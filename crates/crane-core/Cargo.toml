@@ -1,0 +1,16 @@
+[package]
+name    = "crane-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+toml_edit  = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+rayon      = { workspace = true }
+walkdir    = { workspace = true }
+regex      = { workspace = true }
+sha2       = { workspace = true }
+semver     = { workspace = true }
+thiserror  = { workspace = true }
+owo-colors = { workspace = true }

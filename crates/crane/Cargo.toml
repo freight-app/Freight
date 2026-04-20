@@ -1,0 +1,14 @@
+[package]
+name    = "crane"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crane"
+path = "src/main.rs"
+
+[dependencies]
+crane-core  = { path = "../crane-core" }
+clap        = { workspace = true }
+owo-colors  = { workspace = true }
+anyhow      = { workspace = true }
