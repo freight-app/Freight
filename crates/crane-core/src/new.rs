@@ -1,20 +1,26 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::CraneError;
 use crate::output::print_success;
 
-const SUPPORTED_LANGS: &[(&str, &str, &str)] = &[
-    ("c",       "c",       "c17"),
-    ("c++",     "c++",     "c++20"),
-    ("cpp",     "c++",     "c++20"),
-    ("fortran", "fortran", "f2018"),
-    ("ada",     "ada",     "ada2012"),
-    ("d",       "d",       ""),
+// (alias, canonical_name, toml_key, std)
+const SUPPORTED_LANGS: &[(&str, &str, &str, &str)] = &[
+    ("c",       "c",       "c",       "c17"),
+    ("c++",     "c++",     "cpp",     "c++20"),
+    ("cpp",     "c++",     "cpp",     "c++20"),
+    ("fortran", "fortran", "fortran", "f2018"),
+    ("ada",     "ada",     "ada",     "ada2012"),
+    ("d",       "d",       "d",       ""),
+    ("cuda",    "cuda",    "cuda",    "c++20"),
+    ("opencl",  "opencl",  "opencl",  "CL3.0"),
+    ("hip",     "hip",     "hip",     "c++20"),
+    ("sycl",    "sycl",    "sycl",    "c++20"),
+    ("ispc",    "ispc",    "ispc",    ""),
 ];
 
 pub fn scaffold_project(name: &str, lang_arg: &str) -> Result<(), CraneError> {
-    let (lang_name, lang_std) = resolve_lang(lang_arg)?;
+    let (lang_name, lang_key, lang_std) = resolve_lang(lang_arg)?;
 
     let root = Path::new(name);
     if root.exists() {
@@ -23,7 +29,7 @@ pub fn scaffold_project(name: &str, lang_arg: &str) -> Result<(), CraneError> {
 
     fs::create_dir_all(root.join("src"))?;
 
-    write_manifest(root, name, lang_name, lang_std)?;
+    write_manifest(root, name, lang_name, lang_key, lang_std)?;
     write_hello(root, lang_name)?;
     write_gitignore(root)?;
 
@@ -36,21 +42,89 @@ pub fn scaffold_project(name: &str, lang_arg: &str) -> Result<(), CraneError> {
     Ok(())
 }
 
-fn resolve_lang(arg: &str) -> Result<(&'static str, &'static str), CraneError> {
+/// `crane init [--lang <lang>]` — initialize crane in the current directory.
+pub fn init_project(lang_arg: Option<&str>) -> Result<(), CraneError> {
+    let cwd = std::env::current_dir()?;
+
+    if cwd.join("crane.toml").exists() {
+        return Err(CraneError::ProjectExists(
+            "crane.toml already exists in this directory".into(),
+        ));
+    }
+
+    let name = cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string();
+
+    let lang = lang_arg
+        .map(str::to_string)
+        .or_else(|| detect_language(&cwd))
+        .unwrap_or_else(|| "c++".into());
+
+    let (lang_name, lang_key, lang_std) = resolve_lang(&lang)?;
+
+    if !cwd.join("src").exists() {
+        fs::create_dir(cwd.join("src"))?;
+    }
+
+    write_manifest(&cwd, &name, lang_name, lang_key, lang_std)?;
+
+    // Only scaffold a hello-world if src/ is empty
+    let src_is_empty = fs::read_dir(cwd.join("src"))
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(true);
+    if src_is_empty {
+        write_hello(&cwd, lang_name)?;
+    }
+
+    if !cwd.join(".gitignore").exists() {
+        write_gitignore(&cwd)?;
+    }
+
+    print_success(&format!("initialized `{name}` ({lang_name} project)"));
+    Ok(())
+}
+
+/// Guess the language from file extensions found in the project root and `src/`.
+fn detect_language(dir: &Path) -> Option<String> {
+    let mut dirs_to_scan: Vec<PathBuf> = vec![dir.to_path_buf()];
+    if dir.join("src").is_dir() {
+        dirs_to_scan.push(dir.join("src"));
+    }
+
+    for scan_dir in dirs_to_scan {
+        let Ok(entries) = fs::read_dir(&scan_dir) else { continue };
+        for entry in entries.flatten() {
+            match entry.path().extension().and_then(|e| e.to_str()) {
+                Some("cpp" | "cc" | "cxx") => return Some("c++".into()),
+                Some("c") => return Some("c".into()),
+                Some("f90" | "f95" | "f03") => return Some("fortran".into()),
+                Some("adb" | "ads") => return Some("ada".into()),
+                Some("d") => return Some("d".into()),
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn resolve_lang(arg: &str) -> Result<(&'static str, &'static str, &'static str), CraneError> {
     let lower = arg.to_lowercase();
-    for (alias, name, std) in SUPPORTED_LANGS {
+    for (alias, name, key, std) in SUPPORTED_LANGS {
         if *alias == lower {
-            return Ok((name, std));
+            return Ok((name, key, std));
         }
     }
     Err(CraneError::UnsupportedLanguage(arg.to_string()))
 }
 
-fn write_manifest(root: &Path, name: &str, lang: &str, std: &str) -> Result<(), CraneError> {
+fn write_manifest(root: &Path, name: &str, lang: &str, lang_key: &str, std: &str) -> Result<(), CraneError> {
     let std_line = if std.is_empty() {
         String::new()
     } else {
-        format!("std  = \"{std}\"\n")
+        format!("std = \"{std}\"\n")
     };
 
     let contents = format!(
@@ -60,8 +134,7 @@ version     = "0.1.0"
 description = ""
 license     = "MIT"
 
-[language]
-name = "{lang}"
+[language.{lang_key}]
 {std_line}
 [[bin]]
 name = "{name}"
@@ -84,7 +157,7 @@ strip     = true
 debug     = false
 "#,
         name = name,
-        lang = lang,
+        lang_key = lang_key,
         std_line = std_line,
         ext = lang_extension(lang),
     );

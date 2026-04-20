@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use crane_core::new::scaffold_project;
-use crane_core::output::print_unimplemented;
+use crane_core::manifest::cmd_check;
+use crane_core::new::{init_project, scaffold_project};
+use crane_core::output::{print_error, print_unimplemented};
+use crane_core::toolchain::cmd_toolchain_list;
 
 #[derive(Parser)]
 #[command(name = "crane", about = "Build tool and package manager for C, C++, Fortran, and more")]
@@ -19,7 +21,10 @@ enum Commands {
         lang: String,
     },
     /// Initialize crane in the current directory
-    Init,
+    Init {
+        #[arg(long)]
+        lang: Option<String>,
+    },
     /// Build the project
     Build {
         #[arg(long)]
@@ -89,7 +94,12 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::New { name, lang } => scaffold_project(&name, &lang)?,
-        Commands::Init => print_unimplemented("init"),
+        Commands::Init { lang } => {
+            if let Err(e) = init_project(lang.as_deref()) {
+                print_error(&e.to_string());
+                std::process::exit(1);
+            }
+        }
         Commands::Build { .. } => print_unimplemented("build"),
         Commands::Run { .. } => print_unimplemented("run"),
         Commands::Test { .. } => print_unimplemented("test"),
@@ -100,14 +110,14 @@ fn main() -> Result<()> {
         Commands::Tree => print_unimplemented("tree"),
         Commands::Info { .. } => print_unimplemented("info"),
         Commands::Search { .. } => print_unimplemented("search"),
-        Commands::Check => print_unimplemented("check"),
+        Commands::Check => cmd_check(),
         Commands::Clean => print_unimplemented("clean"),
         Commands::Migrate { .. } => print_unimplemented("migrate"),
         Commands::Login => print_unimplemented("login"),
         Commands::Publish => print_unimplemented("publish"),
         Commands::Yank { .. } => print_unimplemented("yank"),
         Commands::Toolchain { command } => match command {
-            ToolchainCommands::List => print_unimplemented("toolchain list"),
+            ToolchainCommands::List => cmd_toolchain_list(),
             ToolchainCommands::Add { .. } => print_unimplemented("toolchain add"),
             ToolchainCommands::Use { .. } => print_unimplemented("toolchain use"),
         },

@@ -1,0 +1,222 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use regex::Regex;
+
+use super::cache::ToolchainCache;
+use super::template::CompilerTemplate;
+
+/// A compiler found on this machine.
+#[derive(Debug, Clone)]
+pub struct DetectedCompiler {
+    pub template: CompilerTemplate,
+    pub version: String,
+    pub path: PathBuf,
+}
+
+/// Load every `.toml` file from `templates_dir` and return parsed templates.
+pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
+    let Ok(entries) = std::fs::read_dir(templates_dir) else {
+        return vec![];
+    };
+
+    let mut templates = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        match CompilerTemplate::from_toml(&src) {
+            Ok(t) => templates.push(t),
+            Err(e) => eprintln!("warn: skipping {:?}: {e}", path.file_name().unwrap_or_default()),
+        }
+    }
+    templates
+}
+
+/// Probe PATH for every template's binary and return those that are present with their version.
+pub fn detect_all(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {
+    let mut found = Vec::new();
+    for template in templates {
+        if let Some(detected) = probe(template) {
+            found.push(detected);
+        }
+    }
+    found.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+    found
+}
+
+/// Like [`detect_all`] but reads and writes a persistent version cache so that
+/// `--version` is only invoked when a compiler binary has changed on disk.
+pub fn detect_all_cached(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {
+    let mut cache = ToolchainCache::load();
+    cache.evict_missing();
+    let mut dirty = false;
+    let mut found = Vec::new();
+
+    for template in templates {
+        if let Some(detected) = probe_cached(template, &mut cache, &mut dirty) {
+            found.push(detected);
+        }
+    }
+
+    if dirty {
+        cache.save();
+    }
+
+    found.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+    found
+}
+
+fn probe_cached(
+    template: &CompilerTemplate,
+    cache: &mut ToolchainCache,
+    dirty: &mut bool,
+) -> Option<DetectedCompiler> {
+    let path = which(&template.binary)?;
+    let version = if let Some(v) = cache.get_version(&path) {
+        v.to_string()
+    } else {
+        let v = query_version(template, &path).unwrap_or_else(|| "unknown".into());
+        cache.set_version(&path, &v);
+        *dirty = true;
+        v
+    };
+    Some(DetectedCompiler { template: template.clone(), version, path })
+}
+
+fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
+    let path = which(&template.binary)?;
+    let version = query_version(template, &path).unwrap_or_else(|| "unknown".into());
+    Some(DetectedCompiler {
+        template: template.clone(),
+        version,
+        path,
+    })
+}
+
+/// Resolve a binary name to its full path by searching PATH.
+fn which(binary: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(binary);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        // On some systems the binary might not have an extension check needed
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if candidate.exists() {
+                if let Ok(meta) = candidate.metadata() {
+                    if meta.permissions().mode() & 0o111 != 0 {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn query_version(template: &CompilerTemplate, path: &Path) -> Option<String> {
+    let output = Command::new(path)
+        .arg(&template.version_arg)
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Some compilers (gfortran) print version to stderr
+    let combined = format!("{stdout}{stderr}");
+
+    let re = Regex::new(&template.version_regex).ok()?;
+    re.captures(&combined)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEMPLATES_DIR: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../compiler-templates");
+
+    #[test]
+    fn load_templates_finds_all_five() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        assert_eq!(templates.len(), 5, "expected gcc, clang, gfortran, gnat, nvcc");
+    }
+
+    #[test]
+    fn all_templates_have_required_fields() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        for t in &templates {
+            assert!(!t.name.is_empty(), "empty name");
+            assert!(!t.binary.is_empty(), "{}: empty binary", t.name);
+            assert!(!t.extensions.is_empty(), "{}: no extensions", t.name);
+            assert!(!t.version_regex.is_empty(), "{}: empty version_regex", t.name);
+            assert!(!t.version_arg.is_empty(), "{}: empty version_arg", t.name);
+        }
+    }
+
+    #[test]
+    fn load_templates_missing_dir_returns_empty() {
+        let templates = load_templates(Path::new("/nonexistent/path/compiler-templates"));
+        assert!(templates.is_empty());
+    }
+
+    #[test]
+    fn detect_all_result_is_sorted_by_name() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = detect_all(&templates);
+        let names: Vec<&str> = detected.iter().map(|d| d.template.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "detect_all should return compilers in alphabetical order");
+    }
+
+    #[test]
+    fn detected_compilers_have_non_empty_version() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        for d in detect_all(&templates) {
+            assert!(!d.version.is_empty(), "{} reported empty version", d.template.name);
+            assert!(d.path.exists(), "{} path does not exist: {:?}", d.template.name, d.path);
+        }
+    }
+}
+
+/// Resolve the compiler templates directory.
+/// Checks (in order):
+///   1. `CRANE_TEMPLATES_DIR` env var
+///   2. `{binary_dir}/compiler-templates/`
+///   3. `{binary_dir}/../../compiler-templates/`  (cargo dev layout)
+pub fn templates_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CRANE_TEMPLATES_DIR") {
+        let p = PathBuf::from(dir);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+
+    let exe = std::env::current_exe().ok()?;
+    let bin_dir = exe.parent()?;
+
+    let candidate1 = bin_dir.join("compiler-templates");
+    if candidate1.is_dir() {
+        return Some(candidate1);
+    }
+
+    // cargo dev layout: target/debug/crane → workspace root is two levels up
+    let candidate2 = bin_dir.join("..").join("..").join("compiler-templates");
+    let candidate2 = candidate2.canonicalize().ok()?;
+    if candidate2.is_dir() {
+        return Some(candidate2);
+    }
+
+    None
+}

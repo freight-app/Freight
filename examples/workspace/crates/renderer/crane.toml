@@ -1,0 +1,27 @@
+# crates/renderer/crane.toml — workspace member (shared library)
+
+[package]
+name        = "renderer"
+version     = "0.1.0"
+authors     = ["Dev Team"]
+description = "Vulkan rendering backend"
+license     = "MIT"
+
+[language.cpp]
+std = "c++20"
+
+[lib]
+type    = "shared"
+src     = "src/"
+include = "include/"
+
+[dependencies]
+engine    = { path = "../engine" }
+# Inherits version constraint from [workspace.dependencies]
+libvulkan = { workspace = true }
+
+[compiler]
+backend   = "auto"
+opt-level = 2
+warnings  = "all"
+defines   = ["VK_USE_PLATFORM_XCB_KHR"]

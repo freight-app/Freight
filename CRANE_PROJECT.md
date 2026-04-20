@@ -438,23 +438,27 @@ thiserror     = "1"
 
 ## Development roadmap
 
-### Phase 1 — CLI skeleton ← START HERE
-- [ ] Cargo workspace: `crane` (bin) + `crane-core` (lib)
-- [ ] `clap` wiring — all subcommands stubbed, print "not implemented"
-- [ ] `CraneError` enum with `thiserror`
-- [ ] Coloured output helpers: success `✓`, warning `⚠`, error `✗`
-- [ ] `crane new <name> --lang <lang>` — scaffold directory + crane.toml + hello-world src
+### Phase 1 — CLI skeleton ✓ COMPLETE
+- [x] Cargo workspace: `crane` (bin) + `crane-core` (lib)
+- [x] `clap` wiring — all subcommands stubbed, print "not implemented"
+- [x] `CraneError` enum with `thiserror`
+- [x] Coloured output helpers: success `✓`, warning `⚠`, error `✗`
+- [x] `crane new <name> --lang <lang>` — scaffold directory + crane.toml + hello-world src
+- [x] `crane init [--lang <lang>]` — init in current dir, auto-detects language from existing files
 
-### Phase 2 — Manifest
-- [ ] Serde structs for every crane.toml section
-- [ ] Parse + validate with `toml_edit`
-- [ ] `crane check` — validate manifest, print clear errors
+### Phase 2 — Manifest ✓ COMPLETE
+- [x] Serde structs for every crane.toml section (`manifest/types.rs`)
+- [x] Parse + validate with `toml_edit` (`load_manifest_str`, `load_manifest`)
+- [x] `crane check` — validate manifest, print clear errors or a summary
+- [x] `find_manifest_dir` — walk up the directory tree to locate `crane.toml`
+- [x] `Manifest::build_settings_for(profile)` — convert manifest + profile into `BuildSettings` (needed for Phase 4)
 
-### Phase 3 — Compiler detection
-- [ ] Probe `$PATH` for known compiler binaries
-- [ ] Load + deserialize compiler template `.toml` files
-- [ ] `CompilerTemplate` struct + `assemble_flags()` method
-- [ ] `crane toolchain list`
+### Phase 3 — Compiler detection ✓ COMPLETE
+- [x] Probe `$PATH` for known compiler binaries
+- [x] Load + deserialize compiler template `.toml` files
+- [x] `CompilerTemplate` struct + `assemble_flags()` method (pure, unit-tested)
+- [x] `crane toolchain list`
+- [x] Toolchain version cache — `~/.crane/toolchain-cache.json`, mtime-validated, avoids re-running `--version` on every invocation
 
 ### Phase 4 — Build engine (first working build)
 - [ ] Source discovery with `walkdir`

@@ -1,0 +1,38 @@
+# crane.toml — C executable example
+# A pure-C image processing tool. Only links C libraries.
+# Note: C projects cannot directly link C++ libraries without extern "C" wrappers.
+
+[package]
+name        = "imgproc"
+version     = "0.2.0"
+authors     = ["Dennis Ritchie <dmr@example.com>"]
+description = "Lightweight image processing in C"
+license     = "MIT"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "imgproc"
+src  = "src/main.c"
+
+[dependencies]
+# System libraries resolved via pkg-config — all expose a C API
+libpng  = { system = "libpng",  version = ">=1.6" }
+libjpeg = { system = "libjpeg", version = ">=9.0" }
+
+[compiler]
+backend   = "auto"
+opt-level = 2
+warnings  = "all"
+defines   = ["_POSIX_C_SOURCE=200809L"]
+
+[profile.dev]
+opt-level = 0
+debug     = true
+sanitize  = ["address", "undefined"]
+
+[profile.release]
+opt-level = 3
+strip     = true
+debug     = false

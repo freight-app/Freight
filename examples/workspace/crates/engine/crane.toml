@@ -1,0 +1,21 @@
+# crates/engine/crane.toml — workspace member (static library)
+
+[package]
+name        = "engine"
+version     = "0.1.0"
+authors     = ["Dev Team"]
+description = "Core ECS and math — no platform dependencies"
+license     = "MIT"
+
+[language.cpp]
+std = "c++20"
+
+[lib]
+type    = "static"
+src     = "src/"
+include = "include/"
+
+[compiler]
+backend   = "auto"
+opt-level = 2
+warnings  = "all"
