@@ -17,8 +17,14 @@ pub enum CraneError {
     #[error("cycle detected in module dependency graph: {0}")]
     DependencyCycle(String),
 
+    #[error("no compiler found for language '{0}' — is the toolchain installed?")]
+    NoCompilerForLang(String),
+
     #[error("compiler not found: {0}")]
     CompilerNotFound(String),
+
+    #[error("compilation failed: {0}\n{1}")]
+    CompileFailed(String, String),
 
     #[error("compiler template error: {0}")]
     TemplateError(String),
