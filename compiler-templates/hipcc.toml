@@ -1,17 +1,14 @@
-# compiler-templates/hipcc.toml
 # AMD ROCm HIP compiler — AMD's CUDA equivalent.
-# Handles .hip files and plain .cpp files when the hip backend is selected.
 
-[compiler]
 name          = "hipcc"
 binary        = "hipcc"
 version_arg   = "--version"
 version_regex = "HIP version: (\\d+\\.\\d+\\.\\d+)"
 
-[compiler.extensions]
+[extensions]
 handles = [".hip", ".cpp", ".cc", ".cxx"]
 
-[compiler.flags]
+[flags]
 opt.0            = "-O0"
 opt.1            = "-O1"
 opt.2            = "-O2"
@@ -30,12 +27,12 @@ strip.true       = "-s"
 strip.false      = ""
 sanitize         = ""
 
-[compiler.standards]
+[standards]
 "c++14" = "-std=c++14"
 "c++17" = "-std=c++17"
 "c++20" = "-std=c++20"
 
-[compiler.structure]
+[structure]
 include_dir  = "-I{path}"
 define       = "-D{name}"
 define_value = "-D{name}={value}"
@@ -43,9 +40,15 @@ output       = "-o {path}"
 compile_only = "-c"
 dep_file     = ""
 
-[compiler.modules]
+[modules]
 supported = false
 
-[compiler.passthrough]
+[passthrough]
 enabled = false
 prefix  = ""
+
+[linking.hip]
+abi        = "hip"
+compatible = ["c++", "c", "fortran"]
+linker     = "c++"
+extensions = [".hip"]
