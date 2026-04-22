@@ -1,0 +1,23 @@
+[package]
+name    = "c-simple"
+version = "0.1.0"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "c-simple"
+src  = "src/main.c"
+
+[compiler]
+backend  = "auto"
+warnings = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true
+debug     = false
