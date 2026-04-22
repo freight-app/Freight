@@ -1,0 +1,29 @@
+[package]
+name    = "multi-bin"
+version = "0.1.0"
+description = "Two binaries built from the same source tree"
+
+[language.cpp]
+std = "c++20"
+
+[[bin]]
+name = "encode"
+src  = "src/encode_main.cpp"
+
+[[bin]]
+name = "decode"
+src  = "src/decode_main.cpp"
+
+[compiler]
+backend  = "auto"
+warnings = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+lto       = true
+strip     = true
+debug     = false
