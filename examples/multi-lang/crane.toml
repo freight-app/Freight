@@ -1,0 +1,26 @@
+[package]
+name    = "multi-lang"
+version = "0.1.0"
+description = "C + C++ mixed-language example"
+
+[language.cpp]
+std = "c++20"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "multi-lang"
+src  = "src/main.cpp"
+
+[compiler]
+warnings = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+lto       = true
+strip     = true

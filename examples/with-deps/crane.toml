@@ -1,0 +1,17 @@
+[package]
+name    = "with-deps"
+version = "0.1.0"
+
+[language.cpp]
+std = "c++20"
+
+[[bin]]
+name = "with-deps"
+src  = "src/main.cpp"
+
+[dependencies]
+vecmath = "0.1.0"
+
+[profile.dev]
+opt-level = 0
+debug     = true

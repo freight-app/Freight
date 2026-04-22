@@ -1,0 +1,10 @@
+[package]
+name    = "vecmath"
+version = "0.1.0"
+
+[language.cpp]
+std = "c++20"
+
+[lib]
+type = "static"
+src  = "src"

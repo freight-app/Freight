@@ -1,0 +1,28 @@
+[package]
+name        = "hello-cpp"
+version     = "0.1.0"
+description = "Example crane project — multi-file C++"
+license     = "MIT"
+
+[language.cpp]
+std = "c++20"
+
+[[bin]]
+name = "hello-cpp"
+src  = "src/main.cpp"
+
+[compiler]
+backend   = "auto"
+opt-level = 2
+debug     = false
+warnings  = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+lto       = true
+strip     = true
+debug     = false
