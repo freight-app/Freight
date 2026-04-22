@@ -223,16 +223,20 @@ pub struct CompilerIncludes {
     pub paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Backend {
-    #[default]
-    Auto,
-    Gcc,
-    Clang,
-    Gfortran,
-    Gnat,
-    Nvcc,
+/// The compiler backend name from `[compiler] backend = "..."`.
+/// Stored as a plain string so user-added templates are supported without a Rust change.
+/// Special value `"auto"` (the default) picks the first available compiler for each language.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct Backend(pub String);
+
+impl Default for Backend {
+    fn default() -> Self { Self("auto".into()) }
+}
+
+impl Backend {
+    pub fn is_auto(&self) -> bool { self.0.eq_ignore_ascii_case("auto") }
+    pub fn name(&self) -> &str { &self.0 }
 }
 
 fn default_opt_level() -> u8 { 2 }

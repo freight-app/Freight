@@ -4,9 +4,9 @@ use std::path::Path;
 use semver::Version;
 
 use super::types::{Dependency, Manifest, Profile};
+use crate::toolchain::CompilerTemplate;
 
 const VALID_WARNINGS: &[&str] = &["none", "default", "all", "error"];
-const VALID_LANG_KEYS: &[&str] = &["c", "cpp", "fortran", "ada", "d", "cuda", "opencl", "hip", "sycl", "ispc"];
 
 #[derive(Debug, Clone)]
 pub struct ValidationError {
@@ -27,12 +27,16 @@ impl std::fmt::Display for ValidationError {
 }
 
 /// Validate a parsed manifest and return every problem found.
-/// Returns an empty vec when the manifest is valid.
-pub fn validate(manifest: &Manifest) -> Vec<ValidationError> {
+///
+/// Pass the loaded compiler templates so language keys and standards can be checked
+/// against what the toolchain actually supports. An empty `templates` slice skips
+/// template-dependent checks (language key validity, std validity) without error.
+pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<ValidationError> {
     let mut errors: Vec<ValidationError> = Vec::new();
 
     validate_package(manifest, &mut errors);
-    validate_language(manifest, &mut errors);
+    validate_language(manifest, templates, &mut errors);
+    validate_lang_std_consistency(manifest, &mut errors);
     validate_targets(manifest, &mut errors);
     validate_compiler(manifest, &mut errors);
     validate_profiles(manifest, &mut errors);
@@ -60,21 +64,39 @@ fn validate_package(m: &Manifest, errors: &mut Vec<ValidationError>) {
     }
 }
 
-fn validate_language(m: &Manifest, errors: &mut Vec<ValidationError>) {
+fn validate_language(m: &Manifest, templates: &[CompilerTemplate], errors: &mut Vec<ValidationError>) {
     for (key, settings) in &m.language {
         let ctx = format!("[language.{key}]");
-        if !VALID_LANG_KEYS.contains(&key.as_str()) {
+
+        let handling: Vec<&CompilerTemplate> = templates.iter()
+            .filter(|t| t.linking.contains_key(key.as_str()))
+            .collect();
+
+        if !templates.is_empty() && handling.is_empty() {
+            let mut known: Vec<String> = templates.iter()
+                .flat_map(|t| t.linking.keys().cloned())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            known.sort();
             errors.push(ValidationError::new(
                 &ctx,
-                format!("{key:?} is not a supported language key; choose one of: {}", VALID_LANG_KEYS.join(", ")),
+                format!("{key:?} is not a supported language key; known keys: {}", known.join(", ")),
             ));
             continue;
         }
+
         if let Some(std) = &settings.std {
-            if !is_valid_std_for_lang(key, std) {
+            let valid_stds: HashSet<&str> = handling.iter()
+                .flat_map(|t| t.standards.keys().map(String::as_str))
+                .collect();
+            // Empty valid_stds means the language uses no -std= flag; treat any value as docs.
+            if !valid_stds.is_empty() && !valid_stds.contains(std.as_str()) {
+                let mut sorted: Vec<&str> = valid_stds.into_iter().collect();
+                sorted.sort();
                 errors.push(ValidationError::new(
                     &ctx,
-                    format!("std {:?} is not valid for {key}; valid standards: {}", std, valid_stds_for(key)),
+                    format!("std {:?} is not valid for {key}; valid standards: {}", std, sorted.join(", ")),
                 ));
             }
         }
@@ -149,21 +171,37 @@ fn is_valid_package_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Check language compatibility of path dependencies against the current project.
+/// Check ABI compatibility of path dependencies against the current project.
 ///
-/// Only path deps are checked — system/registry deps expose a C ABI by convention and
-/// are always safe to link. If a dep's `crane.toml` cannot be read it is silently skipped.
-pub fn validate_dep_compat(manifest: &Manifest, base_dir: &Path) -> Vec<ValidationError> {
+/// Compatibility is determined by the `[compiler.linking]` sections of the loaded
+/// compiler templates — no rules are hardcoded in Rust. Only path deps are checked;
+/// system/registry deps expose a C ABI by convention and are always safe to link.
+/// If a dep's `crane.toml` cannot be read it is silently skipped.
+/// An empty `templates` slice skips all compatibility checks.
+pub fn validate_dep_compat(
+    manifest: &Manifest,
+    base_dir: &Path,
+    templates: &[CompilerTemplate],
+) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    let project_langs: HashSet<&str> =
-        manifest.language.keys().map(String::as_str).collect();
-
-    if project_langs.is_empty() {
+    let project_langs: HashSet<&str> = manifest.language.keys().map(String::as_str).collect();
+    if project_langs.is_empty() || templates.is_empty() {
         return errors;
     }
 
-    let allowed = allowed_dep_langs(&project_langs);
+    // Collect all ABIs the project's languages are compatible with,
+    // always including each language's own ABI (a language links with itself).
+    let allowed_abis: HashSet<&str> = project_langs.iter()
+        .flat_map(|&lang| {
+            templates.iter()
+                .filter_map(move |t| t.linking.get(lang))
+                .flat_map(|l| {
+                    std::iter::once(l.abi.as_str())
+                        .chain(l.compatible.iter().map(String::as_str))
+                })
+        })
+        .collect();
 
     for (dep_name, dep) in &manifest.dependencies {
         let rel_path = match dep {
@@ -179,16 +217,43 @@ pub fn validate_dep_compat(manifest: &Manifest, base_dir: &Path) -> Vec<Validati
         let Ok(dep_manifest) = toml_edit::de::from_str::<Manifest>(&src) else { continue };
 
         for dep_lang in dep_manifest.language.keys() {
-            if !allowed.contains(dep_lang.as_str()) {
-                errors.push(ValidationError::new(
-                    &format!("[dependencies.{dep_name}]"),
-                    format!(
-                        "library language \"{dep_lang}\" is not compatible with project \
-                         language(s) [{}] — languages cannot link across ABI boundaries \
-                         without explicit C wrappers",
-                        sorted_langs(&project_langs).join(", ")
-                    ),
-                ));
+            let dep_abi = templates.iter()
+                .filter_map(|t| t.linking.get(dep_lang.as_str()))
+                .map(|l| l.abi.as_str())
+                .next();
+
+            if let Some(abi) = dep_abi {
+                if !allowed_abis.contains(abi) {
+                    errors.push(ValidationError::new(
+                        &format!("[dependencies.{dep_name}]"),
+                        format!(
+                            "library language \"{dep_lang}\" (ABI: \"{abi}\") is not compatible \
+                             with project language(s) [{}]",
+                            sorted_langs(&project_langs).join(", ")
+                        ),
+                    ));
+                }
+            }
+
+            // For C and C++, the dep's standard must not be newer than the project's.
+            // A library compiled with a newer std may use features unavailable to the caller.
+            if matches!(dep_lang.as_str(), "c" | "cpp") {
+                let proj_std = manifest.language.get(dep_lang.as_str())
+                    .and_then(|l| l.std.as_deref());
+                let dep_std = dep_manifest.language.get(dep_lang.as_str())
+                    .and_then(|l| l.std.as_deref());
+
+                if let (Some(ps), Some(ds)) = (proj_std, dep_std) {
+                    if std_year(ds) > std_year(ps) {
+                        errors.push(ValidationError::new(
+                            &format!("[dependencies.{dep_name}]"),
+                            format!(
+                                "{dep_lang} library uses std \"{ds}\" which is newer than the \
+                                 project's \"{ps}\" — the project must use at least \"{ds}\""
+                            ),
+                        ));
+                    }
+                }
             }
         }
     }
@@ -196,32 +261,50 @@ pub fn validate_dep_compat(manifest: &Manifest, base_dir: &Path) -> Vec<Validati
     errors
 }
 
-/// Languages that a project may link against, given its own language set.
+/// Check that C and C++ standards are mutually consistent within one project.
 ///
-/// Fortran is linkable from C and C++ (via ABI conventions or `bind(C)` wrappers).
-/// Fortran can link C via `iso_c_binding`. Ada and D stay within their own ecosystems
-/// except for C interop.
-fn allowed_dep_langs<'a>(project_langs: &HashSet<&'a str>) -> HashSet<&'static str> {
-    let mut allowed = HashSet::new();
-    for &lang in project_langs {
-        match lang {
-            "c"       => { allowed.extend(["c", "fortran"]); }
-            "cpp"     => { allowed.extend(["c", "cpp", "fortran"]); }
-            "fortran" => { allowed.extend(["fortran", "c"]); }
-            "ada"     => { allowed.extend(["ada", "c"]); }
-            "d"       => { allowed.extend(["d", "c", "fortran"]); }
-            // GPU languages: host code is C/C++, so all three C-family ABIs are linkable.
-            // OpenCL kernels don't directly link CUDA/HIP objects and vice-versa.
-            "cuda"    => { allowed.extend(["cuda", "cpp", "c", "fortran"]); }
-            "hip"     => { allowed.extend(["hip", "cpp", "c", "fortran"]); }
-            "sycl"    => { allowed.extend(["sycl", "cpp", "c", "fortran"]); }
-            "opencl"  => { allowed.extend(["opencl", "cpp", "c"]); }
-            // ISPC outputs C-callable objects, so C and C++ hosts link it natively.
-            "ispc"    => { allowed.extend(["ispc", "cpp", "c"]); }
-            _ => {}
-        }
+/// When both languages are active, they must either both declare a std or neither
+/// should. If both declare one, the C std must not be newer than the C++ std —
+/// mixing c23 headers with a c++17 translation unit causes hard-to-diagnose
+/// symbol resolution failures at link time.
+fn validate_lang_std_consistency(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    if !m.language.contains_key("c") || !m.language.contains_key("cpp") {
+        return;
     }
-    allowed
+
+    let c_std   = m.language.get("c")  .and_then(|l| l.std.as_deref());
+    let cpp_std = m.language.get("cpp").and_then(|l| l.std.as_deref());
+
+    match (c_std, cpp_std) {
+        (Some(_), None) | (None, Some(_)) => {
+            errors.push(ValidationError::new(
+                "[language]",
+                "when mixing [language.c] and [language.cpp] both must declare std or neither should",
+            ));
+        }
+        (Some(cs), Some(cpps)) => {
+            if std_year(cs) > std_year(cpps) {
+                errors.push(ValidationError::new(
+                    "[language]",
+                    format!(
+                        "C standard \"{cs}\" is newer than C++ standard \"{cpps}\"; \
+                         use a matching or older C std to avoid link-time symbol conflicts"
+                    ),
+                ));
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+/// Return a numeric year for C and C++ standard strings for ordering comparisons.
+/// Returns 0 for unknown or non-versioned standards (treated as "no constraint").
+fn std_year(std: &str) -> u32 {
+    match std {
+        "c11"   => 11, "c17" => 17, "c23" => 23,
+        "c++11" => 11, "c++14" => 14, "c++17" => 17, "c++20" => 20, "c++23" => 23,
+        _       => 0,
+    }
 }
 
 fn sorted_langs<'a>(langs: &HashSet<&'a str>) -> Vec<&'a str> {
@@ -230,32 +313,17 @@ fn sorted_langs<'a>(langs: &HashSet<&'a str>) -> Vec<&'a str> {
     v
 }
 
-fn is_valid_std_for_lang(lang: &str, std: &str) -> bool {
-    let stds = valid_stds_for(lang);
-    if stds == "(any)" { return true; }
-    stds.split(", ").any(|s| s == std)
-}
-
-fn valid_stds_for(lang_key: &str) -> &'static str {
-    match lang_key {
-        "c"       => "c11, c17, c23",
-        "cpp"     => "c++17, c++20, c++23",
-        "fortran" => "f95, f2003, f2008, f2018",
-        "ada"     => "ada95, ada2005, ada2012, ada2022",
-        "d"       => "(any)",
-        "cuda"    => "c++17, c++20",
-        "opencl"  => "CL1.0, CL1.1, CL1.2, CL2.0, CL3.0",
-        "hip"     => "c++14, c++17, c++20",
-        "sycl"    => "c++17, c++20",
-        "ispc"    => "(any)",
-        _         => "",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manifest::load_manifest_str;
+
+    const TEMPLATES_DIR: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../compiler-templates");
+
+    fn test_templates() -> Vec<CompilerTemplate> {
+        crate::toolchain::load_templates(std::path::Path::new(TEMPLATES_DIR))
+    }
 
     const FULL_MANIFEST: &str = r#"
 [package]
@@ -293,7 +361,7 @@ debug     = false
     }
 
     fn errors(s: &str) -> Vec<ValidationError> {
-        validate(&load(s))
+        validate(&load(s), &test_templates())
     }
 
     fn field_errors(s: &str, ctx: &str) -> Vec<ValidationError> {
@@ -475,6 +543,8 @@ version = "bad"
 
     #[test]
     fn d_language_accepts_any_std() {
+        // D has no -std= flag so dmd.toml has an empty [compiler.standards] table.
+        // Any std value the user writes is treated as documentation — no validation error.
         let s = r#"
 [package]
 name    = "foo"
@@ -518,7 +588,7 @@ src  = "src/main.cpp"
 mylib = { path = "mylib" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        let errs = validate_dep_compat(&manifest, dir.path());
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(errs.is_empty(), "cpp project should be able to use a C dep");
     }
 
@@ -540,7 +610,7 @@ src  = "src/main.c"
 cpplib = { path = "cpplib" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        let errs = validate_dep_compat(&manifest, dir.path());
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(!errs.is_empty(), "c project should not be able to use a C++ dep");
         assert!(errs[0].context.contains("cpplib"));
     }
@@ -563,7 +633,7 @@ src  = "src/main.f90"
 cpplib = { path = "cpplib" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        let errs = validate_dep_compat(&manifest, dir.path());
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(!errs.is_empty(), "fortran project should not be able to use a C++ dep");
     }
 
@@ -584,7 +654,7 @@ src  = "src/main.c"
 numlib = { path = "numlib" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        assert!(validate_dep_compat(&manifest, dir.path()).is_empty());
+        assert!(validate_dep_compat(&manifest, dir.path(), &test_templates()).is_empty());
     }
 
     #[test]
@@ -604,7 +674,7 @@ src  = "src/main.cpp"
 numlib = { path = "numlib" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        assert!(validate_dep_compat(&manifest, dir.path()).is_empty());
+        assert!(validate_dep_compat(&manifest, dir.path(), &test_templates()).is_empty());
     }
 
     #[test]
@@ -624,7 +694,7 @@ src  = "src/main.f90"
 clib = { path = "clib" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        assert!(validate_dep_compat(&manifest, dir.path()).is_empty());
+        assert!(validate_dep_compat(&manifest, dir.path(), &test_templates()).is_empty());
     }
 
     #[test]
@@ -643,8 +713,127 @@ src  = "src/main.c"
 ghost = { path = "does-not-exist" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        let errs = validate_dep_compat(&manifest, dir.path());
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(errs.is_empty(), "missing dep dir should be silently skipped");
+    }
+
+    // ── C/C++ std consistency ─────────────────────────────────────────────────
+
+    #[test]
+    fn mixed_c_cpp_with_matching_stds_is_valid() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[language.cpp]
+std = "c++20"
+[language.c]
+std = "c17"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+"#;
+        assert!(errors(s).is_empty(), "c17 with c++20 should be valid");
+    }
+
+    #[test]
+    fn mixed_c_cpp_c_newer_than_cpp_is_error() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[language.cpp]
+std = "c++17"
+[language.c]
+std = "c23"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+"#;
+        assert!(!field_errors(s, "[language]").is_empty(), "c23 with c++17 should error");
+    }
+
+    #[test]
+    fn mixed_c_cpp_one_std_missing_is_error() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[language.cpp]
+std = "c++20"
+[language.c]
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+"#;
+        assert!(!field_errors(s, "[language]").is_empty(), "one std missing should error");
+    }
+
+    #[test]
+    fn dep_with_newer_cpp_std_than_project_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let dep_content = r#"
+[package]
+name    = "dep"
+version = "0.1.0"
+[language.cpp]
+std = "c++23"
+[[bin]]
+name = "dep"
+src  = "src/main.cpp"
+"#;
+        std::fs::create_dir_all(dir.path().join("mylib")).unwrap();
+        std::fs::write(dir.path().join("mylib/crane.toml"), dep_content).unwrap();
+
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[language.cpp]
+std = "c++17"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[dependencies]
+mylib = { path = "mylib" }
+"#;
+        let manifest = load_manifest_str(s).unwrap();
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
+        assert!(!errs.is_empty(), "dep with newer std should error");
+        assert!(errs[0].message.contains("c++23"));
+    }
+
+    #[test]
+    fn dep_with_same_or_older_cpp_std_is_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let dep_content = r#"
+[package]
+name    = "dep"
+version = "0.1.0"
+[language.cpp]
+std = "c++17"
+[[bin]]
+name = "dep"
+src  = "src/main.cpp"
+"#;
+        std::fs::create_dir_all(dir.path().join("mylib")).unwrap();
+        std::fs::write(dir.path().join("mylib/crane.toml"), dep_content).unwrap();
+
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[language.cpp]
+std = "c++20"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[dependencies]
+mylib = { path = "mylib" }
+"#;
+        let manifest = load_manifest_str(s).unwrap();
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
+        assert!(errs.is_empty(), "dep with older std should be fine");
     }
 
     #[test]
@@ -663,7 +852,7 @@ src  = "src/main.c"
 libpng = { system = "libpng", version = ">=1.6" }
 "#;
         let manifest = load_manifest_str(s).unwrap();
-        let errs = validate_dep_compat(&manifest, dir.path());
+        let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(errs.is_empty(), "system deps should not trigger compat check");
     }
 }

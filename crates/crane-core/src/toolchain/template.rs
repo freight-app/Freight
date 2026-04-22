@@ -9,11 +9,6 @@ use crate::error::CraneError;
 
 #[derive(Debug, Deserialize)]
 struct RawTemplate {
-    compiler: RawCompiler,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawCompiler {
     name: String,
     binary: String,
     version_arg: String,
@@ -26,6 +21,8 @@ struct RawCompiler {
     passthrough: RawPassthrough,
     #[serde(default)]
     extra: RawExtra,
+    #[serde(default)]
+    linking: HashMap<String, RawLinking>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,7 +76,45 @@ struct RawExtra {
     always: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawLinking {
+    abi: String,
+    compatible: Vec<String>,
+    #[serde(default)]
+    linker: String,
+    #[serde(default)]
+    extensions: Vec<String>,
+    /// Override the template's top-level binary for compiling this language's source files.
+    /// E.g. `gcc.toml` has `binary = "g++"` for linking, but C files must be compiled with `gcc`.
+    #[serde(default)]
+    compile_binary: Option<String>,
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/// ABI and linking compatibility declared by a compiler template.
+///
+/// The `linking` map on `CompilerTemplate` is keyed by the language key used in
+/// `[language.X]` sections of `crane.toml` (e.g. `"cpp"`, `"cuda"`). Each entry
+/// describes what ABI the compiler's output conforms to and which other ABIs it can
+/// be linked against.
+#[derive(Debug, Clone)]
+pub struct LinkingInfo {
+    /// The ABI label this compiler's output conforms to (e.g. `"c++"`, `"cuda"`).
+    pub abi: String,
+    /// ABI labels whose output can be linked into a binary alongside this one.
+    pub compatible: Vec<String>,
+    /// If non-empty, the ABI label of the compiler that must perform the final link step.
+    /// For example CUDA device code sets this to `"c++"` so the host C++ compiler drives linking.
+    pub linker: String,
+    /// File extensions handled by this language key (e.g. `[".cpp", ".cc"]` for `"cpp"`).
+    /// Used by source discovery to assign each source file to the right language.
+    pub extensions: Vec<String>,
+    /// Binary name to use when *compiling* (not linking) source files of this language.
+    /// Overrides the template's top-level `binary` for the compile step only.
+    /// E.g. gcc.toml uses `g++` as the linker binary but `gcc` to compile `.c` files.
+    pub compile_binary: Option<String>,
+}
 
 /// Settings drawn from `crane.toml` (or a profile) used to produce compiler flags.
 #[derive(Debug, Clone)]
@@ -169,6 +204,9 @@ pub struct CompilerTemplate {
     pub modules: ModuleStyle,
     pub passthrough: PassthroughConfig,
     pub always_flags: Vec<String>,
+    /// Linking metadata keyed by the language key (e.g. `"cpp"`, `"c"`, `"cuda"`).
+    /// A template may handle multiple language keys (e.g. gcc handles `"cpp"` and `"c"`).
+    pub linking: HashMap<String, LinkingInfo>,
 
     flags_opt: HashMap<String, String>,
     flags_debug: HashMap<String, String>,
@@ -183,37 +221,47 @@ impl CompilerTemplate {
     pub fn from_toml(src: &str) -> Result<Self, CraneError> {
         let raw: RawTemplate = toml_edit::de::from_str(src)
             .map_err(|e: toml_edit::de::Error| CraneError::TemplateError(e.to_string()))?;
-        let c = raw.compiler;
 
-        let modules = build_module_style(c.modules);
+        let modules = build_module_style(raw.modules);
+
+        let linking = raw.linking.into_iter().map(|(key, l)| {
+            (key, LinkingInfo {
+                abi: l.abi,
+                compatible: l.compatible,
+                linker: l.linker,
+                extensions: l.extensions,
+                compile_binary: l.compile_binary,
+            })
+        }).collect();
 
         Ok(Self {
-            name: c.name,
-            binary: c.binary,
-            version_arg: c.version_arg,
-            version_regex: c.version_regex,
-            extensions: c.extensions.handles,
-            standards: c.standards,
+            name: raw.name,
+            binary: raw.binary,
+            version_arg: raw.version_arg,
+            version_regex: raw.version_regex,
+            extensions: raw.extensions.handles,
+            standards: raw.standards,
             structure: StructureFlags {
-                include_dir: c.structure.include_dir,
-                define: c.structure.define,
-                define_value: c.structure.define_value,
-                output: c.structure.output,
-                compile_only: c.structure.compile_only,
-                dep_file: c.structure.dep_file,
+                include_dir: raw.structure.include_dir,
+                define: raw.structure.define,
+                define_value: raw.structure.define_value,
+                output: raw.structure.output,
+                compile_only: raw.structure.compile_only,
+                dep_file: raw.structure.dep_file,
             },
             modules,
             passthrough: PassthroughConfig {
-                enabled: c.passthrough.enabled,
-                prefix: c.passthrough.prefix,
+                enabled: raw.passthrough.enabled,
+                prefix: raw.passthrough.prefix,
             },
-            always_flags: c.extra.always,
-            flags_opt: c.flags.opt,
-            flags_debug: c.flags.debug,
-            flags_warnings: c.flags.warnings,
-            flags_lto: c.flags.lto,
-            flags_strip: c.flags.strip,
-            flags_sanitize: c.flags.sanitize,
+            always_flags: raw.extra.always,
+            linking,
+            flags_opt: raw.flags.opt,
+            flags_debug: raw.flags.debug,
+            flags_warnings: raw.flags.warnings,
+            flags_lto: raw.flags.lto,
+            flags_strip: raw.flags.strip,
+            flags_sanitize: raw.flags.sanitize,
         })
     }
 
@@ -317,6 +365,19 @@ impl CompilerTemplate {
     pub fn compile_only_flag(&self) -> Vec<String> {
         push_flag_parts(&self.structure.compile_only)
     }
+
+    /// Flags to generate a Makefile dependency file alongside compilation.
+    /// Returns an empty Vec if the template does not support dep files.
+    pub fn dep_file_flags(&self, path: &std::path::Path) -> Vec<String> {
+        if self.structure.dep_file.is_empty() {
+            return vec![];
+        }
+        self.structure.dep_file
+            .replace("{path}", &path.to_string_lossy())
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn build_module_style(raw: RawModules) -> ModuleStyle {
@@ -357,6 +418,11 @@ mod tests {
     const GFORTRAN_TOML: &str = include_str!("../../../../compiler-templates/gfortran.toml");
     const GNAT_TOML: &str = include_str!("../../../../compiler-templates/gnat.toml");
     const NVCC_TOML: &str = include_str!("../../../../compiler-templates/nvcc.toml");
+    const DMD_TOML: &str = include_str!("../../../../compiler-templates/dmd.toml");
+    const OPENCL_TOML: &str = include_str!("../../../../compiler-templates/opencl.toml");
+    const HIPCC_TOML: &str = include_str!("../../../../compiler-templates/hipcc.toml");
+    const ICPX_TOML: &str = include_str!("../../../../compiler-templates/icpx.toml");
+    const ISPC_TOML: &str = include_str!("../../../../compiler-templates/ispc.toml");
 
     fn gcc() -> CompilerTemplate { CompilerTemplate::from_toml(GCC_TOML).unwrap() }
     fn clang() -> CompilerTemplate { CompilerTemplate::from_toml(CLANG_TOML).unwrap() }
@@ -365,12 +431,49 @@ mod tests {
     // ── Parsing ───────────────────────────────────────────────────────────────
 
     #[test]
-    fn all_five_templates_parse() {
+    fn all_templates_parse() {
         CompilerTemplate::from_toml(GCC_TOML).unwrap();
         CompilerTemplate::from_toml(CLANG_TOML).unwrap();
         CompilerTemplate::from_toml(GFORTRAN_TOML).unwrap();
         CompilerTemplate::from_toml(GNAT_TOML).unwrap();
         CompilerTemplate::from_toml(NVCC_TOML).unwrap();
+        CompilerTemplate::from_toml(DMD_TOML).unwrap();
+        CompilerTemplate::from_toml(OPENCL_TOML).unwrap();
+        CompilerTemplate::from_toml(HIPCC_TOML).unwrap();
+        CompilerTemplate::from_toml(ICPX_TOML).unwrap();
+        CompilerTemplate::from_toml(ISPC_TOML).unwrap();
+    }
+
+    #[test]
+    fn gcc_linking_declares_cpp_and_c() {
+        let t = gcc();
+        let cpp = t.linking.get("cpp").expect("gcc should have linking.cpp");
+        assert_eq!(cpp.abi, "c++");
+        assert!(cpp.compatible.contains(&"c".to_string()));
+        assert!(cpp.compatible.contains(&"fortran".to_string()));
+        assert_eq!(cpp.compile_binary, None, "C++ uses the template's main binary (g++)");
+
+        let c = t.linking.get("c").expect("gcc should have linking.c");
+        assert_eq!(c.abi, "c");
+        assert_eq!(c.compile_binary.as_deref(), Some("gcc"),
+            "C files must be compiled with gcc, not g++");
+    }
+
+    #[test]
+    fn nvcc_linking_requires_cpp_linker() {
+        let t = nvcc();
+        let cuda = t.linking.get("cuda").expect("nvcc should have linking.cuda");
+        assert_eq!(cuda.abi, "cuda");
+        assert_eq!(cuda.linker, "c++");
+    }
+
+    #[test]
+    fn dmd_linking_d_compatible_with_c_and_fortran() {
+        let t = CompilerTemplate::from_toml(DMD_TOML).unwrap();
+        let d = t.linking.get("d").expect("dmd should have linking.d");
+        assert_eq!(d.abi, "d");
+        assert!(d.compatible.contains(&"c".to_string()));
+        assert!(d.compatible.contains(&"fortran".to_string()));
     }
 
     #[test]
@@ -381,6 +484,7 @@ mod tests {
         assert!(t.extensions.contains(&".cpp".to_string()));
         assert!(t.extensions.contains(&".c".to_string()));
         assert!(t.standards.contains_key("c++20"));
+        assert!(t.standards.contains_key("c17"), "gcc handles C standards too");
     }
 
     #[test]

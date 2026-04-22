@@ -51,8 +51,12 @@ pub fn cmd_check() {
         Err(e) => { print_error(&e.to_string()); return; }
     };
 
-    let mut errors = validate(&manifest);
-    errors.extend(validate_dep_compat(&manifest, &manifest_dir));
+    let templates = crate::toolchain::templates_dir()
+        .map(|d| crate::toolchain::load_templates(&d))
+        .unwrap_or_default();
+
+    let mut errors = validate(&manifest, &templates);
+    errors.extend(validate_dep_compat(&manifest, &manifest_dir, &templates));
 
     if errors.is_empty() {
         print_success("crane.toml is valid");

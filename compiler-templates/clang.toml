@@ -39,7 +39,7 @@ define       = "-D{name}"
 define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
-dep_file     = "-MF {path}"
+dep_file     = "-MMD -MF {path}"
 
 [modules]
 supported     = true
@@ -51,14 +51,15 @@ import_module = "-fmodule-file={pcm_path}"
 enabled = false
 prefix  = ""
 
+[linking.c]
+abi            = "c"
+compile_binary = "clang"
+compatible     = ["fortran"]
+linker         = ""
+extensions     = [".c"]
+
 [linking.cpp]
 abi        = "c++"
 compatible = ["c", "fortran"]
 linker     = ""
 extensions = [".cpp", ".cc", ".cxx", ".c++"]
-
-[linking.c]
-abi        = "c"
-compatible = ["fortran"]
-linker     = ""
-extensions = [".c"]

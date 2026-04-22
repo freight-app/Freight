@@ -147,9 +147,11 @@ mod tests {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../compiler-templates");
 
     #[test]
-    fn load_templates_finds_all_five() {
+    fn load_templates_finds_all_ten() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        assert_eq!(templates.len(), 5, "expected gcc, clang, gfortran, gnat, nvcc");
+        assert_eq!(templates.len(), 10,
+            "expected gcc, clang, gfortran, gnat, nvcc, dmd, opencl, hipcc, icpx, ispc \
+             (C handled inside gcc/clang templates via compile_binary, not separate files)");
     }
 
     #[test]

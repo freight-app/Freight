@@ -184,6 +184,11 @@ fn lang_extension(lang: &str) -> &'static str {
         "fortran" => "f90",
         "ada"     => "adb",
         "d"       => "d",
+        "cuda"    => "cu",
+        "opencl"  => "cl",
+        "hip"     => "hip",
+        "sycl"    => "cpp",
+        "ispc"    => "ispc",
         _         => "cpp",
     }
 }
@@ -195,6 +200,51 @@ fn hello_world_src(lang: &str) -> (&'static str, &'static str) {
         "fortran" => ("main.f90", "program main\n    implicit none\n    print *, \"Hello, world!\"\nend program main\n"),
         "ada" => ("main.adb", "with Ada.Text_IO; use Ada.Text_IO;\nprocedure Main is\nbegin\n   Put_Line (\"Hello, world!\");\nend Main;\n"),
         "d"   => ("main.d",   "import std.stdio;\nvoid main() {\n    writeln(\"Hello, world!\");\n}\n"),
-        _     => ("main.cpp", "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, world!\\n\";\n    return 0;\n}\n"),
+        "cuda" => ("main.cu",
+            "#include <cstdio>\n\n\
+             __global__ void hello() {\n\
+             \tprintf(\"Hello from thread %d!\\n\", threadIdx.x);\n\
+             }\n\n\
+             int main() {\n\
+             \thello<<<1, 4>>>();\n\
+             \tcudaDeviceSynchronize();\n\
+             \treturn 0;\n\
+             }\n"),
+        "opencl" => ("main.cl",
+            "/* OpenCL kernel — compile alongside a C/C++ host that sets up the context. */\n\
+             __kernel void hello(__global float* out) {\n\
+             \tint i = get_global_id(0);\n\
+             \tout[i] = (float)i;\n\
+             }\n"),
+        "hip" => ("main.hip",
+            "#include <hip/hip_runtime.h>\n\
+             #include <cstdio>\n\n\
+             __global__ void hello() {\n\
+             \tprintf(\"Hello from thread %d!\\n\", hipThreadIdx_x);\n\
+             }\n\n\
+             int main() {\n\
+             \thipLaunchKernelGGL(hello, dim3(1), dim3(4), 0, 0);\n\
+             \thipDeviceSynchronize();\n\
+             \treturn 0;\n\
+             }\n"),
+        "sycl" => ("main.cpp",
+            "#include <sycl/sycl.hpp>\n\
+             #include <iostream>\n\n\
+             int main() {\n\
+             \tsycl::queue q;\n\
+             \tq.submit([&](sycl::handler& h) {\n\
+             \t\th.single_task([=]() {});\n\
+             \t}).wait();\n\
+             \tstd::cout << \"Hello from SYCL!\\n\";\n\
+             \treturn 0;\n\
+             }\n"),
+        "ispc" => ("main.ispc",
+            "/* ISPC kernel — call from a C/C++ host program. */\n\
+             export void hello(uniform float out[], uniform int n) {\n\
+             \tforeach (i = 0 ... n) {\n\
+             \t\tout[i] = (float)i;\n\
+             \t}\n\
+             }\n"),
+        _ => ("main.cpp", "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, world!\\n\";\n    return 0;\n}\n"),
     }
 }

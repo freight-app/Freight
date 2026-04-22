@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use crane_core::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
 use crane_core::manifest::cmd_check;
 use crane_core::new::{init_project, scaffold_project};
 use crane_core::output::{print_error, print_unimplemented};
@@ -32,6 +33,8 @@ enum Commands {
     },
     /// Build and run the default binary
     Run {
+        #[arg(long)]
+        release: bool,
         /// Arguments to pass to the binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -100,9 +103,9 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::Build { .. } => print_unimplemented("build"),
-        Commands::Run { .. } => print_unimplemented("run"),
-        Commands::Test { .. } => print_unimplemented("test"),
+        Commands::Build { release } => cmd_build(release),
+        Commands::Run { release, args } => cmd_run(release, &args),
+        Commands::Test { name } => cmd_test(name.as_deref()),
         Commands::Add { .. } => print_unimplemented("add"),
         Commands::Remove { .. } => print_unimplemented("remove"),
         Commands::Update { .. } => print_unimplemented("update"),
@@ -111,7 +114,7 @@ fn main() -> Result<()> {
         Commands::Info { .. } => print_unimplemented("info"),
         Commands::Search { .. } => print_unimplemented("search"),
         Commands::Check => cmd_check(),
-        Commands::Clean => print_unimplemented("clean"),
+        Commands::Clean => cmd_clean(),
         Commands::Migrate { .. } => print_unimplemented("migrate"),
         Commands::Login => print_unimplemented("login"),
         Commands::Publish => print_unimplemented("publish"),
