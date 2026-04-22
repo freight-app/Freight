@@ -66,12 +66,26 @@ crane/
 │   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
 │   └── crane-lsp/              # Language Server for crane.toml
 │       └── src/
-│           ├── lib.rs          # `run()` entry point; wires tower-lsp + tokio
-│           ├── main.rs         # standalone `crane-lsp` binary
-│           ├── backend.rs      # LanguageServer impl: diagnostics/completion/hover/goto
-│           ├── completion.rs   # context-aware crane.toml completions
-│           ├── docs.rs         # hover documentation per manifest field
-│           └── position.rs     # map validation errors to source ranges
+│           ├── lib.rs
+│           ├── error.rs
+│           ├── new.rs          # crane new / crane init
+│           ├── manifest/       # crane.toml parsing + validation
+│           │   ├── mod.rs
+│           │   ├── types.rs
+│           │   ├── find.rs
+│           │   └── validate.rs
+│           ├── toolchain/      # compiler detection + templates
+│           │   ├── mod.rs
+│           │   ├── template.rs
+│           │   ├── detect.rs
+│           │   └── cache.rs
+│           └── build/          # compilation + linking orchestration
+│               ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
+│               ├── compile.rs  # source → object, parallel via rayon
+│               ├── link.rs     # object → binary / .a / .so
+│               ├── discover.rs # walkdir source discovery
+│               ├── deps.rs     # dep graph resolution + topo sort
+│               └── modules.rs  # C++20 module scanner, DAG, phased compilation
 ├── compiler-templates/         # bundled .toml files per compiler
 │   ├── gcc.toml                # g++ (C++ linker), gcc (C compiler override)
 │   ├── clang.toml              # clang++ (C++ linker), clang (C compiler override)
