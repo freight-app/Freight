@@ -40,28 +40,38 @@ crane/
 ├── crates/
 │   ├── crane/                  # binary crate — CLI entry point
 │   │   └── src/main.rs
-│   └── crane-core/             # library crate — all build logic
+│   ├── crane-core/             # library crate — all build logic
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── error.rs
+│   │       ├── new.rs          # crane new / crane init
+│   │       ├── dep_cmds.rs     # crane add/remove/update/fetch/tree
+│   │       ├── lock.rs         # crane.lock read/write
+│   │       ├── manifest/       # crane.toml parsing + validation
+│   │       │   ├── mod.rs
+│   │       │   ├── types.rs
+│   │       │   ├── find.rs
+│   │       │   └── validate.rs
+│   │       ├── toolchain/      # compiler detection + templates
+│   │       │   ├── mod.rs
+│   │       │   ├── template.rs
+│   │       │   ├── detect.rs
+│   │       │   └── cache.rs
+│   │       └── build/          # compilation + linking orchestration
+│   │           ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
+│   │           ├── compile.rs  # source → object, parallel via rayon
+│   │           ├── link.rs     # object → binary / .a / .so
+│   │           ├── discover.rs # walkdir source discovery
+│   │           ├── deps.rs     # dep graph resolution + topo sort
+│   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   └── crane-lsp/              # Language Server for crane.toml
 │       └── src/
-│           ├── lib.rs
-│           ├── error.rs
-│           ├── new.rs          # crane new / crane init
-│           ├── manifest/       # crane.toml parsing + validation
-│           │   ├── mod.rs
-│           │   ├── types.rs
-│           │   ├── find.rs
-│           │   └── validate.rs
-│           ├── toolchain/      # compiler detection + templates
-│           │   ├── mod.rs
-│           │   ├── template.rs
-│           │   ├── detect.rs
-│           │   └── cache.rs
-│           └── build/          # compilation + linking orchestration
-│               ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
-│               ├── compile.rs  # source → object, parallel via rayon
-│               ├── link.rs     # object → binary / .a / .so
-│               ├── discover.rs # walkdir source discovery
-│               ├── deps.rs     # dep graph resolution + topo sort
-│               └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│           ├── lib.rs          # `run()` entry point; wires tower-lsp + tokio
+│           ├── main.rs         # standalone `crane-lsp` binary
+│           ├── backend.rs      # LanguageServer impl: diagnostics/completion/hover/goto
+│           ├── completion.rs   # context-aware crane.toml completions
+│           ├── docs.rs         # hover documentation per manifest field
+│           └── position.rs     # map validation errors to source ranges
 ├── compiler-templates/         # bundled .toml files per compiler
 │   ├── gcc.toml                # g++ (C++ linker), gcc (C compiler override)
 │   ├── clang.toml              # clang++ (C++ linker), clang (C compiler override)
@@ -310,6 +320,7 @@ crane publish                     upload package to registry          ✗ needs 
 crane yank <version>              yank a published version            ✗ needs crane.dev
 crane toolchain add <name>        install a compiler template         ✗ not yet
 crane toolchain use <name>        set default compiler backend        ✗ not yet
+crane lsp                         run language server on stdio        ✓ implemented
 ```
 
 ---
@@ -419,6 +430,30 @@ crane toolchain use <name>        set default compiler backend        ✗ not ye
 - [ ] Makefile importer (`makefile-lossless` crate)
 - [ ] Meson importer (regex-based)
 - [ ] Unrecognised constructs → `# CRANE: could not import — review manually`
+
+### Phase 12 — Language server (in progress — `feature/lsp-server`)
+A dedicated LSP for `crane.toml`, built on `tower-lsp` + `tokio`. Lives in
+`crates/crane-lsp/` and is invokable either as a standalone `crane-lsp` binary
+or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same
+`run()` entry point).
+
+- [x] Crate scaffold: `crates/crane-lsp/` (lib + bin), `tower-lsp 0.20`, stdio transport
+- [x] Document store backed by `DashMap<Url, String>` — full-sync updates
+- [x] Diagnostics via `crane-core`'s `validate()` + `validate_dep_compat()`
+- [x] Text-based position mapping in `position.rs` — validation errors carry a free-form context (`[package]`, `[dependencies.foo]`) with no spans, so we search the buffer for those strings and fall back to the first line when nothing matches
+- [x] Parse-error diagnostics extract `line N, column M` from the serde message
+- [x] Completion in `completion.rs` — detects the current `[section]` via prefix scan:
+    - top-level: section headers
+    - `[compiler]`: `backend` (loaded template names), `warnings`, `opt-level`, field snippets
+    - `[language.X]`: `std` values pulled from loaded templates' `[standards]` tables
+    - `[lib]`: `type` (`static` | `shared` | `header-only`)
+    - `[[bin]]`, `[profile.*]`, `[target]`: field snippets
+- [x] Hover docs in `docs.rs` — Markdown descriptions keyed by dotted path (`compiler.backend`, `lib.type`, etc.)
+- [x] Go-to-definition for `path = "..."` dependencies — resolves relative to the document and opens the target `crane.toml`
+- [x] `crane lsp` CLI subcommand
+- [ ] Publish a VS Code extension that activates on `crane.toml`
+- [ ] Inlay hints showing resolved compiler flags per profile
+- [ ] Code actions: "add `[[bin]]` target", "convert simple version dep → detailed table"
 
 ---
 

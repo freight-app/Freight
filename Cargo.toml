@@ -2,6 +2,7 @@
 members = [
     "crates/crane",
     "crates/crane-core",
+    "crates/crane-lsp",
 ]
 resolver = "2"
 
@@ -28,3 +29,8 @@ semver        = "1"
 # Error handling
 anyhow        = "1"
 thiserror     = "2"
+
+# LSP
+tower-lsp     = "0.20"
+tokio         = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync"] }
+dashmap       = "6"

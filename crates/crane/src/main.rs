@@ -94,6 +94,8 @@ enum Commands {
         #[command(subcommand)]
         command: ToolchainCommands,
     },
+    /// Run the crane language server (for editor integration, stdio)
+    Lsp,
 }
 
 #[derive(Subcommand)]
@@ -140,6 +142,12 @@ fn main() -> Result<()> {
             ToolchainCommands::Add { .. } => print_unimplemented("toolchain add"),
             ToolchainCommands::Use { .. } => print_unimplemented("toolchain use"),
         },
+        Commands::Lsp => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(crane_lsp::run());
+        }
     }
 
     Ok(())
