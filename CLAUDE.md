@@ -14,7 +14,7 @@ The project is written in Rust.
 - **Declarative compiler templates** — each compiler (gcc, clang, nvcc, gfortran, nasm…) is described in a `.toml` file that maps abstract settings to real flags. Adding a new compiler = writing a TOML, not writing Rust.
 - **One tool, many languages** — file extension routes to the right compiler automatically. A single project can mix `.cpp`, `.c`, `.f90`, `.asm`, `.cu` files.
 - **Incremental by default** — mtime dirty checking via Makefile `.d` dep files (source + all included headers), parallel compilation via rayon.
-- **C++20 modules ready** — template infrastructure exists (`ModuleStyle::Gcc`, `ModuleStyle::Clang`), full module DAG pipeline is a future phase.
+- **C++20 modules supported** — scanner detects `export module` / `import` declarations, builds a dependency DAG, compiles MIUs in topological order (parallel within each level), then compiles the rest in parallel with `-fmodule-file=` flags injected per import.
 
 ---
 
@@ -60,22 +60,32 @@ crane/
 │               ├── compile.rs  # source → object, parallel via rayon
 │               ├── link.rs     # object → binary / .a / .so
 │               ├── discover.rs # walkdir source discovery
-│               └── deps.rs     # dep graph resolution + topo sort
+│               ├── deps.rs     # dep graph resolution + topo sort
+│               └── modules.rs  # C++20 module scanner, DAG, phased compilation
 ├── compiler-templates/         # bundled .toml files per compiler
 │   ├── gcc.toml                # g++ (C++ linker), gcc (C compiler override)
 │   ├── clang.toml              # clang++ (C++ linker), clang (C compiler override)
 │   ├── gfortran.toml
+│   ├── gnat.toml               # GNU Ada compiler
+│   ├── dmd.toml                # D language compiler
 │   ├── nvcc.toml
 │   ├── hipcc.toml
 │   ├── icpx.toml               # Intel oneAPI C++
 │   ├── opencl.toml
-│   ├── ispc.toml               # Intel SPMD
-│   ├── nasm.toml               # x86/x86_64 assembly
-│   └── gas.toml                # GNU assembler (.s files)
+│   └── ispc.toml               # Intel SPMD
 └── examples/
-    ├── hello-cpp/              # basic C++ project with tests
-    ├── multi-lang/             # C + C++ mixed project
-    └── with-deps/              # project with a path dependency
+    ├── hello-cpp/              # multi-file C++ with tests
+    ├── multi-lang/             # C + C++ mixed, tests
+    ├── with-deps/              # path dependency (static lib)
+    ├── c-simple/               # pure C (Collatz benchmark)
+    ├── multi-bin/              # two binaries from one source tree (base64 encode/decode)
+    ├── cpp-modules/            # C++20 named modules (ASCII ray tracer)
+    ├── tri-lang/               # Fortran + C + C++ in one project (requires gfortran)
+    ├── c-executable/           # documented example — C with system deps
+    ├── executable/             # documented example — multiple [[bin]] targets
+    ├── fortran-executable/     # documented example — Fortran with BLAS/LAPACK
+    ├── library/                # documented example — static lib with system deps
+    └── workspace/              # documented example — multi-crate workspace
 ```
 
 ---
@@ -89,11 +99,6 @@ version     = "0.1.0"
 authors     = ["You <you@example.com>"]
 description = "A short description"
 license     = "MIT"
-
-# Target architecture and CPU features (optional)
-[target]
-arch           = "x86_64"          # drives [arch_flags] in compiler templates
-cpu_extensions = ["avx2", "fma"]   # produces -mavx2 -mfma for gcc/clang
 
 # Per-language settings; key matches the template's [linking.<key>] name
 [language.cpp]
@@ -163,7 +168,7 @@ version_arg   = "--version"
 version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b"
 
 [extensions]
-handles = [".cpp", ".cc", ".cxx", ".c++", ".c"]
+handles = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"]
 
 [flags]
 opt.0            = "-O0"
@@ -181,7 +186,6 @@ lto.false        = ""
 strip.true       = "-s"
 strip.false      = ""
 sanitize         = "-fsanitize={values}"
-cpu_extension    = "-m{name}"   # each cpu_extension → -mavx2, -mfma, etc.
 
 [standards]
 "c11"   = "-std=c11"
@@ -190,10 +194,6 @@ cpu_extension    = "-m{name}"   # each cpu_extension → -mavx2, -mfma, etc.
 "c++17" = "-std=c++17"
 "c++20" = "-std=c++20"
 "c++23" = "-std=c++23"
-
-# Optional: maps arch names → compiler flags (mainly for assemblers)
-[arch_flags]
-# gcc/clang leave this empty; arch is handled via target_triple
 
 [structure]
 include_dir  = "-I{path}"
@@ -206,7 +206,7 @@ dep_file     = "-MMD -MF {path}"   # generates Makefile dep file for header trac
 [modules]
 supported     = true
 enable_flag   = "-fmodules-ts"
-compile_miu   = "-fmodule-output={pcm_path}"
+compile_miu   = "-fmodule-output={pcm_path}"   # GCC one-step: produces both .o and .pcm
 import_module = "-fmodule-file={name}={pcm_path}"
 
 [passthrough]
@@ -215,43 +215,32 @@ prefix  = ""
 
 # A template can claim multiple language keys.
 # [linking.<key>] declares ABI + linker compatibility for that language.
-# compiler = "..." overrides the top-level binary for *compilation* only.
+# compile_binary overrides the top-level binary for *compilation* only.
 [linking.c]
-abi      = "c"
-compiler = "gcc"          # C files compiled with gcc, not g++
-compatible = ["fortran"]
-linker     = ""
-extensions = [".c"]
+abi            = "c"
+compile_binary = "gcc"   # C files compiled with gcc, not g++
+compatible     = ["fortran"]
+linker         = ""
+extensions     = [".c"]
 
 [linking.cpp]
 abi        = "c++"
 compatible = ["c", "fortran"]
 linker     = ""
-extensions = [".cpp", ".cc", ".cxx", ".c++"]
+extensions = [".cpp", ".cppm", ".cc", ".cxx", ".c++"]
 ```
 
-### Assembly template example (NASM)
+### Clang module strategy (two-step)
+
+Clang differs from GCC in that `--precompile` produces only the BMI (.pcm), then a separate
+`-c` pass produces the object file. The template encodes this difference:
 
 ```toml
-# compiler-templates/nasm.toml
-
-name          = "nasm"
-binary        = "nasm"
-version_arg   = "--version"
-version_regex = "NASM version (\\d+\\.\\d+\\.\\d+)"
-
-[extensions]
-handles = [".asm", ".nasm"]
-
-[arch_flags]
-"x86_64" = "-f elf64"    # [target] arch = "x86_64" → -f elf64
-"x86"    = "-f elf32"
-
-[linking.asm]
-abi        = "c"
-compatible = ["c", "cpp", "fortran"]
-linker     = ""
-extensions = [".asm", ".nasm"]
+[modules]
+supported     = true
+enable_flag   = ""
+precompile    = "--precompile"           # step 1: src → .pcm (no object)
+import_module = "-fmodule-file={name}={pcm_path}"  # flag passed to consumers
 ```
 
 ---
@@ -267,12 +256,18 @@ crane build
   │       ├── compile each dep → archive (.a)
   │       └── collect dep include dirs
   ├── 4. Walk src/ — discover sources by file extension → language key
-  ├── 5. Dirty check each source (mtime of .o vs source + headers via .d file)
-  ├── 6. Compile dirty sources in parallel (rayon)
-  │       ├── select compiler by lang_key (respects backend = "auto" or named)
-  │       ├── resolve compile binary (gcc.toml: g++ for linking, gcc for .c files)
-  │       └── emit .d dep file alongside .o for next-run header tracking
+  ├── 5. Scan C++ sources for `export module` / `import` declarations
+  │       ├── [no modules] → flat parallel compile (step 6a)
+  │       └── [modules found] → module-aware pipeline (step 6b)
+  ├── 6a. Flat: dirty-check + compile all sources in parallel (rayon)
+  ├── 6b. Module-aware:
+  │       ├── topo-sort MIUs into batches (Kahn's algorithm)
+  │       ├── for each batch: compile MIUs in parallel → produce .pcm + .o
+  │       │     GCC: one pass with -fmodule-output=
+  │       │     Clang: --precompile → .pcm, then -c → .o
+  │       └── compile MImplUs + regular TUs in parallel with -fmodule-file= per import
   └── 7. Link all .o + dep .a files → binary / .a / .so
+          (each [[bin]] only links its own entry-point .o, not other bins')
 ```
 
 ---
@@ -344,7 +339,7 @@ crane toolchain use <name>        set default compiler backend        ✗ not ye
 - [x] `CompilerTemplate` struct + `assemble_flags()` method (pure, unit-tested)
 - [x] `crane toolchain list`
 - [x] Toolchain version cache (`~/.crane/toolchain-cache.json`, mtime-validated)
-- [x] Template system supports: gcc, clang, gfortran, nvcc, hipcc, icpx, opencl, ispc, nasm, gas
+- [x] Template system supports: gcc, clang, gfortran, gnat, dmd, nvcc, hipcc, icpx, opencl, ispc
 
 ### Phase 4 — Build engine ✓ COMPLETE
 - [x] Source discovery with `walkdir` — extension → language key routing
@@ -356,6 +351,7 @@ crane toolchain use <name>        set default compiler backend        ✗ not ye
 - [x] `crane test` — compiles test files, links against project objects (excluding `main()`), runs each test binary
 - [x] `crane clean` — wipes `target/`
 - [x] Multi-language builds — C + C++ in one project, each compiled with the right binary
+- [x] Multi-bin fix — each `[[bin]]` links only its own entry-point object, not all bins' mains
 
 ### Phase 5 — Dependencies ✓ COMPLETE
 - [x] Path dependency resolution — compile dep, archive to `.a`, link into project
@@ -366,26 +362,37 @@ crane toolchain use <name>        set default compiler backend        ✗ not ye
 - [x] Transitive dep checks — errors if a dep's dep is not present, does not fetch recursively
 - [x] Dep include dirs accumulated in topo order for multi-level dep builds
 
-### Phase 6 — Assembly + target config ✓ COMPLETE
+### Phase 6 — Assembly + target config (in progress — `feature/assembly-support`)
 - [x] NASM template (`nasm.toml`) — `.asm`/`.nasm`, x86/x86_64 arch flags
 - [x] GAS template (`gas.toml`) — `.s`, x86/x86_64/aarch64 arch flags
 - [x] `[target]` section in crane.toml — `arch` and `cpu_extensions`
 - [x] `arch` drives `[arch_flags]` lookups in templates (e.g. `-f elf64` for NASM)
 - [x] `cpu_extensions` produces per-extension flags (e.g. `-mavx2`, `-mfma` via `cpu_extension = "-m{name}"`)
-- [x] Unified C/C++ templates — `compiler = "gcc"` override in `[linking.c]` so C files are not compiled with `g++`
+- [x] Unified C/C++ templates — `compile_binary = "gcc"` override in `[linking.c]` so C files are not compiled with `g++`
 
-### Phase 7 — Git workflow ✓ COMPLETE
-- [x] Feature-branch workflow: `feature/<name>` branches off master, merged when done
-- [x] `feature/assembly-support` — first feature branch, contains Phase 6 work
+### Phase 7 — Examples ✓ COMPLETE
+- [x] `examples/hello-cpp/` — multi-file C++ with tests
+- [x] `examples/multi-lang/` — C + C++ mixed project with tests
+- [x] `examples/with-deps/` — path dependency (static lib)
+- [x] `examples/c-simple/` — pure C, Collatz benchmark
+- [x] `examples/multi-bin/` — two binaries (base64 encode/decode) from one source tree
+- [x] `examples/cpp-modules/` — C++20 named modules, ASCII ray tracer
+- [x] `examples/tri-lang/` — Fortran + C + C++ N-body gravity (requires gfortran)
 
-### Phase 8 — C++20 modules (planned)
-- [ ] Scan source files for `export module` / `import` statements
-- [ ] Classify files as MIU / MImplU / TU
-- [ ] Build module DAG (nodes = files, edges = `import` dependencies)
-- [ ] Compile MIUs first → produce `.pcm` files
-- [ ] Pass `-fmodule-file=` to dependents
-- [ ] GCC vs Clang strategy differences (one step vs two steps)
-- [ ] `crane build` respects module order in parallel batches
+### Phase 8 — C++20 modules ✓ COMPLETE
+- [x] Scan source files for `export module` / `import` statements (`build/modules.rs`)
+- [x] Classify files as MIU (`export module foo;`) / MImplU (`module foo;`) / Regular TU
+- [x] Global module fragment support (`module;` + `#include` before `export module`)
+- [x] Header unit imports (`import <foo>`, `import "foo"`) skipped cleanly without breaking scan
+- [x] Build module DAG — Kahn's topo sort into parallel batches
+- [x] Cycle detection with `DependencyCycle` error
+- [x] GCC one-step MIU compilation: `-fmodule-output={pcm_path}` produces both `.o` and `.pcm`
+- [x] Clang two-step MIU compilation: `--precompile` → `.pcm`, then `-c` → `.o`
+- [x] `-fmodule-file={name}={pcm_path}` injected for every import with a known BMI
+- [x] BMI stored at `target/{profile}/modules/{name}.pcm`
+- [x] Transparent activation — auto-detected from source content; projects without `export module` use the unchanged flat parallel pipeline
+- [x] Incremental: MIUs skipped when both `.o` and `.pcm` are up-to-date
+- [x] `.cppm` added to gcc and clang template extension lists
 
 ### Phase 9 — Registry + lockfile (planned)
 - [ ] `crane.lock` read/write (deterministic dep pinning)
@@ -414,12 +421,13 @@ crane toolchain use <name>        set default compiler backend        ✗ not ye
 1. **`crane` crate is thin** — only `main.rs`, CLI parsing, delegates everything to `crane-core`
 2. **All logic in `crane-core`** — testable without the CLI
 3. **Compiler templates are runtime data** — loaded from `compiler-templates/` directory, not hardcoded
-4. **One template per toolchain, not per language** — `gcc.toml` handles both C and C++; the `compiler` field in `[linking.c]` overrides which binary compiles that language
-5. **DAG cycles = hard error** — report the full cycle path
+4. **One template per toolchain, not per language** — `gcc.toml` handles both C and C++; `compile_binary` in `[linking.c]` overrides which binary compiles that language
+5. **DAG cycles = hard error** — report the full cycle path (both dep cycles and module cycles)
 6. **`CompilerTemplate::assemble_flags()` is pure** — no side effects, unit-tested
 7. **Never shell out to Make / Ninja / CMake during a build** — crane owns the build graph entirely
 8. **Errors use `thiserror` in crane-core, surface at the CLI boundary**
 9. **Feature branches** — each new feature gets its own `feature/<name>` branch off `master`
+10. **Module detection is transparent** — `build_sources()` scans automatically; projects without `export module` take the unchanged fast path
 
 ---
 
