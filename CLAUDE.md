@@ -297,17 +297,17 @@ crane clean                       wipe target/                        ✓ implem
 crane check                       validate crane.toml                 ✓ implemented
 crane toolchain list              show detected compilers             ✓ implemented
 
-crane add <package>[@version]     add a dependency                    ✗ not yet
-crane remove <package>            remove a dependency                 ✗ not yet
-crane update [<package>]          update deps within semver ranges    ✗ not yet
-crane fetch                       download deps without building      ✗ not yet
-crane tree                        print dependency tree               ✗ not yet
-crane info <package>              show package metadata               ✗ not yet
-crane search <query>              search crane.dev                    ✗ not yet
+crane add <name>[@ver] [--path P] [--system] [--dev]   add a dependency        ✓ implemented
+crane remove <package>            remove a dependency                 ✓ implemented
+crane update [<package>]          refresh lockfile for path deps      ✓ implemented (registry pending)
+crane fetch                       verify/download deps                ✓ implemented (registry pending)
+crane tree                        print dependency tree               ✓ implemented
+crane info <package>              show package metadata               ✗ needs crane.dev
+crane search <query>              search crane.dev                    ✗ needs crane.dev
 crane migrate [--from <format>]   import existing build system        ✗ not yet
-crane login                       authenticate with crane.dev         ✗ not yet
-crane publish                     upload package to registry          ✗ not yet
-crane yank <version>              yank a published version            ✗ not yet
+crane login                       authenticate with crane.dev         ✗ needs crane.dev
+crane publish                     upload package to registry          ✗ needs crane.dev
+crane yank <version>              yank a published version            ✗ needs crane.dev
 crane toolchain add <name>        install a compiler template         ✗ not yet
 crane toolchain use <name>        set default compiler backend        ✗ not yet
 ```
@@ -394,12 +394,18 @@ crane toolchain use <name>        set default compiler backend        ✗ not ye
 - [x] Incremental: MIUs skipped when both `.o` and `.pcm` are up-to-date
 - [x] `.cppm` added to gcc and clang template extension lists
 
-### Phase 9 — Registry + lockfile (planned)
-- [ ] `crane.lock` read/write (deterministic dep pinning)
-- [ ] `crane fetch` — download deps from crane.dev into `.deps/`
-- [ ] `crane add / remove / update` — manifest mutation + lockfile update
-- [ ] `crane search / info` — registry queries
-- [ ] `crane login / publish / yank` — publishing workflow
+### Phase 9 — Registry + lockfile (in progress — `feature/registry-lockfile`)
+- [x] `crane.lock` read/write — deterministic dep pinning (version 1 format, sha256 checksums)
+- [x] `crane.lock` auto-generated on every `crane build` from the resolved dep graph
+- [x] `crane tree` — prints the dependency tree with dep type labels (path/registry/system/git)
+- [x] `crane add <name> [--path <rel>] [--system] [--dev]` — manifest mutation + lock update
+- [x] `crane remove <name>` — removes dep from crane.toml (drops empty section) + lock update
+- [x] `crane update [package]` — refreshes lockfile checksums for path deps; warns on registry/git
+- [x] `crane fetch` — verifies path deps exist; warns registry/git deps need crane.dev
+- [x] `crane search / info` — stubs with clear "registry not yet available" message
+- [x] `crane login / publish / yank` — stubs with clear "registry not yet available" message
+- [ ] `crane fetch` — actually download version deps from crane.dev (needs registry server)
+- [ ] `crane add` — resolve + lock exact version from crane.dev (needs registry server)
 
 ### Phase 10 — Cross-compilation (planned)
 - [ ] `[compiler] target = "aarch64-linux-gnu"` → `--target=` / `-march=` flags

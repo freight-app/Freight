@@ -1,6 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use crane_core::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
+use crane_core::dep_cmds::{
+    cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
+    cmd_update, cmd_yank,
+};
 use crane_core::manifest::cmd_check;
 use crane_core::new::{init_project, scaffold_project};
 use crane_core::output::{print_error, print_unimplemented};
@@ -45,8 +49,18 @@ enum Commands {
     },
     /// Add a dependency
     Add {
-        #[arg(value_name = "PACKAGE[@VERSION]")]
+        /// Package name, optionally with version: `name` or `name@1.0`
+        #[arg(value_name = "NAME[@VERSION]")]
         package: String,
+        /// Add as a path dependency pointing to a local crane project
+        #[arg(long, value_name = "PATH")]
+        path: Option<String>,
+        /// Add as a system (linker) dependency
+        #[arg(long)]
+        system: bool,
+        /// Add to [dev-dependencies] instead of [dependencies]
+        #[arg(long)]
+        dev: bool,
     },
     /// Remove a dependency
     Remove { package: String },
@@ -106,19 +120,21 @@ fn main() -> Result<()> {
         Commands::Build { release } => cmd_build(release),
         Commands::Run { release, args } => cmd_run(release, &args),
         Commands::Test { name } => cmd_test(name.as_deref()),
-        Commands::Add { .. } => print_unimplemented("add"),
-        Commands::Remove { .. } => print_unimplemented("remove"),
-        Commands::Update { .. } => print_unimplemented("update"),
-        Commands::Fetch => print_unimplemented("fetch"),
-        Commands::Tree => print_unimplemented("tree"),
-        Commands::Info { .. } => print_unimplemented("info"),
-        Commands::Search { .. } => print_unimplemented("search"),
+        Commands::Add { package, path, system, dev } => {
+            cmd_add(&package, path.as_deref(), system, dev);
+        }
+        Commands::Remove { package } => cmd_remove(&package),
+        Commands::Update { package } => cmd_update(package.as_deref()),
+        Commands::Fetch => cmd_fetch(),
+        Commands::Tree => cmd_tree(),
+        Commands::Info { package } => cmd_info(&package),
+        Commands::Search { query } => cmd_search(&query),
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
         Commands::Migrate { .. } => print_unimplemented("migrate"),
-        Commands::Login => print_unimplemented("login"),
-        Commands::Publish => print_unimplemented("publish"),
-        Commands::Yank { .. } => print_unimplemented("yank"),
+        Commands::Login => cmd_login(),
+        Commands::Publish => cmd_publish(),
+        Commands::Yank { version } => cmd_yank(&version),
         Commands::Toolchain { command } => match command {
             ToolchainCommands::List => cmd_toolchain_list(),
             ToolchainCommands::Add { .. } => print_unimplemented("toolchain add"),

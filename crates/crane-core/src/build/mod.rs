@@ -16,6 +16,7 @@ use std::process::Command;
 use walkdir::WalkDir;
 
 use crate::error::CraneError;
+use crate::lock::LockFile;
 use crate::manifest::types::Manifest;
 use crate::manifest::validate::{validate, validate_dep_compat};
 use crate::manifest::{find_manifest_dir, load_manifest};
@@ -155,7 +156,8 @@ fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
     use owo_colors::OwoColorize;
     println!("  {} {} ({profile})", "Building".bold(), manifest.package.name);
 
-    let built = build_deps(project_dir, manifest, profile, templates, detected, false)?;
+    let resolved_deps = resolve_dep_graph(project_dir, manifest, false)?;
+    let built = build_resolved_deps(project_dir, profile, templates, detected, &resolved_deps)?;
 
     // Merge dep include dirs into the set passed to the root compile step.
     let mut include_dirs = found.include_dirs.clone();
@@ -168,6 +170,12 @@ fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
         &compile_result.objects, detected, templates,
         &built.libs,
     )?;
+
+    // Keep crane.lock in sync with the resolved dep graph
+    let lock = LockFile::generate(project_dir, manifest, &resolved_deps);
+    if let Err(e) = lock.save(project_dir) {
+        crate::output::print_warning(&format!("could not write crane.lock: {e}"));
+    }
 
     let binaries = link_result.outputs.iter()
         .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so"))
@@ -201,7 +209,8 @@ fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, Cran
     println!("  {} {} ({profile})", "Testing".bold(), manifest.package.name);
 
     // Build deps (include dev-dependencies for test runs).
-    let built = build_deps(project_dir, manifest, profile, templates, detected, true)?;
+    let resolved_deps = resolve_dep_graph(project_dir, manifest, true)?;
+    let built = build_resolved_deps(project_dir, profile, templates, detected, &resolved_deps)?;
 
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(built.include_dirs.iter().cloned());
@@ -318,18 +327,15 @@ fn build_sources(
 
 /// Compile and archive all local deps in topological order.
 ///
-/// Returns the set of `.a` lib paths and include directories to expose to the
-/// root project's compile and link steps.
-fn build_deps(
-    project_dir: &Path,
-    manifest: &Manifest,
+/// Takes an already-resolved dep list so callers can reuse the resolution for
+/// lockfile generation without a second walk.
+fn build_resolved_deps(
+    _project_dir: &Path,
     profile: &str,
     templates: &[CompilerTemplate],
     detected: &[DetectedCompiler],
-    include_dev: bool,
+    resolved: &[ResolvedDep],
 ) -> Result<BuiltDeps, CraneError> {
-    let resolved = resolve_dep_graph(project_dir, manifest, include_dev)?;
-
     if resolved.is_empty() {
         return Ok(BuiltDeps { libs: vec![], include_dirs: vec![] });
     }
@@ -339,7 +345,7 @@ fn build_deps(
     // Accumulate include dirs from already-built deps so later deps can see them.
     let mut built_include_dirs: Vec<PathBuf> = Vec::new();
 
-    for dep in &resolved {
+    for dep in resolved {
         use owo_colors::OwoColorize;
 
         let dep_found = discover(&dep.dir, &dep.manifest, templates);
