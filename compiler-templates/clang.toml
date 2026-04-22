@@ -4,7 +4,7 @@ version_arg   = "--version"
 version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b"
 
 [extensions]
-handles = [".cpp", ".cc", ".cxx", ".c++", ".c"]
+handles = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"]
 
 [flags]
 opt.0            = "-O0"
@@ -45,7 +45,7 @@ dep_file     = "-MMD -MF {path}"
 supported     = true
 enable_flag   = ""
 precompile    = "--precompile"
-import_module = "-fmodule-file={pcm_path}"
+import_module = "-fmodule-file={name}={pcm_path}"
 
 [passthrough]
 enabled = false
@@ -62,4 +62,4 @@ extensions     = [".c"]
 abi        = "c++"
 compatible = ["c", "fortran"]
 linker     = ""
-extensions = [".cpp", ".cc", ".cxx", ".c++"]
+extensions = [".cpp", ".cppm", ".cc", ".cxx", ".c++"]

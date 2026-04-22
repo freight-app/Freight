@@ -2,11 +2,13 @@ pub mod compile;
 pub mod deps;
 pub mod discover;
 pub mod link;
+pub mod modules;
 
 pub use compile::{CompileResult, compile_sources, dep_file_path, object_path, select_compiler, settings_for_lang};
 pub use deps::{ResolvedDep, resolve_dep_graph};
 pub use discover::{DiscoveredSources, SourceFile, discover};
 pub use link::{LinkResult, link_static_lib, link_targets, link_test_binary, select_linker};
+pub use modules::{ModuleBuildPlan, ModuleRole, ScannedSource, bmi_path, compile_module_sources, has_modules, plan_module_build, scan_sources};
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -159,9 +161,7 @@ fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(built.include_dirs.iter().cloned());
 
-    let compile_result = compile_sources(
-        project_dir, manifest, profile, &found.sources, &include_dirs, detected,
-    )?;
+    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
@@ -206,9 +206,7 @@ fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, Cran
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(built.include_dirs.iter().cloned());
 
-    let compile_result = compile_sources(
-        project_dir, manifest, profile, &found.sources, &include_dirs, detected,
-    )?;
+    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected)?;
 
     // Objects from [[bin]] sources contain a main() — exclude from test linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
@@ -293,6 +291,27 @@ fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, Cran
     }
 
     Ok(TestSummary { passed, failed, total: passed + failed })
+}
+
+// ── Source compilation (module-aware) ────────────────────────────────────────
+
+/// Compile a project's sources, automatically switching to the module-aware pipeline
+/// if any C++ source file contains an `export module` declaration.
+fn build_sources(
+    project_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    sources: &[SourceFile],
+    include_dirs: &[PathBuf],
+    detected: &[DetectedCompiler],
+) -> Result<CompileResult, CraneError> {
+    let scanned = scan_sources(project_dir, sources);
+    if has_modules(&scanned) {
+        let mut plan = plan_module_build(project_dir, profile, scanned)?;
+        compile_module_sources(project_dir, manifest, profile, &mut plan, include_dirs, detected)
+    } else {
+        compile_sources(project_dir, manifest, profile, sources, include_dirs, detected)
+    }
 }
 
 // ── Dependency build step ─────────────────────────────────────────────────────

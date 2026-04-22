@@ -53,7 +53,7 @@ pub fn compile_sources(
             fs::create_dir_all(obj.parent().expect("obj path always has a parent"))?;
 
             print_compiling(&src.path);
-            compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings)?;
+            compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, &[])?;
 
             Ok((obj, true))
         })
@@ -121,7 +121,7 @@ pub fn dep_file_path(project_dir: &Path, profile: &str, source_rel: &Path) -> Pa
 }
 
 /// Return `true` if the object is newer than the source and all its included headers.
-fn is_up_to_date(source: &Path, object: &Path, dep_file: &Path) -> bool {
+pub(crate) fn is_up_to_date(source: &Path, object: &Path, dep_file: &Path) -> bool {
     let obj_mtime = match mtime(object) {
         Some(t) => t,
         None => return false,
@@ -165,7 +165,7 @@ fn mtime(path: &Path) -> Option<SystemTime> {
 /// binary in the same directory as the detected compiler (e.g. `gcc` next to `g++`),
 /// falling back to a bare name resolved via PATH. This lets `gcc.toml` use `g++` for
 /// linking while still invoking `gcc` for `.c` source files.
-fn resolve_compile_binary(compiler: &DetectedCompiler, lang_key: &str) -> PathBuf {
+pub(crate) fn resolve_compile_binary(compiler: &DetectedCompiler, lang_key: &str) -> PathBuf {
     if let Some(cb) = compiler.template.linking.get(lang_key)
         .and_then(|l| l.compile_binary.as_deref())
     {
@@ -182,16 +182,21 @@ fn resolve_compile_binary(compiler: &DetectedCompiler, lang_key: &str) -> PathBu
 }
 
 /// Invoke the compiler for a single source file, generating a dep file alongside.
-fn compile_one(
+///
+/// `module_flags` are injected after the assembled flags and before `-c` — used by the
+/// module pipeline to pass `-fmodule-output=` and `-fmodule-file=` on a per-source basis.
+pub(crate) fn compile_one(
     source_abs: &Path,
     obj_path: &Path,
     dep_path: &Path,
     compile_bin: &Path,
     compiler: &DetectedCompiler,
     settings: &BuildSettings,
+    module_flags: &[String],
 ) -> Result<(), CraneError> {
     let mut cmd = Command::new(compile_bin);
     cmd.args(compiler.template.assemble_flags(settings));
+    cmd.args(module_flags);
     cmd.args(compiler.template.compile_only_flag());
     cmd.args(compiler.template.dep_file_flags(dep_path));
     cmd.arg(source_abs);
@@ -213,12 +218,12 @@ fn compile_one(
 
 // ── Progress output ───────────────────────────────────────────────────────────
 
-fn print_compiling(path: &Path) {
+pub(crate) fn print_compiling(path: &Path) {
     use owo_colors::OwoColorize;
     println!("  {} {}", "Compiling".bold().green(), path.display());
 }
 
-fn print_fresh(path: &Path) {
+pub(crate) fn print_fresh(path: &Path) {
     use owo_colors::OwoColorize;
     println!("    {} {}", "Fresh".dimmed(), path.display());
 }
