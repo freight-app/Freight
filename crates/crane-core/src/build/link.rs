@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -5,6 +6,8 @@ use crate::error::CraneError;
 use crate::manifest::types::{Dependency, LibType, Manifest};
 use crate::toolchain::template::BuildSettings;
 use crate::toolchain::{CompilerTemplate, DetectedCompiler};
+
+use super::compile::object_path;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -37,8 +40,19 @@ pub fn link_targets(
         let out = project_dir.join("target").join(profile).join(&bin.name);
         let linker = select_linker(manifest, detected, templates)
             .ok_or_else(|| CraneError::CompilerNotFound("no suitable linker found".into()))?;
+
+        // Exclude other bins' entry-point objects so each binary only has one main().
+        let other_entry_objs: HashSet<PathBuf> = manifest.bins.iter()
+            .filter(|b| b.src != bin.src)
+            .map(|b| object_path(project_dir, profile, Path::new(&b.src)))
+            .collect();
+        let bin_objects: Vec<PathBuf> = objects.iter()
+            .filter(|o| !other_entry_objs.contains(*o))
+            .cloned()
+            .collect();
+
         print_linking(&bin.name);
-        link_executable(objects, &out, linker, manifest, profile, project_dir, dep_libs)?;
+        link_executable(&bin_objects, &out, linker, manifest, profile, project_dir, dep_libs)?;
         outputs.push(out);
     }
 
