@@ -29,6 +29,18 @@ pub enum CraneError {
     #[error("compiler template error: {0}")]
     TemplateError(String),
 
+    #[error("no build system detected in '{0}' — pass --from cmake|makefile|meson")]
+    ImporterNoFormat(String),
+
+    #[error("unknown migration format '{0}' — expected cmake, makefile, or meson")]
+    ImporterUnknownFormat(String),
+
+    #[error("crane.toml already exists in '{0}' — use --force to overwrite")]
+    ImporterManifestExists(String),
+
+    #[error("importer error: {0}")]
+    ImporterParse(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

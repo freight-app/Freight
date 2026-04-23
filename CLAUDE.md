@@ -57,13 +57,20 @@ crane/
 │   │       │   ├── template.rs
 │   │       │   ├── detect.rs
 │   │       │   └── cache.rs
-│   │       └── build/          # compilation + linking orchestration
-│   │           ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
-│   │           ├── compile.rs  # source → object, parallel via rayon
-│   │           ├── link.rs     # object → binary / .a / .so
-│   │           ├── discover.rs # walkdir source discovery
-│   │           ├── deps.rs     # dep graph resolution + topo sort
-│   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   │       ├── build/          # compilation + linking orchestration
+│   │       │   ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
+│   │       │   ├── compile.rs  # source → object, parallel via rayon
+│   │       │   ├── link.rs     # object → binary / .a / .so
+│   │       │   ├── discover.rs # walkdir source discovery
+│   │       │   ├── deps.rs     # dep graph resolution + topo sort
+│   │       │   └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   │       └── importer/       # crane migrate — CMake/Makefile/Meson → crane.toml
+│   │           ├── mod.rs      # run_migrate, ImportedProject IR
+│   │           ├── detect.rs   # pick format from files present
+│   │           ├── emit.rs     # ImportedProject → crane.toml string
+│   │           ├── cmake.rs    # CMakeLists.txt parser
+│   │           ├── makefile.rs # Makefile parser
+│   │           └── meson.rs    # meson.build parser
 │   └── crane-lsp/              # Language Server for crane.toml
 │       └── src/
 │           ├── lib.rs
@@ -109,7 +116,8 @@ crane/
     ├── executable/             # documented example — multiple [[bin]] targets
     ├── fortran-executable/     # documented example — Fortran with BLAS/LAPACK
     ├── library/                # documented example — static lib with system deps
-    └── workspace/              # documented example — multi-crate workspace
+    ├── workspace/              # documented example — multi-crate workspace
+    └── migrated-from-cmake/    # before/after for `crane migrate --from cmake`
 ```
 
 ---
@@ -326,14 +334,14 @@ crane remove <package>            remove a dependency                 ✓ implem
 crane update [<package>]          refresh lockfile for path deps      ✓ implemented (registry pending)
 crane fetch                       verify/download deps                ✓ implemented (registry pending)
 crane tree                        print dependency tree               ✓ implemented
-crane info <package>              show package metadata               ✗ needs crane.dev
-crane search <query>              search crane.dev                    ✗ needs crane.dev
-crane migrate [--from <format>]   import existing build system        ✗ not yet
-crane login                       authenticate with crane.dev         ✗ needs crane.dev
-crane publish                     upload package to registry          ✗ needs crane.dev
-crane yank <version>              yank a published version            ✗ needs crane.dev
-crane toolchain add <name>        install a compiler template         ✗ not yet
-crane toolchain use <name>        set default compiler backend        ✗ not yet
+crane info <package>              show package metadata               ✗ Phase 12 (registry server)
+crane search <query>              search crane.dev                    ✗ Phase 12 (registry server)
+crane migrate [--from <format>] [--dry-run] [--force]  import existing build system  ✓ implemented
+crane login                       authenticate with crane.dev         ✗ Phase 12 (registry server)
+crane publish                     upload package to registry          ✗ Phase 12 (registry server)
+crane yank <version>              yank a published version            ✗ Phase 12 (registry server)
+crane toolchain add <name>        install a compiler template         ✗ Phase 10 (deferred)
+crane toolchain use <name>        set default compiler backend        ✗ Phase 10 (deferred)
 crane lsp                         run language server on stdio        ✓ implemented
 ```
 
@@ -432,20 +440,54 @@ crane lsp                         run language server on stdio        ✓ implem
 - [ ] `crane fetch` — actually download version deps from crane.dev (needs registry server)
 - [ ] `crane add` — resolve + lock exact version from crane.dev (needs registry server)
 
-### Phase 10 — Cross-compilation (planned)
+### Phase 10 — Cross-compilation (deferred — revisit after the importer lands)
+Cross-compilation is valuable but not on the critical path for adoption — most new
+users arriving from CMake/Make/Meson build for their host first. This phase is
+parked until Phase 11 is done.
+
 - [ ] `[compiler] target = "aarch64-linux-gnu"` → `--target=` / `-march=` flags
 - [ ] `[compiler] sysroot = "/opt/sysroot"` → `--sysroot=`
 - [ ] Prebuilt dep filtering by `targets = [...]` in crane.toml
 - [ ] `crane toolchain add` — install a cross-compiler template
 
-### Phase 11 — Importer (planned)
-- [ ] `crane migrate` — detect and import existing build system
-- [ ] CMake importer (`cmake-parser` crate)
-- [ ] Makefile importer (`makefile-lossless` crate)
-- [ ] Meson importer (regex-based)
-- [ ] Unrecognised constructs → `# CRANE: could not import — review manually`
+### Phase 11 — Importer (in progress — `feature/importer`)
+Priority phase: frictionless migration off existing build systems is the single
+biggest unblocker for new users. Lives under `crates/crane-core/src/importer/`.
+All three importers parse into a shared [`ImportedProject`] IR, which
+[`emit::to_toml`] serializes into `crane.toml` with stable output ordering.
 
-### Phase 12 — Language server (in progress — `feature/lsp-server`)
+- [x] `crane migrate [--from cmake|makefile|meson] [--dry-run] [--force]` — auto-detects source build system when `--from` is omitted
+- [x] Auto-detection via presence of `CMakeLists.txt`, `Makefile` / `GNUmakefile`, or `meson.build` (CMake wins on ties)
+- [x] CMake importer (hand-rolled regex tokenizer; swapping in the `cmake-parser` crate is a follow-up) — extract `project()`, `add_executable`, `add_library`, `target_link_libraries`, `target_include_directories` / `include_directories`, `set(CMAKE_CXX_STANDARD …)` / `CMAKE_C_STANDARD`, `add_definitions` / `add_compile_definitions`, `add_compile_options` / `target_compile_options`, `find_package(...)`
+- [x] CMake v1 scope: flat projects only; `add_subdirectory(...)` emits a `# CRANE: subdirectory not imported` comment
+- [x] `find_package(Foo)` → `{ system = "foo" }` dep with a review comment
+- [x] Makefile importer (hand-rolled regex tokenizer; swapping in the `makefile-lossless` crate is a follow-up) — extract `CC`/`CXX`/`FC`, `CFLAGS`/`CXXFLAGS`/`FFLAGS`/`CPPFLAGS`, `LDLIBS`/`LDFLAGS`, `SRCS`/`SRC`/`SOURCES`/`OBJS`, `TARGET`/`PROGRAM`/`BIN`/`EXE`; expands `$(VAR)` / `${VAR}` references and joins backslash continuations
+- [x] Meson importer (regex-based over `meson.build`) — `project()`, `executable()`, `library()` / `shared_library()` / `static_library()`, `dependency()`, `include_directories()`, `add_project_arguments()` / `add_global_arguments()`; `default_options` carries `cpp_std` / `c_std` through
+- [x] Unrecognised constructs → `# CRANE: could not import — review manually` preserved in the emitted TOML
+- [x] `--dry-run` prints generated `crane.toml` to stdout without writing
+- [x] Leaves original build files in place; errors if `crane.toml` already exists unless `--force`
+- [x] Fixture tests under `crates/crane-core/tests/importer_fixtures/{cmake,make,meson}/` with expected outputs
+- [x] One worked example: `examples/migrated-from-cmake/` showing before/after
+
+### Phase 12 — Registry server (planned — `feature/registry-server`, after Phase 11)
+New workspace crate `crates/crane-registry/` implementing crane.dev. Filesystem-backed
+for v1 so it can run self-hosted with zero external services; storage backend is
+swappable later. Unblocks the outstanding Phase 9 items (`crane fetch` / `add` against
+a real registry).
+
+- [ ] Axum-based HTTP server bound to `CRANE_REGISTRY_ADDR` (default `0.0.0.0:8080`)
+- [ ] Filesystem layout: `registry-data/index/<name>.json` (versions + checksums) + `registry-data/packages/<name>/<version>.tar.gz`
+- [ ] `GET /api/v1/packages/{name}` — return versions + metadata
+- [ ] `GET /api/v1/packages/{name}/{version}/download` — stream the `.tar.gz`
+- [ ] `GET /api/v1/search?q=<query>` — prefix + substring match across package names/descriptions
+- [ ] `POST /api/v1/publish` (bearer auth) — accept tarball + manifest, reject on name/version collision
+- [ ] `POST /api/v1/yank` (bearer auth) — mark a version yanked; still downloadable by lock, not resolvable by `add`
+- [ ] Static bearer tokens in `registry-data/tokens.toml` for v1; JWT/OAuth deferred
+- [ ] Client side: `CRANE_REGISTRY_URL` env var (default `https://crane.dev`); credentials at `~/.crane/credentials.toml`
+- [ ] Wire Phase 9 stubs — `crane fetch` / `add` / `search` / `info` / `publish` / `login` / `yank` — to the real HTTP API
+- [ ] Integration tests spin up the server on an ephemeral port and exercise publish → fetch → build
+
+### Phase 13 — Language server (in progress — `feature/lsp-server`)
 A dedicated LSP for `crane.toml`, built on `tower-lsp` + `tokio`. Lives in
 `crates/crane-lsp/` and is invokable either as a standalone `crane-lsp` binary
 or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same

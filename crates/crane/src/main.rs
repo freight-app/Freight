@@ -5,6 +5,7 @@ use crane_core::dep_cmds::{
     cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
     cmd_update, cmd_yank,
 };
+use crane_core::importer::cmd_migrate;
 use crane_core::manifest::cmd_check;
 use crane_core::new::{init_project, scaffold_project};
 use crane_core::output::{print_error, print_unimplemented};
@@ -78,10 +79,17 @@ enum Commands {
     Check,
     /// Wipe target/
     Clean,
-    /// Import an existing build system
+    /// Import an existing build system (CMake, Makefile, or Meson)
     Migrate {
+        /// Source build system; auto-detected when omitted
         #[arg(long, value_name = "FORMAT")]
         from: Option<String>,
+        /// Print generated crane.toml to stdout without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite an existing crane.toml
+        #[arg(long)]
+        force: bool,
     },
     /// Authenticate with crane.dev
     Login,
@@ -133,7 +141,9 @@ fn main() -> Result<()> {
         Commands::Search { query } => cmd_search(&query),
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
-        Commands::Migrate { .. } => print_unimplemented("migrate"),
+        Commands::Migrate { from, dry_run, force } => {
+            cmd_migrate(from.as_deref(), dry_run, force);
+        }
         Commands::Login => cmd_login(),
         Commands::Publish => cmd_publish(),
         Commands::Yank { version } => cmd_yank(&version),
