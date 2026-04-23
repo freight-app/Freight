@@ -212,7 +212,8 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), CraneError> {
 
 /// Collect `-l{name}` flags for every `system = "..."` dependency.
 fn collect_system_lib_flags(manifest: &Manifest) -> Vec<String> {
-    manifest.dependencies.values()
+    let effective = manifest.effective_dependencies();
+    effective.values()
         .chain(manifest.dev_dependencies.values())
         .filter_map(|dep| {
             if let Dependency::Detailed(d) = dep { d.system.as_deref() } else { None }
@@ -224,10 +225,10 @@ fn collect_system_lib_flags(manifest: &Manifest) -> Vec<String> {
 /// Collect pre-built `.a` paths for every `path = "..."` dependency.
 /// Only includes libs that have already been built.
 fn collect_path_libs(manifest: &Manifest, project_dir: &Path, profile: &str) -> Vec<PathBuf> {
-    manifest.dependencies.iter()
+    manifest.effective_dependencies().iter()
         .filter_map(|(name, dep)| {
             if let Dependency::Detailed(d) = dep {
-                d.path.as_ref().map(|p| (name, p))
+                d.path.as_ref().map(|p| (name.clone(), p.clone()))
             } else {
                 None
             }

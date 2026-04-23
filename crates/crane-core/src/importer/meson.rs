@@ -300,10 +300,13 @@ fn handle_project(
         match k.as_str() {
             "version" => p.version = Some(v.clone()),
             "default_options" => {
-                // "cpp_std=c++20" / "c_std=c17" come in via default_options.
-                for opt in v.split(',').map(str::trim) {
+                // "cpp_std=c++20" / "c_std=c17" come in via default_options,
+                // typically wrapped in a list literal: ['cpp_std=c++20', ...].
+                let inner = strip_list_brackets(v).unwrap_or(v.as_str());
+                for opt in split_top_level_commas(inner) {
+                    let opt = strip_quotes(opt.trim());
                     if let Some((lhs, rhs)) = opt.split_once('=') {
-                        let rhs = strip_quotes(rhs);
+                        let rhs = strip_quotes(rhs.trim());
                         match lhs.trim() {
                             "cpp_std" => p.language_mut("cpp").std = Some(rhs.to_string()),
                             "c_std" => p.language_mut("c").std = Some(rhs.to_string()),
@@ -435,9 +438,9 @@ mod tests {
     #[test]
     fn default_options_pulls_out_stds() {
         let src = "project('x', 'cpp', default_options: ['cpp_std=c++20', 'c_std=c17'])\n";
-        let mut p = parse_text(src, "fallback");
-        assert_eq!(p.language_mut("cpp").std.as_deref(), Some("c++20"));
-        assert_eq!(p.language_mut("c").std.as_deref(), Some("c17"));
+        let p = parse_text(src, "fallback");
+        assert_eq!(p.languages.get("cpp").and_then(|l| l.std.as_deref()), Some("c++20"));
+        assert_eq!(p.languages.get("c").and_then(|l| l.std.as_deref()), Some("c17"));
     }
 
     #[test]
@@ -482,6 +485,19 @@ add_project_arguments('-DFOO', '-DBAR=2', '-Wall', language: 'cpp')
         assert!(p.compiler.defines.contains(&"FOO".to_string()));
         assert!(p.compiler.defines.contains(&"BAR=2".to_string()));
         assert!(p.compiler.flags.contains(&"-Wall".to_string()));
+    }
+
+    #[test]
+    fn multiple_executables_produce_multiple_bins() {
+        let src = "\
+project('p', 'cpp')
+executable('app1', 'src/main1.cpp')
+executable('app2', 'src/main2.cpp')
+";
+        let p = parse_text(src, "fallback");
+        assert_eq!(p.bins.len(), 2);
+        assert_eq!(p.bins[0].name, "app1");
+        assert_eq!(p.bins[1].name, "app2");
     }
 
     #[test]

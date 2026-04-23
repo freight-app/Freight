@@ -26,12 +26,46 @@ pub struct Manifest {
     pub profile: Profiles,
     #[serde(default)]
     pub features: HashMap<String, Vec<String>>,
+    /// Per-platform overlays keyed by OS name (`linux`, `windows`, `macos`,
+    /// `freebsd`, …) or family alias (`unix`, `bsd`). Matching overlays are
+    /// merged into the base config in a defined order (see [`host_platforms`])
+    /// so users can declare e.g. `[platform.windows]` deps that are only
+    /// linked on Windows builds.
+    #[serde(default)]
+    pub platform: HashMap<String, PlatformOverlay>,
 }
 
 impl Manifest {
     /// Produce `BuildSettings` for the named profile (`"dev"` or `"release"`),
-    /// starting from the base `[compiler]` settings and applying profile overrides.
+    /// starting from the base `[compiler]` settings and applying profile and
+    /// platform overrides.
     pub fn build_settings_for(&self, profile_name: &str) -> BuildSettings {
+        let mut defines = self.compiler.defines.clone();
+        let mut flags = self.compiler.flags.clone();
+        let mut include_paths: Vec<PathBuf> = self
+            .compiler
+            .includes
+            .paths
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+
+        // Apply matching platform overlays in family-then-specific order so a
+        // Linux build picks up `[platform.unix]` first then `[platform.linux]`.
+        // Lookup is case-insensitive against the manifest keys.
+        for plat in host_platforms() {
+            if let Some(ov) = self.platform_overlay(plat) {
+                merge_string_vec(&mut defines, &ov.compiler.defines);
+                merge_string_vec(&mut flags, &ov.compiler.flags);
+                for p in &ov.compiler.includes.paths {
+                    let buf = PathBuf::from(p);
+                    if !include_paths.contains(&buf) {
+                        include_paths.push(buf);
+                    }
+                }
+            }
+        }
+
         let base = BuildSettings {
             opt_level: self.compiler.opt_level.to_string(),
             debug: self.compiler.debug,
@@ -41,15 +75,9 @@ impl Manifest {
             } else {
                 None // mixed-language: standard resolved per source file in Phase 4
             },
-            defines: self.compiler.defines.clone(),
-            include_paths: self
-                .compiler
-                .includes
-                .paths
-                .iter()
-                .map(PathBuf::from)
-                .collect(),
-            extra_flags: self.compiler.flags.clone(),
+            defines,
+            include_paths,
+            extra_flags: flags,
             target_triple: self.compiler.target.clone(),
             sysroot: self.compiler.sysroot.as_deref().map(PathBuf::from),
             ..Default::default()
@@ -76,6 +104,75 @@ impl Manifest {
             ..base
         }
     }
+
+    /// Iterate over `(name, dep)` pairs for the base `[dependencies]` plus any
+    /// `[platform.X.dependencies]` whose `X` matches the host. A platform
+    /// overlay can shadow a base dep with the same key — common when a package
+    /// links a different system library on Windows vs Linux.
+    pub fn effective_dependencies(&self) -> HashMap<String, Dependency> {
+        let mut out = self.dependencies.clone();
+        for plat in host_platforms() {
+            if let Some(ov) = self.platform_overlay(plat) {
+                for (name, dep) in &ov.dependencies {
+                    out.insert(name.clone(), dep.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Case-insensitive lookup of a platform overlay.
+    fn platform_overlay(&self, name: &str) -> Option<&PlatformOverlay> {
+        self.platform
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v)
+    }
+}
+
+fn merge_string_vec(into: &mut Vec<String>, items: &[String]) {
+    for item in items {
+        if !into.iter().any(|x| x == item) {
+            into.push(item.clone());
+        }
+    }
+}
+
+/// Platform names that match the current host, ordered family-first so
+/// specific overlays win. On Linux this returns `["unix", "linux"]`; on
+/// Windows just `["windows"]`; on FreeBSD `["unix", "bsd", "freebsd"]`.
+pub fn host_platforms() -> Vec<&'static str> {
+    let os = std::env::consts::OS;
+    let mut chain = Vec::new();
+    let unix = matches!(
+        os,
+        "linux" | "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly"
+            | "android" | "ios" | "solaris" | "illumos"
+    );
+    let bsd = matches!(os, "freebsd" | "openbsd" | "netbsd" | "dragonfly");
+    if unix {
+        chain.push("unix");
+    }
+    if bsd {
+        chain.push("bsd");
+    }
+    chain.push(match os {
+        // Map a few rust os names back to the friendlier crane keys.
+        other => other,
+    });
+    chain
+}
+
+/// Set of platform / family names crane recognizes in `[platform.X]` keys.
+/// Used by validation; everything outside this set still parses but emits a
+/// warning so typos don't silently no-op.
+pub fn known_platform_keys() -> &'static [&'static str] {
+    &[
+        "unix", "bsd",
+        "linux", "windows", "macos",
+        "freebsd", "openbsd", "netbsd", "dragonfly",
+        "android", "ios", "solaris", "illumos",
+    ]
 }
 
 // ── Package ───────────────────────────────────────────────────────────────────
@@ -264,4 +361,129 @@ pub struct Profile {
     pub strip: Option<bool>,
     #[serde(default)]
     pub sanitize: Vec<String>,
+}
+
+// ── Platform overlays ─────────────────────────────────────────────────────────
+
+/// Per-platform overlay applied on top of the base manifest when the host OS
+/// matches. Only `dependencies` and a handful of compiler fields are
+/// overlay-able — per-language stds, `[[bin]]` targets, profiles and
+/// sanitizers are intentionally not platform-conditional in v1.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PlatformOverlay {
+    #[serde(default)]
+    pub dependencies: HashMap<String, Dependency>,
+    #[serde(default)]
+    pub compiler: PlatformCompilerOverlay,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PlatformCompilerOverlay {
+    #[serde(default)]
+    pub defines: Vec<String>,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    #[serde(default)]
+    pub includes: CompilerIncludes,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::load_manifest_str;
+
+    fn host_overlay_block() -> String {
+        // Build a manifest fragment with a platform section keyed on whichever
+        // OS we're running the test under, so the test exercises the actual
+        // host-detection path on every CI runner.
+        let host = std::env::consts::OS;
+        format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.c]
+[[bin]]
+name = "p"
+src  = "src/main.c"
+
+[compiler]
+defines = ["BASE"]
+
+[platform.{host}.compiler]
+defines = ["FROM_HOST"]
+flags   = ["-DPLATFORM_FLAG"]
+
+[platform.{host}.compiler.includes]
+paths = ["platform-include/"]
+
+[platform.{host}.dependencies]
+hostlib = {{ system = "hostlib" }}
+"#,
+        )
+    }
+
+    #[test]
+    fn platform_overlay_merges_into_build_settings() {
+        let m = load_manifest_str(&host_overlay_block()).unwrap();
+        let s = m.build_settings_for("dev");
+        assert!(s.defines.contains(&"BASE".to_string()));
+        assert!(s.defines.contains(&"FROM_HOST".to_string()));
+        assert!(s.extra_flags.contains(&"-DPLATFORM_FLAG".to_string()));
+        assert!(s.include_paths.iter().any(|p| p.ends_with("platform-include/")));
+    }
+
+    #[test]
+    fn platform_overlay_adds_dependencies() {
+        let m = load_manifest_str(&host_overlay_block()).unwrap();
+        let deps = m.effective_dependencies();
+        assert!(deps.contains_key("hostlib"));
+    }
+
+    #[test]
+    fn non_matching_platform_overlay_is_ignored() {
+        // Pick something that definitely isn't the host.
+        let other = if std::env::consts::OS == "windows" { "linux" } else { "windows" };
+        let s = format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.c]
+[[bin]]
+name = "p"
+src  = "src/main.c"
+
+[platform.{other}.dependencies]
+shouldnotbe = {{ system = "shouldnotbe" }}
+"#
+        );
+        let m = load_manifest_str(&s).unwrap();
+        let deps = m.effective_dependencies();
+        assert!(!deps.contains_key("shouldnotbe"));
+    }
+
+    #[test]
+    fn unix_alias_matches_unix_hosts() {
+        let chain = host_platforms();
+        let unix_hosts = ["linux", "macos", "freebsd", "openbsd", "netbsd"];
+        if unix_hosts.contains(&std::env::consts::OS) {
+            assert!(chain.contains(&"unix"), "expected `unix` in {chain:?}");
+        }
+    }
+
+    #[test]
+    fn host_platforms_specific_comes_after_family() {
+        // Specific OS overlay should be applied last so it can override a
+        // family-level overlay. Verify ordering: family aliases come before
+        // the specific OS in the returned chain.
+        let chain = host_platforms();
+        let host = std::env::consts::OS;
+        let specific = chain.iter().position(|p| *p == host).expect("host in chain");
+        for (i, p) in chain.iter().enumerate() {
+            if matches!(*p, "unix" | "bsd") {
+                assert!(i < specific, "{p} should come before {host} in {chain:?}");
+            }
+        }
+    }
 }

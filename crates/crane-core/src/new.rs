@@ -2,7 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::CraneError;
-use crate::output::print_success;
+
+/// Outcome of `scaffold_project` / `init_project` so the CLI can print a
+/// contextual summary without the library having to know about stdout.
+pub struct ScaffoldOutcome {
+    pub name: String,
+    pub language: &'static str,
+}
 
 // (alias, canonical_name, toml_key, std)
 const SUPPORTED_LANGS: &[(&str, &str, &str, &str)] = &[
@@ -19,7 +25,7 @@ const SUPPORTED_LANGS: &[(&str, &str, &str, &str)] = &[
     ("ispc",    "ispc",    "ispc",    ""),
 ];
 
-pub fn scaffold_project(name: &str, lang_arg: &str) -> Result<(), CraneError> {
+pub fn scaffold_project(name: &str, lang_arg: &str) -> Result<ScaffoldOutcome, CraneError> {
     let (lang_name, lang_key, lang_std) = resolve_lang(lang_arg)?;
 
     let root = Path::new(name);
@@ -33,17 +39,11 @@ pub fn scaffold_project(name: &str, lang_arg: &str) -> Result<(), CraneError> {
     write_hello(root, lang_name)?;
     write_gitignore(root)?;
 
-    print_success(&format!("created `{name}` ({lang_name} project)"));
-    println!();
-    println!("  cd {name}");
-    println!("  crane build");
-    println!();
-
-    Ok(())
+    Ok(ScaffoldOutcome { name: name.to_string(), language: lang_name })
 }
 
 /// `crane init [--lang <lang>]` — initialize crane in the current directory.
-pub fn init_project(lang_arg: Option<&str>) -> Result<(), CraneError> {
+pub fn init_project(lang_arg: Option<&str>) -> Result<ScaffoldOutcome, CraneError> {
     let cwd = std::env::current_dir()?;
 
     if cwd.join("crane.toml").exists() {
@@ -83,8 +83,7 @@ pub fn init_project(lang_arg: Option<&str>) -> Result<(), CraneError> {
         write_gitignore(&cwd)?;
     }
 
-    print_success(&format!("initialized `{name}` ({lang_name} project)"));
-    Ok(())
+    Ok(ScaffoldOutcome { name, language: lang_name })
 }
 
 /// Guess the language from file extensions found in the project root and `src/`.

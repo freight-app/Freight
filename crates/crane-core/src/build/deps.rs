@@ -106,9 +106,9 @@ fn direct_compilable_deps(
     include_dev: bool,
 ) -> Vec<(String, PathBuf)> {
     let mut result: Vec<(String, PathBuf)> = Vec::new();
-    for (name, dep) in &manifest.dependencies {
-        if let Some(dir) = compilable_dep_dir(project_dir, name, dep) {
-            result.push((name.clone(), dir));
+    for (name, dep) in manifest.effective_dependencies() {
+        if let Some(dir) = compilable_dep_dir(project_dir, &name, &dep) {
+            result.push((name, dir));
         }
     }
     if include_dev {

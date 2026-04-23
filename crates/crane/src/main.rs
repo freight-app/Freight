@@ -1,15 +1,19 @@
+mod commands;
+mod output;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use crane_core::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
-use crane_core::dep_cmds::{
+
+use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
+use crate::commands::check::cmd_check;
+use crate::commands::deps::{
     cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
     cmd_update, cmd_yank,
 };
-use crane_core::importer::cmd_migrate;
-use crane_core::manifest::cmd_check;
-use crane_core::new::{init_project, scaffold_project};
-use crane_core::output::{print_error, print_unimplemented};
-use crane_core::toolchain::cmd_toolchain_list;
+use crate::commands::migrate::cmd_migrate;
+use crate::commands::new::{cmd_init, cmd_new};
+use crate::commands::toolchain::cmd_toolchain_list;
+use crate::output::print_unimplemented;
 
 #[derive(Parser)]
 #[command(name = "crane", about = "Build tool and package manager for C, C++, Fortran, and more")]
@@ -120,13 +124,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::New { name, lang } => scaffold_project(&name, &lang)?,
-        Commands::Init { lang } => {
-            if let Err(e) = init_project(lang.as_deref()) {
-                print_error(&e.to_string());
-                std::process::exit(1);
-            }
-        }
+        Commands::New { name, lang } => cmd_new(&name, &lang),
+        Commands::Init { lang } => cmd_init(lang.as_deref()),
         Commands::Build { release } => cmd_build(release),
         Commands::Run { release, args } => cmd_run(release, &args),
         Commands::Test { name } => cmd_test(name.as_deref()),

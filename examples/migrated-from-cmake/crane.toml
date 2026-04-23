@@ -4,8 +4,6 @@
 [package]
 name        = "migrated-from-cmake"
 version     = "0.1.0"
-description = ""
-license     = ""
 
 [language.cpp]
 std = "c++20"

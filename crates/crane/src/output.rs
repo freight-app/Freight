@@ -1,3 +1,7 @@
+//! Coloured CLI output helpers — used by every `cmd_*` shell so they speak in
+//! the same voice. Lives in the binary because the library has no business
+//! formatting for a terminal.
+
 use owo_colors::OwoColorize;
 
 pub fn print_success(msg: &str) {

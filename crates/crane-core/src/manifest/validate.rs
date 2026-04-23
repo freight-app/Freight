@@ -3,7 +3,7 @@ use std::path::Path;
 
 use semver::Version;
 
-use super::types::{Dependency, Manifest, Profile};
+use super::types::{known_platform_keys, Dependency, Manifest, Profile};
 use crate::toolchain::CompilerTemplate;
 
 const VALID_WARNINGS: &[&str] = &["none", "default", "all", "error"];
@@ -40,8 +40,26 @@ pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<Vali
     validate_targets(manifest, &mut errors);
     validate_compiler(manifest, &mut errors);
     validate_profiles(manifest, &mut errors);
+    validate_platforms(manifest, &mut errors);
 
     errors
+}
+
+fn validate_platforms(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    let known = known_platform_keys();
+    for key in m.platform.keys() {
+        let lc = key.to_ascii_lowercase();
+        if !known.iter().any(|k| *k == lc) {
+            errors.push(ValidationError::new(
+                &format!("[platform.{key}]"),
+                format!(
+                    "unknown platform key {:?}; expected one of: {}",
+                    key,
+                    known.join(", "),
+                ),
+            ));
+        }
+    }
 }
 
 fn validate_package(m: &Manifest, errors: &mut Vec<ValidationError>) {
@@ -854,5 +872,41 @@ libpng = { system = "libpng", version = ">=1.6" }
         let manifest = load_manifest_str(s).unwrap();
         let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(errs.is_empty(), "system deps should not trigger compat check");
+    }
+
+    #[test]
+    fn known_platform_keys_validate_clean() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[platform.linux.dependencies]
+dl = { system = "dl" }
+[platform.windows.dependencies]
+ws2_32 = { system = "ws2_32" }
+[platform.unix.compiler]
+defines = ["UNIX_BUILD"]
+"#;
+        assert!(field_errors(s, "[platform").is_empty());
+    }
+
+    #[test]
+    fn unknown_platform_key_errors() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[platform.beos.dependencies]
+foo = { system = "foo" }
+"#;
+        let errs = field_errors(s, "[platform.beos]");
+        assert!(!errs.is_empty());
+        assert!(errs.iter().any(|e| e.message.contains("unknown platform key")));
     }
 }

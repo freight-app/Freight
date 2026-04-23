@@ -9,11 +9,10 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::error::CraneError;
-use crate::output::{print_error, print_status, print_success, print_warning};
 
 pub mod cmake;
 pub mod detect;
@@ -21,48 +20,34 @@ pub mod emit;
 pub mod makefile;
 pub mod meson;
 
-// ── CLI glue ──────────────────────────────────────────────────────────────────
-
-/// Thin wrapper used by the `crane` binary — parses the `--from` string and
-/// dispatches to [`run_migrate`], printing errors instead of propagating.
-pub fn cmd_migrate(from: Option<&str>, dry_run: bool, force: bool) {
-    let cwd = match std::env::current_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            print_error(&format!("cannot read cwd: {e}"));
-            return;
-        }
-    };
-
-    let fmt = match from {
-        Some(s) => match Format::from_str(s) {
-            Ok(f) => Some(f),
-            Err(e) => {
-                print_error(&e.to_string());
-                return;
-            }
-        },
-        None => None,
-    };
-
-    if let Err(e) = run_migrate(&cwd, fmt, dry_run, force) {
-        print_error(&e.to_string());
-    }
-}
-
 // ── Public entry point ────────────────────────────────────────────────────────
+
+/// Result of a successful migrate. Caller (CLI) decides what to display.
+pub struct MigrateOutcome {
+    pub format: Format,
+    pub project_dir: PathBuf,
+    /// Where the manifest was written, or `None` for `dry_run`.
+    pub written_to: Option<PathBuf>,
+    /// Generated `crane.toml` contents — useful for `--dry-run` output.
+    pub toml: String,
+    /// Number of `# CRANE:` notes the user should review.
+    pub note_count: usize,
+}
 
 /// Run `crane migrate` against `project_dir`.
 ///
 /// * `format` — when `None`, the importer auto-detects from files present.
-/// * `dry_run` — prints the generated `crane.toml` to stdout instead of writing.
+/// * `dry_run` — generates the manifest but does not write to disk.
 /// * `force` — overwrite an existing `crane.toml`.
+///
+/// Pure: returns the outcome instead of printing. The CLI shell formats a
+/// human-readable summary; library users can inspect [`MigrateOutcome`].
 pub fn run_migrate(
     project_dir: &Path,
     format: Option<Format>,
     dry_run: bool,
     force: bool,
-) -> Result<(), CraneError> {
+) -> Result<MigrateOutcome, CraneError> {
     let fmt = match format {
         Some(f) => f,
         None => detect::detect_format(project_dir)
@@ -76,8 +61,6 @@ pub fn run_migrate(
         ));
     }
 
-    print_status("Importing", &format!("{fmt} project at {}", project_dir.display()));
-
     let imported = match fmt {
         Format::Cmake => cmake::parse(project_dir)?,
         Format::Makefile => makefile::parse(project_dir)?,
@@ -85,23 +68,27 @@ pub fn run_migrate(
     };
 
     let toml = emit::to_toml(&imported);
+    let note_count = imported.notes.len();
 
-    if dry_run {
-        print!("{toml}");
-        return Ok(());
-    }
+    let written_to = if dry_run {
+        None
+    } else {
+        fs::write(&manifest_path, &toml)?;
+        Some(manifest_path)
+    };
 
-    fs::write(&manifest_path, &toml)?;
+    Ok(MigrateOutcome {
+        format: fmt,
+        project_dir: project_dir.to_path_buf(),
+        written_to,
+        toml,
+        note_count,
+    })
+}
 
-    if !imported.notes.is_empty() {
-        print_warning(&format!(
-            "{} construct(s) could not be imported — see `# CRANE:` comments in crane.toml",
-            imported.notes.len()
-        ));
-    }
-
-    print_success(&format!("wrote {}", manifest_path.display()));
-    Ok(())
+/// Parse a `--from` CLI flag into a [`Format`]. Convenience for the binary.
+pub fn parse_format(s: &str) -> Result<Format, CraneError> {
+    Format::from_str(s)
 }
 
 // ── Format ────────────────────────────────────────────────────────────────────
@@ -152,10 +139,25 @@ pub struct ImportedProject {
     /// Keyed by dep name.
     pub dependencies: BTreeMap<String, ImportedDep>,
     pub compiler: ImportedCompiler,
+    /// Per-platform overlays keyed by crane platform name (`linux`, `windows`,
+    /// `macos`, `unix`, …). Populated when the source build system gates calls
+    /// behind a platform check (e.g. CMake's `if(WIN32) … endif()`); emitted as
+    /// `[platform.X]` sections in the generated `crane.toml`.
+    pub platforms: BTreeMap<String, ImportedPlatformOverlay>,
     /// Free-form notes emitted as `# CRANE: …` comments at the top of the
     /// generated manifest so the user can review constructs that didn't map
     /// cleanly.
     pub notes: Vec<String>,
+}
+
+/// Per-platform fragment of an [`ImportedProject`]. Only carries the fields a
+/// platform overlay can actually override — mirrors `manifest::PlatformOverlay`.
+#[derive(Debug, Default, Clone)]
+pub struct ImportedPlatformOverlay {
+    pub dependencies: BTreeMap<String, ImportedDep>,
+    pub defines: Vec<String>,
+    pub flags: Vec<String>,
+    pub include_paths: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -206,5 +208,51 @@ impl ImportedProject {
     /// Ensure a `[language.<key>]` entry exists; return a mutable handle.
     pub fn language_mut(&mut self, key: &str) -> &mut ImportedLanguage {
         self.languages.entry(key.to_string()).or_default()
+    }
+
+    /// Ensure a `[platform.<key>]` overlay exists; return a mutable handle.
+    pub fn platform_mut(&mut self, key: &str) -> &mut ImportedPlatformOverlay {
+        self.platforms.entry(key.to_string()).or_default()
+    }
+
+    /// Insert a dependency, routing it to a platform overlay when `platform`
+    /// is set (e.g. inside `if(WIN32)`), otherwise to the base manifest.
+    /// Existing entries are preserved (importer never silently overrides).
+    pub fn add_dep(&mut self, platform: Option<&str>, name: String, dep: ImportedDep) {
+        let bucket = match platform {
+            Some(p) => &mut self.platform_mut(p).dependencies,
+            None => &mut self.dependencies,
+        };
+        bucket.entry(name).or_insert(dep);
+    }
+
+    pub fn add_define(&mut self, platform: Option<&str>, define: String) {
+        let bucket = match platform {
+            Some(p) => &mut self.platform_mut(p).defines,
+            None => &mut self.compiler.defines,
+        };
+        if !bucket.iter().any(|d| d == &define) {
+            bucket.push(define);
+        }
+    }
+
+    pub fn add_flag(&mut self, platform: Option<&str>, flag: String) {
+        let bucket = match platform {
+            Some(p) => &mut self.platform_mut(p).flags,
+            None => &mut self.compiler.flags,
+        };
+        if !bucket.iter().any(|f| f == &flag) {
+            bucket.push(flag);
+        }
+    }
+
+    pub fn add_include_path(&mut self, platform: Option<&str>, path: String) {
+        let bucket = match platform {
+            Some(p) => &mut self.platform_mut(p).include_paths,
+            None => &mut self.compiler.include_paths,
+        };
+        if !bucket.iter().any(|p| p == &path) {
+            bucket.push(path);
+        }
     }
 }

@@ -38,14 +38,24 @@ crane/
 ├── Cargo.toml                  # workspace root
 ├── CLAUDE.md                   # this file
 ├── crates/
-│   ├── crane/                  # binary crate — CLI entry point
-│   │   └── src/main.rs
-│   ├── crane-core/             # library crate — all build logic
+│   ├── crane/                  # binary crate — CLI shells + clap dispatch
+│   │   └── src/
+│   │       ├── main.rs         # clap parse → commands::* dispatch
+│   │       ├── output.rs       # coloured print helpers (CLI-only)
+│   │       └── commands/       # one cmd_* shell per command, calls into crane-core
+│   │           ├── mod.rs
+│   │           ├── build.rs    # cmd_build, cmd_run, cmd_test, cmd_clean
+│   │           ├── check.rs    # cmd_check + manifest summary printer
+│   │           ├── deps.rs     # cmd_add, remove, update, fetch, tree, search, info, login, publish, yank
+│   │           ├── migrate.rs  # cmd_migrate
+│   │           ├── new.rs      # cmd_new, cmd_init
+│   │           └── toolchain.rs # cmd_toolchain_list
+│   ├── crane-core/             # library crate — all build logic, no CLI / no printing of results
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── error.rs
-│   │       ├── new.rs          # crane new / crane init
-│   │       ├── dep_cmds.rs     # crane add/remove/update/fetch/tree
+│   │       ├── new.rs          # scaffold_project / init_project (returns ScaffoldOutcome)
+│   │       ├── dep_cmds.rs     # manifest_add_dep, manifest_remove_dep, regen_lock, locate_project
 │   │       ├── lock.rs         # crane.lock read/write
 │   │       ├── manifest/       # crane.toml parsing + validation
 │   │       │   ├── mod.rs
@@ -58,14 +68,14 @@ crane/
 │   │       │   ├── detect.rs
 │   │       │   └── cache.rs
 │   │       ├── build/          # compilation + linking orchestration
-│   │       │   ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
+│   │       │   ├── mod.rs      # build_project, clean_project, test_project (pub functions)
 │   │       │   ├── compile.rs  # source → object, parallel via rayon
 │   │       │   ├── link.rs     # object → binary / .a / .so
 │   │       │   ├── discover.rs # walkdir source discovery
 │   │       │   ├── deps.rs     # dep graph resolution + topo sort
 │   │       │   └── modules.rs  # C++20 module scanner, DAG, phased compilation
 │   │       └── importer/       # crane migrate — CMake/Makefile/Meson → crane.toml
-│   │           ├── mod.rs      # run_migrate, ImportedProject IR
+│   │           ├── mod.rs      # run_migrate → MigrateOutcome, ImportedProject IR
 │   │           ├── detect.rs   # pick format from files present
 │   │           ├── emit.rs     # ImportedProject → crane.toml string
 │   │           ├── cmake.rs    # CMakeLists.txt parser
@@ -104,7 +114,7 @@ crane/
 │   ├── icpx.toml               # Intel oneAPI C++
 │   ├── opencl.toml
 │   └── ispc.toml               # Intel SPMD
-└── examples/
+└── examples/                   # every example is buildable — `cd <dir> && crane build`
     ├── hello-cpp/              # multi-file C++ with tests
     ├── multi-lang/             # C + C++ mixed, tests
     ├── with-deps/              # path dependency (static lib)
@@ -112,11 +122,6 @@ crane/
     ├── multi-bin/              # two binaries from one source tree (base64 encode/decode)
     ├── cpp-modules/            # C++20 named modules (ASCII ray tracer)
     ├── tri-lang/               # Fortran + C + C++ in one project (requires gfortran)
-    ├── c-executable/           # documented example — C with system deps
-    ├── executable/             # documented example — multiple [[bin]] targets
-    ├── fortran-executable/     # documented example — Fortran with BLAS/LAPACK
-    ├── library/                # documented example — static lib with system deps
-    ├── workspace/              # documented example — multi-crate workspace
     └── migrated-from-cmake/    # before/after for `crane migrate --from cmake`
 ```
 
@@ -183,6 +188,25 @@ opt-level = 3
 lto       = true
 strip     = true
 debug     = false
+
+# Per-platform overlays — keyed by host OS or family alias.
+# Recognized keys: linux, windows, macos, freebsd, openbsd, netbsd, dragonfly,
+# android, ios, solaris, illumos, plus the family aliases `unix` (everything
+# except windows) and `bsd` (the BSDs). Family overlays are applied first,
+# then the specific OS — so a Linux build picks up [platform.unix] then
+# [platform.linux].
+[platform.linux.dependencies]
+dl      = { system = "dl" }
+pthread = { system = "pthread" }
+
+[platform.windows.dependencies]
+ws2_32  = { system = "ws2_32" }
+
+[platform.windows.compiler]
+defines = ["WIN32_LEAN_AND_MEAN"]
+
+[platform.unix.compiler]
+defines = ["POSIX_BUILD"]
 ```
 
 ---
@@ -460,6 +484,9 @@ All three importers parse into a shared [`ImportedProject`] IR, which
 - [x] Auto-detection via presence of `CMakeLists.txt`, `Makefile` / `GNUmakefile`, or `meson.build` (CMake wins on ties)
 - [x] CMake importer (hand-rolled regex tokenizer; swapping in the `cmake-parser` crate is a follow-up) — extract `project()`, `add_executable`, `add_library`, `target_link_libraries`, `target_include_directories` / `include_directories`, `set(CMAKE_CXX_STANDARD …)` / `CMAKE_C_STANDARD`, `add_definitions` / `add_compile_definitions`, `add_compile_options` / `target_compile_options`, `find_package(...)`
 - [x] CMake v1 scope: flat projects only; `add_subdirectory(...)` emits a `# CRANE: subdirectory not imported` comment
+- [x] CMake `set(VAR …)` tracked and `${VAR}` references expanded in subsequent calls; multi-token expansions split on whitespace so `set(SRCS a.cpp b.cpp); add_executable(app ${SRCS})` works
+- [x] Multiple `add_executable(...)` calls produce multiple `[[bin]]` entries
+- [x] Unrecognized `if(...) … endif()` blocks emit a review note; recognized platform guards (`if(WIN32)`, `if(LINUX)`, `if(APPLE)`, `if(UNIX)`, `if(MSVC)`, `if(MINGW)`, `if(CMAKE_SYSTEM_NAME STREQUAL "X")`) route their contents into `[platform.X]` overlays in the emitted manifest
 - [x] `find_package(Foo)` → `{ system = "foo" }` dep with a review comment
 - [x] Makefile importer (hand-rolled regex tokenizer; swapping in the `makefile-lossless` crate is a follow-up) — extract `CC`/`CXX`/`FC`, `CFLAGS`/`CXXFLAGS`/`FFLAGS`/`CPPFLAGS`, `LDLIBS`/`LDFLAGS`, `SRCS`/`SRC`/`SOURCES`/`OBJS`, `TARGET`/`PROGRAM`/`BIN`/`EXE`; expands `$(VAR)` / `${VAR}` references and joins backslash continuations
 - [x] Meson importer (regex-based over `meson.build`) — `project()`, `executable()`, `library()` / `shared_library()` / `static_library()`, `dependency()`, `include_directories()`, `add_project_arguments()` / `add_global_arguments()`; `default_options` carries `cpp_std` / `c_std` through
@@ -468,6 +495,7 @@ All three importers parse into a shared [`ImportedProject`] IR, which
 - [x] Leaves original build files in place; errors if `crane.toml` already exists unless `--force`
 - [x] Fixture tests under `crates/crane-core/tests/importer_fixtures/{cmake,make,meson}/` with expected outputs
 - [x] One worked example: `examples/migrated-from-cmake/` showing before/after
+- [x] `[platform.<os>]` manifest section: per-platform overlays for `dependencies`, `compiler.defines`, `compiler.flags`, `compiler.includes.paths`. Build engine merges matching overlays at build time using `std::env::consts::OS`; family aliases (`unix`, `bsd`) apply before the specific OS. Validated by `validate_platforms`; round-tripped by the CMake importer's `if(...)` recogniser. Per-platform `[language]`, `[[bin]]`, profiles and sanitizers are deliberately not overlay-able in v1.
 
 ### Phase 12 — Registry server (planned — `feature/registry-server`, after Phase 11)
 New workspace crate `crates/crane-registry/` implementing crane.dev. Filesystem-backed
@@ -515,8 +543,8 @@ or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same
 
 ## Architecture rules
 
-1. **`crane` crate is thin** — only `main.rs`, CLI parsing, delegates everything to `crane-core`
-2. **All logic in `crane-core`** — testable without the CLI
+1. **`crane` crate owns the CLI** — clap parsing, `commands/` shells, and `output.rs` colour helpers. Each `cmd_*` reads cwd, calls a pure function in `crane-core`, prints the outcome.
+2. **`crane-core` is a library, no CLI knowledge** — pure functions return `Result<T, CraneError>` (e.g. `build_project`, `run_migrate → MigrateOutcome`, `scaffold_project → ScaffoldOutcome`). It must not depend on `output.rs` or call `print_*`. Inline `println!` for build-engine progress (`Compiling foo.cpp`, `Linking …`) is the one exception, pending a future progress-callback abstraction.
 3. **Compiler templates are runtime data** — loaded from `compiler-templates/` directory, not hardcoded
 4. **One template per toolchain, not per language** — `gcc.toml` handles both C and C++; `compile_binary` in `[linking.c]` overrides which binary compiles that language
 5. **DAG cycles = hard error** — report the full cycle path (both dep cycles and module cycles)

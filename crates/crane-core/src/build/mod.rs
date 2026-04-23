@@ -20,117 +20,21 @@ use crate::lock::LockFile;
 use crate::manifest::types::Manifest;
 use crate::manifest::validate::{validate, validate_dep_compat};
 use crate::manifest::{find_manifest_dir, load_manifest};
-use crate::output::{print_error, print_success};
 use crate::toolchain::{CompilerTemplate, DetectedCompiler, detect_all_cached, load_templates, templates_dir};
 
-// ── Public commands ───────────────────────────────────────────────────────────
+// ── Public results ────────────────────────────────────────────────────────────
 
-/// Implementation of `crane build [--release]`.
-pub fn cmd_build(release: bool) {
-    let profile = if release { "release" } else { "dev" };
-    match build_project(profile) {
-        Ok(output) => {
-            println!();
-            print_success(&format!(
-                "{} ({} compiled, {} up to date)",
-                output.package_name, output.compiled, output.skipped,
-            ));
-            for bin in &output.binaries {
-                println!("    {}", bin.display());
-            }
-        }
-        Err(e) => {
-            println!();
-            print_error(&e.to_string());
-        }
-    }
+pub struct BuildOutput {
+    pub package_name: String,
+    pub binaries: Vec<PathBuf>,
+    pub compiled: usize,
+    pub skipped: usize,
 }
 
-/// Implementation of `crane run [--release] [-- args...]`.
-pub fn cmd_run(release: bool, run_args: &[String]) {
-    let profile = if release { "release" } else { "dev" };
-    let output = match build_project(profile) {
-        Ok(o) => o,
-        Err(e) => { println!(); print_error(&e.to_string()); return; }
-    };
-
-    match output.binaries.as_slice() {
-        [] => {
-            print_error("no binary target produced — add a [[bin]] section to crane.toml");
-        }
-        [bin] => {
-            println!();
-            use owo_colors::OwoColorize;
-            println!("    {} {}", "Running".bold().green(), bin.display());
-            println!();
-            let status = Command::new(bin).args(run_args).status();
-            match status {
-                Ok(s) if !s.success() => {
-                    if let Some(code) = s.code() {
-                        print_error(&format!("process exited with code {code}"));
-                    }
-                }
-                Err(e) => print_error(&format!("failed to run binary: {e}")),
-                Ok(_) => {}
-            }
-        }
-        _ => {
-            print_error("multiple [[bin]] targets — specify which to run (not yet supported)");
-            for b in &output.binaries {
-                eprintln!("  {}", b.display());
-            }
-        }
-    }
-}
-
-/// Implementation of `crane clean` — remove the `target/` directory.
-pub fn cmd_clean() {
-    match clean_project() {
-        Ok(()) => print_success("cleaned target/"),
-        Err(e) => { println!(); print_error(&e.to_string()); }
-    }
-}
-
-/// Implementation of `crane test [name]`.
-pub fn cmd_test(filter: Option<&str>) {
-    match test_project("dev", filter) {
-        Ok(summary) => {
-            println!();
-            if summary.total == 0 {
-                println!("no test files found under tests/");
-                return;
-            }
-            if summary.failed == 0 {
-                print_success(&format!(
-                    "test result: ok. {} passed; 0 failed", summary.passed,
-                ));
-            } else {
-                print_error(&format!(
-                    "test result: FAILED. {} passed; {} failed",
-                    summary.passed, summary.failed,
-                ));
-            }
-        }
-        Err(e) => {
-            println!();
-            print_error(&e.to_string());
-        }
-    }
-}
-
-// ── Internal structs ──────────────────────────────────────────────────────────
-
-struct BuildOutput {
-    package_name: String,
-    binaries: Vec<PathBuf>,
-    compiled: usize,
-    skipped: usize,
-}
-
-struct TestSummary {
-    passed: usize,
-    failed: usize,
-    total: usize,
+pub struct TestSummary {
+    pub passed: usize,
+    pub failed: usize,
+    pub total: usize,
 }
 
 struct ProjectContext {
@@ -149,7 +53,13 @@ struct BuiltDeps {
 
 // ── Build pipeline ────────────────────────────────────────────────────────────
 
-fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
+/// Build the project rooted at the current working directory.
+///
+/// Returns the high-level outcome (binary paths, compile counts) so the
+/// caller decides how to present results. Progress-line output (`Building`,
+/// `Compiling foo.cpp`, `Linking ...`) currently goes to stdout directly;
+/// routing it through a callback is future work.
+pub fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
     let ctx = load_project(profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
@@ -171,10 +81,11 @@ fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
         &built.libs,
     )?;
 
-    // Keep crane.lock in sync with the resolved dep graph
+    // Keep crane.lock in sync with the resolved dep graph. Lock-write failures
+    // are non-fatal — we surface them on stderr but still return success.
     let lock = LockFile::generate(project_dir, manifest, &resolved_deps);
     if let Err(e) = lock.save(project_dir) {
-        crate::output::print_warning(&format!("could not write crane.lock: {e}"));
+        eprintln!("warning: could not write crane.lock: {e}");
     }
 
     let binaries = link_result.outputs.iter()
@@ -190,7 +101,8 @@ fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
     })
 }
 
-fn clean_project() -> Result<(), CraneError> {
+/// Wipe the project's `target/` directory.
+pub fn clean_project() -> Result<(), CraneError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
@@ -201,7 +113,8 @@ fn clean_project() -> Result<(), CraneError> {
     Ok(())
 }
 
-fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+/// Build and execute the project's test binaries.
+pub fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
     let ctx = load_project(profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 

@@ -42,13 +42,9 @@ pub fn to_toml(p: &ImportedProject) -> String {
         p.version.as_deref().unwrap_or("0.1.0")
     )
     .unwrap();
-    writeln!(
-        out,
-        "description = \"{}\"",
-        p.description.as_deref().unwrap_or("")
-    )
-    .unwrap();
-    writeln!(out, "license     = \"\"").unwrap();
+    if let Some(desc) = p.description.as_deref().filter(|d| !d.is_empty()) {
+        writeln!(out, "description = \"{}\"", escape_string(desc)).unwrap();
+    }
     writeln!(out).unwrap();
 
     // ── [language.X] ──
@@ -124,6 +120,42 @@ pub fn to_toml(p: &ImportedProject) -> String {
         writeln!(out).unwrap();
     }
 
+    // ── [platform.X] overlays ──
+    for (key, ov) in &p.platforms {
+        if !ov.dependencies.is_empty() {
+            writeln!(out, "[platform.{key}.dependencies]").unwrap();
+            for (name, dep) in &ov.dependencies {
+                match dep {
+                    ImportedDep::System(s) => {
+                        writeln!(out, "{name} = {{ system = \"{s}\" }}").unwrap();
+                    }
+                    ImportedDep::Version(v) => {
+                        writeln!(out, "{name} = \"{v}\"").unwrap();
+                    }
+                    ImportedDep::Path(rel) => {
+                        writeln!(out, "{name} = {{ path = \"{rel}\" }}").unwrap();
+                    }
+                }
+            }
+            writeln!(out).unwrap();
+        }
+        if !ov.defines.is_empty() || !ov.flags.is_empty() {
+            writeln!(out, "[platform.{key}.compiler]").unwrap();
+            if !ov.defines.is_empty() {
+                writeln!(out, "defines = {}", fmt_string_array(&ov.defines)).unwrap();
+            }
+            if !ov.flags.is_empty() {
+                writeln!(out, "flags   = {}", fmt_string_array(&ov.flags)).unwrap();
+            }
+            writeln!(out).unwrap();
+        }
+        if !ov.include_paths.is_empty() {
+            writeln!(out, "[platform.{key}.compiler.includes]").unwrap();
+            writeln!(out, "paths = {}", fmt_string_array(&ov.include_paths)).unwrap();
+            writeln!(out).unwrap();
+        }
+    }
+
     // ── [profile.*] defaults ──
     writeln!(out, "[profile.dev]").unwrap();
     writeln!(out, "opt-level = 0").unwrap();
@@ -146,11 +178,15 @@ fn fmt_string_array(items: &[String]) -> String {
             s.push_str(", ");
         }
         s.push('"');
-        s.push_str(&item.replace('\\', "\\\\").replace('"', "\\\""));
+        s.push_str(&escape_string(item));
         s.push('"');
     }
     s.push(']');
     s
+}
+
+fn escape_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]
@@ -179,6 +215,55 @@ mod tests {
         p.push_note("add_subdirectory(sub) not imported");
         let toml = to_toml(&p);
         assert!(toml.contains("# CRANE: add_subdirectory(sub) not imported"));
+    }
+
+    #[test]
+    fn empty_description_is_omitted() {
+        let p = ImportedProject {
+            name: Some("hello".into()),
+            ..Default::default()
+        };
+        let toml = to_toml(&p);
+        assert!(!toml.contains("description"));
+        assert!(!toml.contains("license"));
+    }
+
+    #[test]
+    fn populated_description_is_emitted() {
+        let p = ImportedProject {
+            name: Some("hello".into()),
+            description: Some("a short description".into()),
+            ..Default::default()
+        };
+        let toml = to_toml(&p);
+        assert!(toml.contains("description = \"a short description\""));
+    }
+
+    #[test]
+    fn platform_overlay_emits_nested_tables() {
+        let mut p = ImportedProject::default();
+        p.name = Some("hello".into());
+        let win = p.platform_mut("windows");
+        win.dependencies.insert("ws2_32".into(), ImportedDep::System("ws2_32".into()));
+        win.defines.push("WIN_BUILD".into());
+        win.include_paths.push("third_party/win-include/".into());
+        let toml = to_toml(&p);
+        assert!(toml.contains("[platform.windows.dependencies]"));
+        assert!(toml.contains("ws2_32 = { system = \"ws2_32\" }"));
+        assert!(toml.contains("[platform.windows.compiler]"));
+        assert!(toml.contains("defines = [\"WIN_BUILD\"]"));
+        assert!(toml.contains("[platform.windows.compiler.includes]"));
+        assert!(toml.contains("paths = [\"third_party/win-include/\"]"));
+    }
+
+    #[test]
+    fn empty_platform_overlay_omits_section() {
+        let mut p = ImportedProject::default();
+        p.name = Some("hello".into());
+        // Touch the entry so it exists but stays empty.
+        p.platform_mut("linux");
+        let toml = to_toml(&p);
+        assert!(!toml.contains("[platform.linux"));
     }
 
     #[test]
