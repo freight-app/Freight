@@ -34,6 +34,9 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-MD -MF {path}"
+# nvcc cross-compilation uses --target-dir / --generate-code, not --target=.
+target       = ""
+sysroot      = ""
 
 [modules]
 supported = false

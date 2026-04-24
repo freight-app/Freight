@@ -38,6 +38,10 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = ""
 dep_file     = "-MMM {path}"
+# ispc's --target selects SIMD width, not a host triple; cross-compilation
+# is not supported via standard flags.
+target       = ""
+sysroot      = ""
 
 [modules]
 supported = false

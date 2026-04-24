@@ -40,6 +40,9 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-MMD -MF {path}"
+# icpx is a clang-based compiler and supports --target= for cross-compilation.
+target       = "--target={triple}"
+sysroot      = "--sysroot={path}"
 
 [modules]
 supported = false

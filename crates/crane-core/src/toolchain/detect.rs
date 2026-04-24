@@ -3,8 +3,9 @@ use std::process::Command;
 
 use regex::Regex;
 
-use super::cache::ToolchainCache;
+use super::cache::{crane_home, ToolchainCache};
 use super::template::CompilerTemplate;
+use crate::error::CraneError;
 
 /// A compiler found on this machine.
 #[derive(Debug, Clone)]
@@ -193,6 +194,61 @@ mod tests {
 }
 
 /// Resolve the compiler templates directory.
+/// The user-local templates directory: `~/.crane/templates/`.
+///
+/// Returns `None` when the crane home directory cannot be determined. The
+/// directory does not need to exist — it is created by [`toolchain_add`].
+pub fn user_templates_dir() -> Option<PathBuf> {
+    Some(crane_home()?.join("templates"))
+}
+
+/// Load templates from both the system templates directory and the user's
+/// `~/.crane/templates/` directory. User templates override system templates
+/// with the same `name` field, enabling local customisation without touching
+/// the system installation.
+pub fn load_all_templates() -> Vec<CompilerTemplate> {
+    let mut templates: Vec<CompilerTemplate> = Vec::new();
+
+    if let Some(system_dir) = templates_dir() {
+        templates.extend(load_templates(&system_dir));
+    }
+
+    if let Some(user_dir) = user_templates_dir() {
+        for t in load_templates(&user_dir) {
+            if let Some(pos) = templates.iter().position(|s| s.name == t.name) {
+                templates[pos] = t; // user template overrides system template
+            } else {
+                templates.push(t);
+            }
+        }
+    }
+
+    templates
+}
+
+/// Install a compiler template from a local TOML file into `~/.crane/templates/`.
+///
+/// The template is validated before copying. If a template with the same name
+/// already exists it is overwritten. Returns the path the template was written to.
+pub fn toolchain_add(toml_path: &Path) -> Result<PathBuf, CraneError> {
+    let src = std::fs::read_to_string(toml_path)
+        .map_err(|e| CraneError::Io(e))?;
+
+    let template = CompilerTemplate::from_toml(&src)?;
+
+    let user_dir = user_templates_dir()
+        .ok_or_else(|| CraneError::TemplateError("cannot determine ~/.crane directory".into()))?;
+
+    std::fs::create_dir_all(&user_dir)
+        .map_err(|e| CraneError::Io(e))?;
+
+    let dest = user_dir.join(format!("{}.toml", template.name));
+    std::fs::write(&dest, &src)
+        .map_err(|e| CraneError::Io(e))?;
+
+    Ok(dest)
+}
+
 /// Checks (in order):
 ///   1. `CRANE_TEMPLATES_DIR` env var
 ///   2. `{binary_dir}/compiler-templates/`

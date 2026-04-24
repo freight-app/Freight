@@ -38,6 +38,8 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-cpp -MMD -MF {path}"
+target       = ""
+sysroot      = "--sysroot={path}"
 
 [modules]
 supported = false

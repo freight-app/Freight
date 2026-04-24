@@ -162,6 +162,24 @@ fn validate_compiler(m: &Manifest, errors: &mut Vec<ValidationError>) {
             format!("warnings {:?} is not valid; choose one of: {}", cc.warnings, VALID_WARNINGS.join(", ")),
         ));
     }
+
+    if let Some(target) = &cc.target {
+        if target.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "[compiler]",
+                "target must not be empty; use a target triple such as \"aarch64-linux-gnu\"",
+            ));
+        }
+    }
+
+    if let Some(sysroot) = &cc.sysroot {
+        if sysroot.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "[compiler]",
+                "sysroot must not be empty; use an absolute path such as \"/opt/sysroot\"",
+            ));
+        }
+    }
 }
 
 fn validate_profiles(m: &Manifest, errors: &mut Vec<ValidationError>) {

@@ -12,7 +12,7 @@ use crate::commands::deps::{
 };
 use crate::commands::migrate::cmd_migrate;
 use crate::commands::new::{cmd_init, cmd_new};
-use crate::commands::toolchain::cmd_toolchain_list;
+use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list};
 use crate::output::print_unimplemented;
 
 #[derive(Parser)]
@@ -148,7 +148,7 @@ fn main() -> Result<()> {
         Commands::Yank { version } => cmd_yank(&version),
         Commands::Toolchain { command } => match command {
             ToolchainCommands::List => cmd_toolchain_list(),
-            ToolchainCommands::Add { .. } => print_unimplemented("toolchain add"),
+            ToolchainCommands::Add { name } => cmd_toolchain_add(&name),
             ToolchainCommands::Use { .. } => print_unimplemented("toolchain use"),
         },
         Commands::Lsp => {

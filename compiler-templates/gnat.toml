@@ -37,6 +37,8 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = ""
+target       = ""
+sysroot      = ""
 
 [modules]
 supported = false

@@ -40,6 +40,11 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-MMD -MF {path}"
+# GCC cross-compilation is done via a dedicated toolchain binary (e.g.
+# aarch64-linux-gnu-gcc); there is no runtime --target= flag.  Sysroot is
+# supported on all GCC installations.
+target       = ""
+sysroot      = "--sysroot={path}"
 
 [modules]
 supported     = true

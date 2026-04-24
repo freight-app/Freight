@@ -42,6 +42,8 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-MF {path}"
+target       = ""
+sysroot      = ""
 
 [modules]
 supported = false
