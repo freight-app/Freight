@@ -1,14 +1,11 @@
-use crane_core::toolchain::{detect_all_cached, load_templates, templates_dir};
+use std::path::Path;
 
-use crate::output::print_warning;
+use crane_core::toolchain::{detect_all_cached, load_all_templates, toolchain_add, user_templates_dir};
+
+use crate::output::{print_error, print_success, print_warning};
 
 pub fn cmd_toolchain_list() {
-    let Some(dir) = templates_dir() else {
-        print_warning("compiler-templates directory not found; set CRANE_TEMPLATES_DIR");
-        return;
-    };
-
-    let templates = load_templates(&dir);
+    let templates = load_all_templates();
     if templates.is_empty() {
         print_warning("no compiler templates loaded");
         return;
@@ -17,7 +14,6 @@ pub fn cmd_toolchain_list() {
     let detected = detect_all_cached(&templates);
     if detected.is_empty() {
         println!("No supported compilers found on PATH.");
-        println!("Templates loaded from: {}", dir.display());
         return;
     }
 
@@ -30,5 +26,17 @@ pub fn cmd_toolchain_list() {
             d.version,
             d.path.display()
         );
+    }
+}
+
+pub fn cmd_toolchain_add(path: &str) {
+    match toolchain_add(Path::new(path)) {
+        Ok(dest) => {
+            print_success(&format!("template installed to {}", dest.display()));
+            if let Some(user_dir) = user_templates_dir() {
+                println!("  User templates directory: {}", user_dir.display());
+            }
+        }
+        Err(e) => print_error(&format!("failed to install template: {e}")),
     }
 }

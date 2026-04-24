@@ -109,12 +109,23 @@ impl Manifest {
     /// `[platform.X.dependencies]` whose `X` matches the host. A platform
     /// overlay can shadow a base dep with the same key — common when a package
     /// links a different system library on Windows vs Linux.
+    ///
+    /// Deps with a `targets = [...]` field are only included when
+    /// `[compiler] target` matches one of the listed triples. This is intended
+    /// for prebuilt path deps that have been compiled for a specific target; set
+    /// no `targets` field to include a dep unconditionally.
     pub fn effective_dependencies(&self) -> HashMap<String, Dependency> {
-        let mut out = self.dependencies.clone();
+        let current_target = self.compiler.target.as_deref();
+        let mut out: HashMap<String, Dependency> = self.dependencies.iter()
+            .filter(|(_, dep)| dep_matches_target(dep, current_target))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         for plat in host_platforms() {
             if let Some(ov) = self.platform_overlay(plat) {
                 for (name, dep) in &ov.dependencies {
-                    out.insert(name.clone(), dep.clone());
+                    if dep_matches_target(dep, current_target) {
+                        out.insert(name.clone(), dep.clone());
+                    }
                 }
             }
         }
@@ -128,6 +139,23 @@ impl Manifest {
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v)
     }
+}
+
+/// Returns `true` if the dependency should be included for the given build target.
+///
+/// When `targets` is absent the dep is unconditional. When `targets` is present the
+/// dep is only included when `current_target` is in the list — a `None` current target
+/// (native build) never matches target-specific deps.
+fn dep_matches_target(dep: &Dependency, current_target: Option<&str>) -> bool {
+    if let Dependency::Detailed(d) = dep {
+        if let Some(targets) = &d.targets {
+            return match current_target {
+                Some(t) => targets.iter().any(|wanted| wanted == t),
+                None => false,
+            };
+        }
+    }
+    true
 }
 
 fn merge_string_vec(into: &mut Vec<String>, items: &[String]) {
@@ -485,5 +513,95 @@ shouldnotbe = {{ system = "shouldnotbe" }}
                 assert!(i < specific, "{p} should come before {host} in {chain:?}");
             }
         }
+    }
+
+    // ── cross-compilation: dep targets filtering ──────────────────────────────
+
+    fn cross_manifest(target: Option<&str>, dep_targets: Option<&[&str]>) -> String {
+        let target_line = target.map(|t| format!("target = \"{t}\"")).unwrap_or_default();
+        let dep_targets_line = dep_targets
+            .map(|ts| {
+                let joined = ts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ");
+                format!(", targets = [{joined}]")
+            })
+            .unwrap_or_default();
+        format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.c]
+[[bin]]
+name = "p"
+src  = "src/main.c"
+
+[compiler]
+{target_line}
+
+[dependencies]
+mylib = {{ path = "../mylib"{dep_targets_line} }}
+"#
+        )
+    }
+
+    #[test]
+    fn dep_without_targets_always_included() {
+        let m = load_manifest_str(&cross_manifest(None, None)).unwrap();
+        assert!(m.effective_dependencies().contains_key("mylib"));
+        let m2 = load_manifest_str(&cross_manifest(Some("aarch64-linux-gnu"), None)).unwrap();
+        assert!(m2.effective_dependencies().contains_key("mylib"));
+    }
+
+    #[test]
+    fn dep_with_targets_excluded_on_native_build() {
+        let m = load_manifest_str(
+            &cross_manifest(None, Some(&["aarch64-linux-gnu"]))
+        ).unwrap();
+        assert!(
+            !m.effective_dependencies().contains_key("mylib"),
+            "target-specific dep should be excluded on native build"
+        );
+    }
+
+    #[test]
+    fn dep_with_matching_target_is_included() {
+        let m = load_manifest_str(
+            &cross_manifest(Some("aarch64-linux-gnu"), Some(&["aarch64-linux-gnu", "armv7-linux-gnu"]))
+        ).unwrap();
+        assert!(
+            m.effective_dependencies().contains_key("mylib"),
+            "dep matching build target should be included"
+        );
+    }
+
+    #[test]
+    fn dep_with_non_matching_target_is_excluded() {
+        let m = load_manifest_str(
+            &cross_manifest(Some("x86_64-linux-gnu"), Some(&["aarch64-linux-gnu"]))
+        ).unwrap();
+        assert!(
+            !m.effective_dependencies().contains_key("mylib"),
+            "dep for different target should be excluded"
+        );
+    }
+
+    #[test]
+    fn build_settings_propagates_target_triple_and_sysroot() {
+        let manifest_src = r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.cpp]
+[[bin]]
+name = "p"
+src  = "src/main.cpp"
+[compiler]
+target  = "aarch64-linux-gnu"
+sysroot = "/opt/sysroot"
+"#;
+        let m = load_manifest_str(manifest_src).unwrap();
+        let s = m.build_settings_for("dev");
+        assert_eq!(s.target_triple.as_deref(), Some("aarch64-linux-gnu"));
+        assert_eq!(s.sysroot.as_deref(), Some(std::path::Path::new("/opt/sysroot")));
     }
 }

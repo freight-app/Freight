@@ -39,6 +39,9 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-MMD -MF {path}"
+# hipcc wraps clang; --target= selects the HIP target architecture.
+target       = "--target={triple}"
+sysroot      = "--sysroot={path}"
 
 [modules]
 supported = false

@@ -38,6 +38,8 @@ define_value = "-version={name}"
 output       = "-of={path}"
 compile_only = "-c"
 dep_file     = ""
+target       = ""
+sysroot      = ""
 
 [modules]
 supported = false

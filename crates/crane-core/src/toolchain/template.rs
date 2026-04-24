@@ -49,6 +49,15 @@ struct RawStructure {
     output: String,
     compile_only: String,
     dep_file: String,
+    /// Flag template for cross-compilation target triple, e.g. `"--target={triple}"`.
+    /// Empty string means this compiler does not support a runtime `--target=` flag
+    /// (e.g. GCC, which cross-compiles via a dedicated toolchain binary).
+    #[serde(default)]
+    target: String,
+    /// Flag template for the sysroot path, e.g. `"--sysroot={path}"`.
+    /// Empty string means not supported.
+    #[serde(default)]
+    sysroot: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +192,10 @@ pub struct StructureFlags {
     pub output: String,
     pub compile_only: String,
     pub dep_file: String,
+    /// `"--target={triple}"` or empty if unsupported.
+    pub target: String,
+    /// `"--sysroot={path}"` or empty if unsupported.
+    pub sysroot: String,
 }
 
 #[derive(Debug, Clone)]
@@ -248,6 +261,8 @@ impl CompilerTemplate {
                 output: raw.structure.output,
                 compile_only: raw.structure.compile_only,
                 dep_file: raw.structure.dep_file,
+                target: raw.structure.target,
+                sysroot: raw.structure.sysroot,
             },
             modules,
             passthrough: PassthroughConfig {
@@ -350,6 +365,23 @@ impl CompilerTemplate {
                 flags.push(self.passthrough.prefix.clone());
             }
             flags.push(f.clone());
+        }
+
+        // Cross-compilation target triple (e.g. `--target=aarch64-linux-gnu`)
+        if let Some(triple) = &settings.target_triple {
+            if !self.structure.target.is_empty() {
+                let f = self.structure.target.replace("{triple}", triple);
+                push_flag_str(&mut flags, &f);
+            }
+        }
+
+        // Sysroot (e.g. `--sysroot=/opt/sysroot`)
+        if let Some(sysroot) = &settings.sysroot {
+            if !self.structure.sysroot.is_empty() {
+                let f = self.structure.sysroot
+                    .replace("{path}", &sysroot.to_string_lossy());
+                push_flag_str(&mut flags, &f);
+            }
         }
 
         flags
@@ -733,5 +765,75 @@ mod tests {
     #[test]
     fn compile_only_flag_is_dash_c() {
         assert_eq!(gcc().compile_only_flag(), vec!["-c"]);
+    }
+
+    // ── cross-compilation — target + sysroot ─────────────────────────────────
+
+    #[test]
+    fn clang_emits_target_triple_flag() {
+        let t = clang();
+        let flags = t.assemble_flags(&BuildSettings {
+            opt_level: "2".into(),
+            target_triple: Some("aarch64-linux-gnu".into()),
+            ..Default::default()
+        });
+        assert!(
+            flags.iter().any(|f| f == "--target=aarch64-linux-gnu"),
+            "clang should emit --target= for cross builds, got: {flags:?}"
+        );
+    }
+
+    #[test]
+    fn gcc_does_not_emit_target_flag() {
+        // GCC cross-compiles via dedicated toolchain binary, not --target=.
+        let t = gcc();
+        let flags = t.assemble_flags(&BuildSettings {
+            opt_level: "2".into(),
+            target_triple: Some("aarch64-linux-gnu".into()),
+            ..Default::default()
+        });
+        assert!(
+            !flags.iter().any(|f| f.starts_with("--target")),
+            "gcc should NOT emit --target=, got: {flags:?}"
+        );
+    }
+
+    #[test]
+    fn gcc_emits_sysroot_flag() {
+        let t = gcc();
+        let flags = t.assemble_flags(&BuildSettings {
+            opt_level: "2".into(),
+            sysroot: Some(PathBuf::from("/opt/sysroot")),
+            ..Default::default()
+        });
+        assert!(
+            flags.iter().any(|f| f == "--sysroot=/opt/sysroot"),
+            "gcc should emit --sysroot= when sysroot is set, got: {flags:?}"
+        );
+    }
+
+    #[test]
+    fn clang_emits_both_target_and_sysroot() {
+        let t = clang();
+        let flags = t.assemble_flags(&BuildSettings {
+            opt_level: "2".into(),
+            target_triple: Some("aarch64-linux-gnu".into()),
+            sysroot: Some(PathBuf::from("/opt/arm-sysroot")),
+            ..Default::default()
+        });
+        assert!(flags.iter().any(|f| f == "--target=aarch64-linux-gnu"));
+        assert!(flags.iter().any(|f| f == "--sysroot=/opt/arm-sysroot"));
+    }
+
+    #[test]
+    fn native_build_emits_no_target_or_sysroot() {
+        let flags = gcc().assemble_flags(&BuildSettings {
+            opt_level: "2".into(),
+            target_triple: None,
+            sysroot: None,
+            ..Default::default()
+        });
+        assert!(!flags.iter().any(|f| f.starts_with("--target")));
+        assert!(!flags.iter().any(|f| f.starts_with("--sysroot")));
     }
 }
