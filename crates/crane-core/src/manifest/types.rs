@@ -130,20 +130,21 @@ impl Manifest {
     /// overlay can shadow a base dep with the same key — common when a package
     /// links a different system library on Windows vs Linux.
     ///
-    /// Deps with a `targets = [...]` field are only included when
-    /// `[compiler] target` matches one of the listed triples. This is intended
-    /// for prebuilt path deps that have been compiled for a specific target; set
-    /// no `targets` field to include a dep unconditionally.
+    /// Deps are filtered by three optional fields on the dep itself:
+    /// - `targets`: cross-compilation triple allowlist (see `[compiler] target`)
+    /// - `os`: host OS allowlist; supports family aliases like `"unix"`
+    /// - `arch`: host CPU architecture allowlist (e.g. `"x86_64"`)
+    /// All absent fields are unconditional.
     pub fn effective_dependencies(&self) -> HashMap<String, Dependency> {
         let current_target = self.compiler.target.as_deref();
         let mut out: HashMap<String, Dependency> = self.dependencies.iter()
-            .filter(|(_, dep)| dep_matches_target(dep, current_target))
+            .filter(|(_, dep)| dep_matches_env(dep, current_target))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         for plat in host_platforms() {
             if let Some(ov) = self.platform_overlay(plat) {
                 for (name, dep) in &ov.dependencies {
-                    if dep_matches_target(dep, current_target) {
+                    if dep_matches_env(dep, current_target) {
                         out.insert(name.clone(), dep.clone());
                     }
                 }
@@ -161,20 +162,40 @@ impl Manifest {
     }
 }
 
-/// Returns `true` if the dependency should be included for the given build target.
+/// Returns `true` if the dependency should be included given the current build environment.
 ///
-/// When `targets` is absent the dep is unconditional. When `targets` is present the
-/// dep is only included when `current_target` is in the list — a `None` current target
-/// (native build) never matches target-specific deps.
-fn dep_matches_target(dep: &Dependency, current_target: Option<&str>) -> bool {
-    if let Dependency::Detailed(d) = dep {
-        if let Some(targets) = &d.targets {
-            return match current_target {
-                Some(t) => targets.iter().any(|wanted| wanted == t),
-                None => false,
-            };
-        }
+/// Checks three optional filter fields on a `DetailedDep`:
+/// - `targets`: only included when `current_target` matches; absent = unconditional.
+///   A `None` current target (native build) never satisfies a present `targets` list.
+/// - `os`: only included when the host OS (or a family alias from `host_platforms()`)
+///   appears in the list; absent = unconditional.
+/// - `arch`: only included when `std::env::consts::ARCH` appears in the list;
+///   absent = unconditional.
+fn dep_matches_env(dep: &Dependency, current_target: Option<&str>) -> bool {
+    let Dependency::Detailed(d) = dep else { return true };
+
+    if let Some(targets) = &d.targets {
+        let ok = match current_target {
+            Some(t) => targets.iter().any(|wanted| wanted == t),
+            None => false,
+        };
+        if !ok { return false; }
     }
+
+    if let Some(os_req) = &d.os {
+        let host_plats = host_platforms();
+        let ok = os_req.iter().any(|req| {
+            host_plats.iter().any(|p| p.eq_ignore_ascii_case(req.as_str()))
+        });
+        if !ok { return false; }
+    }
+
+    if let Some(arch_req) = &d.arch {
+        let host_arch = std::env::consts::ARCH;
+        let ok = arch_req.iter().any(|req| req.eq_ignore_ascii_case(host_arch));
+        if !ok { return false; }
+    }
+
     true
 }
 
@@ -211,15 +232,29 @@ pub fn host_platforms() -> Vec<&'static str> {
     chain
 }
 
-/// Set of platform / family names crane recognizes in `[platform.X]` keys.
-/// Used by validation; everything outside this set still parses but emits a
-/// warning so typos don't silently no-op.
+/// Set of platform / family names crane recognizes in `[platform.X]` keys and
+/// dep `os` fields. Used by validation.
 pub fn known_platform_keys() -> &'static [&'static str] {
     &[
         "unix", "bsd",
         "linux", "windows", "macos",
         "freebsd", "openbsd", "netbsd", "dragonfly",
         "android", "ios", "solaris", "illumos",
+    ]
+}
+
+/// Set of CPU architecture names accepted in dep `arch` fields.
+/// Values mirror `std::env::consts::ARCH` plus common aliases.
+pub fn known_arch_keys() -> &'static [&'static str] {
+    &[
+        "x86_64", "x86",
+        "aarch64", "arm",
+        "mips", "mips64",
+        "powerpc", "powerpc64",
+        "riscv64",
+        "s390x",
+        "sparc64",
+        "wasm32", "wasm64",
     ]
 }
 
@@ -314,6 +349,34 @@ pub struct DetailedDep {
     /// Reserved for the cross-compilation phase.
     #[serde(default)]
     pub targets: Option<Vec<String>>,
+    /// Host OS requirement: dep is only included when the host OS (or a family
+    /// alias) is in this list. Accepts a bare string or an array.
+    /// Examples: `os = "linux"`, `os = ["linux", "macos"]`, `os = "unix"`.
+    #[serde(default, deserialize_with = "string_or_vec")]
+    pub os: Option<Vec<String>>,
+    /// Host CPU architecture requirement: dep is only included when
+    /// `std::env::consts::ARCH` matches one of the listed values.
+    /// Examples: `arch = "x86_64"`, `arch = ["x86_64", "aarch64"]`.
+    #[serde(default, deserialize_with = "string_or_vec")]
+    pub arch: Option<Vec<String>>,
+}
+
+/// Deserialize a field that can be either a bare string or an array of strings.
+fn string_or_vec<'de, D>(d: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(Option::<OneOrMany>::deserialize(d)?.map(|v| match v {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    }))
 }
 
 // ── Compiler config ───────────────────────────────────────────────────────────
@@ -533,6 +596,110 @@ shouldnotbe = {{ system = "shouldnotbe" }}
                 assert!(i < specific, "{p} should come before {host} in {chain:?}");
             }
         }
+    }
+
+    // ── dep os / arch filtering ───────────────────────────────────────────────
+
+    fn manifest_with_dep_filter(os: Option<&str>, arch: Option<&str>) -> String {
+        let os_line = os
+            .map(|v| format!(", os = \"{v}\""))
+            .unwrap_or_default();
+        let arch_line = arch
+            .map(|v| format!(", arch = \"{v}\""))
+            .unwrap_or_default();
+        format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[[bin]]
+name = "p"
+src  = "src/main.cpp"
+[dependencies]
+mylib = {{ system = "mylib"{os_line}{arch_line} }}
+"#
+        )
+    }
+
+    #[test]
+    fn dep_without_os_or_arch_always_included() {
+        let m = load_manifest_str(&manifest_with_dep_filter(None, None)).unwrap();
+        assert!(m.effective_dependencies().contains_key("mylib"));
+    }
+
+    #[test]
+    fn dep_os_matching_host_is_included() {
+        let host = std::env::consts::OS;
+        let m = load_manifest_str(&manifest_with_dep_filter(Some(host), None)).unwrap();
+        assert!(
+            m.effective_dependencies().contains_key("mylib"),
+            "dep with os = host OS should be included"
+        );
+    }
+
+    #[test]
+    fn dep_os_not_matching_host_is_excluded() {
+        let other = if std::env::consts::OS == "windows" { "linux" } else { "windows" };
+        let m = load_manifest_str(&manifest_with_dep_filter(Some(other), None)).unwrap();
+        assert!(
+            !m.effective_dependencies().contains_key("mylib"),
+            "dep requiring a different OS should be excluded"
+        );
+    }
+
+    #[test]
+    fn dep_os_unix_alias_matches_unix_hosts() {
+        let host = std::env::consts::OS;
+        let is_unix = matches!(
+            host,
+            "linux" | "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly"
+                | "android" | "ios" | "solaris" | "illumos"
+        );
+        let m = load_manifest_str(&manifest_with_dep_filter(Some("unix"), None)).unwrap();
+        let included = m.effective_dependencies().contains_key("mylib");
+        assert_eq!(
+            included, is_unix,
+            "unix alias should match iff host is a unix OS; host={host}"
+        );
+    }
+
+    #[test]
+    fn dep_arch_matching_host_is_included() {
+        let host_arch = std::env::consts::ARCH;
+        let m = load_manifest_str(&manifest_with_dep_filter(None, Some(host_arch))).unwrap();
+        assert!(
+            m.effective_dependencies().contains_key("mylib"),
+            "dep with arch = host arch should be included"
+        );
+    }
+
+    #[test]
+    fn dep_arch_not_matching_host_is_excluded() {
+        let other = if std::env::consts::ARCH == "x86_64" { "s390x" } else { "x86_64" };
+        let m = load_manifest_str(&manifest_with_dep_filter(None, Some(other))).unwrap();
+        assert!(
+            !m.effective_dependencies().contains_key("mylib"),
+            "dep requiring a different arch should be excluded"
+        );
+    }
+
+    #[test]
+    fn dep_os_array_syntax_is_accepted() {
+        let host = std::env::consts::OS;
+        let s = format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[[bin]]
+name = "p"
+src  = "src/main.cpp"
+[dependencies]
+mylib = {{ system = "mylib", os = ["{host}", "linux"] }}
+"#
+        );
+        let m = load_manifest_str(&s).unwrap();
+        assert!(m.effective_dependencies().contains_key("mylib"));
     }
 
     // ── cross-compilation: dep targets filtering ──────────────────────────────

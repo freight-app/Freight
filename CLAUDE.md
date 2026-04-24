@@ -166,6 +166,16 @@ openssl     = { system = "openssl", version = ">=3.0" }
 myutils     = { path = "../myutils" }
 # Target-filtered dep — only linked when cross-compiling to that triple
 arm-hal     = { path = "../arm-hal", targets = ["aarch64-linux-gnu"] }
+# OS-filtered deps — only linked on matching host OS (accepts string or array)
+# Supported keys: unix, linux, windows, macos, freebsd, bsd, and other platform keys
+pthread     = { system = "pthread", os = "linux" }
+ws2_32      = { system = "ws2_32",  os = "windows" }
+# Multiple OS values accepted via array
+libm        = { system = "m",       os = ["linux", "macos"] }
+# Arch-filtered dep — only linked on matching CPU architecture
+sse-util    = { path = "../sse-util", arch = "x86_64" }
+# Combined: OS + arch filter (both must match)
+avx-opt     = { system = "avx-opt", os = "linux", arch = ["x86_64", "aarch64"] }
 
 [dev-dependencies]
 libcheck = "0.15"
@@ -476,6 +486,8 @@ crane lsp                         run language server on stdio        ✓ implem
 - [x] `[compiler] target = "aarch64-linux-gnu"` → `--target={triple}` flag via template `[structure].target`; empty template field = unsupported (GCC requires dedicated cross binary, Clang is natively multi-target)
 - [x] `[compiler] sysroot = "/opt/sysroot"` → `--sysroot={path}` via template `[structure].sysroot`; supported by clang, gcc, gfortran, hipcc, icpx
 - [x] `targets = ["aarch64-linux-gnu"]` on any dep — filtered in/out by `effective_dependencies()` based on `compiler.target`; absent = always include, present + native build = exclude
+- [x] `os = "linux"` / `os = ["linux", "macos"]` on any dep — filtered by host OS at native build time; accepts crane platform keys and family aliases (`unix`, `bsd`); validated by `crane check`
+- [x] `arch = "x86_64"` / `arch = ["x86_64", "aarch64"]` on any dep — filtered by `std::env::consts::ARCH`; validated against known arch set
 - [x] `crane toolchain add <path>` — validates a local `.toml` as a `CompilerTemplate`, installs to `~/.crane/templates/<name>.toml`; `load_all_templates()` merges system + user templates (user overrides same-named system)
 
 ### Phase 11 — Importer (in progress — `feature/importer`)

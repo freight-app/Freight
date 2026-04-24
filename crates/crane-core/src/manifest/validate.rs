@@ -3,7 +3,7 @@ use std::path::Path;
 
 use semver::Version;
 
-use super::types::{known_platform_keys, Dependency, Manifest, Profile};
+use super::types::{known_arch_keys, known_platform_keys, Dependency, DetailedDep, Manifest, Profile};
 use crate::toolchain::CompilerTemplate;
 
 const VALID_WARNINGS: &[&str] = &["none", "default", "all", "error"];
@@ -41,8 +41,59 @@ pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<Vali
     validate_compiler(manifest, &mut errors);
     validate_profiles(manifest, &mut errors);
     validate_platforms(manifest, &mut errors);
+    validate_dep_env_filters(manifest, &mut errors);
 
     errors
+}
+
+fn validate_dep_env_filters(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    let known_plats = known_platform_keys();
+    let known_archs = known_arch_keys();
+
+    let check_dep = |name: &str, dep: &DetailedDep, errors: &mut Vec<ValidationError>| {
+        let ctx = format!("[dependencies.{name}]");
+        if let Some(os_list) = &dep.os {
+            for os in os_list {
+                let lc = os.to_ascii_lowercase();
+                if !known_plats.iter().any(|k| *k == lc) {
+                    errors.push(ValidationError::new(
+                        &ctx,
+                        format!(
+                            "unknown os value {:?}; expected one of: {}",
+                            os,
+                            known_plats.join(", "),
+                        ),
+                    ));
+                }
+            }
+        }
+        if let Some(arch_list) = &dep.arch {
+            for arch in arch_list {
+                let lc = arch.to_ascii_lowercase();
+                if !known_archs.iter().any(|k| *k == lc) {
+                    errors.push(ValidationError::new(
+                        &ctx,
+                        format!(
+                            "unknown arch value {:?}; expected one of: {}",
+                            arch,
+                            known_archs.join(", "),
+                        ),
+                    ));
+                }
+            }
+        }
+    };
+
+    for (name, dep) in &m.dependencies {
+        if let Dependency::Detailed(d) = dep {
+            check_dep(name, d, errors);
+        }
+    }
+    for (name, dep) in &m.dev_dependencies {
+        if let Dependency::Detailed(d) = dep {
+            check_dep(name, d, errors);
+        }
+    }
 }
 
 fn validate_platforms(m: &Manifest, errors: &mut Vec<ValidationError>) {
@@ -890,6 +941,57 @@ libpng = { system = "libpng", version = ">=1.6" }
         let manifest = load_manifest_str(s).unwrap();
         let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
         assert!(errs.is_empty(), "system deps should not trigger compat check");
+    }
+
+    #[test]
+    fn dep_known_os_and_arch_validate_clean() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[dependencies]
+pthread = { system = "pthread", os = "linux" }
+ws2_32  = { system = "ws2_32",  os = "windows" }
+sse_lib = { system = "sse_lib", arch = "x86_64" }
+"#;
+        assert!(field_errors(s, "[dependencies.").is_empty(), "known os/arch should validate clean");
+    }
+
+    #[test]
+    fn dep_unknown_os_is_error() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[dependencies]
+mylib = { system = "mylib", os = "beos" }
+"#;
+        let errs = field_errors(s, "[dependencies.mylib]");
+        assert!(!errs.is_empty());
+        assert!(errs.iter().any(|e| e.message.contains("unknown os value")));
+    }
+
+    #[test]
+    fn dep_unknown_arch_is_error() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[dependencies]
+mylib = { system = "mylib", arch = "pdp11" }
+"#;
+        let errs = field_errors(s, "[dependencies.mylib]");
+        assert!(!errs.is_empty());
+        assert!(errs.iter().any(|e| e.message.contains("unknown arch value")));
     }
 
     #[test]
