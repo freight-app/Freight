@@ -1,20 +1,22 @@
-//! CMakeLists.txt → [`ImportedProject`].
+//! CMakeLists.txt → [`ImportedProject`] using the `cmake-parser` crate.
 //!
 //! v1 scope: flat projects only — a single top-level `CMakeLists.txt`. Nested
 //! `add_subdirectory(...)` calls are recorded as notes but not recursed into.
-//! The parser is a lightweight hand-rolled tokeniser over the CMake command
-//! syntax (`name(args)`), which is adequate for the commands we care about and
-//! avoids taking on a CMake-specific crate dependency.
+//!
+//! The scripting commands (set, if, find_package, …) are handled via the
+//! cmake-parser typed API; the project commands (add_executable, add_library,
+//! target_link_libraries, …) use the crate's lossless tokeniser but fall back
+//! to Debug-based token extraction for their inner enum types, which are kept
+//! in private sub-modules inside cmake-parser.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use regex::Regex;
+use cmake_parser::command::scripting::{find_package::FindPackage, set::Set};
+use cmake_parser::{parse_cmakelists, Command, Doc};
 
-use crate::{
-    ImportedBin, ImportedDep, ImportedLib, ImportedProject,
-};
+use crate::{ImportedBin, ImportedDep, ImportedLib, ImportedProject};
 use crane_core::error::CraneError;
 
 pub fn parse(project_dir: &Path) -> Result<ImportedProject, CraneError> {
@@ -27,8 +29,16 @@ pub fn parse(project_dir: &Path) -> Result<ImportedProject, CraneError> {
 pub(crate) fn parse_text(text: &str) -> ImportedProject {
     let mut project = ImportedProject::default();
 
-    let stripped = strip_comments(text);
-    let calls = tokenize_calls(&stripped);
+    // cmake-parser 0.1.0-beta.1 does not handle inline comments such as
+    // `project(hello) # note` — the entire line is silently dropped. Strip
+    // them ourselves before handing the text to the parser.
+    let cleaned = strip_inline_comments(text);
+
+    let tokens = match parse_cmakelists(cleaned.as_bytes()) {
+        Ok(t) => t,
+        Err(_) => return project,
+    };
+    let doc = Doc::from(tokens);
 
     // User-defined variables seen via `set(VAR …)`. Used to expand `${VAR}` in
     // subsequent calls so that constructs like `add_executable(${TARGET} …)` or
@@ -40,31 +50,54 @@ pub(crate) fn parse_text(text: &str) -> ImportedProject {
     // the right `[platform.X]` overlay and report the rest as notes.
     let mut if_stack: Vec<IfState> = Vec::new();
 
-    for Call { name, args, line } in calls {
-        match name.as_str() {
-            "if" => {
-                let state = classify_if(&args, line);
+    for result in doc.to_commands_iter() {
+        let cmd = match result {
+            Ok(c) => c,
+            Err(_) => continue, // skip unknown/unparseable commands
+        };
+
+        match cmd {
+            Command::If(c) => {
+                let cond_toks: Vec<String> =
+                    c.condition.conditions.iter().map(|t| t.to_string()).collect();
+                let state = classify_if(&cond_toks);
                 if state.platform.is_none() {
+                    let cond_str = cond_toks.join(" ");
                     project.push_note(format!(
-                        "if(...) at line {line}: contents imported unconditionally — review for platform / option guards"
+                        "if({cond_str}): contents imported unconditionally — review for platform / option guards"
                     ));
                 }
                 if_stack.push(state);
                 continue;
             }
-            "endif" => {
+            Command::EndIf(_) => {
                 if_stack.pop();
                 continue;
             }
-            "elseif" | "else" => {
-                // Best-effort: any branch other than the original `if(...)`
-                // gets demoted to "no platform" so we don't misroute things.
-                // The user is expected to review the resulting crane.toml.
+            Command::ElseIf(c) => {
+                if let Some(top) = if_stack.last_mut() {
+                    if top.platform.is_some() {
+                        let cond_str = c
+                            .condition
+                            .conditions
+                            .iter()
+                            .map(|t| t.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        project.push_note(format!(
+                            "elseif({cond_str}) branch entered after {}: routed to base config",
+                            top.kind_label(),
+                        ));
+                        top.platform = None;
+                    }
+                }
+                continue;
+            }
+            Command::Else(_) => {
                 if let Some(top) = if_stack.last_mut() {
                     if top.platform.is_some() {
                         project.push_note(format!(
-                            "{} branch at line {line} entered after {}: routed to base config",
-                            name,
+                            "else branch entered after {}: routed to base config",
                             top.kind_label(),
                         ));
                         top.platform = None;
@@ -78,34 +111,140 @@ pub(crate) fn parse_text(text: &str) -> ImportedProject {
         // Innermost active platform wins, mirroring nested-if semantics.
         let platform = if_stack.iter().rev().find_map(|s| s.platform.as_deref());
 
-        let args = expand_args(&args, &vars);
+        match cmd {
+            // ── project() ─────────────────────────────────────────────────
+            Command::Project(p) => {
+                let mut args = vec![p.project_name.to_string()];
+                let d = format!("{:?}", p.details);
+                args.extend(project_args_from_debug(&d));
+                let args = expand_args(&args, &vars);
+                handle_project(&mut project, &args);
+            }
 
-        match name.as_str() {
-            "project" => handle_project(&mut project, &args),
-            "set" => handle_set(&mut project, &mut vars, &args),
-            "add_executable" => handle_add_executable(&mut project, platform, &args, line),
-            "add_library" => handle_add_library(&mut project, platform, &args, line),
-            "target_link_libraries" => handle_target_link_libraries(&mut project, platform, &args),
-            "target_include_directories" | "include_directories" => {
+            // ── set() ─────────────────────────────────────────────────────
+            Command::Set(s) => {
+                let (var, raw_values) = match *s {
+                    Set::Normal(n) => (
+                        n.variable.to_string(),
+                        n.value.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                    ),
+                    Set::Cache(c) => (
+                        c.variable.to_string(),
+                        c.value.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                    ),
+                };
+                let mut args = vec![var];
+                // Expand at assignment time so that chained sets like
+                // `set(A x); set(B ${A}/y)` store the resolved value for B.
+                args.extend(expand_args(&raw_values, &vars));
+                handle_set(&mut project, &mut vars, &args);
+            }
+
+            // ── add_executable() ──────────────────────────────────────────
+            Command::AddExecutable(a) => {
+                let mut flat = vec![a.name.to_string()];
+                // a.executable is of a private type; extract source tokens via Debug.
+                flat.extend(debug_to_tokens(&format!("{:?}", a.executable)));
+                let args = expand_args(&flat, &vars);
+                handle_add_executable(&mut project, platform, &args);
+            }
+
+            // ── add_library() ─────────────────────────────────────────────
+            Command::AddLibrary(a) => {
+                let lib_debug = format!("{:?}", a.library);
+                // Extract the library type keyword before reconstructing the flat arg list.
+                let lib_type_kw = library_type_keyword(&lib_debug);
+                let mut flat = vec![a.name.to_string()];
+                if let Some(kw) = lib_type_kw {
+                    flat.push(kw.to_string());
+                }
+                flat.extend(debug_to_tokens(&lib_debug));
+                let args = expand_args(&flat, &vars);
+                handle_add_library(&mut project, platform, &args);
+            }
+
+            // ── target_link_libraries() ───────────────────────────────────
+            Command::TargetLinkLibraries(t) => {
+                let flat = debug_to_tokens(&format!("{t:?}"));
+                let args = expand_args(&flat, &vars);
+                handle_target_link_libraries(&mut project, platform, &args);
+            }
+
+            // ── target_include_directories() ──────────────────────────────
+            Command::TargetIncludeDirectories(t) => {
+                let mut flat = vec![t.target.to_string()];
+                flat.extend(debug_to_tokens(&format!("{:?}", t.directories)));
+                let args = expand_args(&flat, &vars);
                 handle_include_dirs(&mut project, platform, &args);
             }
-            "find_package" => handle_find_package(&mut project, platform, &args),
-            "add_compile_definitions" => handle_compile_definitions(&mut project, platform, &args),
-            "add_definitions" => handle_add_definitions(&mut project, platform, &args),
-            "add_compile_options" | "target_compile_options" => {
-                handle_compile_options(&mut project, platform, &name, &args);
+
+            // ── include_directories() ─────────────────────────────────────
+            Command::IncludeDirectories(i) => {
+                let flat: Vec<String> = i.dirs.iter().map(|t| t.to_string()).collect();
+                let args = expand_args(&flat, &vars);
+                handle_include_dirs(&mut project, platform, &args);
             }
-            "add_subdirectory" => {
-                let sub = args.first().cloned().unwrap_or_default();
+
+            // ── find_package() ────────────────────────────────────────────
+            Command::FindPackage(f) => {
+                let name = match *f {
+                    FindPackage::Basic(b) => b.package_name.to_string(),
+                    FindPackage::Full(f) => f.package_name.to_string(),
+                };
+                let args = expand_args(&[name], &vars);
+                handle_find_package(&mut project, platform, &args);
+            }
+
+            // ── add_compile_definitions() ─────────────────────────────────
+            Command::AddCompileDefinitions(a) => {
+                let flat: Vec<String> =
+                    a.compile_definitions.iter().map(|t| t.to_string()).collect();
+                let args = expand_args(&flat, &vars);
+                handle_compile_definitions(&mut project, platform, &args);
+            }
+
+            // ── target_compile_definitions() ─────────────────────────────
+            Command::TargetCompileDefinitions(t) => {
+                // Skip first token (target name), extract definition tokens.
+                let debug = format!("{:?}", t.definitions);
+                let flat = debug_to_tokens(&debug);
+                let args = expand_args(&flat, &vars);
+                handle_compile_definitions(&mut project, platform, &args);
+            }
+
+            // ── add_definitions() ─────────────────────────────────────────
+            Command::AddDefinitions(a) => {
+                let flat: Vec<String> = a.definitions.iter().map(|t| t.to_string()).collect();
+                let args = expand_args(&flat, &vars);
+                handle_add_definitions(&mut project, platform, &args);
+            }
+
+            // ── add_compile_options() ─────────────────────────────────────
+            Command::AddCompileOptions(a) => {
+                let flat: Vec<String> =
+                    a.compile_options.iter().map(|t| t.to_string()).collect();
+                let args = expand_args(&flat, &vars);
+                handle_compile_options(&mut project, platform, false, &args);
+            }
+
+            // ── target_compile_options() ──────────────────────────────────
+            Command::TargetCompileOptions(t) => {
+                // target is public Token; options inner type is private.
+                let mut flat = vec![t.target.to_string()];
+                flat.extend(debug_to_tokens(&format!("{:?}", t.options)));
+                let args = expand_args(&flat, &vars);
+                handle_compile_options(&mut project, platform, true, &args);
+            }
+
+            // ── add_subdirectory() ────────────────────────────────────────
+            Command::AddSubdirectory(s) => {
+                let sub = extract_add_subdirectory_source(&s);
                 project.push_note(format!(
-                    "add_subdirectory({sub}) at line {line}: subdirectory not imported"
+                    "add_subdirectory({sub}): subdirectory not imported"
                 ));
             }
-            _ => {
-                // Ignore commands we don't care about (cmake_minimum_required,
-                // message, install, etc.). Unknown targets with obvious intent
-                // could be logged here in future; for v1 we keep output tidy.
-            }
+
+            _ => {}
         }
     }
 
@@ -116,10 +255,7 @@ pub(crate) fn parse_text(text: &str) -> ImportedProject {
 
 #[derive(Debug)]
 struct IfState {
-    /// Crane platform name (`linux`, `windows`, `macos`, `unix`, …) when this
-    /// `if(...)` was recognised as a platform guard, otherwise `None`.
     platform: Option<String>,
-    /// Original token list, used for diagnostic output.
     raw: Vec<String>,
 }
 
@@ -133,22 +269,17 @@ impl IfState {
     }
 }
 
-/// Recognise CMake's well-known platform predicates. Returns the matching
-/// crane platform key when the if-condition is a single platform check; in
-/// every other case (compound conditions, options, undefined behaviour) the
-/// caller falls back to the unconditional-import path.
-fn classify_if(args: &[String], _line: usize) -> IfState {
+fn classify_if(args: &[String]) -> IfState {
     let raw: Vec<String> = args.iter().cloned().collect();
 
-    // CMake `if(WIN32)`, `if(LINUX)`, etc. — a single bare platform token.
     if args.len() == 1 {
         if let Some(plat) = bare_platform_token(&args[0]) {
             return IfState { platform: Some(plat.to_string()), raw };
         }
     }
 
-    // CMake `if(CMAKE_SYSTEM_NAME STREQUAL "Linux")` — three-token form.
-    if args.len() == 3 && args[0].eq_ignore_ascii_case("CMAKE_SYSTEM_NAME")
+    if args.len() == 3
+        && args[0].eq_ignore_ascii_case("CMAKE_SYSTEM_NAME")
         && args[1].eq_ignore_ascii_case("STREQUAL")
     {
         if let Some(plat) = system_name_token(&args[2]) {
@@ -160,9 +291,6 @@ fn classify_if(args: &[String], _line: usize) -> IfState {
 }
 
 fn bare_platform_token(tok: &str) -> Option<&'static str> {
-    // Match the predicate variables CMake sets per platform / toolchain.
-    // MSVC and MINGW are toolchain markers but always imply Windows in
-    // practice, so they map to the windows overlay.
     match tok.to_ascii_uppercase().as_str() {
         "WIN32" | "MSVC" | "MINGW" | "WINDOWS" | "CYGWIN" => Some("windows"),
         "APPLE" => Some("macos"),
@@ -193,6 +321,174 @@ fn system_name_token(tok: &str) -> Option<&'static str> {
     }
 }
 
+// ── Debug extraction helpers ──────────────────────────────────────────────────
+
+/// Extract all `Token(value)` strings from a `Debug`-formatted cmake-parser struct.
+///
+/// cmake-parser's inner enum types (e.g. `Executable`, `Library`, `Directory`) live in
+/// private sub-modules and cannot be imported. Their Debug implementations consistently
+/// format every CMake token value as `Token(value)` (unquoted) or `Token("value")`
+/// (quoted), so we can recover the original argument list without naming the types.
+fn debug_to_tokens(debug_str: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut s = debug_str;
+    while let Some(idx) = s.find("Token(") {
+        s = &s[idx + 6..]; // skip "Token("
+        let (tok, rest) = if s.starts_with('"') {
+            // Quoted token: Token("some value")
+            let inner = &s[1..];
+            match inner.find('"') {
+                Some(end) => (inner[..end].to_string(), &inner[end + 1..]),
+                None => break,
+            }
+        } else {
+            // Unquoted token: Token(foo/bar.cpp)
+            // Tokens are path-like strings that won't contain ')' themselves.
+            match s.find(')') {
+                Some(end) => (s[..end].to_string(), &s[end + 1..]),
+                None => break,
+            }
+        };
+        s = rest;
+        if !tok.is_empty() {
+            tokens.push(tok);
+        }
+    }
+    tokens
+}
+
+/// Reconstruct the keyword-bearing portion of `project()` arguments from the
+/// Debug representation of `Option<ProjectDetails>`.
+///
+/// Returns the args that should come *after* the project name:
+/// `["VERSION", "1.2.3", "DESCRIPTION", "...", "LANGUAGES", "CXX", "C"]`
+fn project_args_from_debug(details_debug: &str) -> Vec<String> {
+    let mut args = Vec::new();
+
+    if details_debug.contains("General(") {
+        // GeneralProjectDetails has named fields; extract each one by key.
+        if let Some(after) = details_debug.split("version: Some(Token(").nth(1) {
+            if let Some(end) = after.find(')') {
+                let v = after[..end].trim_matches('"');
+                if !v.is_empty() {
+                    args.push("VERSION".to_string());
+                    args.push(v.to_string());
+                }
+            }
+        }
+        if let Some(after) = details_debug.split("description: Some(Token(").nth(1) {
+            if let Some(end) = after.find(')') {
+                let d = after[..end].trim_matches('"');
+                if !d.is_empty() {
+                    args.push("DESCRIPTION".to_string());
+                    args.push(d.to_string());
+                }
+            }
+        }
+        if let Some(after) = details_debug.split("languages: Some([").nth(1) {
+            let lang_section = after.split("])").next().unwrap_or("");
+            let langs = debug_to_tokens(lang_section);
+            if !langs.is_empty() {
+                args.push("LANGUAGES".to_string());
+                args.extend(langs);
+            }
+        }
+    } else if details_debug.contains("Short(") {
+        // Old-style: project(name LANG1 LANG2) — treat all tokens as language list.
+        let toks = debug_to_tokens(details_debug);
+        if !toks.is_empty() {
+            args.push("LANGUAGES".to_string());
+            args.extend(toks);
+        }
+    }
+
+    args
+}
+
+/// Infer the CMake library type keyword from the Debug representation of a
+/// cmake-parser `Library` enum value.
+fn library_type_keyword(lib_debug: &str) -> Option<&'static str> {
+    // The Debug output of the library enum variants contains variant names like:
+    //   "Normal(NormalLibrary { library_type: Some(Shared), ... })"
+    //   "Normal(NormalLibrary { library_type: Some(Static), ... })"
+    //   "Interface(InterfaceLibrary { ... })"
+    //   "Object(ObjectLibrary { ... })"
+    if lib_debug.contains("library_type: Some(Shared)")
+        || lib_debug.contains("library_type: Some(Module)")
+    {
+        Some("SHARED")
+    } else if lib_debug.contains("library_type: Some(Static)") {
+        Some("STATIC")
+    } else if lib_debug.starts_with("Interface(") {
+        Some("INTERFACE")
+    } else if lib_debug.starts_with("Object(") {
+        Some("OBJECT")
+    } else {
+        None
+    }
+}
+
+/// Extract the `source_dir` from an `AddSubdirectory` node.
+///
+/// `AddSubdirectory::source_dir` is private in cmake-parser, so we fall back
+/// to the Debug representation, which is stable within a crate version.
+fn extract_add_subdirectory_source(
+    s: &cmake_parser::command::project::AddSubdirectory<'_>,
+) -> String {
+    // Debug output looks like:
+    //   AddSubdirectory { source_dir: Token(vendor/zlib), binary_dir: None, ... }
+    // or with a quoted path:
+    //   AddSubdirectory { source_dir: Token("some path"), binary_dir: None, ... }
+    let debug = format!("{s:?}");
+    if let Some((_, rest)) = debug.split_once("source_dir: Token(") {
+        if let Some(stripped) = rest.strip_prefix('"') {
+            return stripped.split('"').next().unwrap_or("").to_string();
+        } else {
+            return rest.split(')').next().unwrap_or("").to_string();
+        }
+    }
+    String::new()
+}
+
+// ── Comment stripping ─────────────────────────────────────────────────────────
+
+/// Strip inline `#` comments from CMake source before passing to cmake-parser.
+///
+/// cmake-parser 0.1.0-beta.1 silently drops any command line that contains a
+/// trailing `# comment`, so we remove them ourselves. Full-line comments
+/// (`# ...` with optional leading whitespace) are replaced by blank lines to
+/// preserve line numbers for other diagnostics.
+fn strip_inline_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let bytes = line.as_bytes();
+        let mut in_quote = false;
+        let mut comment_pos = None;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => in_quote = !in_quote,
+                b'\\' if in_quote && i + 1 < bytes.len() => i += 1,
+                b'#' if !in_quote => {
+                    comment_pos = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if let Some(pos) = comment_pos {
+            out.push_str(line[..pos].trim_end());
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+// ── Variable expansion ────────────────────────────────────────────────────────
+
 /// Expand `${VAR}` references in each argument using `vars`. If the expansion
 /// of a single argument yields whitespace-separated tokens (the common case for
 /// `set(SRCS a.cpp b.cpp); add_executable(app ${SRCS})`), the result is split
@@ -202,8 +498,6 @@ fn expand_args(args: &[String], vars: &HashMap<String, String>) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     for a in args {
         let expanded = expand_str(a, vars);
-        // No whitespace introduced: keep as a single token, even if empty —
-        // dropping empty tokens matches the original split_args behaviour.
         if !expanded.contains(char::is_whitespace) {
             if !expanded.is_empty() {
                 out.push(expanded);
@@ -234,9 +528,6 @@ fn expand_str(input: &str, vars: &HashMap<String, String>) -> String {
                 continue;
             }
         }
-        // ASCII-safe to push by byte since `${` boundaries are ASCII; for
-        // multi-byte chars we still walk one byte at a time but only push them
-        // through the char path.
         let c = input[i..].chars().next().unwrap();
         out.push(c);
         i += c.len_utf8();
@@ -244,110 +535,9 @@ fn expand_str(input: &str, vars: &HashMap<String, String>) -> String {
     out
 }
 
-// ── Tokeniser ─────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-struct Call {
-    name: String,
-    args: Vec<String>,
-    line: usize,
-}
-
-/// Strip CMake line comments (`# …` to end of line) but preserve line count so
-/// error messages can cite the original line number.
-fn strip_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
-        let mut in_string = false;
-        let mut end = line.len();
-        let bytes = line.as_bytes();
-        for (i, &b) in bytes.iter().enumerate() {
-            match b {
-                b'"' => in_string = !in_string,
-                b'#' if !in_string => {
-                    end = i;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        out.push_str(&line[..end]);
-        out.push('\n');
-    }
-    out
-}
-
-fn tokenize_calls(text: &str) -> Vec<Call> {
-    // name(  … ), allowing newlines inside the parens
-    let head = Regex::new(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
-    let mut calls = Vec::new();
-
-    for m in head.captures_iter(text) {
-        let whole = m.get(0).unwrap();
-        let name = m.get(1).unwrap().as_str().to_string();
-        let open = whole.end();
-
-        // Walk forward, balancing parens.
-        let bytes = text.as_bytes();
-        let mut depth = 1usize;
-        let mut i = open;
-        let mut in_string = false;
-        while i < bytes.len() && depth > 0 {
-            let c = bytes[i];
-            match c {
-                b'"' => in_string = !in_string,
-                b'(' if !in_string => depth += 1,
-                b')' if !in_string => depth -= 1,
-                _ => {}
-            }
-            if depth == 0 {
-                break;
-            }
-            i += 1;
-        }
-        if depth != 0 {
-            // Unmatched paren — skip.
-            continue;
-        }
-        let inner = &text[open..i];
-        let args = split_args(inner);
-        let line = text[..whole.start()].bytes().filter(|&b| b == b'\n').count() + 1;
-        calls.push(Call { name, args, line });
-    }
-    calls
-}
-
-/// Split CMake argument text into individual tokens, respecting double-quoted
-/// strings. Nested variable expansions (`${X}`) are preserved as-is and the
-/// caller may choose to strip or dereference them.
-fn split_args(input: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_string = false;
-    for c in input.chars() {
-        match c {
-            '"' => {
-                in_string = !in_string;
-                // Drop the quote characters; they're structural.
-            }
-            ' ' | '\t' | '\n' | '\r' if !in_string => {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-            }
-            _ => cur.push(c),
-        }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
 // ── Command handlers ──────────────────────────────────────────────────────────
 
 fn handle_project(p: &mut ImportedProject, args: &[String]) {
-    // project(<name> [VERSION x.y.z] [DESCRIPTION "…"] [LANGUAGES CXX C …])
     if args.is_empty() {
         return;
     }
@@ -377,7 +567,6 @@ fn handle_project(p: &mut ImportedProject, args: &[String]) {
         }
     }
 
-    // If no LANGUAGES clause, CMake defaults to C and C++.
     if p.languages.is_empty() {
         p.language_mut("c");
         p.language_mut("cpp");
@@ -395,7 +584,7 @@ fn cmake_lang_to_key(name: &str) -> Option<&'static str> {
     match name.to_ascii_uppercase().as_str() {
         "CXX" | "C++" => Some("cpp"),
         "C" => Some("c"),
-        "Fortran" | "FORTRAN" => Some("fortran"),
+        "FORTRAN" => Some("fortran"),
         "CUDA" => Some("cuda"),
         "HIP" => Some("hip"),
         _ => None,
@@ -403,15 +592,7 @@ fn cmake_lang_to_key(name: &str) -> Option<&'static str> {
 }
 
 fn handle_set(p: &mut ImportedProject, vars: &mut HashMap<String, String>, args: &[String]) {
-    // set(VAR value… [CACHE TYPE "doc" [FORCE]] [PARENT_SCOPE])
-    let Some((var, rest)) = args.split_first() else { return };
-
-    // Collect values up to the first CMake `set()` keyword.
-    let value_end = rest
-        .iter()
-        .position(|t| matches!(t.as_str(), "CACHE" | "PARENT_SCOPE" | "FORCE"))
-        .unwrap_or(rest.len());
-    let values = &rest[..value_end];
+    let Some((var, values)) = args.split_first() else { return };
 
     if let Some(first) = values.first() {
         match var.as_str() {
@@ -425,14 +606,10 @@ fn handle_set(p: &mut ImportedProject, vars: &mut HashMap<String, String>, args:
         }
     }
 
-    // Always record the variable so subsequent ${VAR} references can resolve.
-    // Multi-token values are joined with spaces; expand_args splits them back
-    // out into separate args at use sites.
     vars.insert(var.clone(), values.join(" "));
 }
 
-fn handle_add_executable(p: &mut ImportedProject, platform: Option<&str>, args: &[String], line: usize) {
-    // add_executable(<name> [WIN32] [MACOSX_BUNDLE] [EXCLUDE_FROM_ALL] src…)
+fn handle_add_executable(p: &mut ImportedProject, platform: Option<&str>, args: &[String]) {
     let Some((name, rest)) = args.split_first() else { return };
     let srcs: Vec<&String> = rest
         .iter()
@@ -445,7 +622,7 @@ fn handle_add_executable(p: &mut ImportedProject, platform: Option<&str>, args: 
         });
         if let Some(plat) = platform {
             p.push_note(format!(
-                "add_executable({name}) at line {line} was inside if({plat}) — emitted at top level; remove or guard manually for non-{plat} builds"
+                "add_executable({name}) was inside if({plat}) — emitted at top level; remove or guard manually for non-{plat} builds"
             ));
         }
     }
@@ -458,8 +635,7 @@ fn is_exe_keyword(s: &str) -> bool {
     )
 }
 
-fn handle_add_library(p: &mut ImportedProject, platform: Option<&str>, args: &[String], line: usize) {
-    // add_library(<name> [STATIC|SHARED|MODULE|INTERFACE|OBJECT] src…)
+fn handle_add_library(p: &mut ImportedProject, platform: Option<&str>, args: &[String]) {
     let Some((name, rest)) = args.split_first() else { return };
     let (lib_type, srcs_start) = match rest.first().map(String::as_str) {
         Some("STATIC") => ("static", 1),
@@ -485,7 +661,7 @@ fn handle_add_library(p: &mut ImportedProject, platform: Option<&str>, args: &[S
 
     if let Some(plat) = platform {
         p.push_note(format!(
-            "add_library({name}) at line {line} was inside if({plat}) — emitted at top level; review for non-{plat} builds"
+            "add_library({name}) was inside if({plat}) — emitted at top level; review for non-{plat} builds"
         ));
     }
 }
@@ -497,8 +673,11 @@ fn parent_dir_or_self(src: &str) -> String {
     }
 }
 
-fn handle_target_link_libraries(p: &mut ImportedProject, platform: Option<&str>, args: &[String]) {
-    // target_link_libraries(<target> [PUBLIC|PRIVATE|INTERFACE] lib…)
+fn handle_target_link_libraries(
+    p: &mut ImportedProject,
+    platform: Option<&str>,
+    args: &[String],
+) {
     let Some((_target, rest)) = args.split_first() else { return };
     for a in rest {
         if matches!(
@@ -510,8 +689,6 @@ fn handle_target_link_libraries(p: &mut ImportedProject, platform: Option<&str>,
         if a.starts_with("${") {
             continue;
         }
-        // Strip a leading "lib" prefix cosmetically for the crane key, but
-        // keep the linker name intact as the system value.
         let key = a.trim_start_matches("lib").to_string();
         let dep_key = if key.is_empty() { a.clone() } else { key };
         p.add_dep(platform, dep_key, ImportedDep::System(a.clone()));
@@ -520,7 +697,6 @@ fn handle_target_link_libraries(p: &mut ImportedProject, platform: Option<&str>,
 
 fn handle_include_dirs(p: &mut ImportedProject, platform: Option<&str>, args: &[String]) {
     for a in args {
-        // Scope / order keywords are CMake structure, not paths.
         if matches!(
             a.to_ascii_uppercase().as_str(),
             "PUBLIC" | "PRIVATE" | "INTERFACE" | "BEFORE" | "AFTER" | "SYSTEM"
@@ -530,9 +706,6 @@ fn handle_include_dirs(p: &mut ImportedProject, platform: Option<&str>, args: &[
         if a.starts_with("${") {
             continue;
         }
-        // target_include_directories() starts with a target name; a bare token
-        // with no slash and no dot is almost certainly the target — skip. We
-        // still accept `include` / `src` as conventional include dir names.
         let looks_like_path = a.contains('/') || a.contains('.') || a == "include" || a == "src";
         if !looks_like_path {
             continue;
@@ -543,7 +716,6 @@ fn handle_include_dirs(p: &mut ImportedProject, platform: Option<&str>, args: &[
 }
 
 fn handle_find_package(p: &mut ImportedProject, platform: Option<&str>, args: &[String]) {
-    // find_package(Name [REQUIRED] [COMPONENTS …])
     let Some(name) = args.first() else { return };
     let key = name.to_ascii_lowercase();
     p.add_dep(platform, key.clone(), ImportedDep::System(key));
@@ -552,7 +724,11 @@ fn handle_find_package(p: &mut ImportedProject, platform: Option<&str>, args: &[
     ));
 }
 
-fn handle_compile_definitions(p: &mut ImportedProject, platform: Option<&str>, args: &[String]) {
+fn handle_compile_definitions(
+    p: &mut ImportedProject,
+    platform: Option<&str>,
+    args: &[String],
+) {
     for a in args {
         if a.starts_with("${") {
             continue;
@@ -576,9 +752,13 @@ fn handle_add_definitions(p: &mut ImportedProject, platform: Option<&str>, args:
     }
 }
 
-fn handle_compile_options(p: &mut ImportedProject, platform: Option<&str>, cmd: &str, args: &[String]) {
-    // target_compile_options: first arg is the target — skip it.
-    let start = if cmd == "target_compile_options" { 1 } else { 0 };
+fn handle_compile_options(
+    p: &mut ImportedProject,
+    platform: Option<&str>,
+    is_target_variant: bool,
+    args: &[String],
+) {
+    let start = if is_target_variant { 1 } else { 0 };
     for a in &args[start..] {
         if matches!(
             a.to_ascii_uppercase().as_str(),
@@ -740,8 +920,6 @@ mod tests {
 
     #[test]
     fn unknown_vars_are_dropped_by_filter() {
-        // ${UNDEFINED} stays literal; the existing `${`-prefix filter in
-        // handle_target_link_libraries skips it so we don't emit a bogus dep.
         let src = r#"
             project(p)
             add_executable(app main.c)
@@ -761,9 +939,6 @@ mod tests {
             target_link_libraries(app PRIVATE ${MY_OPT})
         "#;
         let p = parse_text(src);
-        // ${MY_OPT} should expand to "ON", not "ON CACHE BOOL …".
-        // (And "ON" itself becomes a system dep, which is the user's problem
-        // to review, but at least it's not "BOOL" / "FORCE" garbage.)
         assert!(p.dependencies.contains_key("ON"));
         assert!(!p.dependencies.contains_key("BOOL"));
         assert!(!p.dependencies.contains_key("FORCE"));
@@ -791,10 +966,8 @@ mod tests {
             endif()
         "#;
         let p = parse_text(src);
-        // Contents of the if-block are still imported (we can't evaluate
-        // arbitrary options), but a note records that the import was unconditional.
         assert_eq!(p.bins.len(), 1);
-        assert!(p.notes.iter().any(|n| n.contains("if(...)") && n.contains("unconditionally")));
+        assert!(p.notes.iter().any(|n| n.contains("unconditionally")));
     }
 
     #[test]
@@ -813,10 +986,8 @@ mod tests {
         assert!(win.dependencies.contains_key("ws2_32"));
         assert!(win.defines.contains(&"WIN_BUILD".to_string()));
         assert!(win.include_paths.contains(&"third_party/win-include/".to_string()));
-        // Base config should NOT have these.
         assert!(!p.dependencies.contains_key("ws2_32"));
         assert!(!p.compiler.defines.contains(&"WIN_BUILD".to_string()));
-        // Recognised platform guards do NOT emit the "unconditionally" note.
         assert!(!p.notes.iter().any(|n| n.contains("unconditionally")));
     }
 
@@ -859,9 +1030,7 @@ mod tests {
         "#;
         let p = parse_text(src);
         assert!(p.platforms.contains_key("freebsd"));
-        assert!(
-            p.platforms["freebsd"].dependencies.contains_key("execinfo")
-        );
+        assert!(p.platforms["freebsd"].dependencies.contains_key("execinfo"));
     }
 
     #[test]
@@ -873,8 +1042,6 @@ mod tests {
             endif()
         "#;
         let p = parse_text(src);
-        // Bin is still emitted (it can't be platform-overlayed in v1) but
-        // a note tells the user to review.
         assert_eq!(p.bins.len(), 1);
         assert_eq!(p.bins[0].name, "winapp");
         assert!(p.notes.iter().any(|n|

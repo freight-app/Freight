@@ -1,14 +1,15 @@
-//! Makefile → [`ImportedProject`].
+//! Makefile → [`ImportedProject`] using the `makefile-lossless` crate.
 //!
 //! Makefiles are ad-hoc: there is no single canonical shape. This importer
 //! pulls out the pieces that map cleanly to crane (compiler variables, flag
 //! variables, source lists, the primary link target) and flags everything else
-//! as a note so the user can review. Recipe bodies are ignored entirely —
-//! trying to execute them would defeat the point of migrating off make.
+//! as a note so the user can review.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+use makefile_lossless::Makefile;
 
 use crate::{ImportedBin, ImportedDep, ImportedProject};
 use crane_core::error::CraneError;
@@ -41,50 +42,54 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
     let mut project = ImportedProject::default();
     project.name = Some(default_name.to_string());
 
-    let lines = join_continuations(text);
+    // makefile-lossless 0.3's raw_value() returns only the first physical line
+    // of a multi-line variable, so we join backslash continuations ourselves
+    // before parsing.
+    let joined = join_continuations(text);
+
+    // Parse with relaxed mode so minor syntax errors don't abort the import.
+    let (mf, _errors) = Makefile::from_str_relaxed(&joined);
+
+    // Collect variable definitions in file order, expanding references as we go.
+    // This mirrors the original hand-rolled behaviour: later assignments win for
+    // `=` / `:=` / `?=`, while `+=` appends.
     let mut vars: HashMap<String, String> = HashMap::new();
     let mut rule_heads: Vec<String> = Vec::new();
 
-    for line in &lines {
-        let trimmed = line.trim_start();
-        // Skip comments and blank lines.
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        // Skip recipe lines — they start with a tab in the original, which
-        // `join_continuations` preserves at the start.
-        if line.starts_with('\t') {
-            continue;
-        }
-        // Skip directives we don't interpret.
-        if starts_with_directive(trimmed) {
-            project.push_note(format!("make directive not imported: `{}`", trimmed.trim_end()));
-            continue;
-        }
-
-        if let Some((var, op, rhs)) = parse_assignment(trimmed) {
-            let expanded = expand(&vars, rhs.trim());
-            match op {
-                "+=" => {
-                    let cur = vars.entry(var.to_string()).or_default();
-                    if !cur.is_empty() {
-                        cur.push(' ');
-                    }
-                    cur.push_str(&expanded);
-                }
-                _ => {
-                    vars.insert(var.to_string(), expanded);
-                }
+    for var in mf.variable_definitions() {
+        let name = match var.name() {
+            Some(n) => n,
+            None => continue,
+        };
+        let raw = var.raw_value().unwrap_or_default();
+        let expanded = expand(&vars, raw.trim());
+        let op = var.assignment_operator().unwrap_or_else(|| "=".to_string());
+        if op == "+=" {
+            let cur = vars.entry(name.clone()).or_default();
+            if !cur.is_empty() {
+                cur.push(' ');
             }
-            continue;
+            cur.push_str(&expanded);
+        } else {
+            vars.insert(name.clone(), expanded);
         }
+    }
 
-        if let Some(colon) = trimmed.find(':') {
-            let head = trimmed[..colon].trim().to_string();
-            if !head.is_empty() {
-                rule_heads.push(head);
+    // Collect rule targets for the binary name heuristic.
+    for rule in mf.rules() {
+        for target in rule.targets() {
+            if !target.is_empty() {
+                rule_heads.push(target);
             }
         }
+    }
+
+    // Emit a note for conditionals — we don't attempt to evaluate them.
+    let conditional_count = mf.conditionals().count();
+    if conditional_count > 0 {
+        project.push_note(format!(
+            "{conditional_count} conditional block(s) (ifdef/ifeq/…) found — contents were imported unconditionally; review manually"
+        ));
     }
 
     // ── Languages ──
@@ -95,16 +100,13 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
     if has_cxxflags {
         project.language_mut("cpp");
     }
-    if has_cflags && !has_cxxflags {
-        project.language_mut("c");
-    } else if has_cflags && has_cxxflags {
+    if has_cflags {
         project.language_mut("c");
     }
     if has_fflags {
         project.language_mut("fortran");
     }
     if project.languages.is_empty() {
-        // Default guess: treat as C.
         project.language_mut("c");
     }
 
@@ -120,7 +122,7 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
     }
     extract_flags(&mut project, &all_flags);
 
-    // ── System deps from LDLIBS / LDFLAGS ──
+    // ── System deps from LDLIBS / LDFLAGS / LIBS ──
     let mut link_text = String::new();
     for key in ["LDLIBS", "LDFLAGS", "LIBS"] {
         if let Some(v) = vars.get(key) {
@@ -152,18 +154,17 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
         .unwrap_or_else(|| default_name.to_string());
 
     let sources = collect_sources(&vars);
-    let entry = pick_entry_source(&sources)
-        .unwrap_or_else(|| default_entry_for_languages(&project));
+    let entry =
+        pick_entry_source(&sources).unwrap_or_else(|| default_entry_for_languages(&project));
 
     project.bins.push(ImportedBin {
         name: bin_name,
         src: entry,
     });
 
-    // Recipes are ignored by design, but recording their targets helps the user.
     let skipped: Vec<&String> = rule_heads
         .iter()
-        .filter(|r| !is_phony_rule(r) && !r.contains('$'))
+        .filter(|r| !is_phony_rule(r) && !r.contains('%') && !r.contains('$'))
         .collect();
     if skipped.len() > 1 {
         project.push_note(format!(
@@ -177,59 +178,21 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Fold backslash-newline continuations into a single logical line.
-fn join_continuations(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    for line in text.split_inclusive('\n') {
-        let trimmed_nl = line.trim_end_matches('\n');
-        if let Some(head) = trimmed_nl.strip_suffix('\\') {
-            cur.push_str(head);
-            cur.push(' ');
+/// Join backslash-newline continuations so that `makefile-lossless`'s
+/// `raw_value()` — which only returns the first physical line — sees the
+/// full value.
+fn join_continuations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split('\n') {
+        if let Some(prefix) = line.strip_suffix('\\') {
+            out.push_str(prefix);
+            out.push(' ');
         } else {
-            cur.push_str(trimmed_nl);
-            out.push(std::mem::take(&mut cur));
+            out.push_str(line);
+            out.push('\n');
         }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
     }
     out
-}
-
-fn starts_with_directive(line: &str) -> bool {
-    for d in &[
-        "include ", "-include ", "sinclude ", "ifeq", "ifneq", "ifdef", "ifndef",
-        "else", "endif", "define ", "endef", "override ", "export ", "unexport ",
-        "vpath ", ".PHONY", ".SUFFIXES", ".DEFAULT",
-    ] {
-        if line.starts_with(d) || line.trim_end() == d.trim_end() {
-            return true;
-        }
-    }
-    false
-}
-
-/// Parse a variable assignment line. Returns (name, op, rhs).
-fn parse_assignment(line: &str) -> Option<(&str, &str, &str)> {
-    // Look for `:=`, `+=`, `?=`, `=` — in that order so `:=` isn't confused
-    // with a rule colon.
-    for op in &[":=", "+=", "?=", "="] {
-        if let Some(idx) = line.find(op) {
-            let var = line[..idx].trim();
-            // Must be a bare identifier to be an assignment, not a rule like
-            // `target: prereq =foo`.
-            if !var.is_empty()
-                && var
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                let rhs = &line[idx + op.len()..];
-                return Some((var, op, rhs));
-            }
-        }
-    }
-    None
 }
 
 /// Expand `$(VAR)` / `${VAR}` references against previously-seen variables.
@@ -272,7 +235,6 @@ fn extract_flags(project: &mut ImportedProject, text: &str) {
     while i < tokens.len() {
         let tok = tokens[i];
 
-        // `-D NAME` and `-I PATH` with a separating space — bump the cursor.
         if tok == "-D" && i + 1 < tokens.len() {
             push_define(project, tokens[i + 1]);
             i += 2;
@@ -289,8 +251,6 @@ fn extract_flags(project: &mut ImportedProject, text: &str) {
         } else if let Some(rest) = tok.strip_prefix("-I") {
             push_include(project, rest);
         } else if let Some(rest) = tok.strip_prefix("-std=") {
-            // Prefer mapping C-family stds onto whichever language section is
-            // present; if both are present, CXX wins for c++ prefixes.
             if rest.starts_with("c++") || rest.starts_with("gnu++") {
                 let lang = project.language_mut("cpp");
                 lang.std = Some(rest.replace("gnu++", "c++"));
@@ -299,8 +259,7 @@ fn extract_flags(project: &mut ImportedProject, text: &str) {
                 lang.std = Some(rest.replace("gnu", "c"));
             }
         } else if tok == "-g" || tok.starts_with("-O") || tok == "-Wall" || tok == "-Wextra" {
-            // Recognised but represented via crane's structured profile /
-            // warnings fields; don't echo as raw flags.
+            // Represented via crane's structured profile/warnings fields.
         } else if tok.starts_with('-') && !project.compiler.flags.contains(&tok.to_string()) {
             project.compiler.flags.push(tok.to_string());
         }
@@ -338,7 +297,6 @@ fn collect_sources(vars: &HashMap<String, String>) -> Vec<String> {
         if let Some(v) = vars.get(key) {
             for tok in v.split_whitespace() {
                 if tok.ends_with(".o") {
-                    // Objects: treat `foo.o` as `foo.c` by default.
                     out.push(format!("{}.c", tok.trim_end_matches(".o")));
                 } else {
                     out.push(tok.to_string());
@@ -350,7 +308,9 @@ fn collect_sources(vars: &HashMap<String, String>) -> Vec<String> {
 }
 
 fn pick_entry_source(sources: &[String]) -> Option<String> {
-    let preferred = ["main.cpp", "main.cc", "main.cxx", "main.c", "src/main.cpp", "src/main.c"];
+    let preferred = [
+        "main.cpp", "main.cc", "main.cxx", "main.c", "src/main.cpp", "src/main.c",
+    ];
     for p in &preferred {
         if let Some(s) = sources.iter().find(|s| s.ends_with(p)) {
             return Some(s.clone());
@@ -374,7 +334,6 @@ fn first_non_phony_rule(rules: &[String]) -> Option<String> {
         if is_phony_rule(r) {
             continue;
         }
-        // Skip pattern rules and multi-target rules for the binary name guess.
         if r.contains('%') || r.contains(' ') || r.contains('$') {
             continue;
         }
