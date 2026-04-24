@@ -134,7 +134,9 @@ pub struct ImportedProject {
     pub description: Option<String>,
     /// Keyed by crane language identifier: `"c"`, `"cpp"`, `"fortran"`, etc.
     pub languages: BTreeMap<String, ImportedLanguage>,
-    pub lib: Option<ImportedLib>,
+    /// All libraries declared in the source build file, in declaration order.
+    /// The first is emitted as `[lib]`; extras generate a workspace note.
+    pub libs: Vec<ImportedLib>,
     pub bins: Vec<ImportedBin>,
     /// Keyed by dep name.
     pub dependencies: BTreeMap<String, ImportedDep>,
@@ -168,6 +170,8 @@ pub struct ImportedLanguage {
 
 #[derive(Debug, Clone)]
 pub struct ImportedLib {
+    /// Library target name from the source build system (e.g. `"mylib"`).
+    pub name: String,
     /// `"static"`, `"shared"`, or `"header-only"`.
     pub lib_type: String,
     /// Source directory (e.g. `"src/"`).

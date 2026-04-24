@@ -49,6 +49,13 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
             "add_project_arguments" | "add_global_arguments" => {
                 handle_add_arguments(&mut project, &c.positional);
             }
+            "subdir" => {
+                if let Some(dir) = c.positional.first() {
+                    project.push_note(format!(
+                        "subdir('{dir}'): subdirectory not imported — recurse manually"
+                    ));
+                }
+            }
             _ => {}
         }
     }
@@ -135,6 +142,7 @@ fn is_interesting(name: &str) -> bool {
             | "include_directories"
             | "add_project_arguments"
             | "add_global_arguments"
+            | "subdir"
     )
 }
 
@@ -351,16 +359,25 @@ fn handle_executable(p: &mut ImportedProject, positional: &[String]) {
 }
 
 fn handle_library(p: &mut ImportedProject, positional: &[String], default_type: &str) {
+    let Some(name) = positional.first() else { return };
     let srcs: Vec<&String> = positional.iter().skip(1).filter(|s| looks_like_source(s)).collect();
     let src_dir = srcs
         .first()
         .map(|s| parent_dir_or_self(s))
         .unwrap_or_else(|| "src/".to_string());
-    p.lib = Some(ImportedLib {
-        lib_type: default_type.to_string(),
-        src: src_dir,
-        include: None,
-    });
+
+    if p.libs.is_empty() {
+        p.libs.push(ImportedLib {
+            name: name.clone(),
+            lib_type: default_type.to_string(),
+            src: src_dir,
+            include: None,
+        });
+    } else {
+        p.push_note(format!(
+            "library('{name}') — multiple libraries found; consider splitting into a workspace (only the first library is emitted as [lib])"
+        ));
+    }
 }
 
 fn parent_dir_or_self(src: &str) -> String {
@@ -467,7 +484,7 @@ project('x', 'cpp')
 shared_library('foo', 'src/a.cpp', 'src/b.cpp')
 ";
         let p = parse_text(src, "fallback");
-        let lib = p.lib.expect("expected a lib");
+        let lib = p.libs.first().expect("expected a lib");
         assert_eq!(lib.lib_type, "shared");
         assert_eq!(lib.src, "src/");
     }

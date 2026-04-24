@@ -43,7 +43,9 @@ fn cmake_fixture_round_trips_through_emit() {
     assert!(toml.contains("src  = \"src/main.cpp\""));
     assert!(toml.contains("m = { system = \"m\" }"));
     assert!(toml.contains("pthread = { system = \"pthread\" }"));
+    // find_package(OpenSSL) adds openssl; target_link_libraries(OpenSSL::SSL) adds ssl
     assert!(toml.contains("openssl = { system = \"openssl\" }"));
+    assert!(toml.contains("ssl = { system = \"ssl\" }"));
     assert!(toml.contains("paths = [\"include/\"]"));
     assert!(toml.contains("# CRANE: add_subdirectory(vendor/zlib)"));
 }

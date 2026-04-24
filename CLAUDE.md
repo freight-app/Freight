@@ -164,6 +164,8 @@ libopenblas = "0.3"
 openssl     = { system = "openssl", version = ">=3.0" }
 # Path deps compile a sibling crane project and link its archive
 myutils     = { path = "../myutils" }
+# Target-filtered dep — only linked when cross-compiling to that triple
+arm-hal     = { path = "../arm-hal", targets = ["aarch64-linux-gnu"] }
 
 [dev-dependencies]
 libcheck = "0.15"
@@ -175,6 +177,8 @@ debug     = false
 warnings  = "all"    # none | default | all | error
 defines   = ["USE_BLAS"]
 flags     = []
+target    = "aarch64-linux-gnu"   # optional cross-compilation target triple
+sysroot   = "/opt/sysroot"        # optional sysroot path
 
 [compiler.includes]
 paths = ["include/", "third_party/include/"]
@@ -259,6 +263,8 @@ define_value = "-D{name}={value}"
 output       = "-o {path}"
 compile_only = "-c"
 dep_file     = "-MMD -MF {path}"   # generates Makefile dep file for header tracking
+target       = "--target={triple}" # empty string = unsupported (e.g. GCC uses dedicated cross binary)
+sysroot      = "--sysroot={path}"  # empty string = unsupported
 
 [modules]
 supported     = true
@@ -365,8 +371,8 @@ crane migrate [--from <format>] [--dry-run] [--force]  import existing build sys
 crane login                       authenticate with crane.dev         ✗ Phase 12 (registry server)
 crane publish                     upload package to registry          ✗ Phase 12 (registry server)
 crane yank <version>              yank a published version            ✗ Phase 12 (registry server)
-crane toolchain add <name>        install a compiler template         ✗ Phase 10 (deferred)
-crane toolchain use <name>        set default compiler backend        ✗ Phase 10 (deferred)
+crane toolchain add <path>        install a compiler template         ✓ implemented
+crane toolchain use <name>        set default compiler backend        ✗ deferred
 crane lsp                         run language server on stdio        ✓ implemented
 ```
 
@@ -465,15 +471,12 @@ crane lsp                         run language server on stdio        ✓ implem
 - [ ] `crane fetch` — actually download version deps from crane.dev (needs registry server)
 - [ ] `crane add` — resolve + lock exact version from crane.dev (needs registry server)
 
-### Phase 10 — Cross-compilation (deferred — revisit after the importer lands)
-Cross-compilation is valuable but not on the critical path for adoption — most new
-users arriving from CMake/Make/Meson build for their host first. This phase is
-parked until Phase 11 is done.
+### Phase 10 — Cross-compilation ✓ COMPLETE
 
-- [ ] `[compiler] target = "aarch64-linux-gnu"` → `--target=` / `-march=` flags
-- [ ] `[compiler] sysroot = "/opt/sysroot"` → `--sysroot=`
-- [ ] Prebuilt dep filtering by `targets = [...]` in crane.toml
-- [ ] `crane toolchain add` — install a cross-compiler template
+- [x] `[compiler] target = "aarch64-linux-gnu"` → `--target={triple}` flag via template `[structure].target`; empty template field = unsupported (GCC requires dedicated cross binary, Clang is natively multi-target)
+- [x] `[compiler] sysroot = "/opt/sysroot"` → `--sysroot={path}` via template `[structure].sysroot`; supported by clang, gcc, gfortran, hipcc, icpx
+- [x] `targets = ["aarch64-linux-gnu"]` on any dep — filtered in/out by `effective_dependencies()` based on `compiler.target`; absent = always include, present + native build = exclude
+- [x] `crane toolchain add <path>` — validates a local `.toml` as a `CompilerTemplate`, installs to `~/.crane/templates/<name>.toml`; `load_all_templates()` merges system + user templates (user overrides same-named system)
 
 ### Phase 11 — Importer (in progress — `feature/importer`)
 Priority phase: frictionless migration off existing build systems is the single
@@ -483,13 +486,13 @@ All three importers parse into a shared [`ImportedProject`] IR, which
 
 - [x] `crane migrate [--from cmake|makefile|meson] [--dry-run] [--force]` — auto-detects source build system when `--from` is omitted
 - [x] Auto-detection via presence of `CMakeLists.txt`, `Makefile` / `GNUmakefile`, or `meson.build` (CMake wins on ties)
-- [x] CMake importer (hand-rolled regex tokenizer; swapping in the `cmake-parser` crate is a follow-up) — extract `project()`, `add_executable`, `add_library`, `target_link_libraries`, `target_include_directories` / `include_directories`, `set(CMAKE_CXX_STANDARD …)` / `CMAKE_C_STANDARD`, `add_definitions` / `add_compile_definitions`, `add_compile_options` / `target_compile_options`, `find_package(...)`
+- [x] CMake importer — uses `cmake-parser 0.1.0-beta.1` (`parse_cmakelists` → `Doc` → `to_commands_iter()`); inline `#` comments pre-stripped before parsing (parser limitation); `set(VAR …)` variable references expanded at assignment time so chained expansions work — extracts `project()`, `add_executable`, `add_library`, `target_link_libraries`, `target_include_directories` / `include_directories`, `set(CMAKE_CXX_STANDARD …)` / `CMAKE_C_STANDARD`, `add_definitions` / `add_compile_definitions`, `add_compile_options` / `target_compile_options`, `find_package(...)`
 - [x] CMake v1 scope: flat projects only; `add_subdirectory(...)` emits a `# CRANE: subdirectory not imported` comment
 - [x] CMake `set(VAR …)` tracked and `${VAR}` references expanded in subsequent calls; multi-token expansions split on whitespace so `set(SRCS a.cpp b.cpp); add_executable(app ${SRCS})` works
 - [x] Multiple `add_executable(...)` calls produce multiple `[[bin]]` entries
 - [x] Unrecognized `if(...) … endif()` blocks emit a review note; recognized platform guards (`if(WIN32)`, `if(LINUX)`, `if(APPLE)`, `if(UNIX)`, `if(MSVC)`, `if(MINGW)`, `if(CMAKE_SYSTEM_NAME STREQUAL "X")`) route their contents into `[platform.X]` overlays in the emitted manifest
 - [x] `find_package(Foo)` → `{ system = "foo" }` dep with a review comment
-- [x] Makefile importer (hand-rolled regex tokenizer; swapping in the `makefile-lossless` crate is a follow-up) — extract `CC`/`CXX`/`FC`, `CFLAGS`/`CXXFLAGS`/`FFLAGS`/`CPPFLAGS`, `LDLIBS`/`LDFLAGS`, `SRCS`/`SRC`/`SOURCES`/`OBJS`, `TARGET`/`PROGRAM`/`BIN`/`EXE`; expands `$(VAR)` / `${VAR}` references and joins backslash continuations
+- [x] Makefile importer — uses `makefile-lossless 0.3` (`Makefile::from_str_relaxed`); backslash continuations pre-joined before parsing (crate only returns first physical line of multi-line variables); extracts `CC`/`CXX`/`FC`, `CFLAGS`/`CXXFLAGS`/`FFLAGS`/`CPPFLAGS`, `LDLIBS`/`LDFLAGS`, `SRCS`/`SRC`/`SOURCES`/`OBJS`, `TARGET`/`PROGRAM`/`BIN`/`EXE`; expands `$(VAR)` / `${VAR}` references
 - [x] Meson importer (regex-based over `meson.build`) — `project()`, `executable()`, `library()` / `shared_library()` / `static_library()`, `dependency()`, `include_directories()`, `add_project_arguments()` / `add_global_arguments()`; `default_options` carries `cpp_std` / `c_std` through
 - [x] Unrecognised constructs → `# CRANE: could not import — review manually` preserved in the emitted TOML
 - [x] `--dry-run` prints generated `crane.toml` to stdout without writing

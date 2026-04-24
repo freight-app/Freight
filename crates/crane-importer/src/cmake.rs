@@ -653,11 +653,18 @@ fn handle_add_library(p: &mut ImportedProject, platform: Option<&str>, args: &[S
         .map(|s| parent_dir_or_self(s.as_str()))
         .unwrap_or_else(|| "src/".to_string());
 
-    p.lib = Some(ImportedLib {
-        lib_type: lib_type.to_string(),
-        src: src_dir,
-        include: None,
-    });
+    if p.libs.is_empty() {
+        p.libs.push(ImportedLib {
+            name: name.clone(),
+            lib_type: lib_type.to_string(),
+            src: src_dir,
+            include: None,
+        });
+    } else {
+        p.push_note(format!(
+            "add_library({name}) — multiple libraries found; consider splitting into a workspace (only the first library is emitted as [lib])"
+        ));
+    }
 
     if let Some(plat) = platform {
         p.push_note(format!(
@@ -686,12 +693,68 @@ fn handle_target_link_libraries(
         ) {
             continue;
         }
-        if a.starts_with("${") {
+        // Skip variable references and generator expressions.
+        if a.starts_with("${") || a.starts_with("$<") {
             continue;
         }
-        let key = a.trim_start_matches("lib").to_string();
-        let dep_key = if key.is_empty() { a.clone() } else { key };
-        p.add_dep(platform, dep_key, ImportedDep::System(a.clone()));
+        let (dep_key, linker_name) = normalize_link_token(a);
+        p.add_dep(platform, dep_key, ImportedDep::System(linker_name));
+    }
+}
+
+/// Normalize a CMake link token to `(dep_key, linker_name)`.
+///
+/// CMake imported targets use `Namespace::Component` syntax. We map these to
+/// the actual linker flag name (`-l{linker_name}`) that the system library
+/// requires. For plain library names (e.g. `m`, `pthread`, `libz`), we strip
+/// the `lib` prefix and lowercase.
+fn normalize_link_token(a: &str) -> (String, String) {
+    if let Some((_ns, component)) = a.split_once("::") {
+        let linker = imported_target_linker_name(a, component);
+        (linker.clone(), linker)
+    } else {
+        // Strip leading "lib" prefix (e.g. "libz" → "z") then lowercase.
+        let stripped = a.strip_prefix("lib").unwrap_or(a);
+        let name = if stripped.is_empty() { a } else { stripped };
+        let lower = name.to_ascii_lowercase();
+        (lower.clone(), lower)
+    }
+}
+
+/// Map a CMake imported target to its actual system linker name (`-l{name}`).
+///
+/// For well-known packages the mapping is hardcoded; everything else falls back
+/// to lowercasing the component after `::`. Boost components get the
+/// `boost_` prefix because Boost libraries are installed as `libboost_<name>`.
+fn imported_target_linker_name(full: &str, component: &str) -> String {
+    match full {
+        // Threading
+        "Threads::Threads" => "pthread".to_string(),
+        // Compression
+        "ZLIB::ZLIB" | "zlib::zlib" => "z".to_string(),
+        "BZip2::BZip2" => "bz2".to_string(),
+        "LibLZMA::LibLZMA" => "lzma".to_string(),
+        "zstd::libzstd_shared" | "zstd::libzstd_static" => "zstd".to_string(),
+        // TLS / crypto
+        "OpenSSL::SSL" => "ssl".to_string(),
+        "OpenSSL::Crypto" => "crypto".to_string(),
+        // Image formats
+        "PNG::PNG" => "png".to_string(),
+        "JPEG::JPEG" => "jpeg".to_string(),
+        "TIFF::TIFF" => "tiff".to_string(),
+        // Network
+        "CURL::libcurl" => "curl".to_string(),
+        // XML / JSON
+        "LibXml2::LibXml2" => "xml2".to_string(),
+        // Math
+        "BLAS::BLAS" => "blas".to_string(),
+        "LAPACK::LAPACK" => "lapack".to_string(),
+        // Boost: Boost::filesystem → boost_filesystem
+        _ if full.starts_with("Boost::") => {
+            format!("boost_{}", component.to_ascii_lowercase())
+        }
+        // Generic fallback: lowercase the component name
+        _ => component.to_ascii_lowercase(),
     }
 }
 
@@ -810,7 +873,7 @@ mod tests {
         assert_eq!(p.bins.len(), 1);
         assert_eq!(p.bins[0].name, "myapp");
         assert_eq!(p.bins[0].src, "src/main.cpp");
-        let lib = p.lib.expect("expected a lib");
+        let lib = p.libs.first().expect("expected a lib");
         assert_eq!(lib.lib_type, "static");
         assert_eq!(lib.src, "src/");
     }
@@ -819,7 +882,7 @@ mod tests {
     fn interface_library_is_header_only() {
         let src = "project(p)\nadd_library(hdr INTERFACE)\n";
         let p = parse_text(src);
-        assert_eq!(p.lib.unwrap().lib_type, "header-only");
+        assert_eq!(p.libs.first().unwrap().lib_type, "header-only");
     }
 
     #[test]
@@ -842,6 +905,37 @@ mod tests {
         let p = parse_text(src);
         assert!(p.dependencies.contains_key("m"));
         assert!(p.dependencies.contains_key("pthread"));
+    }
+
+    #[test]
+    fn imported_targets_are_normalized_to_linker_names() {
+        let src = r#"
+            project(p)
+            find_package(OpenSSL REQUIRED)
+            find_package(Threads REQUIRED)
+            find_package(ZLIB REQUIRED)
+            add_executable(app main.cpp)
+            target_link_libraries(app PRIVATE OpenSSL::SSL OpenSSL::Crypto Threads::Threads ZLIB::ZLIB Boost::filesystem)
+        "#;
+        let p = parse_text(src);
+        assert!(matches!(p.dependencies.get("ssl"), Some(ImportedDep::System(s)) if s == "ssl"));
+        assert!(matches!(p.dependencies.get("crypto"), Some(ImportedDep::System(s)) if s == "crypto"));
+        assert!(matches!(p.dependencies.get("pthread"), Some(ImportedDep::System(s)) if s == "pthread"));
+        assert!(matches!(p.dependencies.get("z"), Some(ImportedDep::System(s)) if s == "z"));
+        assert!(matches!(p.dependencies.get("boost_filesystem"), Some(ImportedDep::System(s)) if s == "boost_filesystem"));
+    }
+
+    #[test]
+    fn second_add_library_becomes_note() {
+        let src = r#"
+            project(p)
+            add_library(mylib STATIC src/a.cpp)
+            add_library(another SHARED src/b.cpp)
+        "#;
+        let p = parse_text(src);
+        assert_eq!(p.libs.len(), 1);
+        assert_eq!(p.libs[0].name, "mylib");
+        assert!(p.notes.iter().any(|n| n.contains("another") && n.contains("workspace")));
     }
 
     #[test]
@@ -939,9 +1033,10 @@ mod tests {
             target_link_libraries(app PRIVATE ${MY_OPT})
         "#;
         let p = parse_text(src);
-        assert!(p.dependencies.contains_key("ON"));
-        assert!(!p.dependencies.contains_key("BOOL"));
-        assert!(!p.dependencies.contains_key("FORCE"));
+        // normalize_link_token lowercases plain lib names; "ON" → "on"
+        assert!(p.dependencies.contains_key("on"));
+        assert!(!p.dependencies.contains_key("bool"));
+        assert!(!p.dependencies.contains_key("force"));
     }
 
     #[test]

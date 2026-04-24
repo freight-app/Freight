@@ -56,8 +56,8 @@ pub fn to_toml(p: &ImportedProject) -> String {
         writeln!(out).unwrap();
     }
 
-    // ── [lib] ──
-    if let Some(lib) = &p.lib {
+    // ── [lib] — only the first library is emitted; extras become notes ──
+    if let Some(lib) = p.libs.first() {
         writeln!(out, "[lib]").unwrap();
         writeln!(out, "type    = \"{}\"", lib.lib_type).unwrap();
         writeln!(out, "src     = \"{}\"", lib.src).unwrap();
