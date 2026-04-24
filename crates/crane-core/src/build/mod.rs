@@ -19,7 +19,7 @@ use crate::error::CraneError;
 use crate::lock::LockFile;
 use crate::manifest::types::Manifest;
 use crate::manifest::validate::{validate, validate_dep_compat};
-use crate::manifest::{find_manifest_dir, load_manifest};
+use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 use crate::toolchain::{CompilerTemplate, DetectedCompiler, detect_all_cached, load_templates, templates_dir};
 
 // ── Public results ────────────────────────────────────────────────────────────
@@ -53,6 +53,59 @@ struct BuiltDeps {
 
 // ── Build pipeline ────────────────────────────────────────────────────────────
 
+/// Build every member of a workspace rooted at the current working directory.
+///
+/// Members are built in the order declared in `[workspace].members`. If any
+/// member fails, the build stops and the error is returned.
+pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, CraneError> {
+    let cwd = std::env::current_dir()?;
+    let ws_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    let ws = load_workspace_manifest(&ws_dir)
+        .ok_or_else(|| CraneError::ManifestParse("not a workspace root".into()))?;
+
+    let mut outputs = Vec::new();
+    for member in &ws.members {
+        let member_dir = ws_dir.join(member.trim_end_matches('/'));
+        outputs.push(build_project_at(&member_dir, profile)?);
+    }
+    Ok(outputs)
+}
+
+/// Clean every member of a workspace rooted at the current working directory.
+pub fn clean_workspace() -> Result<(), CraneError> {
+    let cwd = std::env::current_dir()?;
+    let ws_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    let ws = load_workspace_manifest(&ws_dir)
+        .ok_or_else(|| CraneError::ManifestParse("not a workspace root".into()))?;
+
+    for member in &ws.members {
+        let member_dir = ws_dir.join(member.trim_end_matches('/'));
+        clean_project_at(&member_dir)?;
+    }
+    Ok(())
+}
+
+/// Test every member of a workspace rooted at the current working directory.
+pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+    let cwd = std::env::current_dir()?;
+    let ws_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    let ws = load_workspace_manifest(&ws_dir)
+        .ok_or_else(|| CraneError::ManifestParse("not a workspace root".into()))?;
+
+    let mut total_passed = 0;
+    let mut total_failed = 0;
+    for member in &ws.members {
+        let member_dir = ws_dir.join(member.trim_end_matches('/'));
+        let s = test_project_at(&member_dir, profile, filter)?;
+        total_passed += s.passed;
+        total_failed += s.failed;
+    }
+    Ok(TestSummary { passed: total_passed, failed: total_failed, total: total_passed + total_failed })
+}
+
 /// Build the project rooted at the current working directory.
 ///
 /// Returns the high-level outcome (binary paths, compile counts) so the
@@ -60,7 +113,15 @@ struct BuiltDeps {
 /// `Compiling foo.cpp`, `Linking ...`) currently goes to stdout directly;
 /// routing it through a callback is future work.
 pub fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
-    let ctx = load_project(profile)?;
+    let cwd = std::env::current_dir()?;
+    let project_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    build_project_at(&project_dir, profile)
+}
+
+/// Build the project at a specific `project_dir`.
+pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput, CraneError> {
+    let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
@@ -101,11 +162,16 @@ pub fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
     })
 }
 
-/// Wipe the project's `target/` directory.
+/// Wipe the project's `target/` directory (finds project by walking up from cwd).
 pub fn clean_project() -> Result<(), CraneError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    clean_project_at(&project_dir)
+}
+
+/// Wipe the `target/` directory of the project at `project_dir`.
+pub fn clean_project_at(project_dir: &Path) -> Result<(), CraneError> {
     let target = project_dir.join("target");
     if target.exists() {
         std::fs::remove_dir_all(&target)?;
@@ -113,9 +179,17 @@ pub fn clean_project() -> Result<(), CraneError> {
     Ok(())
 }
 
-/// Build and execute the project's test binaries.
+/// Build and run the tests of the project rooted at the current working directory.
 pub fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
-    let ctx = load_project(profile)?;
+    let cwd = std::env::current_dir()?;
+    let project_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    test_project_at(&project_dir, profile, filter)
+}
+
+/// Build and execute the project's test binaries.
+pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+    let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
@@ -303,11 +377,8 @@ fn build_resolved_deps(
 
 // ── Shared project loading ────────────────────────────────────────────────────
 
-fn load_project(_profile: &str) -> Result<ProjectContext, CraneError> {
-    let cwd = std::env::current_dir()?;
-    let project_dir = find_manifest_dir(&cwd)
-        .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    let manifest = load_manifest(&project_dir)?;
+fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, CraneError> {
+    let manifest = load_manifest(project_dir)?;
 
     let tdir = templates_dir()
         .ok_or_else(|| CraneError::CompilerNotFound(
@@ -315,7 +386,7 @@ fn load_project(_profile: &str) -> Result<ProjectContext, CraneError> {
         ))?;
     let templates = load_templates(&tdir);
 
-    validate_or_fail(&manifest, &project_dir, &templates)?;
+    validate_or_fail(&manifest, project_dir, &templates)?;
 
     let detected = detect_all_cached(&templates);
     if detected.is_empty() {
@@ -324,14 +395,14 @@ fn load_project(_profile: &str) -> Result<ProjectContext, CraneError> {
         ));
     }
 
-    let found = discover(&project_dir, &manifest, &templates);
+    let found = discover(project_dir, &manifest, &templates);
     if found.sources.is_empty() {
         return Err(CraneError::CompilerNotFound(
             "no source files found under src/".into(),
         ));
     }
 
-    Ok(ProjectContext { project_dir, manifest, templates, detected, found })
+    Ok(ProjectContext { project_dir: project_dir.to_path_buf(), manifest, templates, detected, found })
 }
 
 fn validate_or_fail(

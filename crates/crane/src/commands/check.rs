@@ -1,5 +1,10 @@
+use std::path::Path;
+
 use crane_core::error::CraneError;
-use crane_core::manifest::{find_manifest_dir, load_manifest, validate, validate_dep_compat, Manifest};
+use crane_core::manifest::{
+    find_manifest_dir, load_manifest, load_workspace_manifest, validate, validate_dep_compat,
+    Manifest,
+};
 use crane_core::toolchain::{load_templates, templates_dir};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
@@ -18,37 +23,57 @@ pub fn cmd_check() {
         }
     };
 
-    let manifest = match load_manifest(&manifest_dir) {
+    // Workspace root: validate each member.
+    if let Some(ws) = load_workspace_manifest(&manifest_dir) {
+        println!("Workspace with {} member(s):", ws.members.len());
+        let templates = templates_dir().map(|d| load_templates(&d)).unwrap_or_default();
+        let mut all_ok = true;
+        for member in &ws.members {
+            let member_dir = manifest_dir.join(member.trim_end_matches('/'));
+            if !check_one(&member_dir, &templates) {
+                all_ok = false;
+            }
+        }
+        if all_ok {
+            print_success("all workspace members are valid");
+        }
+        return;
+    }
+
+    // Single project.
+    let templates = templates_dir().map(|d| load_templates(&d)).unwrap_or_default();
+    check_one(&manifest_dir, &templates);
+}
+
+fn check_one(manifest_dir: &Path, templates: &[crane_core::toolchain::CompilerTemplate]) -> bool {
+    let manifest = match load_manifest(manifest_dir) {
         Ok(m) => m,
         Err(CraneError::ManifestParse(msg)) => {
-            print_error("crane.toml could not be parsed:");
-            eprintln!("  {msg}");
-            return;
+            print_error(&format!("{}: crane.toml could not be parsed: {msg}", manifest_dir.display()));
+            return false;
         }
-        Err(e) => { print_error(&e.to_string()); return; }
+        Err(e) => { print_error(&e.to_string()); return false; }
     };
 
-    let templates = templates_dir()
-        .map(|d| load_templates(&d))
-        .unwrap_or_default();
-
-    let mut errors = validate(&manifest, &templates);
-    errors.extend(validate_dep_compat(&manifest, &manifest_dir, &templates));
+    let mut errors = validate(&manifest, templates);
+    errors.extend(validate_dep_compat(&manifest, manifest_dir, templates));
 
     if errors.is_empty() {
-        print_success("crane.toml is valid");
-        println!();
+        print_success(&format!("{}: crane.toml is valid", manifest.package.name));
         print_manifest_summary(&manifest);
+        true
     } else {
         let count = errors.len();
         print_error(&format!(
-            "crane.toml: {count} {}",
+            "{}: {} {}",
+            manifest.package.name,
+            count,
             if count == 1 { "error" } else { "errors" }
         ));
-        println!();
         for e in &errors {
             eprintln!("  {:16} {}", e.context, e.message);
         }
+        false
     }
 }
 

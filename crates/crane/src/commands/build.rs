@@ -1,11 +1,48 @@
+use std::env;
 use std::process::Command;
 
-use crane_core::build::{build_project, clean_project, test_project};
+use crane_core::build::{
+    build_project, build_workspace, clean_project, clean_workspace, test_project, test_workspace,
+};
+use crane_core::manifest::{find_manifest_dir, load_workspace_manifest};
 
 use crate::output::{print_error, print_success};
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Return true when the nearest `crane.toml` (found by walking up from cwd)
+/// has a `[workspace]` section. Falls through to the regular project path on
+/// any I/O or parse error.
+fn at_workspace_root() -> bool {
+    let Ok(cwd) = env::current_dir() else { return false };
+    let Some(dir) = find_manifest_dir(&cwd) else { return false };
+    load_workspace_manifest(&dir).is_some()
+}
+
+// ── Commands ──────────────────────────────────────────────────────────────────
+
 pub fn cmd_build(release: bool) {
     let profile = if release { "release" } else { "dev" };
+
+    if at_workspace_root() {
+        match build_workspace(profile) {
+            Ok(outputs) => {
+                println!();
+                for o in &outputs {
+                    print_success(&format!(
+                        "{} ({} compiled, {} up to date)",
+                        o.package_name, o.compiled, o.skipped,
+                    ));
+                    for bin in &o.binaries {
+                        println!("    {}", bin.display());
+                    }
+                }
+            }
+            Err(e) => { println!(); print_error(&e.to_string()); }
+        }
+        return;
+    }
+
     match build_project(profile) {
         Ok(output) => {
             println!();
@@ -17,15 +54,18 @@ pub fn cmd_build(release: bool) {
                 println!("    {}", bin.display());
             }
         }
-        Err(e) => {
-            println!();
-            print_error(&e.to_string());
-        }
+        Err(e) => { println!(); print_error(&e.to_string()); }
     }
 }
 
 pub fn cmd_run(release: bool, run_args: &[String]) {
     let profile = if release { "release" } else { "dev" };
+
+    if at_workspace_root() {
+        print_error("`crane run` is not supported at workspace root — cd into a member directory");
+        return;
+    }
+
     let output = match build_project(profile) {
         Ok(o) => o,
         Err(e) => { println!(); print_error(&e.to_string()); return; }
@@ -61,6 +101,14 @@ pub fn cmd_run(release: bool, run_args: &[String]) {
 }
 
 pub fn cmd_clean() {
+    if at_workspace_root() {
+        match clean_workspace() {
+            Ok(()) => print_success("cleaned all workspace member target/ directories"),
+            Err(e) => { println!(); print_error(&e.to_string()); }
+        }
+        return;
+    }
+
     match clean_project() {
         Ok(()) => print_success("cleaned target/"),
         Err(e) => { println!(); print_error(&e.to_string()); }
@@ -68,6 +116,30 @@ pub fn cmd_clean() {
 }
 
 pub fn cmd_test(filter: Option<&str>) {
+    if at_workspace_root() {
+        match test_workspace("dev", filter) {
+            Ok(summary) => {
+                println!();
+                if summary.total == 0 {
+                    println!("no test files found in any workspace member");
+                    return;
+                }
+                if summary.failed == 0 {
+                    print_success(&format!(
+                        "test result: ok. {} passed; 0 failed", summary.passed,
+                    ));
+                } else {
+                    print_error(&format!(
+                        "test result: FAILED. {} passed; {} failed",
+                        summary.passed, summary.failed,
+                    ));
+                }
+            }
+            Err(e) => { println!(); print_error(&e.to_string()); }
+        }
+        return;
+    }
+
     match test_project("dev", filter) {
         Ok(summary) => {
             println!();
@@ -86,9 +158,6 @@ pub fn cmd_test(filter: Option<&str>) {
                 ));
             }
         }
-        Err(e) => {
-            println!();
-            print_error(&e.to_string());
-        }
+        Err(e) => { println!(); print_error(&e.to_string()); }
     }
 }

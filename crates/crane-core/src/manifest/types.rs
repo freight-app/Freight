@@ -5,6 +5,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::toolchain::template::BuildSettings;
 
+// ── Workspace ─────────────────────────────────────────────────────────────────
+
+/// The `[workspace]` section of a workspace-root `crane.toml`.
+///
+/// A workspace root has **only** this section — no `[package]`. Members are
+/// ordinary crane projects whose own `crane.toml` files contain `[package]`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkspaceSection {
+    /// Relative paths to member directories (e.g. `["app/", "libfoo/"]`).
+    pub members: Vec<String>,
+}
+
+/// Thin deserialisation target for workspace-root manifests.
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkspaceToml {
+    pub workspace: WorkspaceSection,
+}
+
+// ── Project manifest ──────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub package: Package,

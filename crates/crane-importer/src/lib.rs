@@ -26,12 +26,19 @@ pub mod meson;
 pub struct MigrateOutcome {
     pub format: Format,
     pub project_dir: PathBuf,
-    /// Where the manifest was written, or `None` for `dry_run`.
+    /// The root `crane.toml` path (workspace root or single project), or
+    /// `None` for `--dry-run`.
     pub written_to: Option<PathBuf>,
-    /// Generated `crane.toml` contents — useful for `--dry-run` output.
+    /// For workspace migrations: `(relative_path, toml_content)` for each
+    /// member crane.toml. Empty for single-project migrations.
+    pub workspace_members: Vec<(String, String)>,
+    /// Generated root `crane.toml` contents — useful for `--dry-run` output.
     pub toml: String,
-    /// Number of `# CRANE:` notes the user should review.
+    /// Number of `# CRANE:` notes the user should review (across all files).
     pub note_count: usize,
+    /// True when the migration produced a workspace root rather than a single
+    /// project manifest.
+    pub is_workspace: bool,
 }
 
 /// Run `crane migrate` against `project_dir`.
@@ -67,6 +74,11 @@ pub fn run_migrate(
         Format::Meson => meson::parse(project_dir)?,
     };
 
+    // Multiple libraries → generate a workspace, otherwise a single project.
+    if imported.libs.len() > 1 {
+        return run_migrate_workspace(project_dir, fmt, dry_run, imported);
+    }
+
     let toml = emit::to_toml(&imported);
     let note_count = imported.notes.len();
 
@@ -81,14 +93,53 @@ pub fn run_migrate(
         format: fmt,
         project_dir: project_dir.to_path_buf(),
         written_to,
+        workspace_members: vec![],
         toml,
         note_count,
+        is_workspace: false,
     })
 }
 
 /// Parse a `--from` CLI flag into a [`Format`]. Convenience for the binary.
 pub fn parse_format(s: &str) -> Result<Format, CraneError> {
     Format::from_str(s)
+}
+
+/// Generate a workspace when the imported project has multiple libraries.
+fn run_migrate_workspace(
+    project_dir: &Path,
+    fmt: Format,
+    dry_run: bool,
+    imported: ImportedProject,
+) -> Result<MigrateOutcome, CraneError> {
+    let ws = emit::to_workspace_toml(&imported);
+    let note_count = imported.notes.len();
+
+    let written_to = if dry_run {
+        None
+    } else {
+        // Write workspace root crane.toml.
+        fs::write(project_dir.join("crane.toml"), &ws.root_toml)?;
+
+        // Write each member's crane.toml, creating the subdirectory as needed.
+        for (rel, content) in &ws.members {
+            let member_dir = project_dir.join(rel);
+            fs::create_dir_all(&member_dir)?;
+            fs::write(member_dir.join("crane.toml"), content)?;
+        }
+
+        Some(project_dir.join("crane.toml"))
+    };
+
+    Ok(MigrateOutcome {
+        format: fmt,
+        project_dir: project_dir.to_path_buf(),
+        written_to,
+        workspace_members: ws.members,
+        toml: ws.root_toml,
+        note_count,
+        is_workspace: true,
+    })
 }
 
 // ── Format ────────────────────────────────────────────────────────────────────

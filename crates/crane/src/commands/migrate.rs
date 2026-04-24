@@ -16,8 +16,6 @@ pub fn cmd_migrate(from: Option<&str>, dry_run: bool, force: bool) {
         None => None,
     };
 
-    // Status line is emitted up front so the user sees what we're doing even
-    // if parsing later fails.
     if let Some(f) = fmt {
         print_status("Importing", &format!("{f} project at {}", cwd.display()));
     } else {
@@ -26,15 +24,46 @@ pub fn cmd_migrate(from: Option<&str>, dry_run: bool, force: bool) {
 
     match run_migrate(&cwd, fmt, dry_run, force) {
         Ok(outcome) => {
+            if outcome.is_workspace {
+                if outcome.written_to.is_none() {
+                    // Dry-run: print workspace root + member manifests.
+                    println!("# === workspace root crane.toml ===");
+                    print!("{}", outcome.toml);
+                    for (dir, content) in &outcome.workspace_members {
+                        println!("\n# === {dir}/crane.toml ===");
+                        print!("{content}");
+                    }
+                    return;
+                }
+                if outcome.note_count > 0 {
+                    print_warning(&format!(
+                        "{} construct(s) could not be imported — see `# CRANE:` comments",
+                        outcome.note_count,
+                    ));
+                }
+                print_success(&format!(
+                    "workspace with {} member(s) written",
+                    outcome.workspace_members.len(),
+                ));
+                if let Some(root) = &outcome.written_to {
+                    println!("    {}", root.display());
+                }
+                for (dir, _) in &outcome.workspace_members {
+                    let member_path = cwd.join(dir).join("crane.toml");
+                    println!("    {}", member_path.display());
+                }
+                return;
+            }
+
+            // Single-project path.
             if outcome.written_to.is_none() {
-                // Dry-run: print the would-be manifest to stdout.
                 print!("{}", outcome.toml);
                 return;
             }
             if outcome.note_count > 0 {
                 print_warning(&format!(
                     "{} construct(s) could not be imported — see `# CRANE:` comments in crane.toml",
-                    outcome.note_count
+                    outcome.note_count,
                 ));
             }
             if let Some(path) = outcome.written_to {
