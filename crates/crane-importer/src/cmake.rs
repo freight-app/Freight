@@ -236,6 +236,27 @@ pub(crate) fn parse_text(text: &str) -> ImportedProject {
                 handle_compile_options(&mut project, platform, true, &args);
             }
 
+            // ── target_compile_features() ─────────────────────────────────
+            Command::TargetCompileFeatures(t) => {
+                // Extract cxx_std_XX / c_std_XX feature tokens to set language
+                // standards — the rest of the feature list is silently ignored.
+                for tok in debug_to_tokens(&format!("{:?}", t.features)) {
+                    if let Some(ver) = tok.strip_prefix("cxx_std_") {
+                        project.language_mut("cpp").std = Some(format!("c++{ver}"));
+                    } else if let Some(ver) = tok.strip_prefix("c_std_") {
+                        project.language_mut("c").std = Some(format!("c{ver}"));
+                    }
+                }
+            }
+
+            // ── configure_file() ──────────────────────────────────────────
+            Command::ConfigureFile(_) => {
+                project.push_note(
+                    "configure_file(): not imported — recreate in a build.crane script"
+                        .to_string(),
+                );
+            }
+
             // ── add_subdirectory() ────────────────────────────────────────
             Command::AddSubdirectory(s) => {
                 let sub = extract_add_subdirectory_source(&s);
@@ -653,18 +674,12 @@ fn handle_add_library(p: &mut ImportedProject, platform: Option<&str>, args: &[S
         .map(|s| parent_dir_or_self(s.as_str()))
         .unwrap_or_else(|| "src/".to_string());
 
-    if p.libs.is_empty() {
-        p.libs.push(ImportedLib {
-            name: name.clone(),
-            lib_type: lib_type.to_string(),
-            src: src_dir,
-            include: None,
-        });
-    } else {
-        p.push_note(format!(
-            "add_library({name}) — multiple libraries found; consider splitting into a workspace (only the first library is emitted as [lib])"
-        ));
-    }
+    p.libs.push(ImportedLib {
+        name: name.clone(),
+        lib_type: lib_type.to_string(),
+        src: src_dir,
+        include: None,
+    });
 
     if let Some(plat) = platform {
         p.push_note(format!(
@@ -926,16 +941,17 @@ mod tests {
     }
 
     #[test]
-    fn second_add_library_becomes_note() {
+    fn multiple_add_library_produces_workspace_members() {
         let src = r#"
             project(p)
             add_library(mylib STATIC src/a.cpp)
             add_library(another SHARED src/b.cpp)
         "#;
         let p = parse_text(src);
-        assert_eq!(p.libs.len(), 1);
+        assert_eq!(p.libs.len(), 2);
         assert_eq!(p.libs[0].name, "mylib");
-        assert!(p.notes.iter().any(|n| n.contains("another") && n.contains("workspace")));
+        assert_eq!(p.libs[1].name, "another");
+        assert_eq!(p.libs[1].lib_type, "shared");
     }
 
     #[test]
@@ -1126,6 +1142,24 @@ mod tests {
         let p = parse_text(src);
         assert!(p.platforms.contains_key("freebsd"));
         assert!(p.platforms["freebsd"].dependencies.contains_key("execinfo"));
+    }
+
+    #[test]
+    fn target_compile_features_sets_language_standard() {
+        let src = r#"
+            project(p)
+            add_executable(app src/main.cpp)
+            target_compile_features(app PRIVATE cxx_std_20)
+        "#;
+        let p = parse_text(src);
+        assert_eq!(p.languages.get("cpp").and_then(|l| l.std.as_deref()), Some("c++20"));
+    }
+
+    #[test]
+    fn configure_file_emits_note() {
+        let src = "project(p)\nconfigure_file(config.h.in config.h)\n";
+        let p = parse_text(src);
+        assert!(p.notes.iter().any(|n| n.contains("configure_file")));
     }
 
     #[test]

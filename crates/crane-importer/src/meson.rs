@@ -7,6 +7,7 @@
 //! importer scans for those call sites with a small regex-based tokenizer and
 //! records anything else it doesn't recognise as a `# CRANE:` note.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -34,16 +35,19 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
     project.name = Some(default_name.to_string());
 
     let stripped = strip_comments(text);
+    // Pre-scan for variable→dep-name mappings before processing calls so that
+    // `dependencies: var` named args in executable/library can be resolved.
+    let var_deps = collect_var_deps(&stripped);
     let calls = collect_calls(&stripped);
 
     for c in &calls {
         match c.name.as_str() {
             "project" => handle_project(&mut project, &c.positional, &c.named),
-            "executable" => handle_executable(&mut project, &c.positional),
-            "library" => handle_library(&mut project, &c.positional, "static"),
-            "static_library" => handle_library(&mut project, &c.positional, "static"),
-            "shared_library" => handle_library(&mut project, &c.positional, "shared"),
-            "both_libraries" => handle_library(&mut project, &c.positional, "static"),
+            "executable" => handle_executable(&mut project, &c.positional, &c.named, &var_deps),
+            "library" => handle_library(&mut project, &c.positional, "static", &c.named, &var_deps),
+            "static_library" => handle_library(&mut project, &c.positional, "static", &c.named, &var_deps),
+            "shared_library" => handle_library(&mut project, &c.positional, "shared", &c.named, &var_deps),
+            "both_libraries" => handle_library(&mut project, &c.positional, "static", &c.named, &var_deps),
             "dependency" => handle_dependency(&mut project, &c.positional),
             "include_directories" => handle_include_dirs(&mut project, &c.positional),
             "add_project_arguments" | "add_global_arguments" => {
@@ -53,6 +57,26 @@ pub(crate) fn parse_text(text: &str, default_name: &str) -> ImportedProject {
                 if let Some(dir) = c.positional.first() {
                     project.push_note(format!(
                         "subdir('{dir}'): subdirectory not imported — recurse manually"
+                    ));
+                }
+            }
+            "test" => {
+                if let Some(name) = c.positional.first() {
+                    project.push_note(format!(
+                        "test('{name}'): test target not imported — add to crane tests manually"
+                    ));
+                }
+            }
+            "configure_file" => {
+                project.push_note(
+                    "configure_file(): not imported — recreate in a build.crane script"
+                        .to_string(),
+                );
+            }
+            "custom_target" => {
+                if let Some(name) = c.positional.first() {
+                    project.push_note(format!(
+                        "custom_target('{name}'): not imported — recreate in a build.crane script"
                     ));
                 }
             }
@@ -143,6 +167,9 @@ fn is_interesting(name: &str) -> bool {
             | "add_project_arguments"
             | "add_global_arguments"
             | "subdir"
+            | "test"
+            | "configure_file"
+            | "custom_target"
     )
 }
 
@@ -286,6 +313,54 @@ fn strip_quotes(s: &str) -> &str {
     }
 }
 
+// ── Variable dependency tracking ──────────────────────────────────────────────
+
+/// Pre-scan for `var = dependency('name')` and `var = X.find_library('name')`
+/// assignments so that `dependencies: var` named args in `executable()` and
+/// `library()` can be resolved to their dep names.
+fn collect_var_deps(text: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+
+    // var = dependency('name') or dependency("name")
+    let re_dep = Regex::new(
+        r#"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*dependency\s*\(\s*['"]([^'"]+)['"]"#,
+    )
+    .unwrap();
+    for caps in re_dep.captures_iter(text) {
+        let var = caps[1].to_string();
+        let dep = caps[2].to_ascii_lowercase();
+        map.insert(var, dep);
+    }
+
+    // var = cc.find_library('name') or any X.find_library('name')
+    let re_find = Regex::new(
+        r#"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z_][A-Za-z0-9_.]*\.find_library\s*\(\s*['"]([^'"]+)['"]"#,
+    )
+    .unwrap();
+    for caps in re_find.captures_iter(text) {
+        let var = caps[1].to_string();
+        let lib = caps[2].to_ascii_lowercase();
+        map.entry(var).or_insert(lib);
+    }
+
+    map
+}
+
+/// Resolve a `dependencies:` named-arg value (single variable name or a list
+/// `[var1, var2, ...]`) through `var_deps` and insert each resolved dep.
+fn resolve_dep_arg(p: &mut ImportedProject, value: &str, var_deps: &HashMap<String, String>) {
+    let inner = strip_list_brackets(value).unwrap_or(value);
+    for token in split_top_level_commas(inner) {
+        let var_name = strip_quotes(token.trim());
+        if var_name.is_empty() {
+            continue;
+        }
+        if let Some(dep_name) = var_deps.get(var_name) {
+            p.add_dep(None, dep_name.clone(), ImportedDep::System(dep_name.clone()));
+        }
+    }
+}
+
 // ── Command handlers ──────────────────────────────────────────────────────────
 
 fn handle_project(
@@ -344,7 +419,12 @@ fn meson_lang_to_key(name: &str) -> Option<&'static str> {
     }
 }
 
-fn handle_executable(p: &mut ImportedProject, positional: &[String]) {
+fn handle_executable(
+    p: &mut ImportedProject,
+    positional: &[String],
+    named: &[(String, String)],
+    var_deps: &HashMap<String, String>,
+) {
     let Some(name) = positional.first() else { return };
     let src = positional
         .iter()
@@ -356,9 +436,20 @@ fn handle_executable(p: &mut ImportedProject, positional: &[String]) {
         name: name.clone(),
         src,
     });
+    for (k, v) in named {
+        if k == "dependencies" {
+            resolve_dep_arg(p, v, var_deps);
+        }
+    }
 }
 
-fn handle_library(p: &mut ImportedProject, positional: &[String], default_type: &str) {
+fn handle_library(
+    p: &mut ImportedProject,
+    positional: &[String],
+    default_type: &str,
+    named: &[(String, String)],
+    var_deps: &HashMap<String, String>,
+) {
     let Some(name) = positional.first() else { return };
     let srcs: Vec<&String> = positional.iter().skip(1).filter(|s| looks_like_source(s)).collect();
     let src_dir = srcs
@@ -366,17 +457,16 @@ fn handle_library(p: &mut ImportedProject, positional: &[String], default_type: 
         .map(|s| parent_dir_or_self(s))
         .unwrap_or_else(|| "src/".to_string());
 
-    if p.libs.is_empty() {
-        p.libs.push(ImportedLib {
-            name: name.clone(),
-            lib_type: default_type.to_string(),
-            src: src_dir,
-            include: None,
-        });
-    } else {
-        p.push_note(format!(
-            "library('{name}') — multiple libraries found; consider splitting into a workspace (only the first library is emitted as [lib])"
-        ));
+    p.libs.push(ImportedLib {
+        name: name.clone(),
+        lib_type: default_type.to_string(),
+        src: src_dir,
+        include: None,
+    });
+    for (k, v) in named {
+        if k == "dependencies" {
+            resolve_dep_arg(p, v, var_deps);
+        }
     }
 }
 
@@ -525,5 +615,61 @@ project('x', 'cpp')  # side comment
 ";
         let p = parse_text(src, "fallback");
         assert_eq!(p.name.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn dep_variable_resolved_via_dependencies_named_arg() {
+        let src = "\
+project('x', 'cpp')
+ssl_dep = dependency('openssl')
+m_dep = dependency('m')
+executable('app', 'src/main.cpp', dependencies: [ssl_dep, m_dep])
+";
+        let p = parse_text(src, "fallback");
+        assert!(p.dependencies.contains_key("openssl"));
+        assert!(p.dependencies.contains_key("m"));
+    }
+
+    #[test]
+    fn find_library_variable_resolved_from_executable_dep() {
+        let src = "\
+project('x', 'c')
+cc = meson.get_compiler('c')
+m_dep = cc.find_library('m', required: false)
+executable('app', 'src/main.c', dependencies: m_dep)
+";
+        let p = parse_text(src, "fallback");
+        assert!(
+            matches!(p.dependencies.get("m"), Some(ImportedDep::System(s)) if s == "m"),
+            "expected m dep, got: {:?}",
+            p.dependencies
+        );
+    }
+
+    #[test]
+    fn multiple_libraries_all_pushed() {
+        let src = "\
+project('x', 'cpp')
+static_library('libfoo', 'src/foo.cpp')
+shared_library('libbar', 'src/bar.cpp')
+";
+        let p = parse_text(src, "fallback");
+        assert_eq!(p.libs.len(), 2);
+        assert_eq!(p.libs[0].name, "libfoo");
+        assert_eq!(p.libs[1].name, "libbar");
+        assert_eq!(p.libs[1].lib_type, "shared");
+    }
+
+    #[test]
+    fn test_and_custom_target_emit_notes() {
+        let src = "\
+project('x', 'cpp')
+executable('app', 'src/main.cpp')
+test('mytest', app)
+custom_target('gen', output: 'gen.h', command: ['gen.sh'])
+";
+        let p = parse_text(src, "fallback");
+        assert!(p.notes.iter().any(|n| n.contains("test('mytest')")));
+        assert!(p.notes.iter().any(|n| n.contains("custom_target('gen')")));
     }
 }
