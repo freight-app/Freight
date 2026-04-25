@@ -406,7 +406,7 @@ mod tests {
     use crate::manifest::load_manifest_str;
 
     const TEMPLATES_DIR: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../compiler-templates");
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
 
     fn test_templates() -> Vec<CompilerTemplate> {
         crate::toolchain::load_templates(std::path::Path::new(TEMPLATES_DIR))

@@ -1,4 +1,4 @@
-use crane_importer::{parse_format, run_migrate};
+use crane_migrator::{parse_format, run_migrate};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 

@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     const TEMPLATES_DIR: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../compiler-templates");
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
 
     #[test]
     fn load_templates_finds_all_ten() {
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn load_templates_missing_dir_returns_empty() {
-        let templates = load_templates(Path::new("/nonexistent/path/compiler-templates"));
+        let templates = load_templates(Path::new("/nonexistent/path/toolchains"));
         assert!(templates.is_empty());
     }
 
@@ -251,8 +251,8 @@ pub fn toolchain_add(toml_path: &Path) -> Result<PathBuf, CraneError> {
 
 /// Checks (in order):
 ///   1. `CRANE_TEMPLATES_DIR` env var
-///   2. `{binary_dir}/compiler-templates/`
-///   3. `{binary_dir}/../../compiler-templates/`  (cargo dev layout)
+///   2. `{binary_dir}/toolchains/`
+///   3. `{binary_dir}/../../toolchains/`  (cargo dev layout)
 pub fn templates_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("CRANE_TEMPLATES_DIR") {
         let p = PathBuf::from(dir);
@@ -264,13 +264,13 @@ pub fn templates_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let bin_dir = exe.parent()?;
 
-    let candidate1 = bin_dir.join("compiler-templates");
+    let candidate1 = bin_dir.join("toolchains");
     if candidate1.is_dir() {
         return Some(candidate1);
     }
 
     // cargo dev layout: target/debug/crane → workspace root is two levels up
-    let candidate2 = bin_dir.join("..").join("..").join("compiler-templates");
+    let candidate2 = bin_dir.join("..").join("..").join("toolchains");
     let candidate2 = candidate2.canonicalize().ok()?;
     if candidate2.is_dir() {
         return Some(candidate2);

@@ -445,16 +445,16 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const GCC_TOML: &str = include_str!("../../../../compiler-templates/gcc.toml");
-    const CLANG_TOML: &str = include_str!("../../../../compiler-templates/clang.toml");
-    const GFORTRAN_TOML: &str = include_str!("../../../../compiler-templates/gfortran.toml");
-    const GNAT_TOML: &str = include_str!("../../../../compiler-templates/gnat.toml");
-    const NVCC_TOML: &str = include_str!("../../../../compiler-templates/nvcc.toml");
-    const DMD_TOML: &str = include_str!("../../../../compiler-templates/dmd.toml");
-    const OPENCL_TOML: &str = include_str!("../../../../compiler-templates/opencl.toml");
-    const HIPCC_TOML: &str = include_str!("../../../../compiler-templates/hipcc.toml");
-    const ICPX_TOML: &str = include_str!("../../../../compiler-templates/icpx.toml");
-    const ISPC_TOML: &str = include_str!("../../../../compiler-templates/ispc.toml");
+    const GCC_TOML: &str = include_str!("../../../../toolchains/gcc.toml");
+    const CLANG_TOML: &str = include_str!("../../../../toolchains/clang.toml");
+    const GFORTRAN_TOML: &str = include_str!("../../../../toolchains/gfortran.toml");
+    const GNAT_TOML: &str = include_str!("../../../../toolchains/gnat.toml");
+    const NVCC_TOML: &str = include_str!("../../../../toolchains/nvcc.toml");
+    const DMD_TOML: &str = include_str!("../../../../toolchains/dmd.toml");
+    const OPENCL_TOML: &str = include_str!("../../../../toolchains/opencl.toml");
+    const HIPCC_TOML: &str = include_str!("../../../../toolchains/hipcc.toml");
+    const ICPX_TOML: &str = include_str!("../../../../toolchains/icpx.toml");
+    const ISPC_TOML: &str = include_str!("../../../../toolchains/ispc.toml");
 
     fn gcc() -> CompilerTemplate { CompilerTemplate::from_toml(GCC_TOML).unwrap() }
     fn clang() -> CompilerTemplate { CompilerTemplate::from_toml(CLANG_TOML).unwrap() }
