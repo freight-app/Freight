@@ -399,7 +399,7 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
 
     let tdir = templates_dir()
         .ok_or_else(|| CraneError::CompilerNotFound(
-            "compiler-templates directory not found; set CRANE_TEMPLATES_DIR".into(),
+            "toolchains directory not found; set CRANE_TEMPLATES_DIR".into(),
         ))?;
     let templates = load_templates(&tdir);
 

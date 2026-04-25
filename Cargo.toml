@@ -2,7 +2,7 @@
 members = [
     "crates/crane",
     "crates/crane-core",
-    "crates/crane-importer",
+    "crates/crane-migrator",
     "crates/crane-lsp",
 ]
 resolver = "2"

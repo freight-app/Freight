@@ -226,8 +226,8 @@ dependencies = [
  "anyhow",
  "clap",
  "crane-core",
- "crane-importer",
  "crane-lsp",
+ "crane-migrator",
  "owo-colors",
  "tokio",
 ]
@@ -251,18 +251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crane-importer"
-version = "0.1.0"
-dependencies = [
- "cmake-parser",
- "crane-core",
- "makefile-lossless",
- "regex",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "crane-lsp"
 version = "0.1.0"
 dependencies = [
@@ -271,6 +259,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-lsp",
+]
+
+[[package]]
+name = "crane-migrator"
+version = "0.1.0"
+dependencies = [
+ "cmake-parser",
+ "crane-core",
+ "makefile-lossless",
+ "regex",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

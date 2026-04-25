@@ -1,5 +1,5 @@
 [package]
-name    = "crane-importer"
+name    = "crane-migrator"
 version = "0.1.0"
 edition = "2021"
 
