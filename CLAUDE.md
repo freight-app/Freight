@@ -403,6 +403,7 @@ crane yank <version>              yank a published version            ✗ Phase 
 crane toolchain add <path>        install a compiler template         ✓ implemented
 crane toolchain use <name>        set default compiler backend        ✗ deferred
 crane lsp                         run language server on stdio        ✓ implemented
+crane compile-commands [--release] generate compile_commands.json     ✓ implemented
 ```
 
 ---

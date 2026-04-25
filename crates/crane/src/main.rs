@@ -5,6 +5,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
+use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::check::cmd_check;
 use crate::commands::deps::{
     cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
@@ -95,6 +96,11 @@ enum Commands {
     Check,
     /// Wipe target/
     Clean,
+    /// Generate compile_commands.json for clangd, fortls, serve-d and other language servers
+    CompileCommands {
+        #[arg(long)]
+        release: bool,
+    },
     /// Import an existing build system (CMake, Makefile, or Meson)
     Migrate {
         /// Source build system; auto-detected when omitted
@@ -152,6 +158,7 @@ fn main() -> Result<()> {
         Commands::Search { query } => cmd_search(&query),
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
+        Commands::CompileCommands { release } => cmd_compile_commands(release),
         Commands::Migrate { from, dry_run, force } => {
             cmd_migrate(from.as_deref(), dry_run, force);
         }

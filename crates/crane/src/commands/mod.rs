@@ -3,6 +3,7 @@
 
 pub mod build;
 pub mod check;
+pub mod compile_commands;
 pub mod deps;
 pub mod migrate;
 pub mod new;

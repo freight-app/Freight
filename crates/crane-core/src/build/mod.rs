@@ -1,4 +1,5 @@
 pub mod compile;
+pub mod compile_commands;
 pub mod deps;
 pub mod discover;
 pub mod features;
@@ -164,6 +165,16 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
         eprintln!("warning: could not write crane.lock: {e}");
     }
 
+    // Regenerate compile_commands.json so IDEs (clangd, fortls, serve-d…) stay
+    // in sync. Non-fatal — a write failure must not abort a successful build.
+    let cc = compile_commands::generate(
+        project_dir, manifest, detected, profile,
+        &found.sources, &include_dirs, &feature_defines,
+    );
+    if let Err(e) = compile_commands::write(project_dir, &cc) {
+        eprintln!("warning: could not write compile_commands.json: {e}");
+    }
+
     let binaries = link_result.outputs.iter()
         .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so"))
         .cloned()
@@ -175,6 +186,29 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
         compiled: compile_result.compiled,
         skipped: compile_result.skipped,
     })
+}
+
+/// Generate `compile_commands.json` without running a full build.
+///
+/// Uses only the project's own include dirs (not built dep dirs), so running
+/// `crane build` first gives more complete entries. Returns the number of
+/// entries written.
+pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result<usize, CraneError> {
+    let ctx = load_project_at(project_dir, profile)?;
+    let ProjectContext { project_dir, manifest, templates: _, detected, found } = &ctx;
+
+    let feature_defines = {
+        let active = features::resolve_features(&manifest.features, &[], true)?;
+        features::to_defines(&active)
+    };
+
+    let commands = compile_commands::generate(
+        project_dir, manifest, detected, profile,
+        &found.sources, &found.include_dirs, &feature_defines,
+    );
+    let count = commands.len();
+    compile_commands::write(project_dir, &commands)?;
+    Ok(count)
 }
 
 /// Wipe the project's `target/` directory (finds project by walking up from cwd).
