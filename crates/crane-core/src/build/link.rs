@@ -148,17 +148,13 @@ fn link_executable(
     linker: &DetectedCompiler,
     manifest: &Manifest,
     profile: &str,
-    project_dir: &Path,
+    _project_dir: &Path,
     dep_libs: &[PathBuf],
 ) -> Result<(), CraneError> {
     let mut cmd = Command::new(&linker.path);
     cmd.args(linker.template.assemble_flags(&link_settings(manifest, profile)));
     cmd.args(objects);
-    // Dep libs (built from .deps/) before path deps and system libs
     cmd.args(dep_libs);
-    for lib in collect_path_libs(manifest, project_dir, profile) {
-        cmd.arg(lib);
-    }
     for flag in collect_system_lib_flags(manifest) {
         cmd.arg(flag);
     }
@@ -178,7 +174,7 @@ fn link_shared(
     linker: &DetectedCompiler,
     manifest: &Manifest,
     profile: &str,
-    project_dir: &Path,
+    _project_dir: &Path,
     dep_libs: &[PathBuf],
 ) -> Result<(), CraneError> {
     let mut cmd = Command::new(&linker.path);
@@ -186,9 +182,6 @@ fn link_shared(
     cmd.arg("-shared");
     cmd.args(objects);
     cmd.args(dep_libs);
-    for lib in collect_path_libs(manifest, project_dir, profile) {
-        cmd.arg(lib);
-    }
     for flag in collect_system_lib_flags(manifest) {
         cmd.arg(flag);
     }
@@ -222,26 +215,6 @@ fn collect_system_lib_flags(manifest: &Manifest) -> Vec<String> {
         .collect()
 }
 
-/// Collect pre-built `.a` paths for every `path = "..."` dependency.
-/// Only includes libs that have already been built.
-fn collect_path_libs(manifest: &Manifest, project_dir: &Path, profile: &str) -> Vec<PathBuf> {
-    manifest.effective_dependencies().iter()
-        .filter_map(|(name, dep)| {
-            if let Dependency::Detailed(d) = dep {
-                d.path.as_ref().map(|p| (name.clone(), p.clone()))
-            } else {
-                None
-            }
-        })
-        .filter_map(|(name, rel_path)| {
-            let lib = project_dir
-                .join(rel_path)
-                .join("target").join(profile)
-                .join(format!("lib{name}.a"));
-            if lib.exists() { Some(lib) } else { None }
-        })
-        .collect()
-}
 
 /// Strip link-irrelevant fields from BuildSettings before passing to the linker.
 /// The linker doesn't want -std=, -Wall, -D, or -I flags.

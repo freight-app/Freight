@@ -49,7 +49,17 @@ pub fn build_foreign_deps(
         }
 
         let libs = invoke_build_system(&dep_dir, name, bs, profile)?;
-        let include_dirs: Vec<PathBuf> = d.include.iter().map(|p| dep_dir.join(p)).collect();
+
+        // Explicit `include = [...]` wins; if absent, probe common conventions.
+        let include_dirs: Vec<PathBuf> = if !d.include.is_empty() {
+            d.include.iter().map(|p| dep_dir.join(p)).collect()
+        } else {
+            ["include", "inc"]
+                .iter()
+                .map(|p| dep_dir.join(p))
+                .filter(|p| p.is_dir())
+                .collect()
+        };
 
         results.push(ForeignBuilt { name: name.clone(), libs, include_dirs });
     }
@@ -162,7 +172,7 @@ fn find_libs(search_dir: &Path) -> Result<Vec<PathBuf>, CraneError> {
     {
         let path = entry.path();
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext == "a" || ext == "so" {
+            if matches!(ext, "a" | "so" | "dylib") {
                 libs.push(path.to_path_buf());
             }
         }
