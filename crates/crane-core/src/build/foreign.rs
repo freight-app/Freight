@@ -31,7 +31,6 @@ pub fn build_foreign_deps(
 
     for (name, dep) in &manifest.dependencies {
         let Dependency::Detailed(d) = dep else { continue };
-        let Some(bs) = &d.build_system else { continue };
 
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
@@ -41,6 +40,21 @@ pub fn build_foreign_deps(
             continue;
         };
 
+        // Resolve effective build system: explicit > auto-detect > skip (crane project).
+        // For path deps that have a crane.toml, crane owns the build regardless.
+        let bs = match &d.build_system {
+            Some(bs) => bs.clone(),
+            None => {
+                if d.path.is_some() && dep_dir.join("crane.toml").exists() {
+                    continue;
+                }
+                match detect_build_system(&dep_dir) {
+                    Some(detected) => detected,
+                    None => continue,
+                }
+            }
+        };
+
         if !dep_dir.exists() {
             return Err(CraneError::ManifestParse(format!(
                 "foreign dep '{name}' not found at '{}' — run `crane fetch` first",
@@ -48,7 +62,7 @@ pub fn build_foreign_deps(
             )));
         }
 
-        let libs = invoke_build_system(&dep_dir, name, bs, profile, &d.cmake_args)?;
+        let libs = invoke_build_system(&dep_dir, name, &bs, profile, &d.cmake_args)?;
 
         // Explicit `include = [...]` wins; if absent, probe common conventions.
         let include_dirs: Vec<PathBuf> = if !d.include.is_empty() {
@@ -107,7 +121,7 @@ fn invoke_build_system(
     find_libs(&search_dir)
 }
 
-fn detect_build_system(dep_dir: &Path) -> Option<String> {
+pub(crate) fn detect_build_system(dep_dir: &Path) -> Option<String> {
     if dep_dir.join("CMakeLists.txt").exists() { return Some("cmake".into()); }
     if dep_dir.join("meson.build").exists()    { return Some("meson".into()); }
     if dep_dir.join("Makefile").exists() || dep_dir.join("GNUmakefile").exists() {

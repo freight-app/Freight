@@ -10,8 +10,8 @@ std = "c++17"
 name = "with-cmake-dep"
 src  = "src/main.cpp"
 
-# crane builds this via `cmake -S vendor/mathlib -B .crane-build`, then links
+# crane auto-detects CMakeLists.txt in vendor/mathlib, builds it, and links
 # any .a/.so it finds in the build directory.  The include/ directory is
 # auto-detected (no explicit include = [...] needed).
 [dependencies]
-mathlib = { path = "vendor/mathlib", build_system = "cmake" }
+mathlib = { path = "vendor/mathlib" }

@@ -10,7 +10,7 @@ std = "c17"
 name = "with-make-dep"
 src  = "src/main.c"
 
-# crane runs `make` in vendor/strutil, then finds libstrutil.a there.
-# include/ is auto-detected.
+# crane auto-detects the Makefile in vendor/strutil, runs make, then finds
+# libstrutil.a there.  include/ is auto-detected.
 [dependencies]
-strutil = { path = "vendor/strutil", build_system = "make" }
+strutil = { path = "vendor/strutil" }
