@@ -133,16 +133,21 @@ fn compilable_dep_dir(project_dir: &Path, name: &str, dep: &Dependency) -> Optio
         }
         Dependency::Detailed(d) => {
             if d.system.is_some() { return None; }
-            // Foreign deps are built by their own build system (build/foreign.rs).
-            if d.build_system.is_some() { return None; }
-            if d.git.is_some() {
-                // Git dep lands in .deps/{name}/ after `crane fetch`
-                return Some(project_dir.join(".deps").join(name));
+            let dep_dir = if d.git.is_some() {
+                project_dir.join(".deps").join(name)
+            } else if let Some(p) = &d.path {
+                project_dir.join(p)
+            } else {
+                return None;
+            };
+            // Explicitly foreign, or auto-detected as foreign (and not a crane project).
+            if d.build_system.is_some()
+                || (!(d.path.is_some() && dep_dir.join("crane.toml").exists())
+                    && super::foreign::detect_build_system(&dep_dir).is_some())
+            {
+                return None;
             }
-            if let Some(path) = &d.path {
-                return Some(project_dir.join(path));
-            }
-            None
+            Some(dep_dir)
         }
     }
 }

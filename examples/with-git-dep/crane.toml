@@ -11,8 +11,8 @@ name = "with-git-dep"
 src  = "src/main.cpp"
 
 # Run `crane fetch` first to clone the repo into .deps/easyloggingpp/.
-# crane then builds it with cmake and links libeasyloggingpp.a.
+# crane auto-detects CMakeLists.txt and builds the static lib.
 # The library's public header lives under src/ in the repo, so we declare
 # that explicitly (there is no include/ directory to auto-detect).
 [dependencies]
-easyloggingpp = { git = "https://github.com/amrayn/easyloggingpp", build_system = "cmake", include = ["src/"], cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-Dbuild_static_lib=ON"] }
+easyloggingpp = { git = "https://github.com/amrayn/easyloggingpp", include = ["src/"], cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-Dbuild_static_lib=ON"] }
