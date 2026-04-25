@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::build::deps::ResolvedDep;
+use crate::git;
 use crate::manifest::types::{Dependency, Manifest};
 
 const LOCK_VERSION: u32 = 1;
@@ -59,7 +60,7 @@ impl LockFile {
 
         // Compiled deps (path / version / git — all are present in resolved)
         for dep in resolved {
-            let source = dep_source_string(project_dir, dep);
+            let source = dep_source_string(project_dir, dep, root);
             let checksum = dep_checksum(&dep.dir);
             let mut dep_dep_names: Vec<String> =
                 dep.manifest.dependencies.keys().cloned().collect();
@@ -123,7 +124,13 @@ impl LockFile {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn dep_source_string(project_dir: &Path, dep: &ResolvedDep) -> String {
+fn dep_source_string(project_dir: &Path, dep: &ResolvedDep, root_manifest: &Manifest) -> String {
+    if let Some(Dependency::Detailed(d)) = root_manifest.dependencies.get(&dep.name) {
+        if let Some(url) = &d.git {
+            let sha = git::current_rev(&dep.dir).unwrap_or_else(|| "HEAD".to_string());
+            return format!("git+{}#{}", url, sha);
+        }
+    }
     let rel = relative_path(project_dir, &dep.dir);
     format!("path+{}", rel.display())
 }

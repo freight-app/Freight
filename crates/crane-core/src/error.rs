@@ -41,6 +41,9 @@ pub enum CraneError {
     #[error("importer error: {0}")]
     ImporterParse(String),
 
+    #[error("git error: {0}")]
+    GitError(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

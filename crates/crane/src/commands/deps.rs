@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crane_core::dep_cmds::{
-    locate_project, manifest_add_dep, manifest_remove_dep, regen_lock, DetailedDep, RegenLockOutcome,
+    locate_project, manifest_add_dep, manifest_remove_dep, regen_lock,
+    fetch_git_deps, update_git_deps, DetailedDep, GitDepAction, RegenLockOutcome,
 };
 use crane_core::manifest::types::{Dependency, Manifest};
 use crane_core::manifest::{find_manifest_dir, load_manifest};
@@ -63,7 +64,16 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
 
 // ── crane add ────────────────────────────────────────────────────────────────
 
-pub fn cmd_add(package: &str, path: Option<&str>, system: bool, dev: bool) {
+pub fn cmd_add(
+    package: &str,
+    path: Option<&str>,
+    git: Option<&str>,
+    branch: Option<&str>,
+    tag: Option<&str>,
+    rev: Option<&str>,
+    system: bool,
+    dev: bool,
+) {
     let cwd = match std::env::current_dir() {
         Ok(d) => d,
         Err(e) => { print_error(&format!("cannot read cwd: {e}")); return; }
@@ -99,19 +109,26 @@ pub fn cmd_add(package: &str, path: Option<&str>, system: bool, dev: bool) {
             path: Some(rel_path.to_string()),
             ..Default::default()
         })
+    } else if let Some(url) = git {
+        Dependency::Detailed(DetailedDep {
+            git: Some(url.to_string()),
+            branch: branch.map(str::to_string),
+            tag: tag.map(str::to_string),
+            rev: rev.map(str::to_string),
+            ..Default::default()
+        })
     } else if system {
         Dependency::Detailed(DetailedDep {
             system: Some(dep_name.to_string()),
             ..Default::default()
         })
     } else {
+        if version.is_none() {
+            print_warning("crane.dev registry is not yet available — this dependency cannot be fetched");
+        }
         let ver = version.unwrap_or("*").to_string();
         Dependency::Simple(ver)
     };
-
-    if matches!(&dep, Dependency::Simple(_)) || matches!(&dep, Dependency::Detailed(d) if d.git.is_some()) {
-        print_warning("crane.dev registry is not yet available — this dependency cannot be fetched");
-    }
 
     if let Err(e) = manifest_add_dep(&project_dir.join("crane.toml"), dep_name, &dep, dev) {
         print_error(&e.to_string());
@@ -120,6 +137,25 @@ pub fn cmd_add(package: &str, path: Option<&str>, system: bool, dev: bool) {
 
     let section = if dev { "dev-dependencies" } else { "dependencies" };
     print_success(&format!("added `{dep_name}` to [{section}]"));
+
+    // Clone git deps immediately after adding them.
+    if matches!(&dep, Dependency::Detailed(d) if d.git.is_some()) {
+        print_status("fetch", &format!("cloning `{dep_name}`…"));
+        match fetch_git_deps(&project_dir) {
+            Ok(outcomes) => {
+                for o in outcomes {
+                    if o.name == dep_name {
+                        match o.action {
+                            GitDepAction::Cloned => print_success(&format!("cloned `{dep_name}`")),
+                            GitDepAction::AlreadyPresent => print_status("ok", &format!("`{dep_name}` already present")),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Err(e) => print_error(&format!("fetch failed: {e}")),
+        }
+    }
 
     refresh_lock(&project_dir);
 }
@@ -156,24 +192,35 @@ pub fn cmd_update(package: Option<&str>) {
         Err(e) => { print_error(&e.to_string()); return; }
     };
 
-    let has_registry = manifest.dependencies.values().any(|d| matches!(d, Dependency::Simple(_)));
-    let has_git = manifest.dependencies.values()
-        .any(|d| matches!(d, Dependency::Detailed(dd) if dd.git.is_some()));
-
-    if has_registry || has_git {
-        print_warning("crane.dev registry is not yet available — version/git dependencies cannot be updated");
+    if manifest.dependencies.values().any(|d| matches!(d, Dependency::Simple(_))) {
+        print_warning("crane.dev registry is not yet available — version dependencies cannot be updated");
     }
 
     let target = package.map(|p| p.to_string());
-    let path_deps: Vec<&str> = manifest.dependencies.iter()
+
+    // Update path dep lockfile checksums.
+    let path_count = manifest.dependencies.iter()
         .filter(|(name, dep)| {
             target.as_deref().map_or(true, |t| t == name.as_str())
                 && matches!(dep, Dependency::Detailed(d) if d.path.is_some())
         })
-        .map(|(name, _)| name.as_str())
-        .collect();
+        .count();
 
-    if path_deps.is_empty() && !has_registry && !has_git {
+    // Pull latest commits for git deps.
+    match update_git_deps(&project_dir, target.as_deref()) {
+        Ok(outcomes) => {
+            for o in outcomes {
+                match o.action {
+                    GitDepAction::Updated => print_success(&format!("updated `{}`", o.name)),
+                    GitDepAction::Skipped => print_status("skip", &format!("`{}` (rev-pinned)", o.name)),
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => { print_error(&e.to_string()); return; }
+    }
+
+    if path_count == 0 && !manifest.dependencies.values().any(|d| matches!(d, Dependency::Detailed(dd) if dd.git.is_some())) {
         if let Some(pkg) = package {
             print_error(&format!("`{pkg}` not found in [dependencies]"));
         } else {
@@ -184,8 +231,8 @@ pub fn cmd_update(package: Option<&str>) {
 
     refresh_lock(&project_dir);
 
-    if !path_deps.is_empty() {
-        print_success(&format!("updated lockfile for {} path dep(s)", path_deps.len()));
+    if path_count > 0 {
+        print_success(&format!("refreshed lockfile for {path_count} path dep(s)"));
     }
 }
 
@@ -202,16 +249,16 @@ pub fn cmd_fetch() {
     };
 
     let mut all_ok = true;
-    let mut any_path = false;
-    let mut any_registry = false;
+    let mut any_work = false;
 
+    // Verify path deps.
     for (name, dep) in &manifest.dependencies {
         match dep {
             Dependency::Detailed(d) if d.system.is_some() => {
                 print_status("skip", &format!("{name} (system)"));
             }
-            Dependency::Detailed(d) if d.path.is_some() => {
-                any_path = true;
+            Dependency::Detailed(d) if d.path.is_some() && d.build_system.is_none() => {
+                any_work = true;
                 let rel = d.path.as_deref().unwrap();
                 let dep_dir = project_dir.join(rel);
                 if dep_dir.join("crane.toml").exists() {
@@ -221,30 +268,40 @@ pub fn cmd_fetch() {
                     all_ok = false;
                 }
             }
-            Dependency::Detailed(d) if d.git.is_some() => {
-                any_registry = true;
-                print_warning(&format!("{name}: git dependencies are not yet supported — skipping"));
+            Dependency::Detailed(d) if d.build_system.is_some() => {
+                print_status("skip", &format!("{name} (foreign — built on demand)"));
             }
-            _ => {
-                any_registry = true;
+            Dependency::Simple(_) => {
+                any_work = true;
                 print_warning(&format!("{name}: crane.dev registry not yet available — skipping"));
             }
+            _ => {}
         }
     }
 
-    if any_registry {
-        println!();
-        print_warning("version and git dependencies require crane.dev, which is not yet available");
+    // Clone git deps.
+    match fetch_git_deps(&project_dir) {
+        Ok(outcomes) => {
+            for o in outcomes {
+                any_work = true;
+                match o.action {
+                    GitDepAction::Cloned        => print_success(&format!("cloned `{}`", o.name)),
+                    GitDepAction::AlreadyPresent => print_status("ok",   &format!("{} (git, up to date)", o.name)),
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => { print_error(&e.to_string()); all_ok = false; }
     }
 
-    if !any_path && !any_registry {
+    if !any_work {
         println!("no dependencies to fetch");
         return;
     }
 
-    if all_ok && any_path {
+    if all_ok {
         println!();
-        print_success("all path dependencies present");
+        print_success("all dependencies ready");
     }
 }
 

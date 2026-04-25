@@ -8,6 +8,7 @@ use toml_edit::{DocumentMut, Item, Table, Value, value};
 
 use crate::build::deps::resolve_dep_graph;
 use crate::error::CraneError;
+use crate::git;
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest};
@@ -55,8 +56,25 @@ pub fn manifest_add_dep(
             if let Some(g) = &d.git {
                 inline.insert("git", Value::from(g.as_str()));
             }
+            if let Some(b) = &d.branch {
+                inline.insert("branch", Value::from(b.as_str()));
+            }
+            if let Some(t) = &d.tag {
+                inline.insert("tag", Value::from(t.as_str()));
+            }
+            if let Some(r) = &d.rev {
+                inline.insert("rev", Value::from(r.as_str()));
+            }
             if let Some(v) = &d.version {
                 inline.insert("version", Value::from(v.as_str()));
+            }
+            if let Some(bs) = &d.build_system {
+                inline.insert("build_system", Value::from(bs.as_str()));
+            }
+            if !d.include.is_empty() {
+                let mut arr = toml_edit::Array::new();
+                for s in &d.include { arr.push(s.as_str()); }
+                inline.insert("include", Value::Array(arr));
             }
             table[name] = Item::Value(Value::InlineTable(inline));
         }
@@ -96,6 +114,86 @@ pub fn manifest_remove_dep(manifest_path: &Path, name: &str) -> Result<bool, Cra
         std::fs::write(manifest_path, doc.to_string())?;
     }
     Ok(removed)
+}
+
+// ── Git dep fetch / update ───────────────────────────────────────────────────
+
+/// Outcome of a single git dep fetch / update operation.
+pub struct GitDepOutcome {
+    pub name: String,
+    pub action: GitDepAction,
+}
+
+pub enum GitDepAction {
+    Cloned,
+    AlreadyPresent,
+    Updated,
+    Skipped,
+}
+
+/// Clone any git deps that are not yet present under `.deps/`.
+/// Already-present directories are left untouched (use [`update_git_deps`] to refresh them).
+pub fn fetch_git_deps(project_dir: &Path) -> Result<Vec<GitDepOutcome>, CraneError> {
+    let manifest = load_manifest(project_dir)?;
+    let deps_dir = project_dir.join(".deps");
+    let mut outcomes = Vec::new();
+
+    for (name, dep) in &manifest.dependencies {
+        let Dependency::Detailed(d) = dep else { continue };
+        let Some(url) = &d.git else { continue };
+
+        let dest = deps_dir.join(name);
+        if dest.exists() {
+            outcomes.push(GitDepOutcome { name: name.clone(), action: GitDepAction::AlreadyPresent });
+            continue;
+        }
+
+        std::fs::create_dir_all(&deps_dir)?;
+        git::clone_dep(
+            &dest,
+            url,
+            d.branch.as_deref(),
+            d.tag.as_deref(),
+            d.rev.as_deref(),
+        )?;
+        outcomes.push(GitDepOutcome { name: name.clone(), action: GitDepAction::Cloned });
+    }
+
+    Ok(outcomes)
+}
+
+/// Fetch updates for all git deps already present in `.deps/`.
+/// Deps pinned with `rev` are skipped.
+/// Deps not yet cloned are skipped (run `crane fetch` first).
+pub fn update_git_deps(project_dir: &Path, only: Option<&str>) -> Result<Vec<GitDepOutcome>, CraneError> {
+    let manifest = load_manifest(project_dir)?;
+    let deps_dir = project_dir.join(".deps");
+    let mut outcomes = Vec::new();
+
+    for (name, dep) in &manifest.dependencies {
+        if let Some(filter) = only {
+            if name.as_str() != filter { continue; }
+        }
+
+        let Dependency::Detailed(d) = dep else { continue };
+        let Some(_url) = &d.git else { continue };
+
+        let dest = deps_dir.join(name);
+        if !dest.exists() {
+            outcomes.push(GitDepOutcome { name: name.clone(), action: GitDepAction::Skipped });
+            continue;
+        }
+
+        if d.rev.is_some() {
+            outcomes.push(GitDepOutcome { name: name.clone(), action: GitDepAction::Skipped });
+            continue;
+        }
+
+        git::update_dep(&dest, d.branch.as_deref(), d.tag.as_deref(), None)?;
+        outcomes.push(GitDepOutcome { name: name.clone(), action: GitDepAction::Updated });
+    }
+
+    Ok(outcomes)
 }
 
 // ── Lock regeneration ────────────────────────────────────────────────────────

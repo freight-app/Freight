@@ -130,6 +130,8 @@ fn compilable_dep_dir(project_dir: &Path, name: &str, dep: &Dependency) -> Optio
         }
         Dependency::Detailed(d) => {
             if d.system.is_some() { return None; }
+            // Foreign deps are built by their own build system (build/foreign.rs).
+            if d.build_system.is_some() { return None; }
             if d.git.is_some() {
                 // Git dep lands in .deps/{name}/ after `crane fetch`
                 return Some(project_dir.join(".deps").join(name));

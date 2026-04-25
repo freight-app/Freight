@@ -1,6 +1,7 @@
 pub mod compile;
 pub mod deps;
 pub mod discover;
+pub mod foreign;
 pub mod link;
 pub mod modules;
 
@@ -129,17 +130,25 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
 
     let resolved_deps = resolve_dep_graph(project_dir, manifest, false)?;
     let built = build_resolved_deps(project_dir, profile, templates, detected, &resolved_deps)?;
+    let foreign_built = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+
+    let mut all_libs = built.libs.clone();
+    let mut all_dep_includes = built.include_dirs.clone();
+    for f in foreign_built {
+        all_libs.extend(f.libs);
+        all_dep_includes.extend(f.include_dirs);
+    }
 
     // Merge dep include dirs into the set passed to the root compile step.
     let mut include_dirs = found.include_dirs.clone();
-    include_dirs.extend(built.include_dirs.iter().cloned());
+    include_dirs.extend(all_dep_includes.iter().cloned());
 
     let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
         &compile_result.objects, detected, templates,
-        &built.libs,
+        &all_libs,
     )?;
 
     // Keep crane.lock in sync with the resolved dep graph. Lock-write failures
@@ -198,9 +207,17 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
     // Build deps (include dev-dependencies for test runs).
     let resolved_deps = resolve_dep_graph(project_dir, manifest, true)?;
     let built = build_resolved_deps(project_dir, profile, templates, detected, &resolved_deps)?;
+    let foreign_built = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+
+    let mut all_libs = built.libs.clone();
+    let mut all_dep_includes = built.include_dirs.clone();
+    for f in foreign_built {
+        all_libs.extend(f.libs);
+        all_dep_includes.extend(f.include_dirs);
+    }
 
     let mut include_dirs = found.include_dirs.clone();
-    include_dirs.extend(built.include_dirs.iter().cloned());
+    include_dirs.extend(all_dep_includes.iter().cloned());
 
     let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected)?;
 
@@ -269,7 +286,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
             .collect();
         link_test_binary(
             &all_objs, &test_bin, manifest, profile, project_dir,
-            detected, templates, &built.libs,
+            detected, templates, &all_libs,
         )?;
 
         print!("test {stem} ... ");

@@ -359,6 +359,24 @@ pub struct DetailedDep {
     /// Examples: `arch = "x86_64"`, `arch = ["x86_64", "aarch64"]`.
     #[serde(default, deserialize_with = "string_or_vec")]
     pub arch: Option<Vec<String>>,
+    /// Branch to check out for a git dependency. Mutually exclusive with `tag` and `rev`.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// Tag to check out for a git dependency. Mutually exclusive with `branch` and `rev`.
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Exact commit SHA or abbreviated ref to check out. Pins the dep to a
+    /// specific commit and prevents `crane update` from moving it forward.
+    #[serde(default)]
+    pub rev: Option<String>,
+    /// Delegate building this dep to an external build system rather than
+    /// crane's own compiler. Values: `"cmake"`, `"make"`, `"meson"`, `"auto"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_system: Option<String>,
+    /// Include directories to expose to code that depends on this dep,
+    /// relative to the dep's source directory. Only used for foreign deps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
 }
 
 /// Deserialize a field that can be either a bare string or an array of strings.

@@ -60,6 +60,18 @@ enum Commands {
         /// Add as a path dependency pointing to a local crane project
         #[arg(long, value_name = "PATH")]
         path: Option<String>,
+        /// Add as a git dependency (URL)
+        #[arg(long, value_name = "URL")]
+        git: Option<String>,
+        /// Git branch to track (requires --git)
+        #[arg(long)]
+        branch: Option<String>,
+        /// Git tag to check out (requires --git)
+        #[arg(long)]
+        tag: Option<String>,
+        /// Exact commit SHA to pin (requires --git)
+        #[arg(long)]
+        rev: Option<String>,
         /// Add as a system (linker) dependency
         #[arg(long)]
         system: bool,
@@ -129,8 +141,8 @@ fn main() -> Result<()> {
         Commands::Build { release } => cmd_build(release),
         Commands::Run { release, args } => cmd_run(release, &args),
         Commands::Test { name } => cmd_test(name.as_deref()),
-        Commands::Add { package, path, system, dev } => {
-            cmd_add(&package, path.as_deref(), system, dev);
+        Commands::Add { package, path, git, branch, tag, rev, system, dev } => {
+            cmd_add(&package, path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(), rev.as_deref(), system, dev);
         }
         Commands::Remove { package } => cmd_remove(&package),
         Commands::Update { package } => cmd_update(package.as_deref()),
