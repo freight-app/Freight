@@ -15,10 +15,15 @@ struct RawTemplate {
     version_regex: String,
     extensions: RawExtensions,
     flags: RawFlags,
+    #[serde(default)]
     standards: HashMap<String, String>,
     structure: RawStructure,
     modules: RawModules,
     passthrough: RawPassthrough,
+    /// Per-arch (and optionally per-arch+OS) flags, e.g. NASM output format.
+    /// Keys: `"x86_64"` or `"x86_64.linux"` — more specific key wins.
+    #[serde(default)]
+    arch_flags: HashMap<String, String>,
     #[serde(default)]
     extra: RawExtra,
     #[serde(default)]
@@ -39,6 +44,10 @@ struct RawFlags {
     #[serde(default)]
     strip: HashMap<String, String>,
     sanitize: String,
+    /// Template for per-CPU-extension flags, e.g. `"-m{name}"` → `-mavx2`.
+    /// Empty string means the compiler does not support such flags.
+    #[serde(default)]
+    cpu_extension: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,11 +150,16 @@ pub struct BuildSettings {
     pub include_paths: Vec<PathBuf>,
     pub extra_flags: Vec<String>,
     /// Cross-compilation target triple (e.g. `"aarch64-linux-gnu"`).
-    /// `None` means native/host build. Reserved for the cross-compilation phase.
+    /// `None` means native/host build.
     pub target_triple: Option<String>,
     /// Sysroot for cross-compilation (`--sysroot=...`).
-    /// `None` means use the default sysroot. Reserved for the cross-compilation phase.
     pub sysroot: Option<PathBuf>,
+    /// Host (or target) CPU architecture used for `[arch_flags]` lookup in templates.
+    /// Defaults to `std::env::consts::ARCH`; overridden by `[target] arch` in crane.toml.
+    pub arch: String,
+    /// CPU extension names (e.g. `["avx2", "fma"]`) that generate `-m<name>` flags
+    /// via the template's `cpu_extension` field.
+    pub cpu_extensions: Vec<String>,
 }
 
 impl Default for BuildSettings {
@@ -163,6 +177,8 @@ impl Default for BuildSettings {
             extra_flags: vec![],
             target_triple: None,
             sysroot: None,
+            arch: std::env::consts::ARCH.to_string(),
+            cpu_extensions: vec![],
         }
     }
 }
@@ -221,12 +237,16 @@ pub struct CompilerTemplate {
     /// A template may handle multiple language keys (e.g. gcc handles `"cpp"` and `"c"`).
     pub linking: HashMap<String, LinkingInfo>,
 
+    /// Per-arch (optionally per-arch+OS) flags. Key `"x86_64.linux"` wins over `"x86_64"`.
+    pub arch_flags: HashMap<String, String>,
     flags_opt: HashMap<String, String>,
     flags_debug: HashMap<String, String>,
     flags_warnings: HashMap<String, String>,
     flags_lto: HashMap<String, String>,
     flags_strip: HashMap<String, String>,
     flags_sanitize: String,
+    /// Template for CPU-extension flags, e.g. `"-m{name}"`. Empty = unsupported.
+    flags_cpu_extension: String,
 }
 
 impl CompilerTemplate {
@@ -270,6 +290,7 @@ impl CompilerTemplate {
                 prefix: raw.passthrough.prefix,
             },
             always_flags: raw.extra.always,
+            arch_flags: raw.arch_flags,
             linking,
             flags_opt: raw.flags.opt,
             flags_debug: raw.flags.debug,
@@ -277,6 +298,7 @@ impl CompilerTemplate {
             flags_lto: raw.flags.lto,
             flags_strip: raw.flags.strip,
             flags_sanitize: raw.flags.sanitize,
+            flags_cpu_extension: raw.flags.cpu_extension,
         })
     }
 
@@ -380,6 +402,26 @@ impl CompilerTemplate {
             if !self.structure.sysroot.is_empty() {
                 let f = self.structure.sysroot
                     .replace("{path}", &sysroot.to_string_lossy());
+                push_flag_str(&mut flags, &f);
+            }
+        }
+
+        // Arch flags (e.g. NASM output format: `-f elf64`).
+        // Try arch.os first, then arch alone.
+        if !self.arch_flags.is_empty() {
+            let os = std::env::consts::OS;
+            let arch_os = format!("{}.{os}", settings.arch);
+            let arch_flag = self.arch_flags.get(&arch_os)
+                .or_else(|| self.arch_flags.get(&settings.arch))
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            push_flag_str(&mut flags, arch_flag);
+        }
+
+        // CPU extension flags (e.g. `-mavx2`, `-mfma`).
+        if !self.flags_cpu_extension.is_empty() {
+            for ext in &settings.cpu_extensions {
+                let f = self.flags_cpu_extension.replace("{name}", ext);
                 push_flag_str(&mut flags, &f);
             }
         }

@@ -67,14 +67,16 @@ crane/
 │   │       │   ├── template.rs
 │   │       │   ├── detect.rs
 │   │       │   └── cache.rs
-│   │       ├── build/          # compilation + linking orchestration
-│   │       │   ├── mod.rs      # build_project, clean_project, test_project (pub functions)
-│   │       │   ├── compile.rs  # source → object, parallel via rayon
-│   │       │   ├── link.rs     # object → binary / .a / .so
-│   │       │   ├── discover.rs # walkdir source discovery
-│   │       │   ├── deps.rs     # dep graph resolution + topo sort
-│   │       │   └── modules.rs  # C++20 module scanner, DAG, phased compilation
-│   ├── crane-importer/         # library crate — crane migrate (CMake/Makefile/Meson → crane.toml)
+│   │       └── build/          # compilation + linking orchestration
+│   │           ├── mod.rs      # build_project, clean_project, test_project (pub functions)
+│   │           ├── compile.rs  # source → object, parallel via rayon
+│   │           ├── link.rs     # object → binary / .a / .so
+│   │           ├── discover.rs # walkdir source discovery
+│   │           ├── deps.rs     # dep graph resolution + topo sort
+│   │           ├── features.rs # Cargo-style [features] resolve + define generation
+│   │           ├── foreign.rs  # foreign build system integration (cmake/make/meson/autotools/scons)
+│   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   ├── crane-migrator/         # library crate — crane migrate (CMake/Makefile/Meson → crane.toml)
 │   │   └── src/
 │   │       ├── lib.rs          # run_migrate → MigrateOutcome, ImportedProject IR
 │   │       ├── detect.rs       # pick format from files present
@@ -85,28 +87,13 @@ crane/
 │   └── crane-lsp/              # Language Server for crane.toml
 │       └── src/
 │           ├── lib.rs
-│           ├── error.rs
-│           ├── new.rs          # crane new / crane init
-│           ├── manifest/       # crane.toml parsing + validation
-│           │   ├── mod.rs
-│           │   ├── types.rs
-│           │   ├── find.rs
-│           │   └── validate.rs
-│           ├── toolchain/      # compiler detection + templates
-│           │   ├── mod.rs
-│           │   ├── template.rs
-│           │   ├── detect.rs
-│           │   └── cache.rs
-│           └── build/          # compilation + linking orchestration
-│               ├── mod.rs      # cmd_build, cmd_run, cmd_test, cmd_clean
-│               ├── compile.rs  # source → object, parallel via rayon
-│               ├── link.rs     # object → binary / .a / .so
-│               ├── discover.rs # walkdir source discovery
-│               ├── deps.rs     # dep graph resolution + topo sort
-│               └── modules.rs  # C++20 module scanner, DAG, phased compilation
-├── compiler-templates/         # bundled .toml files per compiler
-│   ├── gcc.toml                # g++ (C++ linker), gcc (C compiler override)
-│   ├── clang.toml              # clang++ (C++ linker), clang (C compiler override)
+│           ├── position.rs     # text-based position mapping for diagnostics
+│           ├── completion.rs   # section-aware completions
+│           └── docs.rs         # hover docs keyed by dotted path
+├── toolchains/                 # bundled .toml files per compiler
+│   ├── gcc.toml                # g++ (C++ linker), gcc (C compiler override), GAS (.s/.S)
+│   ├── clang.toml              # clang++ (C++ linker), clang (C compiler override), GAS (.s/.S)
+│   ├── nasm.toml               # NASM x86/x86_64 assembler (.asm/.nasm)
 │   ├── gfortran.toml
 │   ├── gnat.toml               # GNU Ada compiler
 │   ├── dmd.toml                # D language compiler
@@ -123,6 +110,10 @@ crane/
     ├── multi-bin/              # two binaries from one source tree (base64 encode/decode)
     ├── cpp-modules/            # C++20 named modules (ASCII ray tracer)
     ├── tri-lang/               # Fortran + C + C++ in one project (requires gfortran)
+    ├── asm-hello/              # C + NASM assembly (.asm auto-discovered, no [language.asm] needed)
+    ├── with-cmake-dep/         # path dep built by CMake (auto-detected)
+    ├── with-make-dep/          # path dep built by Make (auto-detected)
+    ├── with-git-dep/           # git dependency cloned + built automatically
     └── migrated-from-cmake/    # before/after for `crane migrate --from cmake`
 ```
 
@@ -191,9 +182,6 @@ logging    = []            # → -DLOGGING when active
 tls        = ["net"]       # → -DTLS + activates the "net" feature
 net        = []            # → -DNET
 
-[dev-dependencies]
-libcheck = "0.15"
-
 [compiler]
 backend   = "auto"   # auto | gcc | clang | gfortran | nasm | …
 opt-level = 2
@@ -206,6 +194,12 @@ sysroot   = "/opt/sysroot"        # optional sysroot path
 
 [compiler.includes]
 paths = ["include/", "third_party/include/"]
+
+# Target hardware configuration — drives arch_flags lookup in templates and -m<ext> flags.
+# arch defaults to the host CPU architecture (std::env::consts::ARCH).
+[target]
+arch           = "x86_64"              # overrides host arch for template [arch_flags] lookup
+cpu_extensions = ["avx2", "fma"]       # → -mavx2 -mfma via template cpu_extension = "-m{name}"
 
 [profile.dev]
 opt-level = 0
@@ -242,10 +236,10 @@ defines = ["POSIX_BUILD"]
 
 ## Compiler template format
 
-Each compiler is described by a flat `.toml` file — no `[compiler]` nesting. Crane loads all `.toml` files from `compiler-templates/` at startup. Adding a new compiler = writing a new TOML, not touching Rust.
+Each compiler is described by a flat `.toml` file — no `[compiler]` nesting. Crane loads all `.toml` files from `toolchains/` at startup. Adding a new compiler = writing a new TOML, not touching Rust.
 
 ```toml
-# compiler-templates/gcc.toml
+# toolchains/gcc.toml
 
 name          = "gcc"
 binary        = "g++"          # binary used for linking
@@ -271,6 +265,7 @@ lto.false        = ""
 strip.true       = "-s"
 strip.false      = ""
 sanitize         = "-fsanitize={values}"
+cpu_extension    = "-m{name}"   # e.g. avx2 → -mavx2; empty string = unsupported
 
 [standards]
 "c11"   = "-std=c11"
@@ -300,19 +295,26 @@ import_module = "-fmodule-file={name}={pcm_path}"
 enabled = false
 prefix  = ""
 
+# Arch-dependent flags — keyed by "arch.os" first, then "arch" as fallback.
+# Used e.g. by NASM to select output format: -f elf64 vs -f macho64 vs -f win64.
+[arch_flags]
+"x86_64.linux"   = "-f elf64"
+"x86_64.macos"   = "-f macho64"
+"x86_64.windows" = "-f win64"
+
 # A template can claim multiple language keys.
 # [linking.<key>] declares ABI + linker compatibility for that language.
 # compile_binary overrides the top-level binary for *compilation* only.
 [linking.c]
 abi            = "c"
 compile_binary = "gcc"   # C files compiled with gcc, not g++
-compatible     = ["fortran"]
+compatible     = ["fortran", "asm"]
 linker         = ""
-extensions     = [".c"]
+extensions     = [".c", ".s", ".S"]   # GCC/Clang handle AT&T assembly natively
 
 [linking.cpp]
 abi        = "c++"
-compatible = ["c", "fortran"]
+compatible = ["c", "fortran", "asm"]
 linker     = ""
 extensions = [".cpp", ".cppm", ".cc", ".cxx", ".c++"]
 ```
@@ -363,12 +365,15 @@ crane build
 
 | Kind | crane.toml syntax | How it works |
 |---|---|---|
-| Path | `{ path = "../mylib" }` | Compiles the dep project, links its `.a` archive |
+| Path | `{ path = "../mylib" }` | Compiles the dep project (crane or foreign), links its `.a` archive |
 | System | `{ system = "openssl" }` | Passes `-l{name}` to the linker |
 | Version | `"0.3"` | Fetched from crane.dev (not yet implemented) |
-| Git | `{ git = "..." }` | Not yet implemented |
+| Git | `{ git = "https://..." }` | Cloned into `.deps/<name>/`, then built like a path dep |
+| Foreign | `{ path = "../zlib" }` (no `crane.toml`) | Auto-detects CMake/Meson/Make/Autotools/SCons; builds + installs into `.crane-build/`; headers and archive linked automatically |
 
 Path dependencies are non-recursive: crane checks that a dep's own deps are already present in `.deps/` but does not download them. The topo sort ensures deps are compiled in the right order.
+
+Foreign build system detection priority: CMake (`CMakeLists.txt`) > Meson (`meson.build`) > Autotools (`configure.ac` / `configure.in` / `autogen.sh`) > SCons (`SConstruct`) > Make (`Makefile` / `GNUmakefile`). Any path dep that contains a `crane.toml` is always treated as a crane project regardless of other build files present.
 
 ---
 
@@ -427,7 +432,7 @@ crane lsp                         run language server on stdio        ✓ implem
 - [x] `CompilerTemplate` struct + `assemble_flags()` method (pure, unit-tested)
 - [x] `crane toolchain list`
 - [x] Toolchain version cache (`~/.crane/toolchain-cache.json`, mtime-validated)
-- [x] Template system supports: gcc, clang, gfortran, gnat, dmd, nvcc, hipcc, icpx, opencl, ispc
+- [x] Template system supports: gcc, clang, nasm, gfortran, gnat, dmd, nvcc, hipcc, icpx, opencl, ispc
 
 ### Phase 4 — Build engine ✓ COMPLETE
 - [x] Source discovery with `walkdir` — extension → language key routing
@@ -450,12 +455,36 @@ crane lsp                         run language server on stdio        ✓ implem
 - [x] Transitive dep checks — errors if a dep's dep is not present, does not fetch recursively
 - [x] Dep include dirs accumulated in topo order for multi-level dep builds
 
-### Phase 6 — Assembly + target config (in progress — `feature/assembly-support`)
-- [x] NASM template (`nasm.toml`) — `.asm`/`.nasm`, x86/x86_64 arch flags
-- [x] GAS template (`gas.toml`) — `.s`, x86/x86_64/aarch64 arch flags
-- [x] `[target]` section in crane.toml — `arch` and `cpu_extensions`
-- [x] `arch` drives `[arch_flags]` lookups in templates (e.g. `-f elf64` for NASM)
-- [x] `cpu_extensions` produces per-extension flags (e.g. `-mavx2`, `-mfma` via `cpu_extension = "-m{name}"`)
+### Phase 5a — Foreign build system integration ✓ COMPLETE
+- [x] Auto-detect foreign build system from dep directory — CMake > Meson > Autotools > SCons > Make; path deps with `crane.toml` always treated as crane projects
+- [x] `build_system` key in `[dependencies]` no longer required; auto-detection handles it; key is still accepted for explicit override
+- [x] CMake foreign deps — `cmake -S . -B .crane-build -DCMAKE_BUILD_TYPE=... -DCMAKE_INSTALL_PREFIX=...` + `cmake --build` + `cmake --install`; `cmake_args` forwarded verbatim to configure step
+- [x] Meson foreign deps — `meson setup .crane-build --buildtype=... --prefix=...` + `meson compile` + `meson install`
+- [x] Make foreign deps — `make` in dep dir; searches `lib/`, `build/` for output archives
+- [x] Autotools foreign deps — `autoreconf -fi` (or `./autogen.sh`), `./configure --prefix=.crane-build/install/`, `make`, `make install`; include + lib search under `build/install/`
+- [x] SCons foreign deps — `scons` in dep dir
+- [x] Git dependencies — `{ git = "https://..." }` clones into `.deps/<name>/`, then treated as path dep; `rev`/`tag`/`branch` supported
+- [x] Foreign dep include auto-discovery — probes `install/include`, `include`, `src` (and cmake/meson equivalent install trees) after build
+- [x] Foreign dep archive auto-discovery — searches build output dirs for `lib*.a` / `lib*.so`
+
+### Phase 5b — Features system ✓ COMPLETE
+- [x] `[features]` table in crane.toml — keys map to lists of implied feature names
+- [x] `"default"` key lists features active when no explicit selection is made; `"default"` itself never produces a `-DDEFAULT` define
+- [x] Active features produce `-D<NAME_UPPER>` compiler flags for all sources (`tls` → `-DTLS`, `with-json` → `-DWITH_JSON`)
+- [x] Feature closure: activating a feature activates all transitively implied features (BFS expansion)
+- [x] Cycle detection in `[features]` with clear error
+- [x] Unknown feature reference = validation error at `crane check` time
+- [x] Per-dep feature selection: `mylib = { path = "../mylib", features = ["tls"] }` passes `-DTLS` when compiling that dep
+- [x] `default-features = false` on a dep declaration opts out of the dep's defaults
+- [x] `build/features.rs` — `resolve_features()` + `to_defines()` (pure, unit-tested)
+
+### Phase 6 — Assembly + target config ✓ COMPLETE
+- [x] NASM template (`toolchains/nasm.toml`) — `.asm`/`.nasm`, `[arch_flags]` keyed by `"arch.os"` for output format (`-f elf64` / `-f macho64` / `-f win64`)
+- [x] GAS (AT&T assembly) via GCC/Clang — `.s`/`.S` added to `[linking.c]` extensions in gcc.toml and clang.toml; no separate template needed
+- [x] `[target]` section in crane.toml — `arch` (overrides host for `[arch_flags]` lookup) and `cpu_extensions` (generates `-m<ext>` flags)
+- [x] `[arch_flags]` in compiler templates — keyed by `"arch.os"` first, `"arch"` fallback; used by NASM for output format selection
+- [x] `cpu_extension = "-m{name}"` in `[flags]` — gcc/clang produce `-mavx2`, `-mfma` etc. from `cpu_extensions` list
+- [x] `.asm`/`.nasm` auto-discovered without `[language.asm]` declaration — always-active when NASM template is installed
 - [x] Unified C/C++ templates — `compile_binary = "gcc"` override in `[linking.c]` so C files are not compiled with `g++`
 
 ### Phase 7 — Examples ✓ COMPLETE
@@ -466,6 +495,10 @@ crane lsp                         run language server on stdio        ✓ implem
 - [x] `examples/multi-bin/` — two binaries (base64 encode/decode) from one source tree
 - [x] `examples/cpp-modules/` — C++20 named modules, ASCII ray tracer
 - [x] `examples/tri-lang/` — Fortran + C + C++ N-body gravity (requires gfortran)
+- [x] `examples/asm-hello/` — C + NASM assembly; `.asm` auto-discovered without `[language.asm]`
+- [x] `examples/with-cmake-dep/` — foreign CMake dep (auto-detected, no `build_system` key)
+- [x] `examples/with-make-dep/` — foreign Make dep (auto-detected)
+- [x] `examples/with-git-dep/` — git dependency cloned and built automatically
 
 ### Phase 8 — C++20 modules ✓ COMPLETE
 - [x] Scan source files for `export module` / `import` statements (`build/modules.rs`)
@@ -504,9 +537,9 @@ crane lsp                         run language server on stdio        ✓ implem
 - [x] `arch = "x86_64"` / `arch = ["x86_64", "aarch64"]` on any dep — filtered by `std::env::consts::ARCH`; validated against known arch set
 - [x] `crane toolchain add <path>` — validates a local `.toml` as a `CompilerTemplate`, installs to `~/.crane/templates/<name>.toml`; `load_all_templates()` merges system + user templates (user overrides same-named system)
 
-### Phase 11 — Importer (in progress — `feature/importer`)
+### Phase 11 — Migrator (in progress — `feature/importer`)
 Priority phase: frictionless migration off existing build systems is the single
-biggest unblocker for new users. Lives in `crates/crane-importer/` (a standalone library crate that depends on `crane-core` for its error types).
+biggest unblocker for new users. Lives in `crates/crane-migrator/` (a standalone library crate that depends on `crane-core` for its error types).
 All three importers parse into a shared [`ImportedProject`] IR, which
 [`emit::to_toml`] serializes into `crane.toml` with stable output ordering.
 
@@ -575,12 +608,12 @@ or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same
 
 1. **`crane` crate owns the CLI** — clap parsing, `commands/` shells, and `output.rs` colour helpers. Each `cmd_*` reads cwd, calls a pure function in `crane-core`, prints the outcome.
 2. **`crane-core` is a library, no CLI knowledge** — pure functions return `Result<T, CraneError>` (e.g. `build_project`, `scaffold_project → ScaffoldOutcome`). It must not depend on `output.rs` or call `print_*`. Inline `println!` for build-engine progress (`Compiling foo.cpp`, `Linking …`) is the one exception, pending a future progress-callback abstraction.
-2a. **`crane-importer` is a separate library** — depends on `crane-core` for `CraneError`, exposes `run_migrate → MigrateOutcome`. Keeping it separate lets external tools use the importer without pulling in the build engine.
-3. **Compiler templates are runtime data** — loaded from `compiler-templates/` directory, not hardcoded
+2a. **`crane-migrator` is a separate library** — depends on `crane-core` for `CraneError`, exposes `run_migrate → MigrateOutcome`. Keeping it separate lets external tools use the migrator without pulling in the build engine.
+3. **Compiler templates are runtime data** — loaded from `toolchains/` directory, not hardcoded
 4. **One template per toolchain, not per language** — `gcc.toml` handles both C and C++; `compile_binary` in `[linking.c]` overrides which binary compiles that language
 5. **DAG cycles = hard error** — report the full cycle path (both dep cycles and module cycles)
 6. **`CompilerTemplate::assemble_flags()` is pure** — no side effects, unit-tested
-7. **Never shell out to Make / Ninja / CMake during a build** — crane owns the build graph entirely
+7. **Never shell out to Make / Ninja / CMake for crane's own sources** — crane owns the build graph entirely. Foreign build systems are only invoked when compiling external dependencies that don't have a `crane.toml`.
 8. **Errors use `thiserror` in crane-core, surface at the CLI boundary**
 9. **Feature branches** — each new feature gets its own `feature/<name>` branch off `master`
 10. **Module detection is transparent** — `build_sources()` scans automatically; projects without `export module` take the unchanged fast path

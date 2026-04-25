@@ -24,6 +24,7 @@ lto.false        = ""
 strip.true       = "-s"
 strip.false      = ""
 sanitize         = "-fsanitize={values}"
+cpu_extension    = "-m{name}"
 
 [standards]
 "c11"   = "-std=c11"
@@ -57,9 +58,9 @@ prefix  = ""
 [linking.c]
 abi            = "c"
 compile_binary = "clang"
-compatible     = ["fortran"]
+compatible     = ["fortran", "asm"]
 linker         = ""
-extensions     = [".c"]
+extensions     = [".c", ".s", ".S"]
 
 [linking.cpp]
 abi        = "c++"

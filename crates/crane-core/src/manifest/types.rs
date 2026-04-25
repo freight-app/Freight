@@ -46,6 +46,9 @@ pub struct Manifest {
     pub profile: Profiles,
     #[serde(default)]
     pub features: HashMap<String, Vec<String>>,
+    /// Assembly / CPU target configuration: arch override and CPU extensions.
+    #[serde(default)]
+    pub target: TargetConfig,
     /// Per-platform overlays keyed by OS name (`linux`, `windows`, `macos`,
     /// `freebsd`, …) or family alias (`unix`, `bsd`). Matching overlays are
     /// merged into the base config in a defined order (see [`host_platforms`])
@@ -100,6 +103,9 @@ impl Manifest {
             extra_flags: flags,
             target_triple: self.compiler.target.clone(),
             sysroot: self.compiler.sysroot.as_deref().map(PathBuf::from),
+            arch: self.target.arch.clone()
+                .unwrap_or_else(|| std::env::consts::ARCH.to_string()),
+            cpu_extensions: self.target.cpu_extensions.clone(),
             ..Default::default()
         };
 
@@ -406,6 +412,22 @@ where
         OneOrMany::One(s) => vec![s],
         OneOrMany::Many(v) => v,
     }))
+}
+
+// ── Target / assembly config ──────────────────────────────────────────────────
+
+/// `[target]` — CPU architecture and extension settings for assembly builds.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct TargetConfig {
+    /// Override the host CPU architecture used for assembler format selection
+    /// (e.g. `arch = "x86_64"`). Defaults to the host arch at build time.
+    #[serde(default)]
+    pub arch: Option<String>,
+    /// CPU extensions to enable (e.g. `["avx2", "fma"]`).
+    /// Each entry produces a compiler flag via the template's `cpu_extension` pattern,
+    /// e.g. `"-mavx2"` from `cpu_extension = "-m{name}"` in gcc.toml.
+    #[serde(default)]
+    pub cpu_extensions: Vec<String>,
 }
 
 // ── Compiler config ───────────────────────────────────────────────────────────
