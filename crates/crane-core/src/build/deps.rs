@@ -82,12 +82,15 @@ pub fn resolve_dep_graph(
 
 /// Absolute include directories that `dep` exports to its dependants.
 ///
-/// Includes `{dep_dir}/inc/` if present, plus any paths from `[compiler].includes`.
+/// Auto-detects `include/` and `inc/` at the dep root (both common conventions),
+/// then appends any paths from `[compiler].includes`.
 pub fn dep_include_dirs(dep_dir: &Path, manifest: &Manifest) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    let inc = dep_dir.join("inc");
-    if inc.is_dir() {
-        dirs.push(inc);
+    for candidate in &["include", "inc"] {
+        let d = dep_dir.join(candidate);
+        if d.is_dir() {
+            dirs.push(d);
+        }
     }
     for p in &manifest.compiler.includes.paths {
         let abs = dep_dir.join(p);
