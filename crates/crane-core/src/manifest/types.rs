@@ -377,6 +377,11 @@ pub struct DetailedDep {
     /// relative to the dep's source directory. Only used for foreign deps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
+    /// Extra arguments forwarded verbatim to `cmake -S … -B …` during configure.
+    /// Useful for silencing policy warnings on older CMakeLists.txt files, e.g.
+    /// `cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cmake_args: Vec<String>,
 }
 
 /// Deserialize a field that can be either a bare string or an array of strings.

@@ -48,7 +48,7 @@ pub fn build_foreign_deps(
             )));
         }
 
-        let libs = invoke_build_system(&dep_dir, name, bs, profile)?;
+        let libs = invoke_build_system(&dep_dir, name, bs, profile, &d.cmake_args)?;
 
         // Explicit `include = [...]` wins; if absent, probe common conventions.
         let include_dirs: Vec<PathBuf> = if !d.include.is_empty() {
@@ -74,6 +74,7 @@ fn invoke_build_system(
     name: &str,
     build_system: &str,
     profile: &str,
+    cmake_args: &[String],
 ) -> Result<Vec<PathBuf>, CraneError> {
     let resolved = if build_system == "auto" {
         detect_build_system(dep_dir).ok_or_else(|| {
@@ -92,7 +93,7 @@ fn invoke_build_system(
     println!("  {} {} ({})", "Building".dimmed(), name, resolved);
 
     let search_dir = match resolved.as_str() {
-        "cmake" => { build_cmake(dep_dir, &build_dir, profile)?; build_dir }
+        "cmake" => { build_cmake(dep_dir, &build_dir, profile, cmake_args)?; build_dir }
         "make"  => { build_make(dep_dir)?; dep_dir.to_path_buf() }
         "meson" => { build_meson(dep_dir, &build_dir)?; build_dir }
         other => {
@@ -117,16 +118,18 @@ fn detect_build_system(dep_dir: &Path) -> Option<String> {
 
 // ── Individual build system runners ──────────────────────────────────────────
 
-fn build_cmake(dep_dir: &Path, build_dir: &Path, profile: &str) -> Result<(), CraneError> {
+fn build_cmake(dep_dir: &Path, build_dir: &Path, profile: &str, extra_args: &[String]) -> Result<(), CraneError> {
     let build_type = if profile == "release" { "Release" } else { "Debug" };
 
-    run("cmake", &[
-        "-S", &dep_dir.to_string_lossy(),
-        "-B", &build_dir.to_string_lossy(),
-        &format!("-DCMAKE_BUILD_TYPE={build_type}"),
-    ], dep_dir, "cmake configure")?;
+    let src   = dep_dir.to_string_lossy().into_owned();
+    let bdir  = build_dir.to_string_lossy().into_owned();
+    let btype = format!("-DCMAKE_BUILD_TYPE={build_type}");
 
-    run("cmake", &["--build", &build_dir.to_string_lossy()], dep_dir, "cmake build")
+    let mut configure_args: Vec<&str> = vec!["-S", &src, "-B", &bdir, &btype];
+    for a in extra_args { configure_args.push(a.as_str()); }
+
+    run("cmake", &configure_args, dep_dir, "cmake configure")?;
+    run("cmake", &["--build", &bdir], dep_dir, "cmake build")
 }
 
 fn build_make(dep_dir: &Path) -> Result<(), CraneError> {

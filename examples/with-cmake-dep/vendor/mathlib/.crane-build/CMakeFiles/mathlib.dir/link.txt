@@ -1,0 +1,2 @@
+/usr/sbin/ar qc libmathlib.a CMakeFiles/mathlib.dir/src/mathlib.cpp.o
+/usr/sbin/ranlib libmathlib.a
