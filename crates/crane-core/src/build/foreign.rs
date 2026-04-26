@@ -35,17 +35,35 @@ pub fn build_foreign_deps(
     for (name, dep) in &manifest.dependencies {
         let Dependency::Detailed(d) = dep else { continue };
 
-        // ── pkg-config dep ────────────────────────────────────────────────────
-        if let Some(query) = &d.pkg_config {
-            use owo_colors::OwoColorize;
-            println!("  {} {} (pkg-config)", "Resolving".dimmed(), name);
-            let pc = super::http::pkg_config_query(query)?;
-            results.push(ForeignBuilt {
-                name: name.clone(),
-                libs: vec![],
-                include_dirs: pc.include_dirs,
-                raw_link_flags: pc.link_flags,
-            });
+        // ── system + pkg_config dep ───────────────────────────────────────────
+        // pkg_config is a modifier on a system dep: run `pkg-config --cflags
+        // --libs <query>` to obtain include dirs and link flags. The `system`
+        // name acts as a bare -l{name} fallback when pkg-config fails.
+        if d.system.is_some() {
+            if let Some(query) = &d.pkg_config {
+                use owo_colors::OwoColorize;
+                println!("  {} {} (pkg-config)", "Resolving".dimmed(), name);
+                match super::http::pkg_config_query(query) {
+                    Ok(pc) => {
+                        results.push(ForeignBuilt {
+                            name: name.clone(),
+                            libs: vec![],
+                            include_dirs: pc.include_dirs,
+                            raw_link_flags: pc.link_flags,
+                        });
+                    }
+                    Err(e) => {
+                        let fallback = d.system.as_deref().unwrap_or(name);
+                        use owo_colors::OwoColorize;
+                        println!(
+                            "  {} pkg-config for '{name}' failed ({e}); falling back to -l{fallback}",
+                            "warning:".yellow()
+                        );
+                        // Nothing to push — collect_system_lib_flags handles the -l flag.
+                    }
+                }
+            }
+            // Pure system dep (no pkg_config): -l flag handled by collect_system_lib_flags.
             continue;
         }
 
@@ -58,7 +76,7 @@ pub fn build_foreign_deps(
         } else if let Some(url) = http_url(d) {
             super::http::fetch_http_dep(name, &url, d.sha256.as_deref(), project_dir)?
         } else {
-            // Pure system / version dep — not a foreign build.
+            // Version dep — not a foreign build.
             continue;
         };
 

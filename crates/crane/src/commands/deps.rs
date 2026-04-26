@@ -39,7 +39,11 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
                 println!("{}{}{} {} (registry)", prefix, connector, name, ver);
             }
             Dependency::Detailed(d) if d.system.is_some() => {
-                println!("{}{}{}  (system)", prefix, connector, name);
+                if let Some(query) = &d.pkg_config {
+                    println!("{}{}{} (system, pkg-config: {})", prefix, connector, name, query);
+                } else {
+                    println!("{}{}{} (system)", prefix, connector, name);
+                }
             }
             Dependency::Detailed(d) if d.path.is_some() => {
                 let rel = d.path.as_deref().unwrap_or("?");
@@ -63,10 +67,6 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
             Dependency::Detailed(d) if d.http.is_some() => {
                 let url = d.http.as_deref().unwrap_or("?");
                 println!("{}{}{} (http+{})", prefix, connector, name, url);
-            }
-            Dependency::Detailed(d) if d.pkg_config.is_some() => {
-                let query = d.pkg_config.as_deref().unwrap_or("?");
-                println!("{}{}{} (pkg-config: {})", prefix, connector, name, query);
             }
             Dependency::Detailed(d) => {
                 let ver = d.version.as_deref().unwrap_or("*");

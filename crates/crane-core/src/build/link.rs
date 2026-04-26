@@ -210,12 +210,21 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), CraneError> {
 // ── Dependency helpers ────────────────────────────────────────────────────────
 
 /// Collect `-l{name}` flags for every `system = "..."` dependency.
+///
+/// Deps with `pkg_config = "..."` are skipped here — pkg-config already
+/// provides the correct `-l` flags in its output, which is injected via
+/// `raw_link_flags` from `build_foreign_deps`.
 fn collect_system_lib_flags(manifest: &Manifest) -> Vec<String> {
     let effective = manifest.effective_dependencies();
     effective.values()
         .chain(manifest.dev_dependencies.values())
         .filter_map(|dep| {
-            if let Dependency::Detailed(d) = dep { d.system.as_deref() } else { None }
+            if let Dependency::Detailed(d) = dep {
+                if d.pkg_config.is_some() { return None; }
+                d.system.as_deref()
+            } else {
+                None
+            }
         })
         .map(|name| format!("-l{name}"))
         .collect()

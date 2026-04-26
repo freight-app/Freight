@@ -1,6 +1,6 @@
 #include <nlohmann/json.hpp>  // github dep: nlohmann/json
 #include <cxxopts.hpp>        // http dep:   jarro2783/cxxopts
-#include <zlib.h>             // pkg_config: zlib
+#include <zlib.h>             // system + pkg_config: zlib
 
 #include <cstring>
 #include <iostream>
