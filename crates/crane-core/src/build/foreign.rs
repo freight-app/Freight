@@ -84,13 +84,12 @@ pub fn build_foreign_deps(
         }
 
         // ── Determine source directory ─────────────────────────────────────────
-        // For http / github deps, fetch the archive first if not already present.
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
         } else if d.git.is_some() {
             project_dir.join(".deps").join(name)
-        } else if let Some(url) = http_url(d) {
-            super::http::fetch_http_dep(name, &url, d.sha256.as_deref(), project_dir)?
+        } else if let Some(url) = &d.url {
+            super::http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir)?
         } else {
             // Version dep — not a foreign build.
             continue;
@@ -179,20 +178,6 @@ fn collect_include_dirs(
         candidates.push(bd.join("install").join("include"));
     }
     candidates.into_iter().filter(|p| p.is_dir()).collect()
-}
-
-/// Return the effective HTTP URL for a dep, or `None` if it is not an http/github dep.
-fn http_url(d: &crate::manifest::types::DetailedDep) -> Option<String> {
-    if let Some(url) = &d.http {
-        return Some(url.clone());
-    }
-    if let Some(repo) = &d.github {
-        let git_ref = d.tag.as_deref()
-            .or(d.branch.as_deref())
-            .unwrap_or("main");
-        return Some(super::http::github_url(repo, git_ref));
-    }
-    None
 }
 
 // ── Build system dispatch ─────────────────────────────────────────────────────

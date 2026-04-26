@@ -141,28 +141,25 @@ easyloggingpp = { git = "https://...", rev = "abc1234" }   # pin to commit
 Clones the repo into `.deps/<name>/`, then treats it exactly like a path dep — foreign build
 system detection applies. Run `crane fetch` to clone before building.
 
-### HTTP archive dependency
+### URL archive dependency
 
 ```toml
-zlib = { http = "https://zlib.net/zlib-1.3.1.tar.gz" }
+zlib = { url = "https://zlib.net/zlib-1.3.1.tar.gz" }
 # with SHA-256 verification (recommended):
-zlib = { http = "https://zlib.net/zlib-1.3.1.tar.gz", sha256 = "9a93b2b7..." }
+zlib = { url = "https://zlib.net/zlib-1.3.1.tar.gz", sha256 = "9a93b2b7..." }
+# any scheme curl supports — ftp works too:
+mylib = { url = "ftp://ftp.example.com/pub/mylib-2.0.tar.gz" }
+# GitHub release archives are just URLs:
+json = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz" }
 ```
 
-Downloads the archive with `curl`, optionally verifies SHA-256, extracts to `.deps/<name>/` with
-`--strip-components=1`, then auto-detects the build system (CMake, Meson, etc.) or treats as
-header-only if no source files are found. The sentinel `.deps/<name>/.crane-fetched` prevents
-re-downloading; `crane update <name>` invalidates it.
+Downloads the archive using `curl` (supports `https://`, `http://`, `ftp://`, and any other scheme
+curl handles), optionally verifies SHA-256, extracts to `.deps/<name>/` with `--strip-components=1`,
+then auto-detects the build system or treats as header-only if no source files are found. The
+sentinel `.deps/<name>/.crane-fetched` prevents re-downloading; `crane update <name>` invalidates it.
 
-### GitHub release dependency
-
-```toml
-json = { github = "nlohmann/json", tag = "v3.11.3" }
-json = { github = "nlohmann/json", tag = "v3.11.3", sha256 = "..." }
-```
-
-Shorthand that constructs `https://github.com/<owner>/<repo>/archive/refs/tags/<tag>.tar.gz` then
-follows the same download + build flow as HTTP deps.
+For GitHub repos specifically: if you need to track a branch or make incremental updates, prefer
+`git = "https://github.com/..."` instead. `url` is for pinned release tarballs.
 
 ### Foreign build system options
 

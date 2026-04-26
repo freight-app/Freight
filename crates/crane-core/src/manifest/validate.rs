@@ -109,32 +109,15 @@ fn validate_http_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
         // pkg_config is for system-installed libraries. It can be used alone
         // (`{ pkg_config = "zlib" }`) or with system as a -l{name} fallback
         // (`{ system = "z", pkg_config = "zlib" }`). It must not be combined
-        // with source dep kinds (path / git / http / github).
+        // with source dep kinds (path / git / url).
         if d.pkg_config.is_some() {
-            let has_source = d.path.is_some() || d.git.is_some()
-                || d.http.is_some() || d.github.is_some();
+            let has_source = d.path.is_some() || d.git.is_some() || d.url.is_some();
             if has_source {
                 errors.push(ValidationError::new(
                     &ctx,
-                    "pkg_config cannot be combined with path, git, http, or github",
+                    "pkg_config cannot be combined with path, git, or url",
                 ));
             }
-        }
-
-        // http and github are mutually exclusive.
-        if d.http.is_some() && d.github.is_some() {
-            errors.push(ValidationError::new(
-                &ctx,
-                "http and github are mutually exclusive — use one or the other",
-            ));
-        }
-
-        // github deps need a ref to construct the URL.
-        if d.github.is_some() && d.tag.is_none() && d.branch.is_none() {
-            errors.push(ValidationError::new(
-                &ctx,
-                "github dep requires a tag or branch (e.g. `tag = \"v1.0\"`)",
-            ));
         }
 
     }

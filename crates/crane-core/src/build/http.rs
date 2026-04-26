@@ -16,16 +16,12 @@ pub struct PkgConfigResult {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Construct a GitHub archive URL from `"owner/repo"` + a tag or branch ref.
-pub fn github_url(repo: &str, git_ref: &str) -> String {
-    format!("https://github.com/{repo}/archive/refs/tags/{git_ref}.tar.gz")
-}
-
-/// Download a source archive to `.deps/{name}/`, verify SHA-256, and extract it.
+/// Download a source archive from any URL that `curl` supports (`https://`,
+/// `http://`, `ftp://`, etc.) to `.deps/{name}/`, verify SHA-256, and extract.
 ///
 /// If `.deps/{name}/.crane-fetched` already exists the download is skipped
 /// (use `crane update <name>` to re-fetch). Returns the extracted source dir.
-pub fn fetch_http_dep(
+pub fn fetch_url_dep(
     name: &str,
     url: &str,
     expected_sha256: Option<&str>,
