@@ -4,6 +4,7 @@ pub mod deps;
 pub mod discover;
 pub mod features;
 pub mod foreign;
+pub mod header_units;
 pub mod link;
 pub mod modules;
 
@@ -150,7 +151,23 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines)?;
+    // When the project uses C++20+, precompile dep headers as header units so
+    // consumers can write `import "dep.h";` instead of `#include "dep.h"`.
+    // Failures are non-fatal — we just skip and compile normally.
+    let hu_flags: Vec<String> = if let Some(cpp_std) = manifest.language.get("cpp")
+        .and_then(|l| l.std.as_deref())
+        .filter(|s| header_units::is_module_std(s))
+    {
+        let units = header_units::precompile_dep_headers(
+            project_dir, &all_dep_includes, cpp_std,
+            &manifest.compiler.backend, detected, profile,
+        );
+        if let Some(compiler) = compile::select_compiler("cpp", &manifest.compiler.backend, detected) {
+            header_units::import_flags(&units, compiler)
+        } else { vec![] }
+    } else { vec![] };
+
+    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines, &hu_flags)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
@@ -264,7 +281,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines)?;
+    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines, &[])?;
 
     // Objects from [[bin]] sources contain a main() — exclude from test linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
@@ -309,7 +326,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
     }
 
     let test_compile = compile_sources(
-        project_dir, manifest, profile, &test_srcs, &include_dirs, detected, &feature_defines,
+        project_dir, manifest, profile, &test_srcs, &include_dirs, detected, &feature_defines, &[],
     )?;
 
     let out_dir = project_dir.join("target").join(profile).join("tests");
@@ -363,13 +380,14 @@ fn build_sources(
     include_dirs: &[PathBuf],
     detected: &[DetectedCompiler],
     feature_defines: &[String],
+    header_unit_flags: &[String],
 ) -> Result<CompileResult, CraneError> {
     let scanned = scan_sources(project_dir, sources);
     if has_modules(&scanned) {
         let mut plan = plan_module_build(project_dir, profile, scanned)?;
-        compile_module_sources(project_dir, manifest, profile, &mut plan, include_dirs, detected, feature_defines)
+        compile_module_sources(project_dir, manifest, profile, &mut plan, include_dirs, detected, feature_defines, header_unit_flags)
     } else {
-        compile_sources(project_dir, manifest, profile, sources, include_dirs, detected, feature_defines)
+        compile_sources(project_dir, manifest, profile, sources, include_dirs, detected, feature_defines, header_unit_flags)
     }
 }
 
@@ -432,7 +450,7 @@ fn build_resolved_deps(
 
         let compile_result = compile_sources(
             &dep.dir, &dep.manifest, profile,
-            &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines,
+            &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines, &[],
         )?;
 
         let lib_out = dep.dir.join("target").join(profile)

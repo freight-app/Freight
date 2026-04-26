@@ -32,6 +32,7 @@ pub fn compile_sources(
     include_dirs: &[PathBuf],
     detected: &[DetectedCompiler],
     feature_defines: &[String],
+    header_unit_flags: &[String],
 ) -> Result<CompileResult, CraneError> {
     let results: Result<Vec<(PathBuf, bool)>, CraneError> = sources
         .par_iter()
@@ -54,7 +55,7 @@ pub fn compile_sources(
             fs::create_dir_all(obj.parent().expect("obj path always has a parent"))?;
 
             print_compiling(&src.path);
-            compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, &[])?;
+            compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, header_unit_flags)?;
 
             Ok((obj, true))
         })

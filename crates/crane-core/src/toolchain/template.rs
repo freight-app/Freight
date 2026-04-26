@@ -80,6 +80,10 @@ struct RawModules {
     precompile: Option<String>,
     #[serde(default)]
     import_module: Option<String>,
+    /// Compiler flag that designates input as a C/C++ header for header-unit precompilation.
+    /// e.g. `"-x c++-header"` for clang. Empty string = no header unit support.
+    #[serde(default)]
+    header_unit_flag: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +200,8 @@ pub enum ModuleStyle {
     Clang {
         precompile: String,
         import_module: String,
+        /// Non-empty → header unit precompilation is supported (`-x c++-header`).
+        header_unit_flag: String,
     },
     Unsupported,
 }
@@ -452,6 +458,52 @@ impl CompilerTemplate {
             .map(str::to_owned)
             .collect()
     }
+
+    /// Whether this template supports C++20 header unit precompilation.
+    pub fn supports_header_units(&self) -> bool {
+        matches!(&self.modules, ModuleStyle::Clang { header_unit_flag, .. } if !header_unit_flag.is_empty())
+    }
+
+    /// Build the compiler invocation for precompiling a header as a C++20 header unit.
+    ///
+    /// Returns `(binary, args)` or `None` when unsupported.
+    /// `std_flag` is the already-resolved standard flag (e.g. `"-std=c++20"`).
+    /// `include_flags` are already-formatted `-I` flags.
+    pub fn precompile_header_unit_cmd(
+        &self,
+        header_abs: &std::path::Path,
+        pcm_path: &std::path::Path,
+        std_flag: &str,
+        include_flags: &[String],
+    ) -> Option<(std::path::PathBuf, Vec<String>)> {
+        let ModuleStyle::Clang { precompile, header_unit_flag, .. } = &self.modules else {
+            return None;
+        };
+        if header_unit_flag.is_empty() { return None; }
+
+        let mut args: Vec<String> = Vec::new();
+        push_flag_str(&mut args, std_flag);
+        args.extend_from_slice(include_flags);
+        push_flag_str(&mut args, precompile);
+        push_flag_str(&mut args, header_unit_flag);
+        args.push(header_abs.to_string_lossy().into_owned());
+        args.extend(self.output_flag(pcm_path));
+        Some((std::path::PathBuf::from(&self.binary), args))
+    }
+
+    /// Format a `-fmodule-file=` import flag for a header unit.
+    ///
+    /// `rel_path` is the path relative to its include directory, matching
+    /// what a consumer writes in `import "rel_path";`.
+    pub fn header_unit_import_flag(&self, rel_path: &str, pcm_path: &std::path::Path) -> Option<String> {
+        let ModuleStyle::Clang { import_module, header_unit_flag, .. } = &self.modules else {
+            return None;
+        };
+        if header_unit_flag.is_empty() { return None; }
+        Some(import_module
+            .replace("{name}", rel_path)
+            .replace("{pcm_path}", &pcm_path.to_string_lossy()))
+    }
 }
 
 fn build_module_style(raw: RawModules) -> ModuleStyle {
@@ -462,6 +514,7 @@ fn build_module_style(raw: RawModules) -> ModuleStyle {
         ModuleStyle::Clang {
             precompile,
             import_module: raw.import_module.unwrap_or_default(),
+            header_unit_flag: raw.header_unit_flag,
         }
     } else {
         ModuleStyle::Gcc {
@@ -574,7 +627,7 @@ mod tests {
     #[test]
     fn clang_module_style_is_clang_variant() {
         assert!(matches!(clang().modules, ModuleStyle::Clang { .. }));
-        if let ModuleStyle::Clang { precompile, import_module } = clang().modules {
+        if let ModuleStyle::Clang { precompile, import_module, .. } = clang().modules {
             assert_eq!(precompile, "--precompile");
             assert!(import_module.contains("{pcm_path}"));
         }

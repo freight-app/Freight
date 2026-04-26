@@ -46,10 +46,11 @@ target       = "--target={triple}"
 sysroot      = "--sysroot={path}"
 
 [modules]
-supported     = true
-enable_flag   = ""
-precompile    = "--precompile"
-import_module = "-fmodule-file={name}={pcm_path}"
+supported        = true
+enable_flag      = ""
+precompile       = "--precompile"
+import_module    = "-fmodule-file={name}={pcm_path}"
+header_unit_flag = "-x c++-header"
 
 [passthrough]
 enabled = false
