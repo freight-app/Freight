@@ -1,7 +1,7 @@
 [
   {
     "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/src/main.cpp",
+    "file": "src/main.cpp",
     "arguments": [
       "/usr/sbin/clang++",
       "-O0",
@@ -10,17 +10,17 @@
       "-Wextra",
       "-Wpedantic",
       "-std=c++20",
-      "-I/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/inc",
+      "-Iinc",
       "-c",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/src/main.cpp",
+      "src/main.cpp",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/target/dev/objs/src/main.o"
+      "target/dev/objs/src/main.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/target/dev/objs/src/main.o"
+    "output": "target/dev/objs/src/main.o"
   },
   {
     "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/src/stats.cpp",
+    "file": "src/stats.cpp",
     "arguments": [
       "/usr/sbin/clang++",
       "-O0",
@@ -29,12 +29,12 @@
       "-Wextra",
       "-Wpedantic",
       "-std=c++20",
-      "-I/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/inc",
+      "-Iinc",
       "-c",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/src/stats.cpp",
+      "src/stats.cpp",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/target/dev/objs/src/stats.o"
+      "target/dev/objs/src/stats.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp/target/dev/objs/src/stats.o"
+    "output": "target/dev/objs/src/stats.o"
   }
 ]

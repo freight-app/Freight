@@ -1,0 +1,29 @@
+[package]
+name        = "with-external-deps"
+version     = "0.1.0"
+description = "Example: github, http, and pkg_config dependencies"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "with-external-deps"
+src  = "src/main.cpp"
+
+[dependencies]
+# GitHub release shorthand — expands to the archive URL automatically.
+# build_system = "none" tells crane to skip building (header-only library).
+# Run `crane fetch` to download before `crane build`.
+json = { github = "nlohmann/json", tag = "v3.11.3", build_system = "none", include = ["single_include"] }
+
+# Direct HTTP tarball — same mechanics, but with an explicit URL.
+# sha256 is optional but recommended to pin the exact archive.
+cxxopts = { http = "https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.2.1.tar.gz", build_system = "none", include = ["include"] }
+
+# System-installed library via pkg-config — crane runs `pkg-config --cflags --libs zlib`
+# and injects the resulting -I and -l flags at compile and link time.
+zlib = { pkg_config = "zlib" }
+
+[profile.dev]
+opt-level = 0
+debug     = true

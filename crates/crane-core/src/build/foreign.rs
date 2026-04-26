@@ -62,9 +62,29 @@ pub fn build_foreign_deps(
             continue;
         };
 
+        if !dep_dir.exists() {
+            return Err(CraneError::ManifestParse(format!(
+                "foreign dep '{name}' not found at '{}' — run `crane fetch` first",
+                dep_dir.display()
+            )));
+        }
+
         // ── Resolve build system ──────────────────────────────────────────────
         // Explicit > auto-detect > skip (native crane project).
         let bs = match &d.build_system {
+            Some(bs) if bs == "none" => {
+                // Header-only dep: skip the build step entirely; just collect
+                // include dirs from the explicit `include = [...]` list or by
+                // probing common directory conventions.
+                let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
+                results.push(ForeignBuilt {
+                    name: name.clone(),
+                    libs: vec![],
+                    include_dirs,
+                    raw_link_flags: vec![],
+                });
+                continue;
+            }
             Some(bs) => bs.clone(),
             None => {
                 if d.path.is_some() && dep_dir.join("crane.toml").exists() {
@@ -77,28 +97,10 @@ pub fn build_foreign_deps(
             }
         };
 
-        if !dep_dir.exists() {
-            return Err(CraneError::ManifestParse(format!(
-                "foreign dep '{name}' not found at '{}' — run `crane fetch` first",
-                dep_dir.display()
-            )));
-        }
-
         let build_dir = dep_dir.join(".crane-build");
         let libs = invoke_build_system(&dep_dir, &build_dir, name, &bs, profile, &d.cmake_args)?;
 
-        // Explicit `include = [...]` wins; if absent, probe common conventions.
-        // Autotools installs headers to .crane-build/install/include/.
-        let include_dirs: Vec<PathBuf> = if !d.include.is_empty() {
-            d.include.iter().map(|p| dep_dir.join(p)).collect()
-        } else {
-            let candidates = [
-                dep_dir.join("include"),
-                dep_dir.join("inc"),
-                build_dir.join("install").join("include"),
-            ];
-            candidates.into_iter().filter(|p| p.is_dir()).collect()
-        };
+        let include_dirs = collect_include_dirs(&dep_dir, &d.include, Some(&build_dir));
 
         results.push(ForeignBuilt {
             name: name.clone(),
@@ -109,6 +111,26 @@ pub fn build_foreign_deps(
     }
 
     Ok(results)
+}
+
+/// Resolve include directories for a dep.
+///
+/// Explicit `include = [...]` in the manifest wins. When absent, probe common
+/// conventions: `include/`, `inc/`, and (if `build_dir` is provided) the
+/// autotools/cmake install tree at `<build_dir>/install/include/`.
+fn collect_include_dirs(
+    dep_dir: &Path,
+    explicit: &[String],
+    build_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    if !explicit.is_empty() {
+        return explicit.iter().map(|p| dep_dir.join(p)).collect();
+    }
+    let mut candidates = vec![dep_dir.join("include"), dep_dir.join("inc")];
+    if let Some(bd) = build_dir {
+        candidates.push(bd.join("install").join("include"));
+    }
+    candidates.into_iter().filter(|p| p.is_dir()).collect()
 }
 
 /// Return the effective HTTP URL for a dep, or `None` if it is not an http/github dep.
@@ -159,7 +181,7 @@ fn invoke_build_system(
         other => {
             return Err(CraneError::ManifestParse(format!(
                 "unknown build_system '{other}' for '{name}'; \
-                 expected: cmake, make, meson, autotools, scons, auto"
+                 expected: cmake, make, meson, autotools, scons, auto, none"
             )));
         }
     };

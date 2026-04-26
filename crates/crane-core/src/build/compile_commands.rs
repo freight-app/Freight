@@ -31,6 +31,26 @@ pub fn generate(
     feature_defines: &[String],
 ) -> Vec<CompileCommand> {
     let abs_dir = project_dir.canonicalize().unwrap_or_else(|_| project_dir.to_path_buf());
+    // Prefix used to relativize any path under the project root.
+    let prefix = format!("{}/", abs_dir.to_string_lossy());
+    // Strip abs_dir prefix from a single argument string.
+    // Handles both standalone paths and single-token flags like `-I/abs/path`.
+    let rel = |s: String| -> String {
+        // Standalone path (e.g. the source file or -o target).
+        if let Some(rest) = s.strip_prefix(&prefix as &str) {
+            return rest.to_owned();
+        }
+        // Single-token flags like -I/abs/path → -Irelative/path.
+        for flag in ["-I", "-isystem", "-iframework"] {
+            if let Some(path_part) = s.strip_prefix(flag) {
+                if let Some(rest) = path_part.strip_prefix(&prefix as &str) {
+                    return format!("{flag}{rest}");
+                }
+            }
+        }
+        s
+    };
+
     let mut commands = Vec::new();
 
     for source in sources {
@@ -44,20 +64,25 @@ pub fn generate(
             manifest, profile, &source.lang_key, include_dirs, project_dir, feature_defines,
         );
         let compile_bin = resolve_compile_binary(compiler, &source.lang_key);
-        let src_abs = abs_dir.join(&source.path);
         let obj = object_path(project_dir, profile, &source.path);
 
         let mut args = vec![compile_bin.to_string_lossy().into_owned()];
         args.extend(compiler.template.assemble_flags(&settings));
         args.extend(compiler.template.compile_only_flag());
-        args.push(src_abs.to_string_lossy().into_owned());
-        args.extend(compiler.template.output_flag(&obj));
+        // Source and output use paths relative to `directory` so the file is
+        // portable when the project is moved or shared across machines.
+        args.push(source.path.to_string_lossy().into_owned());
+        args.extend(compiler.template.output_flag(&obj).into_iter().map(rel));
+
+        // Make all remaining absolute paths under the project root relative;
+        // this covers -I flags that assemble_flags built from include_dirs.
+        let args: Vec<String> = args.into_iter().map(rel).collect();
 
         commands.push(CompileCommand {
             directory: abs_dir.clone(),
-            file: src_abs,
+            file: source.path.clone(),
             arguments: args,
-            output: obj,
+            output: PathBuf::from(rel(obj.to_string_lossy().into_owned())),
         });
     }
 
