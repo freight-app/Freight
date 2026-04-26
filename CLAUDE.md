@@ -24,7 +24,7 @@ The project is written in Rust.
 |---|---|
 | `crane` | The CLI binary |
 | `crane.toml` | Project manifest |
-| `crane.lock` | Auto-generated lockfile (commit this) — not yet implemented |
+| `crane.lock` | Auto-generated lockfile (commit this) |
 | `build.crane` | Optional pre-build hook script — not yet implemented |
 | `~/.crane/` | Global cache directory |
 | `crane.dev` | The package registry — not yet implemented |
@@ -114,6 +114,7 @@ crane/
     ├── with-cmake-dep/         # path dep built by CMake (auto-detected)
     ├── with-make-dep/          # path dep built by Make (auto-detected)
     ├── with-git-dep/           # git dependency cloned + built automatically
+    ├── with-external-deps/     # http + github + system+pkg_config deps; shows header-only auto-detection
     └── migrated-from-cmake/    # before/after for `crane migrate --from cmake`
 ```
 
@@ -171,8 +172,10 @@ avx-opt     = { system = "avx-opt", os = "linux", arch = ["x86_64", "aarch64"] }
 zlib        = { http = "https://zlib.net/zlib-1.3.1.tar.gz", sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23" }
 # GitHub release shorthand — constructs GitHub archive URL from owner/repo + tag
 fmt         = { github = "fmtlib/fmt", tag = "10.2.1", sha256 = "1250e4cc58bf06ee631567523f48848dc4596133e163f02615c97f78bab6c811" }
-# pkg-config dep — no source build; crane runs pkg-config --cflags --libs
+# pkg-config only — error if pkg-config not found
 glib        = { pkg_config = "glib-2.0 >= 2.56" }
+# pkg-config with system fallback — uses -lz if pkg-config is unavailable
+zlib        = { system = "z", pkg_config = "zlib" }
 
 [dev-dependencies]
 libcheck = "0.15"
@@ -372,17 +375,18 @@ crane build
 | Kind | crane.toml syntax | How it works |
 |---|---|---|
 | Path | `{ path = "../mylib" }` | Compiles the dep project (crane or foreign), links its `.a` archive |
-| System | `{ system = "openssl" }` | Passes `-l{name}` to the linker |
+| System | `{ system = "ssl" }` | Passes `-l{name}` to the linker — no source build |
+| pkg-config | `{ pkg_config = "openssl >= 3.0" }` | Runs `pkg-config --cflags --libs`; injects include paths and link flags — no source build; error if pkg-config fails |
+| System + pkg-config | `{ system = "z", pkg_config = "zlib" }` | Tries pkg-config first; falls back to `-l{system}` with a warning if pkg-config is unavailable |
 | Version | `"0.3"` | Fetched from crane.dev (not yet implemented) |
 | Git | `{ git = "https://..." }` | Cloned into `.deps/<name>/`, then built like a path dep |
 | Foreign | `{ path = "../zlib" }` (no `crane.toml`) | Auto-detects CMake/Meson/Make/Autotools/SCons; builds + installs into `.crane-build/`; headers and archive linked automatically |
-| HTTP | `{ http = "https://...", sha256 = "..." }` | Downloads source archive, verifies SHA-256, extracts to `.deps/<name>/`, auto-builds with foreign build system |
-| GitHub | `{ github = "owner/repo", tag = "v1.0" }` | Shorthand for GitHub release archive; constructs `https://github.com/owner/repo/archive/refs/tags/v1.0.tar.gz` |
-| pkg-config | `{ pkg_config = "libfoo >= 2.0" }` | Runs `pkg-config --cflags --libs`; injects include paths and link flags directly — no source build |
+| HTTP | `{ http = "https://...", sha256 = "..." }` | Downloads source archive, verifies SHA-256, extracts to `.deps/<name>/`, auto-builds (or treats as header-only if no source files found) |
+| GitHub | `{ github = "owner/repo", tag = "v1.0" }` | Shorthand for GitHub release archive; same download + build flow as HTTP deps |
 
 Path dependencies are non-recursive: crane checks that a dep's own deps are already present in `.deps/` but does not download them. The topo sort ensures deps are compiled in the right order.
 
-Foreign build system detection priority: CMake (`CMakeLists.txt`) > Meson (`meson.build`) > Autotools (`configure.ac` / `configure.in` / `autogen.sh`) > SCons (`SConstruct`) > Make (`Makefile` / `GNUmakefile`). Any path dep that contains a `crane.toml` is always treated as a crane project regardless of other build files present.
+Foreign build system detection priority: CMake (`CMakeLists.txt`) > Meson (`meson.build`) > Autotools (`configure.ac` / `configure.in` / `autogen.sh`) > SCons (`SConstruct`) > Make (`Makefile` / `GNUmakefile`). Any path dep that contains a `crane.toml` is always treated as a crane project regardless of other build files present. If no build system is found and no compilable source files exist, the dep is treated as header-only automatically (`build_system = "none"` is the explicit override).
 
 HTTP/GitHub archives are extracted to `.deps/<name>/` with `--strip-components=1` (removes the top-level directory common in release tarballs). The sentinel file `.deps/<name>/.crane-fetched` prevents re-downloading on subsequent builds; `crane update <name>` invalidates the sentinel and re-fetches.
 
@@ -484,8 +488,10 @@ crane compile-commands [--release] generate compile_commands.json     ✓ implem
 - [x] SHA-256 verification — optional but validated at fetch time; rejects mismatched archives and cleans up the partial download
 - [x] Download sentinel — `.deps/<name>/.crane-fetched` prevents re-downloading; `crane update <name>` invalidates and re-fetches
 - [x] `crane fetch` handles http/github deps — pre-fetches all archives before build
-- [x] pkg-config deps — `{ pkg_config = "libfoo >= 2.0" }` runs `pkg-config --cflags --libs`; include dirs injected into compilation, link flags passed verbatim to linker (`-L`, `-l`, `-pthread`, etc.)
-- [x] `raw_link_flags` threading — `ForeignBuilt.raw_link_flags` carries pkg-config link flags through `build_foreign_deps` → `build_project_at` → `link_targets` → linker command
+- [x] pkg-config deps — `{ pkg_config = "libfoo >= 2.0" }` (standalone) or `{ system = "z", pkg_config = "zlib" }` (with -l fallback); runs `pkg-config --cflags --libs`; include dirs injected into compilation, link flags passed verbatim to linker
+- [x] `raw_link_flags` threading — `ForeignBuilt.raw_link_flags` carries pkg-config link flags (or the -l fallback) through `build_foreign_deps` → `build_project_at` → `link_targets` → linker command
+- [x] `build_system = "none"` — explicit header-only override; skips build step entirely, collects include dirs from `include = [...]` or common dir probe
+- [x] Header-only auto-detection — if no build system is detected AND no compilable source files exist in the dep dir, the dep is treated as header-only automatically; `has_source_files()` walks 4 levels deep
 
 ### Phase 5b — Features system ✓ COMPLETE
 - [x] `[features]` table in crane.toml — keys map to lists of implied feature names
@@ -636,6 +642,18 @@ template count) and follow the same TOML-file design as compiler templates.
 - [x] `crane debug [<binary>] [--debugger <name>] [-- <args>]` — builds with debug profile, selects binary (disambiguates multiple `[[bin]]` targets), execs the debugger replacing the crane process on Unix (`CommandExt::exec`), runs as child + forwards exit code on Windows
 - [x] `crane debug --launch-json` — writes (or merges into) `.vscode/launch.json`; CodeLLDB format (`"type": "lldb"`) for lldb, cppdbg format (`"type": "cppdbg"`, `"MIMode"`) for gdb; configs tagged with `"generatedBy": "crane"` so re-runs replace only crane-generated entries
 
+### Future toolchain additions
+
+See `docs/future-toolchains.md` for the full list. High-priority candidates:
+
+**Compilers (template-only)**: `zig cc` / `zig c++` (excellent cross-compilation story), TCC (fast iteration), Intel `ifx` Fortran, LDC2 (LLVM-based D), Flang (LLVM Fortran), PGI/NVHPC (`nvc++`)
+
+**Assemblers (template-only)**: YASM (NASM-compatible drop-in), FASM (flat assembler), ARM GAS via `arm-none-eabi-gcc`
+
+**Debuggers (template-only)**: `rr` (Mozilla record & replay, Linux x86-64), OpenOCD+GDB (embedded), WinDbg/CDB (Windows)
+
+**Needs Rust changes**: MSVC (`cl.exe`, `.obj`/`.lib` conventions), Emscripten/WASI (`.wasm` output), Swift (`swiftc`), Metal shaders, Clang Objective-C/Objective-C++ language keys, Bazel/XMake migrators, vcpkg dep kind
+
 #### Debugger template format
 
 ```toml
@@ -655,6 +673,19 @@ binaries     = ["lldb-dap", "lldb-vscode"]
 vscode_type  = "lldb"     # "type" field in launch.json config (CodeLLDB)
 mi_mode      = "lldb"     # "MIMode" field (only used by cppdbg type)
 ```
+
+---
+
+## Documentation
+
+User-facing reference docs live in `docs/`:
+
+| File | Contents |
+|---|---|
+| `docs/manifest-reference.md` | Complete `crane.toml` field reference — every section, every field, with types and examples |
+| `docs/compiler-templates.md` | How the toolchain template system works; all template fields explained; how to write a new template; debugger template schema |
+| `docs/future-toolchains.md` | Planned and possible future compiler, assembler, debugger, and language additions with notes on what each would require |
+| `docs/registry-plan.md` | Architecture plan for the crane.dev registry server (Phase 12) |
 
 ---
 
