@@ -15,6 +15,7 @@ git2       = { workspace = true }
 semver     = { workspace = true }
 thiserror  = { workspace = true }
 owo-colors = { workspace = true }
+rhai       = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

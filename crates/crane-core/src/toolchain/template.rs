@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::error::CraneError;
+use super::engine;
 
 // ── Raw deserialization structs (map directly to TOML layout) ─────────────────
 
@@ -311,6 +312,115 @@ impl CompilerTemplate {
         })
     }
 
+    /// Parse a compiler template from a Rhai script.
+    pub fn from_rhai(src: &str) -> Result<Self, CraneError> {
+        let def = engine::eval_script(src)?;
+        Self::from_def(def)
+    }
+
+    fn from_def(def: engine::ToolchainDef) -> Result<Self, CraneError> {
+        // Primary binary: prefer explicit toolset roles, fall back to set_binary()
+        let binary = ["ld", "cxx", "cc"]
+            .iter()
+            .find_map(|r| def.toolset.get(*r))
+            .cloned()
+            .or_else(|| if !def.binary.is_empty() { Some(def.binary.clone()) } else { None })
+            .unwrap_or_default();
+
+        if binary.is_empty() {
+            return Err(CraneError::TemplateError(format!(
+                "{}: no binary defined — use set_binary(...) or set_toolset(\"ld\", ...)",
+                def.name
+            )));
+        }
+
+        let get_flags = |cat: &str| def.flags.get(cat).cloned().unwrap_or_default();
+        let get_struct = |key: &str| def.structure.get(key).cloned().unwrap_or_default();
+
+        // Compile-step output: prefer output_obj, fall back to output
+        let output = {
+            let obj = get_struct("output_obj");
+            if !obj.is_empty() { obj } else { get_struct("output") }
+        };
+
+        let structure = StructureFlags {
+            include_dir:  get_struct("include_dir"),
+            define:       get_struct("define"),
+            define_value: get_struct("define_value"),
+            output,
+            compile_only: get_struct("compile_only"),
+            dep_file:     get_struct("dep_file"),
+            target:       get_struct("target"),
+            sysroot:      get_struct("sysroot"),
+        };
+
+        let modules = {
+            let p = &def.module_params;
+            let get = |k: &str| p.get(k).cloned().unwrap_or_default();
+            match def.module_style.as_str() {
+                "gcc" => ModuleStyle::Gcc {
+                    enable_flag:      get("enable_flag"),
+                    compile_miu:      get("compile_miu"),
+                    import_module:    get("import_module"),
+                    header_unit_flag: get("header_unit"),
+                },
+                "clang" => ModuleStyle::Clang {
+                    precompile:       get("precompile"),
+                    import_module:    get("import_module"),
+                    header_unit_flag: get("header_unit"),
+                },
+                _ => ModuleStyle::Unsupported,
+            }
+        };
+
+        let linking = def.linking.into_iter().map(|(lang, lp)| {
+            (lang, LinkingInfo {
+                abi:            lp.abi,
+                compatible:     lp.compatible,
+                linker:         lp.linker,
+                extensions:     lp.extensions,
+                compile_binary: lp.compile_binary,
+            })
+        }).collect();
+
+        // load() flags for compile roles go into always_flags for now
+        let mut always_flags = def.always_flags;
+        for role in &["cc", "cxx"] {
+            if let Some(flags) = def.load_flags.get(*role) {
+                always_flags.extend_from_slice(flags);
+            }
+        }
+
+        Ok(Self {
+            name:          def.name,
+            binary,
+            version_arg:   def.version_arg,
+            version_regex: def.version_regex,
+            extensions:    def.extensions,
+            standards:     def.standards,
+            structure,
+            modules,
+            passthrough: PassthroughConfig {
+                enabled: def.passthrough_enabled,
+                prefix:  def.passthrough_prefix,
+            },
+            always_flags,
+            arch_flags:          def.arch_flags,
+            linking,
+            flags_opt:           get_flags("opt"),
+            flags_debug:         get_flags("debug"),
+            flags_warnings:      get_flags("warnings"),
+            flags_lto:           get_flags("lto"),
+            flags_strip:         get_flags("strip"),
+            flags_sanitize:      def.flags.get("sanitize")
+                                     .and_then(|m| m.get("template")).cloned()
+                                     .unwrap_or_default(),
+            flags_cpu_extension: def.flags.get("cpu_ext")
+                                     .and_then(|m| m.get("template")).cloned()
+                                     .unwrap_or_default(),
+        })
+    }
+
     /// Assemble a flat list of compiler flags from abstract build settings.
     /// Pure function — no I/O, no side effects.
     pub fn assemble_flags(&self, settings: &BuildSettings) -> Vec<String> {
@@ -561,35 +671,35 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const GCC_TOML: &str = include_str!("../../../../toolchains/gcc.toml");
-    const CLANG_TOML: &str = include_str!("../../../../toolchains/clang.toml");
-    const GFORTRAN_TOML: &str = include_str!("../../../../toolchains/gfortran.toml");
-    const GNAT_TOML: &str = include_str!("../../../../toolchains/gnat.toml");
-    const NVCC_TOML: &str = include_str!("../../../../toolchains/nvcc.toml");
-    const DMD_TOML: &str = include_str!("../../../../toolchains/dmd.toml");
-    const OPENCL_TOML: &str = include_str!("../../../../toolchains/opencl.toml");
-    const HIPCC_TOML: &str = include_str!("../../../../toolchains/hipcc.toml");
-    const ICPX_TOML: &str = include_str!("../../../../toolchains/icpx.toml");
-    const ISPC_TOML: &str = include_str!("../../../../toolchains/ispc.toml");
+    const GCC_RHAI: &str    = include_str!("../../../../toolchains/gcc.rhai");
+    const CLANG_RHAI: &str  = include_str!("../../../../toolchains/clang.rhai");
+    const GFORTRAN_RHAI: &str = include_str!("../../../../toolchains/gfortran.rhai");
+    const GNAT_RHAI: &str   = include_str!("../../../../toolchains/gnat.rhai");
+    const NVCC_RHAI: &str   = include_str!("../../../../toolchains/nvcc.rhai");
+    const DMD_RHAI: &str    = include_str!("../../../../toolchains/dmd.rhai");
+    const OPENCL_RHAI: &str = include_str!("../../../../toolchains/opencl.rhai");
+    const HIPCC_RHAI: &str  = include_str!("../../../../toolchains/hipcc.rhai");
+    const ICPX_RHAI: &str   = include_str!("../../../../toolchains/icpx.rhai");
+    const ISPC_RHAI: &str   = include_str!("../../../../toolchains/ispc.rhai");
 
-    fn gcc() -> CompilerTemplate { CompilerTemplate::from_toml(GCC_TOML).unwrap() }
-    fn clang() -> CompilerTemplate { CompilerTemplate::from_toml(CLANG_TOML).unwrap() }
-    fn nvcc() -> CompilerTemplate { CompilerTemplate::from_toml(NVCC_TOML).unwrap() }
+    fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
+    fn clang() -> CompilerTemplate { CompilerTemplate::from_rhai(CLANG_RHAI).unwrap() }
+    fn nvcc() -> CompilerTemplate { CompilerTemplate::from_rhai(NVCC_RHAI).unwrap() }
 
     // ── Parsing ───────────────────────────────────────────────────────────────
 
     #[test]
     fn all_templates_parse() {
-        CompilerTemplate::from_toml(GCC_TOML).unwrap();
-        CompilerTemplate::from_toml(CLANG_TOML).unwrap();
-        CompilerTemplate::from_toml(GFORTRAN_TOML).unwrap();
-        CompilerTemplate::from_toml(GNAT_TOML).unwrap();
-        CompilerTemplate::from_toml(NVCC_TOML).unwrap();
-        CompilerTemplate::from_toml(DMD_TOML).unwrap();
-        CompilerTemplate::from_toml(OPENCL_TOML).unwrap();
-        CompilerTemplate::from_toml(HIPCC_TOML).unwrap();
-        CompilerTemplate::from_toml(ICPX_TOML).unwrap();
-        CompilerTemplate::from_toml(ISPC_TOML).unwrap();
+        CompilerTemplate::from_rhai(GCC_RHAI).unwrap();
+        CompilerTemplate::from_rhai(CLANG_RHAI).unwrap();
+        CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
+        CompilerTemplate::from_rhai(GNAT_RHAI).unwrap();
+        CompilerTemplate::from_rhai(NVCC_RHAI).unwrap();
+        CompilerTemplate::from_rhai(DMD_RHAI).unwrap();
+        CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
+        CompilerTemplate::from_rhai(HIPCC_RHAI).unwrap();
+        CompilerTemplate::from_rhai(ICPX_RHAI).unwrap();
+        CompilerTemplate::from_rhai(ISPC_RHAI).unwrap();
     }
 
     #[test]
@@ -617,7 +727,7 @@ mod tests {
 
     #[test]
     fn dmd_linking_d_compatible_with_c_and_fortran() {
-        let t = CompilerTemplate::from_toml(DMD_TOML).unwrap();
+        let t = CompilerTemplate::from_rhai(DMD_RHAI).unwrap();
         let d = t.linking.get("d").expect("dmd should have linking.d");
         assert_eq!(d.abi, "d");
         assert!(d.compatible.contains(&"c".to_string()));
@@ -714,7 +824,7 @@ mod tests {
 
     #[test]
     fn gfortran_has_no_modules() {
-        let t = CompilerTemplate::from_toml(GFORTRAN_TOML).unwrap();
+        let t = CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
         assert_eq!(t.modules, ModuleStyle::Unsupported);
         assert!(t.extensions.contains(&".f90".to_string()));
     }

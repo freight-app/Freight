@@ -15,7 +15,7 @@ pub struct DetectedCompiler {
     pub path: PathBuf,
 }
 
-/// Load every `.toml` file from `templates_dir` and return parsed templates.
+/// Load every `.rhai` file from `templates_dir` and return parsed templates.
 pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
     let Ok(entries) = std::fs::read_dir(templates_dir) else {
         return vec![];
@@ -24,13 +24,13 @@ pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
     let mut templates = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+        if path.extension().and_then(|e| e.to_str()) != Some("rhai") {
             continue;
         }
         let Ok(src) = std::fs::read_to_string(&path) else {
             continue;
         };
-        match CompilerTemplate::from_toml(&src) {
+        match CompilerTemplate::from_rhai(&src) {
             Ok(t) => templates.push(t),
             Err(e) => eprintln!("warn: skipping {:?}: {e}", path.file_name().unwrap_or_default()),
         }
@@ -226,25 +226,27 @@ pub fn load_all_templates() -> Vec<CompilerTemplate> {
     templates
 }
 
-/// Install a compiler template from a local TOML file into `~/.crane/templates/`.
+/// Install a compiler template from a local `.rhai` file into `~/.crane/templates/`.
 ///
-/// The template is validated before copying. If a template with the same name
+/// The script is validated before copying. If a template with the same name
 /// already exists it is overwritten. Returns the path the template was written to.
-pub fn toolchain_add(toml_path: &Path) -> Result<PathBuf, CraneError> {
-    let src = std::fs::read_to_string(toml_path)
-        .map_err(|e| CraneError::Io(e))?;
+pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, CraneError> {
+    if rhai_path.extension().and_then(|e| e.to_str()) != Some("rhai") {
+        return Err(CraneError::TemplateError(
+            "toolchain file must have a .rhai extension".into(),
+        ));
+    }
 
-    let template = CompilerTemplate::from_toml(&src)?;
+    let src = std::fs::read_to_string(rhai_path).map_err(CraneError::Io)?;
+    let template = CompilerTemplate::from_rhai(&src)?;
 
     let user_dir = user_templates_dir()
         .ok_or_else(|| CraneError::TemplateError("cannot determine ~/.crane directory".into()))?;
 
-    std::fs::create_dir_all(&user_dir)
-        .map_err(|e| CraneError::Io(e))?;
+    std::fs::create_dir_all(&user_dir).map_err(CraneError::Io)?;
 
-    let dest = user_dir.join(format!("{}.toml", template.name));
-    std::fs::write(&dest, &src)
-        .map_err(|e| CraneError::Io(e))?;
+    let dest = user_dir.join(format!("{}.rhai", template.name));
+    std::fs::write(&dest, &src).map_err(CraneError::Io)?;
 
     Ok(dest)
 }

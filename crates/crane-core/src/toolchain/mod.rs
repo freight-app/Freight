@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod debugger;
 pub mod detect;
+mod engine;
 pub mod template;
 
 pub use cache::{ToolchainCache, crane_home};
