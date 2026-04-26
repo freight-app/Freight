@@ -414,6 +414,7 @@ crane yank <version>              yank a published version            ✗ Phase 
 crane toolchain add <path>        install a compiler template         ✓ implemented
 crane toolchain use <name>        set default compiler backend        ✗ deferred
 crane lsp                         run language server on stdio        ✓ implemented
+crane debug [<binary>] [--debugger <name>] [--launch-json] [-- <args>]  debug a binary  ✓ implemented
 crane compile-commands [--release] generate compile_commands.json     ✓ implemented
 ```
 
@@ -620,6 +621,40 @@ or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same
 - [ ] Publish a VS Code extension that activates on `crane.toml`
 - [ ] Inlay hints showing resolved compiler flags per profile
 - [ ] Code actions: "add `[[bin]]` target", "convert simple version dep → detailed table"
+
+### Phase 14 — Debugger integration ✓ COMPLETE
+
+Interactive debugger launch and IDE configuration generation. Debugger templates
+live in `toolchains/debuggers/` (a subdirectory, keeping them out of the compiler
+template count) and follow the same TOML-file design as compiler templates.
+
+- [x] `DebuggerTemplate` struct in `crates/crane-core/src/toolchain/debugger.rs` — `name`, `binary`, `version_regex`, `[launch]` separator, `[dap]` config
+- [x] `detect_debuggers()` — probes `$PATH` for each template's binary, extracts version, finds DAP adapter binary (`lldb-dap` / `lldb-vscode`)
+- [x] `DetectedDebugger::launch_command()` — builds `std::process::Command` using the template's separator (`"--"` for lldb, `"--args"` for gdb)
+- [x] `toolchains/debuggers/lldb.toml` and `toolchains/debuggers/gdb.toml` — bundled templates
+- [x] `crane toolchain list` — shows a second table section with Debugger/Version/Path (+ DAP path when found)
+- [x] `crane debug [<binary>] [--debugger <name>] [-- <args>]` — builds with debug profile, selects binary (disambiguates multiple `[[bin]]` targets), execs the debugger replacing the crane process on Unix (`CommandExt::exec`), runs as child + forwards exit code on Windows
+- [x] `crane debug --launch-json` — writes (or merges into) `.vscode/launch.json`; CodeLLDB format (`"type": "lldb"`) for lldb, cppdbg format (`"type": "cppdbg"`, `"MIMode"`) for gdb; configs tagged with `"generatedBy": "crane"` so re-runs replace only crane-generated entries
+
+#### Debugger template format
+
+```toml
+# toolchains/debuggers/lldb.toml
+
+name          = "lldb"
+binary        = "lldb"
+version_arg   = "--version"
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b"
+
+[launch]
+separator = "--"    # arguments after this separator are passed to the debuggee
+
+[dap]
+# Binaries searched in order; first found becomes the DAP adapter path
+binaries     = ["lldb-dap", "lldb-vscode"]
+vscode_type  = "lldb"     # "type" field in launch.json config (CodeLLDB)
+mi_mode      = "lldb"     # "MIMode" field (only used by cppdbg type)
+```
 
 ---
 

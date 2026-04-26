@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
 use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::check::cmd_check;
+use crate::commands::debug::cmd_debug;
 use crate::commands::deps::{
     cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
     cmd_update, cmd_yank,
@@ -52,6 +53,20 @@ enum Commands {
     /// Build and run tests
     Test {
         name: Option<String>,
+    },
+    /// Build (debug) and launch an interactive debugger session
+    Debug {
+        /// Binary to debug (required when the project has multiple [[bin]] targets)
+        binary: Option<String>,
+        /// Debugger to use (e.g. lldb, gdb); auto-selected when omitted
+        #[arg(long, value_name = "NAME")]
+        debugger: Option<String>,
+        /// Generate .vscode/launch.json instead of launching a debugger
+        #[arg(long)]
+        launch_json: bool,
+        /// Arguments passed to the debugged program
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Add a dependency
     Add {
@@ -147,6 +162,9 @@ fn main() -> Result<()> {
         Commands::Build { release } => cmd_build(release),
         Commands::Run { release, args } => cmd_run(release, &args),
         Commands::Test { name } => cmd_test(name.as_deref()),
+        Commands::Debug { binary, debugger, launch_json, args } => {
+            cmd_debug(binary.as_deref(), debugger.as_deref(), &args, launch_json);
+        }
         Commands::Add { package, path, git, branch, tag, rev, system, dev } => {
             cmd_add(&package, path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(), rev.as_deref(), system, dev);
         }

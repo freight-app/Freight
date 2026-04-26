@@ -1,0 +1,15 @@
+name          = "lldb"
+binary        = "lldb"
+version_arg   = "--version"
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b"
+
+[launch]
+# lldb -- <binary> [args]
+separator = "--"
+
+[dap]
+# DAP adapter binary names probed in order.
+# lldb-dap is the name from LLVM 18+; lldb-vscode on older installations.
+binaries    = ["lldb-dap", "lldb-vscode"]
+vscode_type = "lldb"
+mi_mode     = "lldb"

@@ -229,6 +229,7 @@ dependencies = [
  "crane-lsp",
  "crane-migrator",
  "owo-colors",
+ "serde_json",
  "tokio",
 ]
 
