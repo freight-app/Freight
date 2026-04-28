@@ -37,6 +37,9 @@ pub(super) struct ToolchainDef {
     pub toolset: HashMap<String, String>,
     /// Extra flags accumulated during `load()` — role → flags
     pub load_flags: HashMap<String, Vec<String>>,
+    /// Host architectures this toolchain is available on (`std::env::consts::ARCH` values).
+    /// Empty = no restriction (works on every architecture).
+    pub supported_archs: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -224,6 +227,18 @@ fn make_engine() -> Engine {
         with_def(|d| d.load_flags.entry(role).or_default().push(flag));
     });
 
+    // ── arch / OS constraints ─────────────────────────────────────────────────
+    // set_supported_archs(["x86_64", "x86"]) — hide toolchain on other hosts.
+    // Empty list (default) = available on all architectures.
+    e.register_fn("set_supported_archs", |arr: Array| {
+        with_def(|d| {
+            d.supported_archs = arr
+                .into_iter()
+                .filter_map(|v| v.try_cast::<String>())
+                .collect();
+        });
+    });
+
     // ── utilities ─────────────────────────────────────────────────────────────
     // find_tool("g++") → "/usr/bin/g++" | ()
     e.register_fn("find_tool", |name: String| -> Dynamic {
@@ -231,6 +246,12 @@ fn make_engine() -> Engine {
             .map(Dynamic::from)
             .unwrap_or(Dynamic::UNIT)
     });
+
+    // arch() → "x86_64" | "aarch64" | "arm" | …  (std::env::consts::ARCH)
+    e.register_fn("arch", || std::env::consts::ARCH.to_string());
+
+    // os() → "linux" | "macos" | "windows" | …  (std::env::consts::OS)
+    e.register_fn("os", || std::env::consts::OS.to_string());
 
     // env("INCLUDE") → "..." | ()
     e.register_fn("env", |key: String| -> Dynamic {

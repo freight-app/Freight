@@ -59,6 +59,9 @@ set_structure("sysroot",      "");
 set_module_style("none");
 set_passthrough(false, "");
 
+// NVIDIA HPC SDK supports x86_64 and aarch64 (NVIDIA Grace CPU).
+set_supported_archs(["x86_64", "aarch64"]);
+
 set_linking("c", #{
     abi:            "c",
     compatible:     ["fortran"],
@@ -83,5 +86,7 @@ set_linking("fortran", #{
 });
 
 fn check() {
+    let h = arch();
+    if h != "x86_64" && h != "aarch64" { return false; }
     find_tool("nvc++") != ()
 }

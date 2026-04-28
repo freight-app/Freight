@@ -47,6 +47,9 @@ set_structure("sysroot",      "--sysroot={path}");
 set_module_style("none");
 set_passthrough(false, "");
 
+// AMD ROCm officially supports x86_64 Linux only.
+set_supported_archs(["x86_64"]);
+
 set_linking("hip", #{
     abi:        "hip",
     compatible: ["c++", "c", "fortran"],
@@ -55,5 +58,6 @@ set_linking("hip", #{
 });
 
 fn check() {
+    if arch() != "x86_64" { return false; }
     find_tool("hipcc") != ()
 }

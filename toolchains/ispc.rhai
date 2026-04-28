@@ -44,6 +44,9 @@ set_structure("sysroot",      "");
 set_module_style("none");
 set_passthrough(false, "");
 
+// ISPC compiler binaries are published for x86_64 and aarch64.
+set_supported_archs(["x86_64", "aarch64"]);
+
 set_linking("ispc", #{
     abi:        "ispc",
     compatible: ["c++", "c"],
@@ -52,5 +55,7 @@ set_linking("ispc", #{
 });
 
 fn check() {
+    let h = arch();
+    if h != "x86_64" && h != "aarch64" { return false; }
     find_tool("ispc") != ()
 }

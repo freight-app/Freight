@@ -41,6 +41,9 @@ set_structure("sysroot",      "");
 set_module_style("none");
 set_passthrough(true, "-Xcompiler");
 
+// NVIDIA CUDA Toolkit is available for x86_64 and aarch64 (Jetson / Grace).
+set_supported_archs(["x86_64", "aarch64"]);
+
 add_always_flag("--expt-relaxed-constexpr");
 add_always_flag("--extended-lambda");
 
@@ -52,5 +55,7 @@ set_linking("cuda", #{
 });
 
 fn check() {
+    let h = arch();
+    if h != "x86_64" && h != "aarch64" { return false; }
     find_tool("nvcc") != ()
 }

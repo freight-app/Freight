@@ -77,6 +77,9 @@ fn probe_cached(
     cache: &mut ToolchainCache,
     dirty: &mut bool,
 ) -> Option<DetectedCompiler> {
+    if !arch_supported(template) {
+        return None;
+    }
     let path = which(&template.binary)?;
     let version = if let Some(v) = cache.get_version(&path) {
         v.to_string()
@@ -89,7 +92,15 @@ fn probe_cached(
     Some(DetectedCompiler { template: template.clone(), version, path })
 }
 
+fn arch_supported(template: &CompilerTemplate) -> bool {
+    template.supported_archs.is_empty()
+        || template.supported_archs.iter().any(|a| a == std::env::consts::ARCH)
+}
+
 fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
+    if !arch_supported(template) {
+        return None;
+    }
     let path = which(&template.binary)?;
     let version = query_version(template, &path).unwrap_or_else(|| "unknown".into());
     Some(DetectedCompiler {

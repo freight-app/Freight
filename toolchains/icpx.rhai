@@ -50,6 +50,9 @@ set_structure("sysroot",      "--sysroot={path}");
 set_module_style("none");
 set_passthrough(false, "");
 
+// Intel oneAPI targets Intel hardware (x86/x86_64).
+set_supported_archs(["x86", "x86_64"]);
+
 add_always_flag("-fsycl");
 
 set_linking("sycl", #{
@@ -60,5 +63,7 @@ set_linking("sycl", #{
 });
 
 fn check() {
+    let h = arch();
+    if h != "x86_64" && h != "x86" { return false; }
     find_tool("icpx") != ()
 }

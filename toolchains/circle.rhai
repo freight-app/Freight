@@ -63,6 +63,9 @@ set_module_style("clang", #{
 
 set_passthrough(false, "");
 
+// Circle prebuilt binaries are published for x86_64 and aarch64 only.
+set_supported_archs(["x86_64", "aarch64"]);
+
 set_linking("c", #{
     abi:            "c",
     compatible:     ["asm"],
@@ -79,5 +82,7 @@ set_linking("cpp", #{
 });
 
 fn check() {
+    let h = arch();
+    if h != "x86_64" && h != "aarch64" { return false; }
     find_tool("circle") != ()
 }

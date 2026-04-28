@@ -54,6 +54,9 @@ set_arch_flag("x86.windows",    "-f win32");
 set_module_style("none");
 set_passthrough(false, "");
 
+// NASM only understands x86 assembly syntax; useless on non-x86 hosts.
+set_supported_archs(["x86", "x86_64"]);
+
 set_linking("asm", #{
     abi:        "c",
     compatible: ["c", "cpp"],
@@ -62,5 +65,7 @@ set_linking("asm", #{
 });
 
 fn check() {
+    let h = arch();
+    if h != "x86_64" && h != "x86" { return false; }
     find_tool("nasm") != ()
 }

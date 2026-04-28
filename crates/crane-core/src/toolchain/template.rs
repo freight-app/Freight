@@ -247,6 +247,10 @@ pub struct CompilerTemplate {
     /// A template may handle multiple language keys (e.g. gcc handles `"cpp"` and `"c"`).
     pub linking: HashMap<String, LinkingInfo>,
 
+    /// Host architectures on which this toolchain is available (`std::env::consts::ARCH` values).
+    /// Empty = no restriction. Used by `detect_all` to skip unavailable toolchains.
+    pub supported_archs: Vec<String>,
+
     /// Per-arch (optionally per-arch+OS) flags. Key `"x86_64.linux"` wins over `"x86_64"`.
     pub arch_flags: HashMap<String, String>,
     flags_opt: HashMap<String, String>,
@@ -300,6 +304,7 @@ impl CompilerTemplate {
                 prefix: raw.passthrough.prefix,
             },
             always_flags: raw.extra.always,
+            supported_archs: vec![],
             arch_flags: raw.arch_flags,
             linking,
             flags_opt: raw.flags.opt,
@@ -405,6 +410,7 @@ impl CompilerTemplate {
                 prefix:  def.passthrough_prefix,
             },
             always_flags,
+            supported_archs:     def.supported_archs,
             arch_flags:          def.arch_flags,
             linking,
             flags_opt:           get_flags("opt"),

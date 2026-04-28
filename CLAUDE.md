@@ -326,9 +326,12 @@ fn load() {
 | `set_linking(lang, params)` | ABI, compatible ABIs, extensions, optional `compile_binary` |
 | `set_passthrough(bool, prefix)` | nvcc-style `-Xcompiler` wrapping |
 | `add_always_flag(flag)` | Unconditional flag appended to every invocation |
-| `fn check()` | Return `false` to hide toolchain when binary not found |
-| `fn load()` | Called at detection time; `arch`/`os` in scope; can call `add_flags()` |
+| `set_supported_archs(list)` | Hide toolchain on unlisted host archs (Rust `std::env::consts::ARCH` values: `"x86_64"`, `"aarch64"`, `"x86"`, …); empty = no restriction |
+| `fn check()` | Return `false` to hide toolchain when binary not found or arch unsupported |
+| `fn load()` | Called at detection time; `arch`/`os` variables in scope; can call `add_flags()` |
 | `find_tool(name)` | Search `$PATH`; returns path string or `()` |
+| `arch()` | Returns host CPU arch string (same as `std::env::consts::ARCH`) — callable anywhere |
+| `os()` | Returns host OS string (same as `std::env::consts::OS`) — callable anywhere |
 | `env(key)` | Read environment variable; returns string or `()` |
 
 ---
