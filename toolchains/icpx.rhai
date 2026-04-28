@@ -50,8 +50,9 @@ set_structure("sysroot",      "--sysroot={path}");
 set_module_style("none");
 set_passthrough(false, "");
 
-// Intel oneAPI targets Intel hardware (x86/x86_64).
+// Intel oneAPI is available on x86/x86_64 Linux and Windows.
 set_supported_archs(["x86", "x86_64"]);
+set_supported_os(["linux", "windows"]);
 
 add_always_flag("-fsycl");
 
@@ -65,5 +66,9 @@ set_linking("sycl", #{
 fn check() {
     let h = arch();
     if h != "x86_64" && h != "x86" { return false; }
-    find_tool("icpx") != ()
+    let o = os();
+    if o != "linux" && o != "windows" { return false; }
+    if find_tool("icpx") == () { return false; }
+    // oneAPI environment must be initialised (setvars.sh / setvars.bat).
+    env("ONEAPI_ROOT") != () || env("SETVARS_COMPLETED") != ()
 }

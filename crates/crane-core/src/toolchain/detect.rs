@@ -77,7 +77,7 @@ fn probe_cached(
     cache: &mut ToolchainCache,
     dirty: &mut bool,
 ) -> Option<DetectedCompiler> {
-    if !arch_supported(template) {
+    if !host_supported(template) {
         return None;
     }
     let path = which(&template.binary)?;
@@ -92,13 +92,16 @@ fn probe_cached(
     Some(DetectedCompiler { template: template.clone(), version, path })
 }
 
-fn arch_supported(template: &CompilerTemplate) -> bool {
-    template.supported_archs.is_empty()
-        || template.supported_archs.iter().any(|a| a == std::env::consts::ARCH)
+fn host_supported(template: &CompilerTemplate) -> bool {
+    let arch_ok = template.supported_archs.is_empty()
+        || template.supported_archs.iter().any(|a| a == std::env::consts::ARCH);
+    let os_ok = template.supported_os.is_empty()
+        || template.supported_os.iter().any(|o| o == std::env::consts::OS);
+    arch_ok && os_ok
 }
 
 fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
-    if !arch_supported(template) {
+    if !host_supported(template) {
         return None;
     }
     let path = which(&template.binary)?;

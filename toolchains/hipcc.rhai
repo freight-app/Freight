@@ -47,8 +47,9 @@ set_structure("sysroot",      "--sysroot={path}");
 set_module_style("none");
 set_passthrough(false, "");
 
-// AMD ROCm officially supports x86_64 Linux only.
+// AMD ROCm supports x86_64 Linux only.
 set_supported_archs(["x86_64"]);
+set_supported_os(["linux"]);
 
 set_linking("hip", #{
     abi:        "hip",
@@ -58,6 +59,8 @@ set_linking("hip", #{
 });
 
 fn check() {
-    if arch() != "x86_64" { return false; }
-    find_tool("hipcc") != ()
+    if arch() != "x86_64" || os() != "linux" { return false; }
+    // ROCm also exposes HIP_PATH or ROCM_PATH when properly installed.
+    if find_tool("hipcc") == () { return false; }
+    env("ROCM_PATH") != () || env("HIP_PATH") != () || env("ROCM_HOME") != ()
 }

@@ -40,6 +40,9 @@ pub(super) struct ToolchainDef {
     /// Host architectures this toolchain is available on (`std::env::consts::ARCH` values).
     /// Empty = no restriction (works on every architecture).
     pub supported_archs: Vec<String>,
+    /// Host operating systems this toolchain is available on (`std::env::consts::OS` values).
+    /// Empty = no restriction.
+    pub supported_os: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -233,6 +236,17 @@ fn make_engine() -> Engine {
     e.register_fn("set_supported_archs", |arr: Array| {
         with_def(|d| {
             d.supported_archs = arr
+                .into_iter()
+                .filter_map(|v| v.try_cast::<String>())
+                .collect();
+        });
+    });
+
+    // set_supported_os(["linux", "windows"]) — hide toolchain on other OSes.
+    // Empty list (default) = available on all operating systems.
+    e.register_fn("set_supported_os", |arr: Array| {
+        with_def(|d| {
+            d.supported_os = arr
                 .into_iter()
                 .filter_map(|v| v.try_cast::<String>())
                 .collect();

@@ -53,6 +53,10 @@ set_structure("sysroot",      "");
 set_module_style("none");
 set_passthrough(false, "");
 
+// Intel Fortran (ifx) is available on x86/x86_64 Linux and Windows.
+set_supported_archs(["x86", "x86_64"]);
+set_supported_os(["linux", "windows"]);
+
 set_linking("fortran", #{
     abi:        "fortran",
     compatible: ["c"],
@@ -61,5 +65,11 @@ set_linking("fortran", #{
 });
 
 fn check() {
-    find_tool("ifx") != ()
+    let h = arch();
+    if h != "x86_64" && h != "x86" { return false; }
+    let o = os();
+    if o != "linux" && o != "windows" { return false; }
+    if find_tool("ifx") == () { return false; }
+    // ifx requires the oneAPI environment (setvars.sh / setvars.bat).
+    env("ONEAPI_ROOT") != () || env("SETVARS_COMPLETED") != ()
 }

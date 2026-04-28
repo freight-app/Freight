@@ -41,8 +41,10 @@ set_structure("sysroot",      "");
 set_module_style("none");
 set_passthrough(true, "-Xcompiler");
 
-// NVIDIA CUDA Toolkit is available for x86_64 and aarch64 (Jetson / Grace).
+// CUDA Toolkit is available on x86_64 and aarch64 (Jetson / Grace) Linux and Windows.
+// macOS support was dropped in CUDA 11.6.
 set_supported_archs(["x86_64", "aarch64"]);
+set_supported_os(["linux", "windows"]);
 
 add_always_flag("--expt-relaxed-constexpr");
 add_always_flag("--extended-lambda");
@@ -57,5 +59,9 @@ set_linking("cuda", #{
 fn check() {
     let h = arch();
     if h != "x86_64" && h != "aarch64" { return false; }
-    find_tool("nvcc") != ()
+    let o = os();
+    if o != "linux" && o != "windows" { return false; }
+    if find_tool("nvcc") == () { return false; }
+    // CUDA_PATH (Windows) or CUDA_HOME / CUDA_ROOT (Linux) indicate a full toolkit install.
+    env("CUDA_PATH") != () || env("CUDA_HOME") != () || env("CUDA_ROOT") != ()
 }

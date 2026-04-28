@@ -59,8 +59,9 @@ set_structure("sysroot",      "");
 set_module_style("none");
 set_passthrough(false, "");
 
-// NVIDIA HPC SDK supports x86_64 and aarch64 (NVIDIA Grace CPU).
+// NVIDIA HPC SDK is available on x86_64 and aarch64 (Grace) Linux only.
 set_supported_archs(["x86_64", "aarch64"]);
+set_supported_os(["linux"]);
 
 set_linking("c", #{
     abi:            "c",
@@ -88,5 +89,6 @@ set_linking("fortran", #{
 fn check() {
     let h = arch();
     if h != "x86_64" && h != "aarch64" { return false; }
+    if os() != "linux" { return false; }
     find_tool("nvc++") != ()
 }

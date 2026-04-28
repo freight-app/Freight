@@ -327,6 +327,7 @@ fn load() {
 | `set_passthrough(bool, prefix)` | nvcc-style `-Xcompiler` wrapping |
 | `add_always_flag(flag)` | Unconditional flag appended to every invocation |
 | `set_supported_archs(list)` | Hide toolchain on unlisted host archs (Rust `std::env::consts::ARCH` values: `"x86_64"`, `"aarch64"`, `"x86"`, …); empty = no restriction |
+| `set_supported_os(list)` | Hide toolchain on unlisted host OSes (Rust `std::env::consts::OS` values: `"linux"`, `"windows"`, `"macos"`, …); empty = no restriction |
 | `fn check()` | Return `false` to hide toolchain when binary not found or arch unsupported |
 | `fn load()` | Called at detection time; `arch`/`os` variables in scope; can call `add_flags()` |
 | `find_tool(name)` | Search `$PATH`; returns path string or `()` |
