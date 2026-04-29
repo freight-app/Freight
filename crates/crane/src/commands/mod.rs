@@ -6,6 +6,7 @@ pub mod check;
 pub mod compile_commands;
 pub mod debug;
 pub mod deps;
+pub mod doc;
 pub mod migrate;
 pub mod new;
 pub mod toolchain;

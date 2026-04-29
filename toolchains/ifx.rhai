@@ -57,6 +57,9 @@ set_passthrough(false, "");
 set_supported_archs(["x86", "x86_64"]);
 set_supported_os(["linux", "windows"]);
 
+// ONEAPI_ROOT is exported by setvars.sh / setvars.bat.
+set_required_env(["ONEAPI_ROOT"]);
+
 set_linking("fortran", #{
     abi:        "fortran",
     compatible: ["c"],
@@ -70,6 +73,5 @@ fn check() {
     let o = os();
     if o != "linux" && o != "windows" { return false; }
     if find_tool("ifx") == () { return false; }
-    // ifx requires the oneAPI environment (setvars.sh / setvars.bat).
-    env("ONEAPI_ROOT") != () || env("SETVARS_COMPLETED") != ()
+    env("ONEAPI_ROOT") != ()
 }

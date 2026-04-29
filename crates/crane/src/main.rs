@@ -12,10 +12,18 @@ use crate::commands::deps::{
     cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
     cmd_update, cmd_yank,
 };
+use crate::commands::doc::{cmd_doc, cmd_man};
 use crate::commands::migrate::cmd_migrate;
 use crate::commands::new::{cmd_init, cmd_new};
 use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list};
 use crate::output::print_unimplemented;
+
+/// Returns the top-level [`clap::Command`] for this binary.
+/// Used by `crane man` to generate man pages without re-parsing argv.
+pub(crate) fn cli_command() -> clap::Command {
+    use clap::CommandFactory;
+    Cli::command()
+}
 
 #[derive(Parser)]
 #[command(name = "crane", about = "Build tool and package manager for C, C++, Fortran, and more")]
@@ -128,6 +136,14 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Extract doc comments and generate an HTML reference site in target/doc/
+    Doc,
+    /// Generate man pages for all crane subcommands
+    Man {
+        /// Output directory (default: target/man/)
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<String>,
+    },
     /// Authenticate with crane.dev
     Login,
     /// Upload this package to crane.dev
@@ -180,6 +196,8 @@ fn main() -> Result<()> {
         Commands::Migrate { from, dry_run, force } => {
             cmd_migrate(from.as_deref(), dry_run, force);
         }
+        Commands::Doc => cmd_doc(),
+        Commands::Man { out_dir } => cmd_man(out_dir.as_deref()),
         Commands::Login => cmd_login(),
         Commands::Publish => cmd_publish(),
         Commands::Yank { version } => cmd_yank(&version),

@@ -10,6 +10,7 @@ resolver = "2"
 [workspace.dependencies]
 # CLI
 clap          = { version = "4", features = ["derive"] }
+clap_mangen   = "0.2"
 owo-colors    = "4"
 indicatif     = "0.17"
 

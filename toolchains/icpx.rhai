@@ -54,6 +54,10 @@ set_passthrough(false, "");
 set_supported_archs(["x86", "x86_64"]);
 set_supported_os(["linux", "windows"]);
 
+// ONEAPI_ROOT is exported by setvars.sh / setvars.bat; its absence means
+// the environment has not been initialised and compilation will fail.
+set_required_env(["ONEAPI_ROOT"]);
+
 add_always_flag("-fsycl");
 
 set_linking("sycl", #{
@@ -69,6 +73,5 @@ fn check() {
     let o = os();
     if o != "linux" && o != "windows" { return false; }
     if find_tool("icpx") == () { return false; }
-    // oneAPI environment must be initialised (setvars.sh / setvars.bat).
-    env("ONEAPI_ROOT") != () || env("SETVARS_COMPLETED") != ()
+    env("ONEAPI_ROOT") != ()
 }
