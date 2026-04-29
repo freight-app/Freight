@@ -29,6 +29,7 @@ git2          = { version = "0.19", features = ["vendored-libgit2", "vendored-op
 
 # Dependency resolution
 semver        = "1"
+pulldown-cmark = "0.12"
 
 # Error handling
 anyhow        = "1"

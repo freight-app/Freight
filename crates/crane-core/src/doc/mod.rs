@@ -3,6 +3,7 @@
 /// Supports C/C++ (Doxygen `/** */`, `/*! */`, `///`), Rust (`///`, `/** */`),
 /// Fortran (`!>` / `!!`), D (`/++`, `/**`, `///`) and Ada (`--!` / `---`).
 pub mod extract;
+pub mod markdown;
 pub mod render;
 pub mod render_md;
 pub mod render_latex;

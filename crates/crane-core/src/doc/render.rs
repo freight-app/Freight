@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use super::extract::{DocItem, DocSet, DocTag, TagKind};
+use super::markdown::to_html as md_html;
 
 /// Write the full documentation site to `out_dir`.
 ///
@@ -138,10 +139,10 @@ fn render_item(h: &mut String, item: &DocItem) {
     h.push_str("</div>");
 
     if !item.brief.is_empty() {
-        let _ = write!(h, r#"<p class="brief">{}</p>"#, esc(&item.brief));
+        let _ = write!(h, r#"<div class="brief">{}</div>"#, md_html(&item.brief));
     }
     if !item.body.is_empty() {
-        let _ = write!(h, r#"<p class="body">{}</p>"#, esc(&item.body));
+        let _ = write!(h, r#"<div class="body">{}</div>"#, md_html(&item.body));
     }
 
     // Parameters table
@@ -154,7 +155,12 @@ fn render_item(h: &mut String, item: &DocItem) {
         );
         for tag in &params {
             let pname = tag.name.as_deref().unwrap_or("—");
-            let _ = write!(h, "<tr><td><code>{}</code></td><td>{}</td></tr>", esc(pname), esc(&tag.text));
+            let _ = write!(
+                h,
+                "<tr><td><code>{}</code></td><td>{}</td></tr>",
+                esc(pname),
+                md_html(&tag.text)
+            );
         }
         h.push_str("</tbody></table>");
     }
@@ -166,7 +172,7 @@ fn render_item(h: &mut String, item: &DocItem) {
             h,
             r#"<div class="tag"><span class="tag-label">{}:</span> {}</div>"#,
             esc(tag.kind.label()),
-            esc(&tag.text)
+            md_html(&tag.text)
         );
     }
 

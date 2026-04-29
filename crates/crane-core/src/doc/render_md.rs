@@ -26,13 +26,10 @@ pub fn render_markdown(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
         by_file.entry(rel).or_default().push(item);
     }
 
-    // Build a global symbol index: name → (slug, anchor) for cross-linking
-    let sym_index = build_symbol_index(&by_file);
-
     // Per-file pages
     for (rel, items) in &by_file {
         let slug = rel_to_slug(rel);
-        let content = render_file_page(rel, &slug, items, &sym_index);
+        let content = render_file_page(rel, &slug, items);
         std::fs::write(out_dir.join(format!("{slug}.md")), content)?;
     }
 
@@ -82,12 +79,7 @@ fn render_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
 
 // ── Per-file page ─────────────────────────────────────────────────────────────
 
-fn render_file_page(
-    rel: &str,
-    slug: &str,
-    items: &[&DocItem],
-    sym_index: &SymbolIndex,
-) -> String {
+fn render_file_page(rel: &str, slug: &str, items: &[&DocItem]) -> String {
     let _ = slug; // used by callers for the filename; not needed inside the page itself
     let mut md = String::new();
 
@@ -120,7 +112,7 @@ fn render_file_page(
     // Items
     let mut name_count: BTreeMap<String, usize> = BTreeMap::new();
     for item in items {
-        render_item(&mut md, item, &mut name_count, sym_index);
+        render_item(&mut md, item, &mut name_count);
     }
 
     md
@@ -130,7 +122,6 @@ fn render_item(
     md: &mut String,
     item: &DocItem,
     name_count: &mut BTreeMap<String, usize>,
-    sym_index: &SymbolIndex,
 ) {
     let display = if item.name.is_empty() {
         "*(anonymous)*".to_string()
@@ -155,13 +146,15 @@ fn render_item(
     let _ = writeln!(md);
 
     if !item.brief.is_empty() {
-        let _ = writeln!(md, "{}\n", linkify(&item.brief, sym_index));
+        // Brief is passed through as-is — it's already markdown + math
+        let _ = writeln!(md, "{}\n", item.brief);
     }
     if !item.body.is_empty() {
-        let _ = writeln!(md, "{}\n", linkify(&item.body, sym_index));
+        // Body is passed through as-is — markdown, math, existing links all preserved
+        let _ = writeln!(md, "{}\n", item.body);
     }
 
-    // Parameters table
+    // Parameters table — pipe-escaped so the table cell stays valid
     let params: Vec<&DocTag> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
     if !params.is_empty() {
         md.push_str("| Parameter | Description |\n");
@@ -171,7 +164,7 @@ fn render_item(
             let _ = writeln!(
                 md,
                 "| `{pname}` | {} |",
-                linkify(&tag.text, sym_index)
+                tag.text.replace('|', r"\|")
             );
         }
         let _ = writeln!(md);
@@ -180,89 +173,11 @@ fn render_item(
     // Non-param tags
     for tag in &item.tags {
         if matches!(tag.kind, TagKind::Param | TagKind::Brief) { continue; }
-        let _ = writeln!(
-            md,
-            "**{}:** {}\n",
-            tag.kind.label(),
-            linkify(&tag.text, sym_index)
-        );
+        let _ = writeln!(md, "**{}:** {}\n", tag.kind.label(), tag.text);
     }
 
     let _ = writeln!(md, "---\n");
     let _ = heading; // suppress unused warning — heading is used for dedup logic
-}
-
-// ── Symbol index for cross-linking ────────────────────────────────────────────
-
-struct SymbolEntry {
-    slug: String,
-    anchor: String,
-}
-
-type SymbolIndex = BTreeMap<String, SymbolEntry>;
-
-fn build_symbol_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> SymbolIndex {
-    let mut idx = SymbolIndex::new();
-    for (rel, items) in by_file {
-        let slug = rel_to_slug(rel);
-        for item in items {
-            if item.name.is_empty() { continue; }
-            // First definition wins (same as rustdoc behaviour)
-            idx.entry(item.name.clone()).or_insert_with(|| SymbolEntry {
-                slug: slug.clone(),
-                anchor: md_heading_anchor(item.kind.label(), &item.name),
-            });
-        }
-    }
-    idx
-}
-
-/// Replace bare symbol names in prose with Markdown links when a definition exists.
-///
-/// Only replaces whole-word occurrences that are not already inside a link or
-/// a code span to avoid double-linking.
-fn linkify(text: &str, idx: &SymbolIndex) -> String {
-    if idx.is_empty() || text.is_empty() { return text.to_string(); }
-
-    // Simple word-boundary scan: split into segments, replace token if in index
-    // and not already enclosed in backticks or brackets.
-    let mut out = String::with_capacity(text.len());
-    let mut in_code = false;
-    let mut chars = text.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '`' {
-            in_code = !in_code;
-            out.push(c);
-            continue;
-        }
-        if in_code || !c.is_alphanumeric() && c != '_' {
-            out.push(c);
-            continue;
-        }
-        // Collect a word token
-        let mut word = String::new();
-        word.push(c);
-        while let Some(&nc) = chars.peek() {
-            if nc.is_alphanumeric() || nc == '_' {
-                word.push(nc);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if let Some(entry) = idx.get(&word) {
-            let _ = write!(
-                out,
-                "[`{word}`]({slug}.md#{anchor})",
-                slug = entry.slug,
-                anchor = entry.anchor,
-            );
-        } else {
-            out.push_str(&word);
-        }
-    }
-    out
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -307,23 +222,4 @@ mod tests {
         assert_eq!(rel_to_slug("src/mathlib.h"), "src_mathlib_h");
     }
 
-    #[test]
-    fn linkify_known_symbol() {
-        let mut idx = SymbolIndex::new();
-        idx.insert("factorial".into(), SymbolEntry {
-            slug: "mathlib_h".into(),
-            anchor: "fn-factorial".into(),
-        });
-        let out = linkify("Call factorial to compute n!", &idx);
-        assert!(out.contains("[`factorial`](mathlib_h.md#fn-factorial)"), "{out}");
-    }
-
-    #[test]
-    fn linkify_skips_backtick() {
-        let mut idx = SymbolIndex::new();
-        idx.insert("foo".into(), SymbolEntry { slug: "a".into(), anchor: "fn-foo".into() });
-        let out = linkify("`foo` is already code", &idx);
-        // Inside backtick span — should not double-link
-        assert_eq!(out, "`foo` is already code");
-    }
 }
