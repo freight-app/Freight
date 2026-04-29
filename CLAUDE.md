@@ -49,6 +49,7 @@ crane/
 │   │           ├── deps.rs     # cmd_add, remove, update, fetch, tree, search, info, login, publish, yank
 │   │           ├── migrate.rs  # cmd_migrate
 │   │           ├── new.rs      # cmd_new, cmd_init
+│   │           ├── doc.rs      # cmd_doc, cmd_man
 │   │           └── toolchain.rs # cmd_toolchain_list
 │   ├── crane-core/             # library crate — all build logic, no CLI / no printing of results
 │   │   └── src/
@@ -67,6 +68,13 @@ crane/
 │   │       │   ├── template.rs
 │   │       │   ├── detect.rs
 │   │       │   └── cache.rs
+│   │       ├── doc/            # documentation extraction and rendering
+│   │       │   ├── mod.rs      # OutputFormat enum + render() dispatch
+│   │       │   ├── extract.rs  # multi-language doc comment extractor
+│   │       │   ├── markdown.rs # math protection + MD→HTML + MD→LaTeX via pulldown-cmark
+│   │       │   ├── render.rs   # HTML renderer (self-contained, MathJax)
+│   │       │   ├── render_md.rs  # Markdown renderer (GFM, cross-document links)
+│   │       │   └── render_latex.rs # LaTeX renderer + PDF compilation
 │   │       └── build/          # compilation + linking orchestration
 │   │           ├── mod.rs      # build_project, clean_project, test_project (pub functions)
 │   │           ├── compile.rs  # source → object, parallel via rayon
@@ -76,6 +84,9 @@ crane/
 │   │           ├── features.rs # Cargo-style [features] resolve + define generation
 │   │           ├── foreign.rs  # foreign build system integration (cmake/make/meson/autotools/scons)
 │   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   ├── crane-doc/              # standalone doc generator binary (crane-doc CLI)
+│   │   └── src/
+│   │       └── main.rs         # crane-doc --format html|md|latex|pdf|all [DIR...] --out DIR
 │   ├── crane-migrator/         # library crate — crane migrate (CMake/Makefile/Meson → crane.toml)
 │   │   └── src/
 │   │       ├── lib.rs          # run_migrate → MigrateOutcome, ImportedProject IR
@@ -118,6 +129,7 @@ crane/
     ├── with-make-dep/          # path dep built by Make (auto-detected)
     ├── with-git-dep/           # git dependency cloned + built automatically
     ├── with-external-deps/     # http + github + system+pkg_config deps; shows header-only auto-detection
+    ├── doc-example/            # C (mathlib), C++ (stats), Fortran (linalg), C (numerics with LaTeX math)
     └── migrated-from-cmake/    # before/after for `crane migrate --from cmake`
 ```
 
@@ -414,6 +426,10 @@ crane toolchain use <name>        set default compiler backend        ✗ deferr
 crane lsp                         run language server on stdio        ✓ implemented
 crane debug [<binary>] [--debugger <name>] [--launch-json] [-- <args>]  debug a binary  ✓ implemented
 crane compile-commands [--release] generate compile_commands.json     ✓ implemented
+crane doc [--format html|md|latex|pdf|all]  extract docs → target/doc/  ✓ implemented
+crane man [--out-dir DIR]         generate man pages → target/man/    ✓ implemented
+
+crane-doc [DIR...] --format <FORMAT> --out <DIR>   standalone doc generator  ✓ implemented
 ```
 
 ---
@@ -581,7 +597,7 @@ All three importers parse into a shared [`ImportedProject`] IR, which
 - [x] One worked example: `examples/migrated-from-cmake/` showing before/after
 - [x] `[platform.<os>]` manifest section: per-platform overlays for `dependencies`, `compiler.defines`, `compiler.flags`, `compiler.includes.paths`. Build engine merges matching overlays at build time using `std::env::consts::OS`; family aliases (`unix`, `bsd`) apply before the specific OS. Validated by `validate_platforms`; round-tripped by the CMake importer's `if(...)` recogniser. Per-platform `[language]`, `[[bin]]`, profiles and sanitizers are deliberately not overlay-able in v1.
 
-### Phase 12 — Registry server (planned — `feature/registry-server`, after Phase 11)
+### Phase 13 — Registry server (planned — `feature/registry-server`, after Phase 11)
 New workspace crate `crates/crane-registry/` implementing crane.dev. Filesystem-backed
 for v1 so it can run self-hosted with zero external services; storage backend is
 swappable later. Unblocks the outstanding Phase 9 items (`crane fetch` / `add` against
@@ -599,7 +615,7 @@ a real registry).
 - [ ] Wire Phase 9 stubs — `crane fetch` / `add` / `search` / `info` / `publish` / `login` / `yank` — to the real HTTP API
 - [ ] Integration tests spin up the server on an ephemeral port and exercise publish → fetch → build
 
-### Phase 13 — Language server (in progress — `feature/lsp-server`)
+### Phase 14 — Language server (in progress — `feature/lsp-server`)
 A dedicated LSP for `crane.toml`, built on `tower-lsp` + `tokio`. Lives in
 `crates/crane-lsp/` and is invokable either as a standalone `crane-lsp` binary
 or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same
@@ -623,7 +639,32 @@ or via `crane lsp` (the CLI spins up a tokio runtime and hands off to the same
 - [ ] Inlay hints showing resolved compiler flags per profile
 - [ ] Code actions: "add `[[bin]]` target", "convert simple version dep → detailed table"
 
-### Phase 14 — Debugger integration ✓ COMPLETE
+### Phase 14 — Documentation generator ✓ COMPLETE
+
+Multi-language doc comment extractor and multi-format renderer. Lives in
+`crates/crane-core/src/doc/` (extraction + rendering) and `crates/crane-doc/`
+(standalone binary). Also surfaced as `crane doc` / `crane man` in the main CLI.
+
+- [x] `doc/extract.rs` — line-scanner extractor for five languages:
+    - **C/C++**: Doxygen `/** */`, `/*! */`, `///` with `@tag`/`\tag` parsing (`@param`, `@return`, `@brief`, `@note`, `@warning`, `@see`, `@since`, `@deprecated`, `@example`)
+    - **Rust**: `///` and `/** */`; symbol detection for `fn`, `struct`, `enum`, `trait`, `mod`, `type`, `impl … for`
+    - **Fortran**: FORD-style `!>` block opener, `!!` continuation; case-insensitive `SUBROUTINE`/`FUNCTION` detection with qualifier stripping (`pure`, `recursive`, `elemental`, `logical`, `integer`, …)
+    - **D**: `/++...+/`, `/**`, `///` (DDoc)
+    - **Ada**: `--!` and `---` markers; `PROCEDURE`, `FUNCTION`, `PACKAGE`, `TYPE`
+- [x] `doc/markdown.rs` — shared markdown + math processing layer (used by all three renderers):
+    - `protect_math()` — replaces `$$...$$`, `$...$`, `\[...\]`, `\(...\)` regions with opaque ASCII placeholders before any renderer sees the text; `restore_math()` puts them back afterwards. Math content is never HTML-escaped or LaTeX-escaped.
+    - `to_html(text)` — protect → pulldown-cmark HTML → restore; supports tables, lists, code spans/blocks, bold, italic, strikethrough, links
+    - `to_latex(text)` — protect → pulldown-cmark events → LaTeX conversion → restore; bold → `\textbf{}`, code spans → `\texttt{}`, code blocks → `verbatim`, lists → `itemize`/`enumerate`, tables → `tabular` with booktabs rules, links → `\href{}{}`
+- [x] `doc/render.rs` — HTML renderer; self-contained dark-theme CSS; MathJax 3 CDN script for `$...$` / `$$...$$` rendering; brief/body/tags rendered as full markdown via `to_html()`
+- [x] `doc/render_md.rs` — GFM Markdown renderer; `index.md` + per-file `<slug>.md` with Contents section; body text passes through verbatim (already markdown + math); pipe chars in table cells escaped (`\|`)
+- [x] `doc/render_latex.rs` — LaTeX renderer; single `docs.tex`; `\section` per file, `\subsection*` per item; `\phantomsection\label{}` for hyperref cross-refs; preamble includes `amsmath`, `amssymb`, `ulem[normalem]`, `hyperref`, `booktabs`, `xcolor`, `geometry`; PDF compilation via `xelatex` (preferred) then `pdflatex`, run twice for ToC/hyperref; graceful fallback warning if no LaTeX on PATH
+- [x] `doc/mod.rs` — `OutputFormat` enum (`Html`, `Markdown`, `Latex`, `Pdf`) with `from_str()` and a unified `render()` dispatch
+- [x] `crane doc [--format html|md|latex|pdf|all]` — scans project source dirs (lib.src, bin dirs, path deps), renders to `target/doc/`; `all` puts each format in a sub-directory
+- [x] `crane man [--out-dir DIR]` — generates man pages for every crane subcommand via `clap_mangen`; defaults to `target/man/`
+- [x] `crates/crane-doc/` — standalone `crane-doc` binary: `crane-doc [DIR...] --format <FORMAT> --out <DIR> [--dry-run]`; `--dry-run` lists all found items without writing files; `all` format is best-effort (PDF warning if no LaTeX)
+- [x] `examples/doc-example/` — five source files covering all supported features: `mathlib.h`/`mathlib.c` (C, Doxygen), `stats.cpp`/`main.cpp` (C++), `linalg.f90` (Fortran), `numerics.h` (C with display math `$$...$$`, inline math `$...$`, bold, code spans, ordered lists, markdown tables)
+
+### Phase 15 — Debugger integration ✓ COMPLETE
 
 Interactive debugger launch and IDE configuration generation. Debugger templates
 live in `toolchains/debuggers/` (a subdirectory, keeping them out of the compiler
@@ -637,7 +678,7 @@ template count) and follow the same TOML-file design as compiler templates.
 - [x] `crane debug [<binary>] [--debugger <name>] [-- <args>]` — builds with debug profile, selects binary (disambiguates multiple `[[bin]]` targets), execs the debugger replacing the crane process on Unix (`CommandExt::exec`), runs as child + forwards exit code on Windows
 - [x] `crane debug --launch-json` — writes (or merges into) `.vscode/launch.json`; CodeLLDB format (`"type": "lldb"`) for lldb, cppdbg format (`"type": "cppdbg"`, `"MIMode"`) for gdb; configs tagged with `"generatedBy": "crane"` so re-runs replace only crane-generated entries
 
-### Phase 15 — Rhai toolchain scripts ✓ COMPLETE
+### Phase 16 — Rhai toolchain scripts ✓ COMPLETE
 
 Compiler definitions moved from static TOML files to Rhai scripts, enabling
 programmatic toolchain definitions (arch-conditional flags, custom detection
@@ -710,8 +751,47 @@ User-facing reference docs live in `docs/`:
 | `docs/manifest-reference.md` | Complete `crane.toml` field reference — every section, every field, with types and examples |
 | `docs/compiler-templates.md` | How the toolchain template system works; all template fields explained; how to write a new template; debugger template schema |
 | `docs/future-toolchains.md` | Planned and possible future compiler, assembler, debugger, and language additions with notes on what each would require |
-| `docs/registry-plan.md` | Architecture plan for the crane.dev registry server (Phase 12) |
-| `docs/plan-toolchain-roles.md` | Plan for Phase 15 follow-on work: toolset role dispatch, `output_obj`/`output_bin`, `lto_link`, `system_lib`, `dep_file_mode = "stdout"`, `msvc.rhai` |
+| `docs/registry-plan.md` | Architecture plan for the crane.dev registry server (Phase 13) |
+| `docs/plan-toolchain-roles.md` | Plan for Phase 16 follow-on work: toolset role dispatch, `output_obj`/`output_bin`, `lto_link`, `system_lib`, `dep_file_mode = "stdout"`, `msvc.rhai` |
+
+### Generating API docs from source
+
+`crane-doc` and `crane doc` extract doc comments from project sources and render
+them in one or more formats:
+
+```
+# From the project directory (uses crane.toml to find sources):
+crane doc                        # → target/doc/index.html (HTML with MathJax)
+crane doc --format md            # → target/doc/index.md  (GFM Markdown)
+crane doc --format latex         # → target/doc/docs.tex  (LaTeX source)
+crane doc --format pdf           # → target/doc/docs.pdf  (requires xelatex / pdflatex)
+crane doc --format all           # → target/doc/html/ md/ latex/ pdf/
+
+# Standalone (no crane.toml needed):
+crane-doc src/                   # same as crane doc --format html
+crane-doc src/ --format all --out target/doc
+crane-doc src/ --dry-run         # list extracted items without writing
+
+# Man pages for the crane CLI:
+crane man                        # → target/man/crane.1 (+ one page per subcommand)
+crane man --out-dir /usr/share/man/man1
+```
+
+**Supported doc comment styles:**
+
+| Language | Styles recognised |
+|----------|-------------------|
+| C / C++  | `/** */`, `/*! */`, `///` with `@tag`/`\tag` (Doxygen) |
+| Rust     | `///`, `/** */` |
+| Fortran  | `!>` (block), `!!` (continuation) — FORD conventions |
+| D        | `/++ +/`, `/**`, `///` — DDoc |
+| Ada      | `--!`, `---` |
+
+**Markdown + math in doc comments** — body text is processed by pulldown-cmark so
+`**bold**`, `_italic_`, `` `code` ``, tables, and lists render correctly in all three output formats.
+LaTeX math (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`) is protected from markdown/HTML/LaTeX
+escaping and passes through verbatim so MathJax (HTML), KaTeX (Markdown), or LaTeX
+itself can render it.
 
 ---
 
@@ -720,6 +800,7 @@ User-facing reference docs live in `docs/`:
 1. **`crane` crate owns the CLI** — clap parsing, `commands/` shells, and `output.rs` colour helpers. Each `cmd_*` reads cwd, calls a pure function in `crane-core`, prints the outcome.
 2. **`crane-core` is a library, no CLI knowledge** — pure functions return `Result<T, CraneError>` (e.g. `build_project`, `scaffold_project → ScaffoldOutcome`). It must not depend on `output.rs` or call `print_*`. Inline `println!` for build-engine progress (`Compiling foo.cpp`, `Linking …`) is the one exception, pending a future progress-callback abstraction.
 2a. **`crane-migrator` is a separate library** — depends on `crane-core` for `CraneError`, exposes `run_migrate → MigrateOutcome`. Keeping it separate lets external tools use the migrator without pulling in the build engine.
+2b. **`crane-doc` is a standalone binary** — depends only on `crane-core` (for `doc::*`). Can be used independently of the main `crane` CLI to generate docs from any source tree. `crane doc` in the main CLI calls the same `crane-core` functions.
 3. **Compiler templates are runtime data** — evaluated from `.rhai` scripts in `toolchains/`, not hardcoded
 4. **One script per toolchain, not per language** — `gcc.rhai` handles both C and C++; `compile_binary` in the `set_linking("c", ...)` call overrides which binary compiles that language
 5. **DAG cycles = hard error** — report the full cycle path (both dep cycles and module cycles)
@@ -742,7 +823,9 @@ serde         = { version = "1", features = ["derive"] }
 rayon         = "1"
 walkdir       = "2"
 regex         = "1"
-semver        = "1"
-tempfile      = "3"    # test helpers
-thiserror     = "1"
+semver         = "1"
+pulldown-cmark = "0.12"  # markdown processing in doc/markdown.rs
+tempfile       = "3"     # test helpers
+thiserror      = "1"
+clap_mangen    = "0.2"   # man page generation for crane man
 ```
