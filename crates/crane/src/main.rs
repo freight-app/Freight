@@ -136,8 +136,12 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Extract doc comments and generate an HTML reference site in target/doc/
-    Doc,
+    /// Extract doc comments and generate a documentation site in target/doc/
+    Doc {
+        /// Output format: html | md | latex | pdf | all  (default: html)
+        #[arg(long, short, value_name = "FORMAT", default_value = "html")]
+        format: String,
+    },
     /// Generate man pages for all crane subcommands
     Man {
         /// Output directory (default: target/man/)
@@ -196,7 +200,7 @@ fn main() -> Result<()> {
         Commands::Migrate { from, dry_run, force } => {
             cmd_migrate(from.as_deref(), dry_run, force);
         }
-        Commands::Doc => cmd_doc(),
+        Commands::Doc { format } => cmd_doc(&format),
         Commands::Man { out_dir } => cmd_man(out_dir.as_deref()),
         Commands::Login => cmd_login(),
         Commands::Publish => cmd_publish(),

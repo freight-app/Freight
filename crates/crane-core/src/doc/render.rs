@@ -240,7 +240,15 @@ nav.toc li{{margin:.2rem 0;font-size:.875rem}}
 .params td:first-child{{width:20%;color:#7dd3fc;font-size:.85rem}}
 .tag{{margin:.3rem 0;font-size:.875rem}}
 .tag-label{{color:#52525b}}
+.math{{overflow-x:auto}}
 </style>
+<script>
+MathJax = {{
+  tex: {{ inlineMath: [['$','$'],['\\\\(','\\\\)']], displayMath: [['$$','$$'],['\\\\[','\\\\]']] }},
+  options: {{ skipHtmlTags: ['script','noscript','style','textarea','pre'] }}
+}};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 </head>
 <body><main>
 "#,

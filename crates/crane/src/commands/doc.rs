@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crane_core::doc::extract::{extract_dir, DocSet};
-use crane_core::doc::render::render_html;
+use crane_core::doc::{render, OutputFormat};
 use crane_core::manifest::types::Dependency;
 use crane_core::manifest::{find_manifest_dir, load_manifest};
 
@@ -9,7 +9,7 @@ use crate::output::{print_error, print_status, print_success, print_warning};
 
 // ── crane doc ─────────────────────────────────────────────────────────────────
 
-pub fn cmd_doc() {
+pub fn cmd_doc(format: &str) {
     let cwd = std::env::current_dir().expect("cannot read cwd");
     let project_dir = find_manifest_dir(&cwd).unwrap_or_else(|| cwd.clone());
     let out_dir = project_dir.join("target").join("doc");
@@ -82,12 +82,38 @@ pub fn cmd_doc() {
     let total = all_items.len();
     let combined = DocSet { items: all_items, source_root: project_dir };
 
-    if let Err(e) = render_html(&combined, &out_dir) {
-        print_error(&format!("failed to write docs: {e}"));
-        return;
-    }
+    let fmt = OutputFormat::from_str(format).unwrap_or_else(|| {
+        print_error(&format!("unknown format {format:?} — expected html, md, latex, pdf, or all"));
+        std::process::exit(1);
+    });
 
-    print_success(&format!("{total} items → {}", out_dir.join("index.html").display()));
+    let render_one = |f: &OutputFormat, dir: &PathBuf| {
+        let (label, index_file) = match f {
+            OutputFormat::Html     => ("html",  "index.html"),
+            OutputFormat::Markdown => ("md",    "index.md"),
+            OutputFormat::Latex    => ("latex", "docs.tex"),
+            OutputFormat::Pdf      => ("pdf",   "docs.pdf"),
+        };
+        match render(&combined, dir, f) {
+            Ok(()) => print_success(&format!("{total} items [{label}] → {}", dir.join(index_file).display())),
+            Err(e) if f == &OutputFormat::Pdf => print_warning(&format!("PDF skipped — {e}")),
+            Err(e) => print_error(&format!("failed to write docs [{label}]: {e}")),
+        }
+    };
+
+    if format.eq_ignore_ascii_case("all") {
+        for f in &[OutputFormat::Html, OutputFormat::Markdown, OutputFormat::Latex, OutputFormat::Pdf] {
+            let sub = match f {
+                OutputFormat::Html     => "html",
+                OutputFormat::Markdown => "md",
+                OutputFormat::Latex    => "latex",
+                OutputFormat::Pdf      => "pdf",
+            };
+            render_one(f, &out_dir.join(sub));
+        }
+    } else {
+        render_one(&fmt, &out_dir);
+    }
 }
 
 // ── crane man ─────────────────────────────────────────────────────────────────

@@ -510,8 +510,6 @@ fn detect_fortran_symbol(line: &str) -> (String, DocKind) {
 
 /// Return the n-th whitespace token from the original (mixed-case) line.
 fn original_token_at(line: &str, n: usize) -> Option<&str> {
-    line.replace('(', " ").replace(')', " ");
-    // Re-tokenise the original line preserving case
     line.split(|c: char| c.is_whitespace() || c == '(' || c == ')')
         .filter(|s| !s.is_empty())
         .nth(n)
