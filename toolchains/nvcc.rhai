@@ -46,6 +46,13 @@ set_passthrough(true, "-Xcompiler");
 set_supported_archs(["x86_64", "aarch64"]);
 set_supported_os(["linux", "windows"]);
 
+// ptxas and fatbinary are bundled with the CUDA Toolkit alongside nvcc.
+// Their absence means a partial or broken toolkit installation.
+set_required_tools(["ptxas", "fatbinary"]);
+
+// nvcc produces device code but delegates final linking to the host C++ linker.
+set_requires_toolchain(["cpp"]);
+
 add_always_flag("--expt-relaxed-constexpr");
 add_always_flag("--extended-lambda");
 
@@ -61,7 +68,5 @@ fn check() {
     if h != "x86_64" && h != "aarch64" { return false; }
     let o = os();
     if o != "linux" && o != "windows" { return false; }
-    if find_tool("nvcc") == () { return false; }
-    // CUDA_PATH (Windows) or CUDA_HOME / CUDA_ROOT (Linux) indicate a full toolkit install.
-    env("CUDA_PATH") != () || env("CUDA_HOME") != () || env("CUDA_ROOT") != ()
+    find_tool("nvcc") != () && find_tool("ptxas") != () && find_tool("fatbinary") != ()
 }

@@ -253,6 +253,18 @@ pub struct CompilerTemplate {
     /// Host operating systems on which this toolchain is available (`std::env::consts::OS` values).
     /// Empty = no restriction.
     pub supported_os: Vec<String>,
+    /// Co-tools that must be present in PATH for this toolchain to function correctly.
+    /// If any are absent, `detect_all` warns and skips the toolchain.
+    pub required_tools: Vec<String>,
+    /// Environment variables that must ALL be set for this toolchain to function.
+    /// If any are absent, `detect_all` warns and skips the toolchain.
+    pub required_env: Vec<String>,
+    /// Minimum acceptable compiler version (e.g. `"12.0"`).
+    /// Compared component-by-component; toolchain is skipped when detected version is older.
+    pub min_version: Option<String>,
+    /// Language ABI keys (e.g. `["cpp"]`) that another detected toolchain must provide.
+    /// Guest compilers (nvcc, hipcc, ispc, opencl) use this to declare their host linker dep.
+    pub requires_toolchain: Vec<String>,
 
     /// Per-arch (optionally per-arch+OS) flags. Key `"x86_64.linux"` wins over `"x86_64"`.
     pub arch_flags: HashMap<String, String>,
@@ -309,6 +321,10 @@ impl CompilerTemplate {
             always_flags: raw.extra.always,
             supported_archs: vec![],
             supported_os: vec![],
+            required_tools: vec![],
+            required_env: vec![],
+            min_version: None,
+            requires_toolchain: vec![],
             arch_flags: raw.arch_flags,
             linking,
             flags_opt: raw.flags.opt,
@@ -416,6 +432,10 @@ impl CompilerTemplate {
             always_flags,
             supported_archs:     def.supported_archs,
             supported_os:        def.supported_os,
+            required_tools:      def.required_tools,
+            required_env:        def.required_env,
+            min_version:         def.min_version,
+            requires_toolchain:  def.requires_toolchain,
             arch_flags:          def.arch_flags,
             linking,
             flags_opt:           get_flags("opt"),

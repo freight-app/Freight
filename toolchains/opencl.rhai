@@ -53,6 +53,10 @@ set_passthrough(false, "");
 add_always_flag("-x");
 add_always_flag("cl");
 
+// OpenCL kernel compilation uses clang in -x cl mode; the final binary
+// is linked by the host C++ application that drives the OpenCL runtime.
+set_requires_toolchain(["cpp"]);
+
 set_linking("opencl", #{
     abi:        "opencl",
     compatible: ["c++", "c"],

@@ -43,6 +43,18 @@ pub(super) struct ToolchainDef {
     /// Host operating systems this toolchain is available on (`std::env::consts::OS` values).
     /// Empty = no restriction.
     pub supported_os: Vec<String>,
+    /// Additional binaries that must be present in PATH alongside the main binary.
+    /// If any are missing, detection emits a warning and skips the toolchain.
+    pub required_tools: Vec<String>,
+    /// Environment variables that must ALL be set for this toolchain to function.
+    /// If any are absent, detection emits a warning and skips the toolchain.
+    pub required_env: Vec<String>,
+    /// Minimum compiler version string (e.g. `"12.0"`, `"14.0.0"`).
+    /// Compared component-by-component; toolchain is skipped if detected version is older.
+    pub min_version: Option<String>,
+    /// Language ABI keys (e.g. `"cpp"`) that must be provided by another detected toolchain.
+    /// Used for guest compilers (nvcc, hipcc, ispc) that cannot produce final binaries alone.
+    pub requires_toolchain: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -247,6 +259,46 @@ fn make_engine() -> Engine {
     e.register_fn("set_supported_os", |arr: Array| {
         with_def(|d| {
             d.supported_os = arr
+                .into_iter()
+                .filter_map(|v| v.try_cast::<String>())
+                .collect();
+        });
+    });
+
+    // set_required_tools(["ptxas", "fatbinary"]) — all must be findable in PATH.
+    // When any are missing and the main binary is present, a warning is emitted.
+    e.register_fn("set_required_tools", |arr: Array| {
+        with_def(|d| {
+            d.required_tools = arr
+                .into_iter()
+                .filter_map(|v| v.try_cast::<String>())
+                .collect();
+        });
+    });
+
+    // set_required_env(["ONEAPI_ROOT"]) — all env vars must be set.
+    // When any are absent and the main binary is present, a warning is emitted.
+    e.register_fn("set_required_env", |arr: Array| {
+        with_def(|d| {
+            d.required_env = arr
+                .into_iter()
+                .filter_map(|v| v.try_cast::<String>())
+                .collect();
+        });
+    });
+
+    // set_min_version("12.0") — minimum required compiler version.
+    // Compared component-by-component; the toolchain is skipped with a warning
+    // when the detected version string is older than the declared minimum.
+    e.register_fn("set_min_version", |s: String| with_def(|d| d.min_version = Some(s)));
+
+    // set_requires_toolchain(["cpp"]) — ABI language keys that another detected
+    // toolchain must provide. Used for guest compilers (nvcc, hipcc, ispc, opencl)
+    // that need a host C/C++ linker; if none is detected the toolchain is skipped
+    // with an actionable warning instead of failing silently at link time.
+    e.register_fn("set_requires_toolchain", |arr: Array| {
+        with_def(|d| {
+            d.requires_toolchain = arr
                 .into_iter()
                 .filter_map(|v| v.try_cast::<String>())
                 .collect();

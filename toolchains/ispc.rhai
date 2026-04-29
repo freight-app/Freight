@@ -47,6 +47,9 @@ set_passthrough(false, "");
 // ISPC compiler binaries are published for x86_64 and aarch64.
 set_supported_archs(["x86_64", "aarch64"]);
 
+// ISPC outputs .o + a C header; the host C++ application links everything.
+set_requires_toolchain(["cpp"]);
+
 set_linking("ispc", #{
     abi:        "ispc",
     compatible: ["c++", "c"],

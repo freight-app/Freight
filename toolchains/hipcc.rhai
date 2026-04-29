@@ -51,6 +51,12 @@ set_passthrough(false, "");
 set_supported_archs(["x86_64"]);
 set_supported_os(["linux"]);
 
+// hipconfig is bundled with every ROCm installation and confirms a complete install.
+set_required_tools(["hipconfig"]);
+
+// hipcc wraps clang and delegates final linking to the host C++ linker.
+set_requires_toolchain(["cpp"]);
+
 set_linking("hip", #{
     abi:        "hip",
     compatible: ["c++", "c", "fortran"],
@@ -60,7 +66,5 @@ set_linking("hip", #{
 
 fn check() {
     if arch() != "x86_64" || os() != "linux" { return false; }
-    // ROCm also exposes HIP_PATH or ROCM_PATH when properly installed.
-    if find_tool("hipcc") == () { return false; }
-    env("ROCM_PATH") != () || env("HIP_PATH") != () || env("ROCM_HOME") != ()
+    find_tool("hipcc") != () && find_tool("hipconfig") != ()
 }
