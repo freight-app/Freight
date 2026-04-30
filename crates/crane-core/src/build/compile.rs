@@ -199,26 +199,82 @@ pub(crate) fn compile_one(
     settings: &BuildSettings,
     module_flags: &[String],
 ) -> Result<(), CraneError> {
+    let dep_mode = compiler.template.dep_file_mode();
+
     let mut cmd = Command::new(compile_bin);
     cmd.args(compiler.template.assemble_flags(settings));
     cmd.args(module_flags);
     cmd.args(compiler.template.compile_only_flag());
-    cmd.args(compiler.template.dep_file_flags(dep_path));
+    // "file": -MMD -MF <path>; "stdout": compiler flag like /showIncludes; "none": nothing
+    if dep_mode != "none" {
+        cmd.args(compiler.template.dep_file_flags(dep_path));
+    }
     cmd.arg(source_abs);
     cmd.args(compiler.template.output_flag(obj_path));
 
     let out = cmd.output().map_err(CraneError::Io)?;
-    if out.status.success() {
+
+    // For stdout dep mode: parse include lines from stdout before checking success
+    if dep_mode == "stdout" && out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if let Err(e) = write_stdout_dep_file(dep_path, source_abs, &stdout) {
+            eprintln!("warning: could not write dep file {}: {e}", dep_path.display());
+        }
+    }
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        // For stdout dep mode, stdout contains /showIncludes output, not error info
+        let diag = if dep_mode == "stdout" {
+            stderr
+        } else {
+            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+            if stdout.is_empty() { stderr } else { format!("{stdout}\n{stderr}") }
+        };
+        return Err(CraneError::CompileFailed(
+            source_abs.to_string_lossy().into_owned(),
+            diag.trim().to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Parse MSVC `/showIncludes` stdout and write a synthetic Makefile dep file.
+///
+/// MSVC prints `Note: including file:  <path>` for every directly or transitively
+/// included header. We collect these paths and write them in `.d` format so the
+/// existing mtime dirty-check logic can use them unchanged.
+fn write_stdout_dep_file(
+    dep_path: &Path,
+    source: &Path,
+    stdout: &str,
+) -> std::io::Result<()> {
+    const PREFIX: &str = "Note: including file:";
+    let includes: Vec<&str> = stdout.lines()
+        .filter_map(|line| {
+            let t = line.trim_start();
+            if t.starts_with(PREFIX) { Some(t[PREFIX.len()..].trim()) } else { None }
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    if includes.is_empty() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    let diag = if stdout.is_empty() { stderr } else { format!("{stdout}\n{stderr}") };
-    Err(CraneError::CompileFailed(
-        source_abs.to_string_lossy().into_owned(),
-        diag.trim().to_owned(),
-    ))
+    if let Some(parent) = dep_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Makefile dep format: `obj.o: source.cpp header1.h \\\n  header2.h\n`
+    let obj = dep_path.with_extension("o");
+    let mut content = format!("{}: {}", obj.display(), source.display());
+    for inc in &includes {
+        content.push_str(&format!(" \\\n  {inc}"));
+    }
+    content.push('\n');
+    fs::write(dep_path, content)
 }
 
 // ── Progress output ───────────────────────────────────────────────────────────

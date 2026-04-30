@@ -246,10 +246,12 @@ fn which(binary: &str) -> Option<PathBuf> {
 }
 
 fn query_version(template: &CompilerTemplate, path: &Path) -> Option<String> {
-    let output = Command::new(path)
-        .arg(&template.version_arg)
-        .output()
-        .ok()?;
+    let mut cmd = Command::new(path);
+    // An empty version_arg means "invoke with no arguments" (e.g. cl.exe prints version on stderr).
+    if !template.version_arg.is_empty() {
+        cmd.arg(&template.version_arg);
+    }
+    let output = cmd.output().ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -305,9 +307,9 @@ mod tests {
     #[test]
     fn load_templates_finds_all() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        assert_eq!(templates.len(), 18,
+        assert_eq!(templates.len(), 19,
             "expected gcc, clang, gfortran, gnat, nvcc, dmd, opencl, hipcc, icpx, ispc, nasm, \
-             tcc, nvhpc, ifx, flang, ldc2, yasm, circle");
+             tcc, nvhpc, ifx, flang, ldc2, yasm, circle, msvc");
     }
 
     #[test]
@@ -318,7 +320,8 @@ mod tests {
             assert!(!t.binary.is_empty(), "{}: empty binary", t.name);
             assert!(!t.extensions.is_empty(), "{}: no extensions", t.name);
             assert!(!t.version_regex.is_empty(), "{}: empty version_regex", t.name);
-            assert!(!t.version_arg.is_empty(), "{}: empty version_arg", t.name);
+            // version_arg may be empty — means "invoke the binary with no arguments"
+            // (e.g. cl.exe prints its version on stderr when called with no args).
         }
     }
 

@@ -43,6 +43,8 @@ struct RawFlags {
     warnings: HashMap<String, String>,
     lto: HashMap<String, String>,
     #[serde(default)]
+    lto_link: HashMap<String, String>,
+    #[serde(default)]
     strip: HashMap<String, String>,
     sanitize: String,
     /// Template for per-CPU-extension flags, e.g. `"-m{name}"` → `-mavx2`.
@@ -68,6 +70,23 @@ struct RawStructure {
     /// Empty string means not supported.
     #[serde(default)]
     sysroot: String,
+    /// Separate compile-step output flag when it differs from `output`.
+    /// e.g. MSVC: `"/Fo{path}"` vs `"-o {path}"` for GCC. Empty = use `output`.
+    #[serde(default)]
+    output_obj: String,
+    /// Separate link-step output flag when it differs from `output`.
+    /// e.g. MSVC: `"/Fe{path}"` vs `"-o {path}"` for GCC. Empty = use `output`.
+    #[serde(default)]
+    output_bin: String,
+    /// How the compiler reports included headers.
+    /// `"file"` (default) = `-MMD -MF {path}`, `"stdout"` = parse compiler stdout,
+    /// `"none"` = no dep tracking.
+    #[serde(default)]
+    dep_file_mode: String,
+    /// Template for linking a system library by name, e.g. `"-l{name}"` (GCC) or
+    /// `"{name}.lib"` (MSVC). Defaults to `"-l{name}"` when empty.
+    #[serde(default)]
+    system_lib: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,9 +234,16 @@ pub struct StructureFlags {
     pub include_dir: String,
     pub define: String,
     pub define_value: String,
+    /// Compile-step output flag (set from `output_obj`, falling back to `output`).
     pub output: String,
+    /// Link-step output flag (set from `output_bin`, falling back to `output`).
+    pub output_bin: String,
     pub compile_only: String,
     pub dep_file: String,
+    /// `"file"` (default) | `"stdout"` (MSVC /showIncludes) | `"none"`.
+    pub dep_file_mode: String,
+    /// System library link flag template, e.g. `"-l{name}"` (GCC) or `"{name}.lib"` (MSVC).
+    pub system_lib: String,
     /// `"--target={triple}"` or empty if unsupported.
     pub target: String,
     /// `"--sysroot={path}"` or empty if unsupported.
@@ -268,10 +294,15 @@ pub struct CompilerTemplate {
 
     /// Per-arch (optionally per-arch+OS) flags. Key `"x86_64.linux"` wins over `"x86_64"`.
     pub arch_flags: HashMap<String, String>,
+    /// Toolchain role → binary map (e.g. `"ar"` → `"ar"`, `"cc"` → `"gcc"`).
+    pub toolset: HashMap<String, String>,
     flags_opt: HashMap<String, String>,
     flags_debug: HashMap<String, String>,
     flags_warnings: HashMap<String, String>,
     flags_lto: HashMap<String, String>,
+    /// Separate LTO flags for the link step (MSVC `/LTCG` vs compile-step `/GL`).
+    /// When empty, `flags_lto` is used for both compile and link.
+    flags_lto_link: HashMap<String, String>,
     flags_strip: HashMap<String, String>,
     flags_sanitize: String,
     /// Template for CPU-extension flags, e.g. `"-m{name}"`. Empty = unsupported.
@@ -296,6 +327,17 @@ impl CompilerTemplate {
             })
         }).collect();
 
+        let output_obj = if raw.structure.output_obj.is_empty() {
+            raw.structure.output.clone()
+        } else {
+            raw.structure.output_obj
+        };
+        let output_bin = if raw.structure.output_bin.is_empty() {
+            raw.structure.output.clone()
+        } else {
+            raw.structure.output_bin
+        };
+
         Ok(Self {
             name: raw.name,
             binary: raw.binary,
@@ -307,9 +349,20 @@ impl CompilerTemplate {
                 include_dir: raw.structure.include_dir,
                 define: raw.structure.define,
                 define_value: raw.structure.define_value,
-                output: raw.structure.output,
+                output: output_obj,
+                output_bin,
                 compile_only: raw.structure.compile_only,
                 dep_file: raw.structure.dep_file,
+                dep_file_mode: if raw.structure.dep_file_mode.is_empty() {
+                    "file".to_string()
+                } else {
+                    raw.structure.dep_file_mode
+                },
+                system_lib: if raw.structure.system_lib.is_empty() {
+                    "-l{name}".to_string()
+                } else {
+                    raw.structure.system_lib
+                },
                 target: raw.structure.target,
                 sysroot: raw.structure.sysroot,
             },
@@ -326,11 +379,13 @@ impl CompilerTemplate {
             min_version: None,
             requires_toolchain: vec![],
             arch_flags: raw.arch_flags,
+            toolset: HashMap::new(),
             linking,
             flags_opt: raw.flags.opt,
             flags_debug: raw.flags.debug,
             flags_warnings: raw.flags.warnings,
             flags_lto: raw.flags.lto,
+            flags_lto_link: raw.flags.lto_link,
             flags_strip: raw.flags.strip,
             flags_sanitize: raw.flags.sanitize,
             flags_cpu_extension: raw.flags.cpu_extension,
@@ -362,19 +417,34 @@ impl CompilerTemplate {
         let get_flags = |cat: &str| def.flags.get(cat).cloned().unwrap_or_default();
         let get_struct = |key: &str| def.structure.get(key).cloned().unwrap_or_default();
 
-        // Compile-step output: prefer output_obj, fall back to output
-        let output = {
+        let fallback_output = get_struct("output");
+        let output_obj = {
             let obj = get_struct("output_obj");
-            if !obj.is_empty() { obj } else { get_struct("output") }
+            if !obj.is_empty() { obj } else { fallback_output.clone() }
+        };
+        let output_bin = {
+            let bin = get_struct("output_bin");
+            if !bin.is_empty() { bin } else { fallback_output }
+        };
+        let system_lib = {
+            let sl = get_struct("system_lib");
+            if !sl.is_empty() { sl } else { "-l{name}".to_string() }
+        };
+        let dep_file_mode = {
+            let dfm = get_struct("dep_file_mode");
+            if !dfm.is_empty() { dfm } else { "file".to_string() }
         };
 
         let structure = StructureFlags {
             include_dir:  get_struct("include_dir"),
             define:       get_struct("define"),
             define_value: get_struct("define_value"),
-            output,
+            output:       output_obj,
+            output_bin,
             compile_only: get_struct("compile_only"),
             dep_file:     get_struct("dep_file"),
+            dep_file_mode,
+            system_lib,
             target:       get_struct("target"),
             sysroot:      get_struct("sysroot"),
         };
@@ -437,11 +507,13 @@ impl CompilerTemplate {
             min_version:         def.min_version,
             requires_toolchain:  def.requires_toolchain,
             arch_flags:          def.arch_flags,
+            toolset:             def.toolset,
             linking,
             flags_opt:           get_flags("opt"),
             flags_debug:         get_flags("debug"),
             flags_warnings:      get_flags("warnings"),
             flags_lto:           get_flags("lto"),
+            flags_lto_link:      get_flags("lto_link"),
             flags_strip:         get_flags("strip"),
             flags_sanitize:      def.flags.get("sanitize")
                                      .and_then(|m| m.get("template")).cloned()
@@ -603,6 +675,86 @@ impl CompilerTemplate {
             .collect()
     }
 
+    /// How this toolchain reports header dependencies: `"file"`, `"stdout"`, or `"none"`.
+    pub fn dep_file_mode(&self) -> &str {
+        &self.structure.dep_file_mode
+    }
+
+    /// Format the output flag for the **link step** (binary or shared lib).
+    /// Uses `output_bin` when it differs from the compile-step output (e.g. MSVC `/Fe{path}`).
+    pub fn output_bin_flag(&self, path: &std::path::Path) -> Vec<String> {
+        let s = self.structure.output_bin.replace("{path}", &path.to_string_lossy());
+        s.split_whitespace().map(str::to_owned).collect()
+    }
+
+    /// The archiver binary for this toolchain (`toolset["ar"]`, or `"ar"` by default).
+    pub fn ar_binary(&self) -> &str {
+        self.toolset.get("ar").map(|s| s.as_str()).unwrap_or("ar")
+    }
+
+    /// Format a system-library link flag using this toolchain's template.
+    ///
+    /// GCC/Clang: `"-lssl"`, MSVC: `"ssl.lib"`.
+    pub fn system_lib_flag(&self, name: &str) -> String {
+        self.structure.system_lib.replace("{name}", name)
+    }
+
+    /// Assemble flags for the **link step**.
+    ///
+    /// Like `assemble_flags` but uses `lto_link` flags when present (MSVC `/LTCG` at link
+    /// time vs `/GL` at compile time). Strips compile-only settings: standard, warnings,
+    /// defines, include paths.
+    pub fn assemble_link_flags(&self, settings: &BuildSettings) -> Vec<String> {
+        let mut flags: Vec<String> = Vec::new();
+
+        if let Some(f) = self.flags_opt.get(&settings.opt_level) {
+            push_flag_str(&mut flags, f);
+        }
+
+        let debug_key = if settings.debug { "true" } else { "false" };
+        if let Some(f) = self.flags_debug.get(debug_key) {
+            push_flag_str(&mut flags, f);
+        }
+
+        let lto_key = if settings.lto { "true" } else { "false" };
+        let lto_f = if !self.flags_lto_link.is_empty() {
+            self.flags_lto_link.get(lto_key)
+        } else {
+            self.flags_lto.get(lto_key)
+        };
+        if let Some(f) = lto_f {
+            push_flag_str(&mut flags, f);
+        }
+
+        if !self.flags_strip.is_empty() {
+            let strip_key = if settings.strip { "true" } else { "false" };
+            if let Some(f) = self.flags_strip.get(strip_key) {
+                push_flag_str(&mut flags, f);
+            }
+        }
+
+        for f in &self.always_flags {
+            flags.push(f.clone());
+        }
+
+        if let Some(triple) = &settings.target_triple {
+            if !self.structure.target.is_empty() {
+                let f = self.structure.target.replace("{triple}", triple);
+                push_flag_str(&mut flags, &f);
+            }
+        }
+
+        if let Some(sysroot) = &settings.sysroot {
+            if !self.structure.sysroot.is_empty() {
+                let f = self.structure.sysroot
+                    .replace("{path}", &sysroot.to_string_lossy());
+                push_flag_str(&mut flags, &f);
+            }
+        }
+
+        flags
+    }
+
     /// Whether this template supports C++20 header unit precompilation.
     pub fn supports_header_units(&self) -> bool {
         match &self.modules {
@@ -720,6 +872,7 @@ mod tests {
     const LDC2_RHAI: &str     = include_str!("../../../../toolchains/ldc2.rhai");
     const YASM_RHAI: &str     = include_str!("../../../../toolchains/yasm.rhai");
     const CIRCLE_RHAI: &str   = include_str!("../../../../toolchains/circle.rhai");
+    const MSVC_RHAI: &str     = include_str!("../../../../toolchains/msvc.rhai");
 
     fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
     fn clang() -> CompilerTemplate { CompilerTemplate::from_rhai(CLANG_RHAI).unwrap() }
@@ -747,6 +900,7 @@ mod tests {
         CompilerTemplate::from_rhai(LDC2_RHAI).unwrap();
         CompilerTemplate::from_rhai(YASM_RHAI).unwrap();
         CompilerTemplate::from_rhai(CIRCLE_RHAI).unwrap();
+        CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
     }
 
     #[test]
@@ -1152,5 +1306,55 @@ mod tests {
         });
         assert!(!flags.iter().any(|f| f.starts_with("--target")));
         assert!(!flags.iter().any(|f| f.starts_with("--sysroot")));
+    }
+
+    // ── MSVC toolchain ────────────────────────────────────────────────────────
+
+    fn msvc() -> CompilerTemplate { CompilerTemplate::from_rhai(MSVC_RHAI).unwrap() }
+
+    #[test]
+    fn msvc_ar_is_lib_exe() {
+        assert_eq!(msvc().ar_binary(), "lib.exe");
+    }
+
+    #[test]
+    fn msvc_system_lib_flag_uses_dot_lib() {
+        assert_eq!(msvc().system_lib_flag("ssl"), "ssl.lib");
+        assert_ne!(msvc().system_lib_flag("ssl"), "-lssl");
+    }
+
+    #[test]
+    fn msvc_dep_file_mode_is_stdout() {
+        assert_eq!(msvc().dep_file_mode(), "stdout");
+    }
+
+    #[test]
+    fn msvc_output_bin_flag_uses_fe() {
+        let flags = msvc().output_bin_flag(std::path::Path::new("target/debug/app.exe"));
+        assert_eq!(flags, vec!["/Fetarget/debug/app.exe"]);
+    }
+
+    #[test]
+    fn msvc_output_obj_flag_uses_fo() {
+        let flags = msvc().output_flag(std::path::Path::new("target/debug/objs/main.o"));
+        assert_eq!(flags, vec!["/Fotarget/debug/objs/main.o"]);
+    }
+
+    #[test]
+    fn msvc_lto_link_uses_ltcg_not_gl() {
+        let settings = BuildSettings { lto: true, ..Default::default() };
+        let compile_flags = msvc().assemble_flags(&settings);
+        let link_flags   = msvc().assemble_link_flags(&settings);
+        // Compile step gets /GL, link step gets /LTCG
+        assert!(compile_flags.contains(&"/GL".to_string()), "/GL should be in compile flags");
+        assert!(!compile_flags.contains(&"/LTCG".to_string()), "/LTCG must not appear at compile time");
+        assert!(link_flags.contains(&"/LTCG".to_string()), "/LTCG should be in link flags");
+        assert!(!link_flags.contains(&"/GL".to_string()), "/GL must not appear at link time");
+    }
+
+    #[test]
+    fn msvc_gcc_default_system_lib_is_dash_l() {
+        // Ensure GCC still uses -l{name} (default path in from_def)
+        assert_eq!(gcc().system_lib_flag("pthread"), "-lpthread");
     }
 }

@@ -352,7 +352,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
             .chain(lib_objects.iter().cloned())
             .collect();
         link_test_binary(
-            &all_objs, &test_bin, manifest, profile, project_dir,
+            &all_objs, &test_bin, manifest, profile,
             detected, templates, &all_libs, &all_raw_link_flags,
         )?;
 
@@ -464,7 +464,10 @@ fn build_resolved_deps(
 
         if !lib_out.exists() || compile_result.compiled > 0 {
             println!(" {} lib{}.a", "Archiving".bold().cyan(), dep.name);
-            link_static_lib(&compile_result.objects, &lib_out)?;
+            let ar = select_linker(&dep.manifest, detected, templates)
+                .map(|l| l.template.ar_binary().to_owned())
+                .unwrap_or_else(|| "ar".to_owned());
+            link_static_lib(&compile_result.objects, &lib_out, &ar)?;
         }
 
         libs.push(lib_out);
