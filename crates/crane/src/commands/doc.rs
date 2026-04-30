@@ -18,10 +18,16 @@ pub fn cmd_doc(format: &str) {
 
     match load_manifest(&project_dir) {
         Ok(manifest) => {
-            // Library source dir
+            // Library source + include dirs
             if let Some(lib) = &manifest.lib {
                 let d = project_dir.join(&lib.src);
                 if d.is_dir() { source_dirs.push(d); }
+                if let Some(inc) = &lib.include {
+                    let inc_dir = project_dir.join(inc);
+                    if inc_dir.is_dir() && !source_dirs.contains(&inc_dir) {
+                        source_dirs.push(inc_dir);
+                    }
+                }
             }
             // Binary source dirs — take the parent directory of the src path
             for bin in &manifest.bins {

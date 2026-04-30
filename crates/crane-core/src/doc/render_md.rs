@@ -130,7 +130,7 @@ fn render_item(
     };
 
     // Deduplicate same-name headings (GFM appends -1, -2; we do it ourselves)
-    let heading_base = format!("{} {}", item.kind.label(), item.name);
+    let heading_base = format!("{} {display}", item.kind.label());
     let count = name_count.entry(item.name.clone()).or_insert(0);
     let heading = if *count == 0 {
         heading_base
@@ -139,18 +139,21 @@ fn render_item(
     };
     *count += 1;
 
-    let _ = writeln!(md, "## {kind} {display}", kind = item.kind.label());
+    let _ = writeln!(md, "## {heading}");
     if item.line > 0 {
         let _ = writeln!(md, "\n<sub>line {}</sub>", item.line);
     }
     let _ = writeln!(md);
 
+    if !item.signature.is_empty() {
+        let sig = item.signature.trim_end_matches('{').trim();
+        let _ = writeln!(md, "```\n{sig}\n```\n");
+    }
+
     if !item.brief.is_empty() {
-        // Brief is passed through as-is — it's already markdown + math
         let _ = writeln!(md, "{}\n", item.brief);
     }
     if !item.body.is_empty() {
-        // Body is passed through as-is — markdown, math, existing links all preserved
         let _ = writeln!(md, "{}\n", item.body);
     }
 
@@ -177,7 +180,6 @@ fn render_item(
     }
 
     let _ = writeln!(md, "---\n");
-    let _ = heading; // suppress unused warning — heading is used for dedup logic
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

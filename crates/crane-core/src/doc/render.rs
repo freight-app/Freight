@@ -51,8 +51,12 @@ fn render_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
         by_file.len()
     );
 
+    // Search box — filters items live across all file pages using data-* attrs
+    h.push_str(r#"<input id="search-box" type="search" placeholder="Search symbols…" autocomplete="off">"#);
+    h.push_str(r#"<p id="no-results">No matching symbols.</p>"#);
+
     h.push_str(
-        r#"<table><thead><tr>
+        r#"<table id="sym-table"><thead><tr>
             <th>File</th><th>Language</th><th>Items</th><th>Symbols</th>
             </tr></thead><tbody>"#,
     );
@@ -87,7 +91,49 @@ fn render_index(by_file: &BTreeMap<String, Vec<&DocItem>>) -> String {
         );
     }
 
-    h.push_str("</tbody></table></main></body></html>");
+    h.push_str("</tbody></table>");
+    // Build a flat symbol index (name, brief, page) from all items for live search
+    let mut sym_json = String::from("const SYMBOLS=[");
+    for (rel, items) in by_file {
+        let page = rel_to_page(rel);
+        for item in items {
+            if item.name.is_empty() { continue; }
+            let name  = item.name.replace('"', "\\\"");
+            let brief = item.brief.replace('"', "\\\"");
+            let anchor = make_anchor(&item.name, item.line);
+            let _ = write!(sym_json,
+                r#"{{"n":"{name}","b":"{brief}","u":"{page}.html#{anchor}"}},"#);
+        }
+    }
+    sym_json.push_str("];");
+    let _ = write!(h, r#"<script>
+{sym_json}
+(function(){{
+  var box=document.getElementById('search-box');
+  var noRes=document.getElementById('no-results');
+  var table=document.getElementById('sym-table');
+  var dynList=document.createElement('ul');
+  dynList.id='dyn-results';
+  dynList.style.cssText='list-style:none;padding:0;margin:0';
+  table.parentNode.insertBefore(dynList,table.nextSibling);
+  box.addEventListener('input',function(){{
+    var q=box.value.trim().toLowerCase();
+    dynList.innerHTML='';
+    if(!q){{table.style.display='';noRes.style.display='none';return;}}
+    table.style.display='none';
+    var hits=SYMBOLS.filter(function(s){{return s.n.toLowerCase().includes(q)||s.b.toLowerCase().includes(q);}});
+    noRes.style.display=hits.length===0?'':'none';
+    hits.slice(0,50).forEach(function(s){{
+      var li=document.createElement('li');
+      li.style.cssText='padding:.3rem 0;border-bottom:1px solid #18181b';
+      li.innerHTML='<a href="'+s.u+'" style="color:#60a5fa;font-family:monospace">'+s.n+'</a>'
+        +(s.b?' <span style="color:#71717a;font-size:.85rem">— '+s.b+'</span>':'');
+      dynList.appendChild(li);
+    }});
+  }});
+}})();
+</script>"#);
+    h.push_str("</main></body></html>");
     h
 }
 
@@ -130,13 +176,21 @@ fn render_item(h: &mut String, item: &DocItem) {
     let anchor = make_anchor(&item.name, item.line);
     let display_name = if item.name.is_empty() { "(anonymous)".to_string() } else { item.name.clone() };
 
-    let _ = write!(h, r#"<div class="item" id="{anchor}"><div class="item-header">"#);
+    let _ = write!(h, r#"<div class="item" id="{anchor}" data-name="{}" data-brief="{}">"#,
+        esc(&display_name.to_ascii_lowercase()),
+        esc(&item.brief.to_ascii_lowercase()));
+    h.push_str(r#"<div class="item-header">"#);
     let _ = write!(h, r#"<span class="kind">{}</span>"#, item.kind.label());
     let _ = write!(h, r#" <code class="name">{}</code>"#, esc(&display_name));
     if item.line > 0 {
         let _ = write!(h, r#" <span class="loc">line {}</span>"#, item.line);
     }
     h.push_str("</div>");
+
+    if !item.signature.is_empty() {
+        let sig = item.signature.trim_end_matches('{').trim();
+        let _ = write!(h, r#"<pre class="sig"><code>{}</code></pre>"#, esc(sig));
+    }
 
     if !item.brief.is_empty() {
         let _ = write!(h, r#"<div class="brief">{}</div>"#, md_html(&item.brief));
@@ -247,6 +301,14 @@ nav.toc li{{margin:.2rem 0;font-size:.875rem}}
 .tag{{margin:.3rem 0;font-size:.875rem}}
 .tag-label{{color:#52525b}}
 .math{{overflow-x:auto}}
+pre.sig{{background:#0d1117;border:1px solid #27272a;border-radius:4px;
+         padding:.5rem .75rem;margin:.5rem 0;overflow-x:auto;font-size:.82rem}}
+pre.sig code{{background:none;padding:0;font-size:inherit;color:#7dd3fc}}
+#search-box{{width:100%;padding:.5rem .75rem;background:#161b27;border:1px solid #27272a;
+             border-radius:6px;color:#d4d4d8;font-size:.9rem;margin-bottom:1rem}}
+#search-box:focus{{outline:none;border-color:#60a5fa}}
+#search-box::placeholder{{color:#52525b}}
+#no-results{{display:none;color:#71717a;padding:.5rem 0}}
 </style>
 <script>
 MathJax = {{

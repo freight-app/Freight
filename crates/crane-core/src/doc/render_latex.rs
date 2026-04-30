@@ -93,6 +93,11 @@ fn render_item(doc: &mut String, item: &DocItem) {
         let _ = writeln!(doc, r"\textcolor{{gray}}{{\small line {}}}\par", item.line);
     }
 
+    if !item.signature.is_empty() {
+        let sig = item.signature.trim_end_matches('{').trim();
+        let _ = writeln!(doc, "\\begin{{verbatim}}\n{sig}\n\\end{{verbatim}}");
+    }
+
     if !item.brief.is_empty() {
         // Brief rendered as bold paragraph — markdown + math supported
         let rendered = to_latex(&item.brief);

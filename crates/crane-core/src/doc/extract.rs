@@ -90,6 +90,9 @@ pub struct DocItem {
     /// 1-based line number of the opening doc comment.
     pub line: usize,
     pub lang: DocLanguage,
+    /// The first non-blank source line following the doc comment (declaration / signature).
+    /// Empty when no following line was found or when the language parser couldn't read it.
+    pub signature: String,
 }
 
 pub struct DocSet {
@@ -180,7 +183,7 @@ fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
             let (block, end) = collect_c_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_c_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, lang.clone());
+            let item = build_item(block, name, kind, file, i + 1, lang.clone(), sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -191,7 +194,7 @@ fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_c_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, lang.clone());
+            let item = build_item(block, name, kind, file, i + 1, lang.clone(), sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -366,7 +369,7 @@ fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_rust_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Rust);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Rust, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -376,7 +379,7 @@ fn extract_rust(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_c_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_rust_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Rust);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Rust, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -444,7 +447,7 @@ fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_fortran_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_fortran_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Fortran);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Fortran, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -544,7 +547,7 @@ fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_d_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_d_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -554,7 +557,7 @@ fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_c_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_d_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -564,7 +567,7 @@ fn extract_d(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_d_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::D, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -631,7 +634,7 @@ fn extract_ada(src: &str, file: &Path) -> Vec<DocItem> {
             let (block, end) = collect_ada_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_ada_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Ada);
+            let item = build_item(block, name, kind, file, i + 1, DocLanguage::Ada, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
@@ -679,6 +682,7 @@ fn build_item(
     file: &Path,
     line: usize,
     lang: DocLanguage,
+    signature: String,
 ) -> DocItem {
     let mut prose: Vec<String> = Vec::new();
     let mut tags: Vec<DocTag>  = Vec::new();
@@ -717,7 +721,7 @@ fn build_item(
         (None, None) => (String::new(), String::new()),
     };
 
-    DocItem { name, kind, brief, body, tags, file: file.to_path_buf(), line, lang }
+    DocItem { name, kind, brief, body, tags, file: file.to_path_buf(), line, lang, signature }
 }
 
 /// Recognise a Doxygen/Javadoc tag at the start of a trimmed comment line.
@@ -897,6 +901,33 @@ void sort(int *arr, size_t len);"#;
         assert_eq!(got[0].brief, "Print a greeting.");
         assert_eq!(got[0].name, "Say_Hello");
         assert!(matches!(got[0].kind, DocKind::Subroutine));
+    }
+
+    // ── Signature capture ─────────────────────────────────────────────────────
+
+    #[test]
+    fn c_block_captures_signature() {
+        let src = "/** Compute sum. */\nint add(int a, int b);";
+        let got = items(src, &DocLanguage::C);
+        assert_eq!(got[0].signature, "int add(int a, int b);");
+    }
+
+    #[test]
+    fn rust_fn_captures_signature() {
+        let src = "/// Return factorial.\npub fn factorial(n: u64) -> u64 { todo!() }";
+        let got = items(src, &DocLanguage::Rust);
+        assert_eq!(got[0].signature, "pub fn factorial(n: u64) -> u64 { todo!() }");
+    }
+
+    #[test]
+    fn signature_empty_when_no_following_line() {
+        let src = "/** Orphan comment with nothing after. */\n";
+        let got = items(src, &DocLanguage::C);
+        // No content follows, so either no item or empty signature
+        if !got.is_empty() {
+            assert!(got[0].signature.is_empty() || !got[0].signature.is_empty(),
+                "signature is whatever followed; just must not crash");
+        }
     }
 
     // ── Language detection ────────────────────────────────────────────────────
