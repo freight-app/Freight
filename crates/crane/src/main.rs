@@ -49,11 +49,26 @@ enum Commands {
     Build {
         #[arg(long)]
         release: bool,
+        /// Activate specific features (comma-separated or repeated)
+        #[arg(long, value_name = "FEATURES", value_delimiter = ',')]
+        features: Vec<String>,
+        /// Do not activate default features
+        #[arg(long)]
+        no_default_features: bool,
     },
     /// Build and run the default binary
     Run {
         #[arg(long)]
         release: bool,
+        /// Binary to run when the project has multiple [[bin]] targets
+        #[arg(long, value_name = "NAME")]
+        bin: Option<String>,
+        /// Activate specific features (comma-separated or repeated)
+        #[arg(long, value_name = "FEATURES", value_delimiter = ',')]
+        features: Vec<String>,
+        /// Do not activate default features
+        #[arg(long)]
+        no_default_features: bool,
         /// Arguments to pass to the binary
         #[arg(last = true)]
         args: Vec<String>,
@@ -61,6 +76,12 @@ enum Commands {
     /// Build and run tests
     Test {
         name: Option<String>,
+        /// Activate specific features (comma-separated or repeated)
+        #[arg(long, value_name = "FEATURES", value_delimiter = ',')]
+        features: Vec<String>,
+        /// Do not activate default features
+        #[arg(long)]
+        no_default_features: bool,
     },
     /// Build (debug) and launch an interactive debugger session
     Debug {
@@ -179,9 +200,15 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::New { name, lang } => cmd_new(&name, &lang),
         Commands::Init { lang } => cmd_init(lang.as_deref()),
-        Commands::Build { release } => cmd_build(release),
-        Commands::Run { release, args } => cmd_run(release, &args),
-        Commands::Test { name } => cmd_test(name.as_deref()),
+        Commands::Build { release, features, no_default_features } => {
+            cmd_build(release, &features, !no_default_features);
+        }
+        Commands::Run { release, bin, features, no_default_features, args } => {
+            cmd_run(release, bin.as_deref(), &features, !no_default_features, &args);
+        }
+        Commands::Test { name, features, no_default_features } => {
+            cmd_test(name.as_deref(), &features, !no_default_features);
+        }
         Commands::Debug { binary, debugger, launch_json, args } => {
             cmd_debug(binary.as_deref(), debugger.as_deref(), &args, launch_json);
         }

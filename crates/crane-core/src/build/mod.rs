@@ -72,7 +72,7 @@ pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, CraneError> {
     let mut outputs = Vec::new();
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        outputs.push(build_project_at(&member_dir, profile)?);
+        outputs.push(build_project_at(&member_dir, profile, &[], true)?);
     }
     Ok(outputs)
 }
@@ -104,7 +104,7 @@ pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary
     let mut total_failed = 0;
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        let s = test_project_at(&member_dir, profile, filter)?;
+        let s = test_project_at(&member_dir, profile, filter, &[], true)?;
         total_passed += s.passed;
         total_failed += s.failed;
     }
@@ -117,15 +117,15 @@ pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary
 /// caller decides how to present results. Progress-line output (`Building`,
 /// `Compiling foo.cpp`, `Linking ...`) currently goes to stdout directly;
 /// routing it through a callback is future work.
-pub fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
+pub fn build_project(profile: &str, features: &[String], use_defaults: bool) -> Result<BuildOutput, CraneError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    build_project_at(&project_dir, profile)
+    build_project_at(&project_dir, profile, features, use_defaults)
 }
 
 /// Build the project at a specific `project_dir`.
-pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput, CraneError> {
+pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], use_defaults: bool) -> Result<BuildOutput, CraneError> {
     let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
@@ -133,7 +133,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
     println!("  {} {} ({profile})", "Building".bold(), manifest.package.name);
 
     let feature_defines = {
-        let active = features::resolve_features(&manifest.features, &[], true)?;
+        let active = features::resolve_features(&manifest.features, features, use_defaults)?;
         features::to_defines(&active)
     };
 
@@ -196,7 +196,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
     }
 
     let binaries = link_result.outputs.iter()
-        .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so"))
+        .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so" || e == "dylib" || e == "dll"))
         .cloned()
         .collect();
 
@@ -249,15 +249,15 @@ pub fn clean_project_at(project_dir: &Path) -> Result<(), CraneError> {
 }
 
 /// Build and run the tests of the project rooted at the current working directory.
-pub fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+pub fn test_project(profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<TestSummary, CraneError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    test_project_at(&project_dir, profile, filter)
+    test_project_at(&project_dir, profile, filter, features, use_defaults)
 }
 
 /// Build and execute the project's test binaries.
-pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<TestSummary, CraneError> {
     let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
@@ -265,7 +265,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
     println!("  {} {} ({profile})", "Testing".bold(), manifest.package.name);
 
     let feature_defines = {
-        let active = features::resolve_features(&manifest.features, &[], true)?;
+        let active = features::resolve_features(&manifest.features, features, use_defaults)?;
         features::to_defines(&active)
     };
 

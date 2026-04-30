@@ -20,7 +20,7 @@ pub struct LinkResult {
 ///
 /// - Each `[[bin]]` → executable in `target/{profile}/{name}`
 /// - `[lib] type = "static"` → `target/{profile}/lib{name}.a` (via `ar`)
-/// - `[lib] type = "shared"` → `target/{profile}/lib{name}.so`
+/// - `[lib] type = "shared"` → `target/{profile}/lib{name}.so` (Linux), `.dylib` (macOS), `.dll` (Windows)
 /// - `[lib] type = "header-only"` → nothing to link
 ///
 /// `dep_libs` are pre-built `.a` archives from `.deps/` that are linked in
@@ -69,8 +69,8 @@ pub fn link_targets(
                 outputs.push(out);
             }
             LibType::Shared => {
-                let out = project_dir.join("target").join(profile)
-                    .join(format!("lib{}.so", manifest.package.name));
+                let lib_name = shared_lib_name(&manifest.package.name);
+                let out = project_dir.join("target").join(profile).join(&lib_name);
                 let linker = select_linker(manifest, detected, templates)
                     .ok_or_else(|| CraneError::CompilerNotFound("no suitable linker found".into()))?;
                 print_linking(out.file_name().unwrap_or_default().to_str().unwrap_or("lib"));
@@ -172,6 +172,14 @@ fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<(), Cran
     run_cmd(cmd, out)
 }
 
+fn shared_lib_name(name: &str) -> String {
+    match std::env::consts::OS {
+        "macos" => format!("lib{name}.dylib"),
+        "windows" => format!("{name}.dll"),
+        _ => format!("lib{name}.so"),
+    }
+}
+
 fn link_shared(
     objects: &[PathBuf],
     out: &Path,
@@ -181,9 +189,10 @@ fn link_shared(
     dep_libs: &[PathBuf],
     extra_link_flags: &[String],
 ) -> Result<(), CraneError> {
+    let shared_flag = if std::env::consts::OS == "macos" { "-dynamiclib" } else { "-shared" };
     let mut cmd = Command::new(&linker.path);
     cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
-    cmd.arg("-shared");
+    cmd.arg(shared_flag);
     cmd.args(objects);
     cmd.args(dep_libs);
     for flag in collect_system_lib_flags(manifest, &linker.template) {
