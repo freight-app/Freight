@@ -232,18 +232,6 @@ crane-doc src/ --format all --out docs/api
 crane-doc src/ --dry-run       # list extracted items without writing
 ```
 
-## Relation to xmake
-
-After starting this project I discovered [xmake](https://xmake.io), which covers similar ground — build tool for native languages, Lua-scripted toolchain definitions, package management. The surface resemblance is real and unintentional; I wasn't aware of it when crane was started.
-
-The underlying approach is different enough that I want to keep going:
-
-- **crane.toml is declarative, not a build script.** xmake's `xmake.lua` is executable Lua — the project description and the build logic are the same file. crane separates them: `crane.toml` is pure data (like `Cargo.toml`), and only toolchain definitions use scripting (Rhai, planned).
-- **crane is Cargo-flavoured.** The workflow — `crane add`, `crane.lock`, a central registry, `crane test` conventions — follows Cargo's model. The goal is that a Rust developer picking up a C++ project feels at home immediately.
-- **crane owns the build graph.** No Ninja or Make underneath. The DAG, dirty checking, parallel compilation, and C++20 module ordering all happen in crane itself.
-
-If xmake already does what you need, use it. Crane is a different bet on how the UX should feel.
-
 ## Documentation
 
 | Document | Contents |
