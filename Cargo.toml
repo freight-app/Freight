@@ -40,3 +40,4 @@ tower-lsp     = "0.20"
 tokio         = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync"] }
 dashmap       = "6"
 rhai          = "1"
+notify        = { version = "6", features = ["macos_fsevent"] }

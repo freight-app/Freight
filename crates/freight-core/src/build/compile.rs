@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use rayon::prelude::*;
@@ -10,6 +11,35 @@ use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::template::BuildSettings;
 use crate::toolchain::DetectedCompiler;
 use super::discover::SourceFile;
+
+// ── Compiler cache wrapper (ccache / sccache) ─────────────────────────────────
+
+static CACHE_WRAPPER: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// Return the compiler cache wrapper binary (`sccache` > `ccache`), or `None`
+/// when none is found or `FREIGHT_NO_CACHE=1` is set.
+fn cache_wrapper() -> Option<&'static PathBuf> {
+    CACHE_WRAPPER.get_or_init(|| {
+        if std::env::var_os("FREIGHT_NO_CACHE").is_some() {
+            return None;
+        }
+        for name in &["sccache", "ccache"] {
+            if let Some(path) = which_tool(name) {
+                return Some(path);
+            }
+        }
+        None
+    }).as_ref()
+}
+
+fn which_tool(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|dir| {
+            let candidate = dir.join(name);
+            if candidate.is_file() { Some(candidate) } else { None }
+        })
+    })
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -201,7 +231,13 @@ pub(crate) fn compile_one(
 ) -> Result<(), FreightError> {
     let dep_mode = compiler.template.dep_file_mode();
 
-    let mut cmd = Command::new(compile_bin);
+    let mut cmd = if let Some(wrapper) = cache_wrapper() {
+        let mut c = Command::new(wrapper);
+        c.arg(compile_bin);
+        c
+    } else {
+        Command::new(compile_bin)
+    };
     cmd.args(compiler.template.assemble_flags(settings));
     cmd.args(module_flags);
     cmd.args(compiler.template.compile_only_flag());

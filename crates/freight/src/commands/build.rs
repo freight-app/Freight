@@ -1,5 +1,10 @@
 use std::env;
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
+
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use freight_core::build::{
     build_project, build_workspace, clean_project, clean_workspace, test_project, test_workspace,
@@ -136,6 +141,94 @@ pub fn cmd_clean() {
 
     match clean_project() {
         Ok(()) => print_success("cleaned target/"),
+        Err(e) => { println!(); print_error(&e.to_string()); }
+    }
+}
+
+pub fn cmd_watch(release: bool) {
+    let profile = if release { "release" } else { "dev" };
+
+    let Ok(cwd) = env::current_dir() else {
+        print_error("cannot read working directory");
+        return;
+    };
+    let Some(project_dir) = find_manifest_dir(&cwd) else {
+        print_error("no freight.toml found");
+        return;
+    };
+
+    // Collect paths to watch.
+    let mut watch_paths: Vec<PathBuf> = Vec::new();
+    let src_dir = project_dir.join("src");
+    if src_dir.exists() { watch_paths.push(src_dir); }
+    let manifest = project_dir.join("freight.toml");
+    if manifest.exists() { watch_paths.push(manifest); }
+    let script = project_dir.join("build.freight");
+    if script.exists() { watch_paths.push(script); }
+    let include_dir = project_dir.join("include");
+    if include_dir.exists() { watch_paths.push(include_dir); }
+
+    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+    let mut watcher = match RecommendedWatcher::new(tx, notify::Config::default()) {
+        Ok(w) => w,
+        Err(e) => { print_error(&format!("failed to initialise file watcher: {e}")); return; }
+    };
+
+    for path in &watch_paths {
+        if let Err(e) = watcher.watch(path, RecursiveMode::Recursive) {
+            print_error(&format!("cannot watch {}: {e}", path.display()));
+            return;
+        }
+    }
+
+    use owo_colors::OwoColorize;
+    println!("  {} source files — press Ctrl+C to stop", "Watching".bold().cyan());
+
+    // Initial build.
+    run_build(profile, &project_dir);
+
+    // Debounce: collect events for 200 ms then rebuild once.
+    let debounce = Duration::from_millis(200);
+    loop {
+        // Block until the first event arrives.
+        match rx.recv() {
+            Err(_) => break, // watcher dropped
+            Ok(Err(e)) => { print_error(&format!("watch error: {e}")); continue; }
+            Ok(Ok(ev)) => {
+                if !is_relevant(&ev) { continue; }
+            }
+        }
+        // Drain further events that arrive within the debounce window.
+        loop {
+            match rx.recv_timeout(debounce) {
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+        run_build(profile, &project_dir);
+    }
+}
+
+fn is_relevant(ev: &Event) -> bool {
+    matches!(
+        ev.kind,
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+    )
+}
+
+fn run_build(profile: &str, project_dir: &std::path::Path) {
+    use owo_colors::OwoColorize;
+    println!("\n  {} …", "Rebuilding".bold().cyan());
+    match build_project(profile, &[], true) {
+        Ok(output) => {
+            println!();
+            print_success(&format!(
+                "{} ({} compiled, {} up to date)",
+                output.package_name, output.compiled, output.skipped,
+            ));
+            let _ = project_dir; // used via build_project's cwd detection
+        }
         Err(e) => { println!(); print_error(&e.to_string()); }
     }
 }

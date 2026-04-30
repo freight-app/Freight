@@ -4,7 +4,7 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test};
+use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test, cmd_watch};
 use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::check::cmd_check;
 use crate::commands::debug::cmd_debug;
@@ -104,6 +104,11 @@ enum Commands {
         /// Arguments passed to the debugged program
         #[arg(last = true)]
         args: Vec<String>,
+    },
+    /// Watch source files and rebuild on changes
+    Watch {
+        #[arg(long)]
+        release: bool,
     },
     /// Add a dependency
     Add {
@@ -225,6 +230,7 @@ fn main() -> Result<()> {
         Commands::Test { name, release, features, no_default_features } => {
             cmd_test(name.as_deref(), release, &features, !no_default_features);
         }
+        Commands::Watch { release } => cmd_watch(release),
         Commands::Debug { binary, debugger, launch_json, args } => {
             cmd_debug(binary.as_deref(), debugger.as_deref(), &args, launch_json);
         }
