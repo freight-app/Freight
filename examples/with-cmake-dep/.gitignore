@@ -1,2 +1,2 @@
 target/
-vendor/**/.crane-build/
+vendor/**/.freight-build/

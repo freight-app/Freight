@@ -4,8 +4,8 @@ This document lists compilers, assemblers, debuggers, and language extensions wo
 templates for. Each entry includes what makes it interesting, what a template would require,
 and any known technical challenges.
 
-Crane's TOML-driven template system means most of these require zero Rust changes — just a new
-`.toml` file in `toolchains/`. Items marked **[needs Rust]** require changes to `crane-core`.
+Freight's TOML-driven template system means most of these require zero Rust changes — just a new
+`.toml` file in `toolchains/`. Items marked **[needs Rust]** require changes to `freight-core`.
 
 ---
 
@@ -193,7 +193,7 @@ Crane's TOML-driven template system means most of these require zero Rust change
   hard-to-reproduce bugs. Linux only, x86-64.
 - **Template addition**: `toolchains/debuggers/rr.toml` with `binary = "rr"`,
   `separator = ""` (rr takes the program as first arg), no DAP support yet.
-- **CLI**: `crane debug --debugger rr` would record; a separate `crane debug --replay` command
+- **CLI**: `freight debug --debugger rr` would record; a separate `freight debug --replay` command
   could re-attach.
 
 ### WinDbg / CDB (Windows)
@@ -215,7 +215,7 @@ Crane's TOML-driven template system means most of these require zero Rust change
 
 ---
 
-## Build System Migration (crane migrate)
+## Build System Migration (freight migrate)
 
 ### Bazel
 - **What**: Google's polyglot build system, widely used in large codebases.
@@ -241,7 +241,7 @@ Crane's TOML-driven template system means most of these require zero Rust change
 - **What**: C/C++ package manager. Can generate build system integrations (`cmake`, `msbuild`,
   `compiler_args`).
 - **Integration**: `conan install .` produces `conanbuildinfo.txt` or a `generators/` directory.
-  Crane could optionally read Conan-generated compiler/linker flags from `conanbuildinfo.args`.
+  Freight could optionally read Conan-generated compiler/linker flags from `conanbuildinfo.args`.
 
 ### vcpkg
 - **What**: Microsoft's C++ package manager for libraries. Installs to a `vcpkg_installed/`

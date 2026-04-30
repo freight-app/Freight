@@ -1,7 +1,7 @@
 [
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/main.cpp",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules",
+    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/main.cpp",
     "arguments": [
       "/usr/sbin/clang++",
       "-O0",
@@ -11,15 +11,15 @@
       "-Wpedantic",
       "-std=c++20",
       "-c",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/main.cpp",
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/main.cpp",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/main.o"
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/main.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/main.o"
+    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/main.o"
   },
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/ray.cppm",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules",
+    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/ray.cppm",
     "arguments": [
       "/usr/sbin/clang++",
       "-O0",
@@ -29,15 +29,15 @@
       "-Wpedantic",
       "-std=c++20",
       "-c",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/ray.cppm",
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/ray.cppm",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/ray.o"
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/ray.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/ray.o"
+    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/ray.o"
   },
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/vec3.cppm",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules",
+    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/vec3.cppm",
     "arguments": [
       "/usr/sbin/clang++",
       "-O0",
@@ -47,10 +47,10 @@
       "-Wpedantic",
       "-std=c++20",
       "-c",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/vec3.cppm",
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/src/vec3.cppm",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/vec3.o"
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/vec3.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/vec3.o"
+    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/cpp-modules/target/dev/objs/src/vec3.o"
   }
 ]

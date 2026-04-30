@@ -1,68 +1,65 @@
 // Compiles OpenCL C kernel files (.cl) using clang in OpenCL mode.
 // Host code (C or C++) is compiled separately by the gcc/clang template.
 
-set_name("opencl");
-set_homepage("https://www.khronos.org/opencl/");
-set_binary("clang");
-set_version_arg("--version");
-set_version_regex("\\b(\\d+\\.\\d+\\.\\d+)\\b");
-
-set_toolset("ld", "clang");
-
-set_extensions([".cl"]);
-
-set_flag("opt", "0", "-O0");
-set_flag("opt", "1", "-O1");
-set_flag("opt", "2", "-O2");
-set_flag("opt", "3", "-O3");
-set_flag("opt", "s", "-Os");
-set_flag("opt", "z", "-Oz");
-
-set_flag("debug", "true",  "-g");
-set_flag("debug", "false", "");
-
-set_flag("warnings", "none",    "");
-set_flag("warnings", "default", "-Wall");
-set_flag("warnings", "all",     "-Wall -Wextra");
-set_flag("warnings", "error",   "-Wall -Wextra -Werror");
-
-set_flag("lto", "true",  "");
-set_flag("lto", "false", "");
-
-set_flag("strip", "true",  "");
-set_flag("strip", "false", "");
-
-set_standard("CL1.0", "-cl-std=CL1.0");
-set_standard("CL1.1", "-cl-std=CL1.1");
-set_standard("CL1.2", "-cl-std=CL1.2");
-set_standard("CL2.0", "-cl-std=CL2.0");
-set_standard("CL3.0", "-cl-std=CL3.0");
-
-set_structure("include_dir",  "-I{path}");
-set_structure("define",       "-D{name}");
-set_structure("define_value", "-D{name}={value}");
-set_structure("output",       "-o {path}");
-set_structure("compile_only", "-c");
-set_structure("dep_file",     "-MF {path}");
-set_structure("target",       "");
-set_structure("sysroot",      "");
-
-set_module_style("none");
-set_passthrough(false, "");
-
-add_always_flag("-x");
-add_always_flag("cl");
-
+compiler["name"]          = "opencl";
+compiler["homepage"]      = "https://www.khronos.org/opencl/";
+compiler["binary"]        = "clang";
+compiler["version_arg"]   = "--version";
+compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+compiler["extensions"]    = [".cl"];
+compiler["passthrough"]        = false;
+compiler["passthrough_prefix"] = "";
+compiler["always_flags"] = ["-x", "cl"];
 // OpenCL kernel compilation uses clang in -x cl mode; the final binary
 // is linked by the host C++ application that drives the OpenCL runtime.
-set_requires_toolchain(["cpp"]);
+compiler["requires_toolchain"] = ["cpp"];
 
-set_linking("opencl", #{
+toolset["ld"] = "clang";
+
+flags["opt"]["0"] = "-O0";
+flags["opt"]["1"] = "-O1";
+flags["opt"]["2"] = "-O2";
+flags["opt"]["3"] = "-O3";
+flags["opt"]["s"] = "-Os";
+flags["opt"]["z"] = "-Oz";
+
+flags["debug"]["true"]  = "-g";
+flags["debug"]["false"] = "";
+
+flags["warnings"]["none"]    = "";
+flags["warnings"]["default"] = "-Wall";
+flags["warnings"]["all"]     = "-Wall -Wextra";
+flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
+
+flags["lto"]["true"]  = "";
+flags["lto"]["false"] = "";
+
+flags["strip"]["true"]  = "";
+flags["strip"]["false"] = "";
+
+standards["CL1.0"] = "-cl-std=CL1.0";
+standards["CL1.1"] = "-cl-std=CL1.1";
+standards["CL1.2"] = "-cl-std=CL1.2";
+standards["CL2.0"] = "-cl-std=CL2.0";
+standards["CL3.0"] = "-cl-std=CL3.0";
+
+structure["include_dir"]  = "-I{path}";
+structure["define"]       = "-D{name}";
+structure["define_value"] = "-D{name}={value}";
+structure["output"]       = "-o {path}";
+structure["compile_only"] = "-c";
+structure["dep_file"]     = "-MF {path}";
+structure["target"]       = "";
+structure["sysroot"]      = "";
+
+modules["style"] = "none";
+
+linking["opencl"] = #{
     abi:        "opencl",
     compatible: ["c++", "c"],
     linker:     "c++",
     extensions: [".cl"],
-});
+};
 
 fn check() {
     find_tool("clang") != ()

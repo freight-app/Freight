@@ -1,6 +1,6 @@
 [
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
     "file": "src/main.cpp",
     "arguments": [
       "/usr/sbin/clang++",
@@ -19,7 +19,7 @@
     "output": "target/dev/objs/src/main.o"
   },
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
     "file": "src/stats.cpp",
     "arguments": [
       "/usr/sbin/clang++",

@@ -3,12 +3,12 @@
 ## Core idea
 
 The TOML compiler templates are replaced entirely by Rhai scripts.
-`crane.toml` stays — it is the project manifest.
+`freight.toml` stays — it is the project manifest.
 Toolchain definitions move to `toolchains/*.rhai`.
 
 ```
-crane/
-├── crane.toml                  ← project: deps, language settings, profiles
+freight/
+├── freight.toml                  ← project: deps, language settings, profiles
 └── toolchains/                 ← compiler definitions (was *.toml, now *.rhai)
     ├── gcc.rhai
     ├── clang.rhai
@@ -26,7 +26,7 @@ crane/
   per role, split LTO flags, stdout dep parsing, environment setup — all
   expressible as normal code.
 - Community toolchains are first-class: drop a `.rhai` file in
-  `~/.crane/toolchains/`, no Rust required.
+  `~/.freight/toolchains/`, no Rust required.
 - Versioned toolchains (`gcc-12`, `gcc-13`) are just parametric scripts, not
   separate files.
 
@@ -37,7 +37,7 @@ no C FFI, familiar C-like syntax. Correct choice over Lua for a Rust project.
 
 ## Rhai API surface
 
-Crane's engine exposes these functions to every toolchain script.
+Freight's engine exposes these functions to every toolchain script.
 
 ### Declaration functions (called at script evaluation time)
 
@@ -53,7 +53,7 @@ set_toolset("ar",    "ar");     // static archive creation
 set_toolset("strip", "strip");  // strip debug symbols
 set_toolset("as",    "as");     // assembler
 
-// Flag maps — key is the crane.toml abstract value
+// Flag maps — key is the freight.toml abstract value
 set_flag("opt",      "0", "-O0");
 set_flag("opt",      "2", "-O2");
 set_flag("debug",    "true",  "-g");
@@ -153,9 +153,9 @@ and `run` with an allowlisted binary set), no network, step-limited engine.
 
 ---
 
-## Built-in scripts (shipped with crane)
+## Built-in scripts (shipped with freight)
 
-Built-in scripts are embedded at compile time with `include_str!` so crane
+Built-in scripts are embedded at compile time with `include_str!` so freight
 works without access to the toolchains directory.
 
 ### `toolchains/gcc.rhai`
@@ -307,7 +307,7 @@ on_load(|| {
 
 ## Changes to the Rust codebase
 
-### New: `crates/crane-core/src/toolchain/engine.rs`
+### New: `crates/freight-core/src/toolchain/engine.rs`
 
 - Owns the `rhai::Engine` instance.
 - Registers all `set_*` / `on_check` / `on_load` / `find_tool` / `run` / `env`
@@ -315,9 +315,9 @@ on_load(|| {
 - Executes a script into a `ToolchainDef` struct (same fields as the current
   `CompilerTemplate`).
 - Built-in scripts embedded with `include_str!`; user scripts from
-  `~/.crane/toolchains/*.rhai` layered on top (user overrides same name).
+  `~/.freight/toolchains/*.rhai` layered on top (user overrides same name).
 
-### Modified: `crates/crane-core/src/toolchain/template.rs`
+### Modified: `crates/freight-core/src/toolchain/template.rs`
 
 - `CompilerTemplate` struct is unchanged — it remains the in-memory
   representation used by compile/link/detect.
@@ -328,7 +328,7 @@ on_load(|| {
 - `ModuleStyle` enum, `LinkingInfo`, `BuildSettings`, `StructureFlags` are all
   unchanged.
 
-### Modified: `crates/crane-core/src/toolchain/mod.rs`
+### Modified: `crates/freight-core/src/toolchain/mod.rs`
 
 - `load_templates(dir)` now globs `*.rhai` instead of `*.toml`.
 - `load_templates_embedded()` returns compiled-in scripts.
@@ -354,9 +354,9 @@ on_load(|| {
 
 ## Backwards compatibility
 
-There is none to maintain for toolchain files — they are internal to crane,
+There is none to maintain for toolchain files — they are internal to freight,
 not user-facing config. The `.rhai` scripts replace the `.toml` files entirely.
-`crane.toml` (project manifest) is completely unaffected.
+`freight.toml` (project manifest) is completely unaffected.
 
 ---
 
@@ -371,7 +371,7 @@ not user-facing config. The `.rhai` scripts replace the `.toml` files entirely.
 | 5 | Add `[toolset]` role dispatch in compile/link/ar callers |
 | 6 | Add `output_obj`/`output_bin`, `lto_link`, `system_lib`, `dep_file_mode = "stdout"` |
 | 7 | Write `msvc.rhai` using the new capabilities |
-| 8 | Update `crane toolchain add <path>` to accept `.rhai` files |
+| 8 | Update `freight toolchain add <path>` to accept `.rhai` files |
 | 9 | Update `docs/compiler-templates.md` → `docs/toolchain-scripts.md` |
 
 Phases 1–3 are a straight mechanical port with no user-visible change.

@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/with-cmake-dep/vendor/mathlib/.freight-build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,4 +1,4 @@
-# Crane — Architecture
+# Freight — Architecture
 
 Internal documentation for contributors. Covers the repository layout, build engine
 pipeline, architecture rules, and the key Rust dependencies.
@@ -8,15 +8,15 @@ pipeline, architecture rules, and the key Rust dependencies.
 ## Repository layout
 
 ```
-crane/
+freight/
 ├── Cargo.toml                  # workspace root
 ├── README.md
 ├── crates/
-│   ├── crane/                  # binary crate — CLI shells + clap dispatch
+│   ├── freight/                  # binary crate — CLI shells + clap dispatch
 │   │   └── src/
 │   │       ├── main.rs         # clap parse → commands::* dispatch
 │   │       ├── output.rs       # coloured print helpers (CLI-only)
-│   │       └── commands/       # one cmd_* shell per command, calls into crane-core
+│   │       └── commands/       # one cmd_* shell per command, calls into freight-core
 │   │           ├── mod.rs
 │   │           ├── build.rs    # cmd_build, cmd_run, cmd_test, cmd_clean
 │   │           ├── check.rs    # cmd_check + manifest summary printer
@@ -25,14 +25,14 @@ crane/
 │   │           ├── migrate.rs  # cmd_migrate
 │   │           ├── new.rs      # cmd_new, cmd_init
 │   │           └── toolchain.rs # cmd_toolchain_list, cmd_toolchain_add
-│   ├── crane-core/             # library crate — all build logic, no CLI / no printing of results
+│   ├── freight-core/             # library crate — all build logic, no CLI / no printing of results
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── error.rs
 │   │       ├── new.rs          # scaffold_project / init_project (returns ScaffoldOutcome)
 │   │       ├── dep_cmds.rs     # manifest_add_dep, manifest_remove_dep, regen_lock, locate_project
-│   │       ├── lock.rs         # crane.lock read/write
-│   │       ├── manifest/       # crane.toml parsing + validation
+│   │       ├── lock.rs         # freight.lock read/write
+│   │       ├── manifest/       # freight.toml parsing + validation
 │   │       │   ├── mod.rs
 │   │       │   ├── types.rs
 │   │       │   ├── find.rs
@@ -60,18 +60,18 @@ crane/
 │   │           ├── features.rs # Cargo-style [features] resolve + define generation
 │   │           ├── foreign.rs  # foreign build system integration (cmake/make/meson/autotools/scons)
 │   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
-│   ├── crane-doc/              # standalone doc generator binary (crane-doc CLI)
+│   ├── freight-doc/              # standalone doc generator binary (freight-doc CLI)
 │   │   └── src/
-│   │       └── main.rs         # crane-doc --format html|md|latex|pdf|all [DIR...] --out DIR
-│   ├── crane-migrator/         # library crate — crane migrate (CMake/Makefile/Meson → crane.toml)
+│   │       └── main.rs         # freight-doc --format html|md|latex|pdf|all [DIR...] --out DIR
+│   ├── freight-migrator/         # library crate — freight migrate (CMake/Makefile/Meson → freight.toml)
 │   │   └── src/
 │   │       ├── lib.rs          # run_migrate → MigrateOutcome, ImportedProject IR
 │   │       ├── detect.rs       # pick format from files present
-│   │       ├── emit.rs         # ImportedProject → crane.toml string
+│   │       ├── emit.rs         # ImportedProject → freight.toml string
 │   │       ├── cmake.rs        # CMakeLists.txt parser
 │   │       ├── makefile.rs     # Makefile parser
 │   │       └── meson.rs        # meson.build parser
-│   └── crane-lsp/              # Language Server for crane.toml
+│   └── freight-lsp/              # Language Server for freight.toml
 │       └── src/
 │           ├── lib.rs
 │           ├── position.rs     # text-based position mapping for diagnostics
@@ -99,7 +99,7 @@ crane/
 │   └── debuggers/
 │       ├── lldb.toml
 │       └── gdb.toml
-└── examples/                   # every example is buildable via `crane build`
+└── examples/                   # every example is buildable via `freight build`
     ├── hello-cpp/
     ├── multi-lang/
     ├── with-deps/
@@ -121,12 +121,12 @@ crane/
 ## Build engine pipeline
 
 ```
-crane build
+freight build
   │
-  ├── 1. Parse + validate crane.toml
+  ├── 1. Parse + validate freight.toml
   ├── 2. Detect toolchain (probe $PATH, evaluate .rhai scripts, version cache)
   ├── 3. Resolve dependency graph (topo sort, compile path deps in order)
-  │       ├── crane deps: compile dep → archive (.a)
+  │       ├── freight deps: compile dep → archive (.a)
   │       ├── foreign deps: cmake/meson/make/autotools/scons → install → collect headers + archive
   │       └── collect dep include dirs
   ├── 4. Walk src/ — discover sources by file extension → language key
@@ -148,21 +148,21 @@ crane build
 
 ## Architecture rules
 
-1. **`crane` crate owns the CLI** — clap parsing, `commands/` shells, and `output.rs` colour
-   helpers. Each `cmd_*` reads cwd, calls a pure function in `crane-core`, prints the outcome.
+1. **`freight` crate owns the CLI** — clap parsing, `commands/` shells, and `output.rs` colour
+   helpers. Each `cmd_*` reads cwd, calls a pure function in `freight-core`, prints the outcome.
 
-2. **`crane-core` is a library, no CLI knowledge** — pure functions return `Result<T, CraneError>`
+2. **`freight-core` is a library, no CLI knowledge** — pure functions return `Result<T, FreightError>`
    (e.g. `build_project`, `scaffold_project → ScaffoldOutcome`). It must not depend on `output.rs`
    or call `print_*`. Inline `println!` for build-engine progress (`Compiling foo.cpp`, `Linking …`)
    is the one exception, pending a future progress-callback abstraction.
 
-2a. **`crane-migrator` is a separate library** — depends on `crane-core` for `CraneError`, exposes
+2a. **`freight-migrator` is a separate library** — depends on `freight-core` for `FreightError`, exposes
    `run_migrate → MigrateOutcome`. Keeping it separate lets external tools use the migrator without
    pulling in the build engine.
 
-2b. **`crane-doc` is a standalone binary** — depends only on `crane-core` (for `doc::*`). Can be
-   used independently of the main `crane` CLI to generate docs from any source tree. `crane doc`
-   in the main CLI calls the same `crane-core` functions.
+2b. **`freight-doc` is a standalone binary** — depends only on `freight-core` (for `doc::*`). Can be
+   used independently of the main `freight` CLI to generate docs from any source tree. `freight doc`
+   in the main CLI calls the same `freight-core` functions.
 
 3. **Compiler templates are runtime data** — evaluated from `.rhai` scripts in `toolchains/`, not
    hardcoded.
@@ -174,11 +174,11 @@ crane build
 
 6. **`CompilerTemplate::assemble_flags()` is pure** — no side effects, unit-tested.
 
-7. **Never shell out to Make / Ninja / CMake for crane's own sources** — crane owns the build graph
+7. **Never shell out to Make / Ninja / CMake for freight's own sources** — freight owns the build graph
    entirely. Foreign build systems are only invoked when compiling external dependencies that don't
-   have a `crane.toml`.
+   have a `freight.toml`.
 
-8. **Errors use `thiserror` in crane-core, surface at the CLI boundary.**
+8. **Errors use `thiserror` in freight-core, surface at the CLI boundary.**
 
 9. **Feature branches** — each new feature gets its own `feature/<name>` branch off `master`.
 
@@ -193,17 +193,17 @@ crane build
 |-------|---------|----------|
 | `clap` | 4 | CLI argument parsing |
 | `owo-colors` | 4 | Coloured terminal output |
-| `toml_edit` | 0.22 | crane.toml parsing and mutation |
+| `toml_edit` | 0.22 | freight.toml parsing and mutation |
 | `serde` | 1 | Deserialization of manifests and templates |
 | `rayon` | 1 | Parallel source compilation |
 | `walkdir` | 2 | Source file discovery |
 | `regex` | 1 | Version extraction, doc comment scanning |
 | `semver` | 1 | Dependency version parsing |
 | `pulldown-cmark` | 0.12 | Markdown processing in `doc/markdown.rs` |
-| `thiserror` | 1 | Error types in `crane-core` |
+| `thiserror` | 1 | Error types in `freight-core` |
 | `tempfile` | 3 | Test helpers |
-| `clap_mangen` | 0.2 | Man page generation for `crane man` |
+| `clap_mangen` | 0.2 | Man page generation for `freight man` |
 | `rhai` | 1 | Compiler template scripting engine |
-| `tower-lsp` | 0.20 | LSP transport in `crane-lsp` |
+| `tower-lsp` | 0.20 | LSP transport in `freight-lsp` |
 | `tokio` | 1 | Async runtime for the LSP server |
 | `sha2` | 0.10 | SHA-256 verification for HTTP/GitHub deps |

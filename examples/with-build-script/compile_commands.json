@@ -1,0 +1,20 @@
+[
+  {
+    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/with-build-script",
+    "file": "src/main.cpp",
+    "arguments": [
+      "/usr/sbin/clang++",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++17",
+      "-Itarget/dev/build",
+      "-c",
+      "src/main.cpp",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  }
+]

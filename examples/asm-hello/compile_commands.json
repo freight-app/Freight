@@ -1,7 +1,7 @@
 [
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/main.c",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello",
+    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/main.c",
     "arguments": [
       "/usr/sbin/clang",
       "-O2",
@@ -10,24 +10,24 @@
       "-Wpedantic",
       "-std=c17",
       "-c",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/main.c",
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/main.c",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/main.o"
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/main.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/main.o"
+    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/main.o"
   },
   {
-    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello",
-    "file": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/math.asm",
+    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello",
+    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/math.asm",
     "arguments": [
       "/usr/sbin/nasm",
       "-w+all",
       "-f",
       "elf64",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/math.asm",
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/math.asm",
       "-o",
-      "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/math.o"
+      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/math.o"
     ],
-    "output": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/math.o"
+    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/math.o"
   }
 ]

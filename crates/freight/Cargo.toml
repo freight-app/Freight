@@ -1,0 +1,21 @@
+[package]
+name    = "freight"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "freight"
+path = "src/main.rs"
+
+[dependencies]
+freight-core     = { path = "../freight-core" }
+freight-doc      = { path = "../freight-doc" }
+freight-migrator = { path = "../freight-migrator" }
+freight-lsp      = { path = "../freight-lsp" }
+clap        = { workspace = true }
+clap_mangen = { workspace = true }
+owo-colors  = { workspace = true }
+rayon       = { workspace = true }
+serde_json  = { workspace = true }
+anyhow      = { workspace = true }
+tokio       = { workspace = true }

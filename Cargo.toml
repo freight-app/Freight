@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/crane",
-    "crates/crane-core",
-    "crates/crane-doc",
-    "crates/crane-migrator",
-    "crates/crane-lsp",
+    "crates/freight",
+    "crates/freight-core",
+    "crates/freight-doc",
+    "crates/freight-migrator",
+    "crates/freight-lsp",
 ]
 resolver = "2"
 

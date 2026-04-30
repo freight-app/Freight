@@ -1,57 +1,57 @@
 // LDC — LLVM-based D compiler. Flag-compatible with DMD for common settings;
 // adds LLVM ThinLTO, better optimisation, and native cross-compilation via --mtriple.
 
-set_name("ldc2");
-set_homepage("https://github.com/ldc-developers/ldc");
-set_binary("ldc2");
-set_version_arg("--version");
-set_version_regex("LDC - the LLVM D compiler \\((\\d+\\.\\d+\\.\\d+)\\)");
+compiler["name"]          = "ldc2";
+compiler["homepage"]      = "https://github.com/ldc-developers/ldc";
+compiler["binary"]        = "ldc2";
+compiler["version_arg"]   = "--version";
+compiler["version_regex"] = "LDC - the LLVM D compiler \\((\\d+\\.\\d+\\.\\d+)\\)";
+compiler["extensions"]    = [".d"];
+compiler["passthrough"]        = false;
+compiler["passthrough_prefix"] = "";
 
-set_toolset("ld",    "ldc2");
-set_toolset("ar",    "ar");
-set_toolset("strip", "strip");
+toolset["ld"]    = "ldc2";
+toolset["ar"]    = "ar";
+toolset["strip"] = "strip";
 
-set_extensions([".d"]);
+flags["opt"]["0"] = "-O0";
+flags["opt"]["1"] = "-O1";
+flags["opt"]["2"] = "-O2";
+flags["opt"]["3"] = "-O3";
+flags["opt"]["s"] = "-Os";
+flags["opt"]["z"] = "-Oz";
 
-set_flag("opt", "0", "-O0");
-set_flag("opt", "1", "-O1");
-set_flag("opt", "2", "-O2");
-set_flag("opt", "3", "-O3");
-set_flag("opt", "s", "-Os");
-set_flag("opt", "z", "-Oz");
+flags["debug"]["true"]  = "-g";
+flags["debug"]["false"] = "";
 
-set_flag("debug", "true",  "-g");
-set_flag("debug", "false", "");
+flags["warnings"]["none"]    = "";
+flags["warnings"]["default"] = "-wi";
+flags["warnings"]["all"]     = "-w";
+flags["warnings"]["error"]   = "-w";
 
-set_flag("warnings", "none",    "");
-set_flag("warnings", "default", "-wi");
-set_flag("warnings", "all",     "-w");
-set_flag("warnings", "error",   "-w");
+flags["lto"]["true"]  = "--flto=full";
+flags["lto"]["false"] = "";
 
-set_flag("lto", "true",  "--flto=full");
-set_flag("lto", "false", "");
+flags["strip"]["true"]  = "--strip";
+flags["strip"]["false"] = "";
 
-set_flag("strip", "true",  "--strip");
-set_flag("strip", "false", "");
+structure["include_dir"]  = "-I{path}";
+structure["define"]       = "-d-version={name}";
+structure["define_value"] = "-d-version={name}";
+structure["output"]       = "-of={path}";
+structure["compile_only"] = "-c";
+structure["dep_file"]     = "";
+structure["target"]       = "--mtriple={triple}";
+structure["sysroot"]      = "";
 
-set_structure("include_dir",  "-I{path}");
-set_structure("define",       "-d-version={name}");
-set_structure("define_value", "-d-version={name}");
-set_structure("output",       "-of={path}");
-set_structure("compile_only", "-c");
-set_structure("dep_file",     "");
-set_structure("target",       "--mtriple={triple}");
-set_structure("sysroot",      "");
+modules["style"] = "none";
 
-set_module_style("none");
-set_passthrough(false, "");
-
-set_linking("d", #{
+linking["d"] = #{
     abi:        "d",
     compatible: ["c", "fortran"],
     linker:     "",
     extensions: [".d"],
-});
+};
 
 fn check() {
     find_tool("ldc2") != ()

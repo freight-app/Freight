@@ -276,74 +276,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crane"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "clap_mangen",
- "crane-core",
- "crane-doc",
- "crane-lsp",
- "crane-migrator",
- "owo-colors",
- "rayon",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "crane-core"
-version = "0.1.0"
-dependencies = [
- "git2",
- "owo-colors",
- "rayon",
- "regex",
- "rhai",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "toml_edit",
- "walkdir",
-]
-
-[[package]]
-name = "crane-doc"
-version = "0.1.0"
-dependencies = [
- "clap",
- "pulldown-cmark",
- "walkdir",
-]
-
-[[package]]
-name = "crane-lsp"
-version = "0.1.0"
-dependencies = [
- "crane-core",
- "dashmap 6.1.0",
- "serde_json",
- "tokio",
- "tower-lsp",
-]
-
-[[package]]
-name = "crane-migrator"
-version = "0.1.0"
-dependencies = [
- "cmake-parser",
- "crane-core",
- "makefile-lossless",
- "regex",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -479,6 +411,74 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "freight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_mangen",
+ "freight-core",
+ "freight-doc",
+ "freight-lsp",
+ "freight-migrator",
+ "owo-colors",
+ "rayon",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "freight-core"
+version = "0.1.0"
+dependencies = [
+ "git2",
+ "owo-colors",
+ "rayon",
+ "regex",
+ "rhai",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml_edit",
+ "walkdir",
+]
+
+[[package]]
+name = "freight-doc"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "pulldown-cmark",
+ "walkdir",
+]
+
+[[package]]
+name = "freight-lsp"
+version = "0.1.0"
+dependencies = [
+ "dashmap 6.1.0",
+ "freight-core",
+ "serde_json",
+ "tokio",
+ "tower-lsp",
+]
+
+[[package]]
+name = "freight-migrator"
+version = "0.1.0"
+dependencies = [
+ "cmake-parser",
+ "freight-core",
+ "makefile-lossless",
+ "regex",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

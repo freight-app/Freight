@@ -1,17 +1,17 @@
 # Compiler Templates
 
-Crane's compiler system is fully data-driven. Every supported compiler or assembler is described
+Freight's compiler system is fully data-driven. Every supported compiler or assembler is described
 by a `.rhai` script in `toolchains/` — no Rust changes required. Adding a new compiler means writing
-a new script and installing it with `crane toolchain add`.
+a new script and installing it with `freight toolchain add`.
 
 ---
 
 ## Loading order
 
-Crane merges templates from two locations at startup:
+Freight merges templates from two locations at startup:
 
-1. **Bundled scripts** — shipped with the crane binary in `toolchains/`
-2. **User scripts** — installed in `~/.crane/templates/` via `crane toolchain add <path>`
+1. **Bundled scripts** — shipped with the freight binary in `toolchains/`
+2. **User scripts** — installed in `~/.freight/templates/` via `freight toolchain add <path>`
 
 User scripts with the same `name` as a bundled script take precedence (override).
 
@@ -125,7 +125,7 @@ set_module_style("clang", #{
 
 | Function | Purpose |
 |----------|---------|
-| `set_name(s)` | Toolchain identifier (used in `backend = "..."` in crane.toml) |
+| `set_name(s)` | Toolchain identifier (used in `backend = "..."` in freight.toml) |
 | `set_binary(s)` | Primary binary (detection + linker fallback) |
 | `set_toolset(role, binary)` | Role overrides: `"cc"`, `"cxx"`, `"ld"`, `"ar"`, `"strip"`, `"as"` |
 | `set_extensions(list)` | File extensions this template claims during source discovery |
@@ -171,8 +171,8 @@ vscode_type  = "lldb"     # "type" field in launch.json config (CodeLLDB)
 mi_mode      = "lldb"     # "MIMode" field (only relevant for cppdbg type)
 ```
 
-`crane debug` uses debugger templates to invoke an interactive session and to generate
-`.vscode/launch.json` entries via `crane debug --launch-json`.
+`freight debug` uses debugger templates to invoke an interactive session and to generate
+`.vscode/launch.json` entries via `freight debug --launch-json`.
 
 ---
 
@@ -189,16 +189,16 @@ mi_mode      = "lldb"     # "MIMode" field (only relevant for cppdbg type)
 7. Add `dep_file` structure if the compiler supports Makefile dep files (`-MMD -MF`)
 8. Call `set_linking` for every language the template handles
 9. Add `fn check()` to hide the toolchain when the binary is absent
-10. Test with `crane toolchain list` to verify detection, then `crane build` on a real project
+10. Test with `freight toolchain list` to verify detection, then `freight build` on a real project
 
 ### Installing
 
 ```sh
-crane toolchain add path/to/mycompiler.rhai
+freight toolchain add path/to/mycompiler.rhai
 ```
 
-The script is validated and copied to `~/.crane/templates/mycompiler.rhai`.
-The new template is loaded on the next crane invocation.
+The script is validated and copied to `~/.freight/templates/mycompiler.rhai`.
+The new template is loaded on the next freight invocation.
 
 ---
 
@@ -212,7 +212,7 @@ C/C++ projects).
 
 ### Arch-specific flags
 
-`set_arch_flag("x86_64.linux", "-f elf64")` is how NASM selects its output format. Crane
+`set_arch_flag("x86_64.linux", "-f elf64")` is how NASM selects its output format. Freight
 looks up `"arch.os"` first, then `"arch"` as a fallback. GCC and Clang don't need this —
 they infer the output format from the target triple.
 

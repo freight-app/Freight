@@ -2,93 +2,92 @@
 // Successor to the Portland Group (PGI) compilers. Used in scientific and HPC workloads.
 // Supports OpenACC, OpenMP offloading, and CUDA Fortran.
 
-set_name("nvhpc");
-set_homepage("https://developer.nvidia.com/hpc-sdk");
-set_binary("nvc++");
-set_version_arg("--version");
-set_version_regex("nvc\\+\\+ (\\d+\\.\\d+)");
+compiler["name"]          = "nvhpc";
+compiler["homepage"]      = "https://developer.nvidia.com/hpc-sdk";
+compiler["binary"]        = "nvc++";
+compiler["version_arg"]   = "--version";
+compiler["version_regex"] = "nvc\\+\\+ (\\d+\\.\\d+)";
+compiler["extensions"]    = [".cpp", ".cc", ".cxx", ".c++", ".c", ".f90", ".f95", ".f", ".F90"];
+compiler["passthrough"]        = false;
+compiler["passthrough_prefix"] = "";
+// NVIDIA HPC SDK is available on x86_64 and aarch64 (Grace) Linux only.
+compiler["supported_archs"] = ["x86_64", "aarch64"];
+compiler["supported_os"]    = ["linux"];
 
-set_toolset("cc",  "nvc");
-set_toolset("cxx", "nvc++");
-set_toolset("ld",  "nvc++");
-set_toolset("ar",  "ar");
+toolset["cc"]  = "nvc";
+toolset["cxx"] = "nvc++";
+toolset["ld"]  = "nvc++";
+toolset["ar"]  = "ar";
 
-set_extensions([".cpp", ".cc", ".cxx", ".c++", ".c", ".f90", ".f95", ".f", ".F90"]);
+flags["opt"]["0"] = "-O0";
+flags["opt"]["1"] = "-O1";
+flags["opt"]["2"] = "-O2";
+flags["opt"]["3"] = "-O3";
+flags["opt"]["s"] = "-O2";
+flags["opt"]["z"] = "-O2";
 
-set_flag("opt", "0", "-O0");
-set_flag("opt", "1", "-O1");
-set_flag("opt", "2", "-O2");
-set_flag("opt", "3", "-O3");
-set_flag("opt", "s", "-O2");
-set_flag("opt", "z", "-O2");
-
-set_flag("debug", "true",  "-g");
-set_flag("debug", "false", "");
+flags["debug"]["true"]  = "-g";
+flags["debug"]["false"] = "";
 
 // NVHPC uses -Minform= for verbosity; -Werror is supported for many diagnostics.
-set_flag("warnings", "none",    "");
-set_flag("warnings", "default", "");
-set_flag("warnings", "all",     "-Minform=warn");
-set_flag("warnings", "error",   "-Minform=warn -Werror");
+flags["warnings"]["none"]    = "";
+flags["warnings"]["default"] = "";
+flags["warnings"]["all"]     = "-Minform=warn";
+flags["warnings"]["error"]   = "-Minform=warn -Werror";
 
-set_flag("lto", "true",  "");
-set_flag("lto", "false", "");
+flags["lto"]["true"]  = "";
+flags["lto"]["false"] = "";
 
-set_flag("strip", "true",  "");
-set_flag("strip", "false", "");
+flags["strip"]["true"]  = "";
+flags["strip"]["false"] = "";
 
-set_flag("cpu_ext", "template", "-m{name}");
+flags["cpu_ext"]["template"] = "-m{name}";
 
-set_standard("c11",   "-std=c11");
-set_standard("c17",   "-std=c17");
-set_standard("c++17", "-std=c++17");
-set_standard("c++20", "-std=c++20");
-set_standard("f2003", "-Mstandard");
-set_standard("f2008", "-Mstandard");
-set_standard("f2018", "-Mstandard");
+standards["c11"]   = "-std=c11";
+standards["c17"]   = "-std=c17";
+standards["c++17"] = "-std=c++17";
+standards["c++20"] = "-std=c++20";
+standards["f2003"] = "-Mstandard";
+standards["f2008"] = "-Mstandard";
+standards["f2018"] = "-Mstandard";
 
-set_structure("include_dir",  "-I{path}");
-set_structure("define",       "-D{name}");
-set_structure("define_value", "-D{name}={value}");
-set_structure("output",       "-o {path}");
-set_structure("compile_only", "-c");
-set_structure("dep_file",     "-MMD -MF {path}");
-set_structure("target",       "");
-set_structure("sysroot",      "");
+structure["include_dir"]  = "-I{path}";
+structure["define"]       = "-D{name}";
+structure["define_value"] = "-D{name}={value}";
+structure["output"]       = "-o {path}";
+structure["compile_only"] = "-c";
+structure["dep_file"]     = "-MMD -MF {path}";
+structure["target"]       = "";
+structure["sysroot"]      = "";
 
-set_module_style("none");
-set_passthrough(false, "");
+modules["style"] = "none";
 
-// NVIDIA HPC SDK is available on x86_64 and aarch64 (Grace) Linux only.
-set_supported_archs(["x86_64", "aarch64"]);
-set_supported_os(["linux"]);
-
-set_linking("c", #{
+linking["c"] = #{
     abi:            "c",
     compatible:     ["fortran"],
     compile_binary: "nvc",
     linker:         "",
     extensions:     [".c"],
-});
+};
 
-set_linking("cpp", #{
+linking["cpp"] = #{
     abi:        "c++",
     compatible: ["c", "fortran"],
     linker:     "",
     extensions: [".cpp", ".cc", ".cxx", ".c++"],
-});
+};
 
-set_linking("fortran", #{
+linking["fortran"] = #{
     abi:            "fortran",
     compatible:     ["c"],
     compile_binary: "nvfortran",
     linker:         "",
     extensions:     [".f90", ".f95", ".f", ".F90"],
-});
+};
 
 fn check() {
-    let h = arch();
+    let h = arch;
     if h != "x86_64" && h != "aarch64" { return false; }
-    if os() != "linux" { return false; }
+    if os != "linux" { return false; }
     find_tool("nvc++") != ()
 }

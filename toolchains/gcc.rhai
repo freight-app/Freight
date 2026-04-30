@@ -13,83 +13,81 @@ for _b in _gxx_bins {
 // Derive the C-compiler binary: g++-13 → gcc-13, g++ → gcc.
 let _gcc = if _gxx == "g++" { "gcc" } else { "gcc" + _gxx.sub_string(3) };
 
-set_name("gcc");
-set_homepage("https://gcc.gnu.org/");
-set_binary(_gxx);
-set_version_arg("--version");
-set_version_regex("\\b(\\d+\\.\\d+\\.\\d+)\\b");
+compiler["name"]          = "gcc";
+compiler["homepage"]      = "https://gcc.gnu.org/";
+compiler["binary"]        = _gxx;
+compiler["version_arg"]   = "--version";
+compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+compiler["extensions"]    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
+compiler["passthrough"]        = false;
+compiler["passthrough_prefix"] = "";
 
-set_toolset("cc",    _gcc);
-set_toolset("cxx",   _gxx);
-set_toolset("ld",    _gxx);
-set_toolset("ar",    "ar");
-set_toolset("strip", "strip");
+toolset["cc"]    = _gcc;
+toolset["cxx"]   = _gxx;
+toolset["ld"]    = _gxx;
+toolset["ar"]    = "ar";
+toolset["strip"] = "strip";
 
-set_extensions([".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"]);
+flags["opt"]["0"] = "-O0";
+flags["opt"]["1"] = "-O1";
+flags["opt"]["2"] = "-O2";
+flags["opt"]["3"] = "-O3";
+flags["opt"]["s"] = "-Os";
+flags["opt"]["z"] = "-Oz";
 
-set_flag("opt", "0", "-O0");
-set_flag("opt", "1", "-O1");
-set_flag("opt", "2", "-O2");
-set_flag("opt", "3", "-O3");
-set_flag("opt", "s", "-Os");
-set_flag("opt", "z", "-Oz");
+flags["debug"]["true"]  = "-g";
+flags["debug"]["false"] = "";
 
-set_flag("debug", "true",  "-g");
-set_flag("debug", "false", "");
+flags["warnings"]["none"]    = "";
+flags["warnings"]["default"] = "-Wall";
+flags["warnings"]["all"]     = "-Wall -Wextra -Wpedantic";
+flags["warnings"]["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 
-set_flag("warnings", "none",    "");
-set_flag("warnings", "default", "-Wall");
-set_flag("warnings", "all",     "-Wall -Wextra -Wpedantic");
-set_flag("warnings", "error",   "-Wall -Wextra -Wpedantic -Werror");
+flags["lto"]["true"]  = "-flto";
+flags["lto"]["false"] = "";
 
-set_flag("lto", "true",  "-flto");
-set_flag("lto", "false", "");
+flags["strip"]["true"]  = "-s";
+flags["strip"]["false"] = "";
 
-set_flag("strip", "true",  "-s");
-set_flag("strip", "false", "");
+flags["sanitize"]["template"] = "-fsanitize={values}";
+flags["cpu_ext"]["template"]  = "-m{name}";
 
-set_flag("sanitize", "template", "-fsanitize={values}");
-set_flag("cpu_ext",  "template", "-m{name}");
+standards["c11"]   = "-std=c11";
+standards["c17"]   = "-std=c17";
+standards["c23"]   = "-std=c23";
+standards["c++17"] = "-std=c++17";
+standards["c++20"] = "-std=c++20";
+standards["c++23"] = "-std=c++23";
 
-set_standard("c11",   "-std=c11");
-set_standard("c17",   "-std=c17");
-set_standard("c23",   "-std=c23");
-set_standard("c++17", "-std=c++17");
-set_standard("c++20", "-std=c++20");
-set_standard("c++23", "-std=c++23");
+structure["include_dir"]  = "-I{path}";
+structure["define"]       = "-D{name}";
+structure["define_value"] = "-D{name}={value}";
+structure["output"]       = "-o {path}";
+structure["compile_only"] = "-c";
+structure["dep_file"]     = "-MMD -MF {path}";
+structure["target"]       = "";
+structure["sysroot"]      = "--sysroot={path}";
 
-set_structure("include_dir",  "-I{path}");
-set_structure("define",       "-D{name}");
-set_structure("define_value", "-D{name}={value}");
-set_structure("output",       "-o {path}");
-set_structure("compile_only", "-c");
-set_structure("dep_file",     "-MMD -MF {path}");
-set_structure("target",       "");
-set_structure("sysroot",      "--sysroot={path}");
+modules["style"]         = "gcc";
+modules["enable_flag"]   = "-fmodules-ts";
+modules["compile_miu"]   = "-fmodule-output={pcm_path}";
+modules["import_module"] = "-fmodule-file={name}={pcm_path}";
+modules["header_unit"]   = "-fmodule-header";
 
-set_module_style("gcc", #{
-    enable_flag:   "-fmodules-ts",
-    compile_miu:   "-fmodule-output={pcm_path}",
-    import_module: "-fmodule-file={name}={pcm_path}",
-    header_unit:   "-fmodule-header",
-});
-
-set_passthrough(false, "");
-
-set_linking("c", #{
+linking["c"] = #{
     abi:            "c",
     compatible:     ["fortran", "asm"],
     compile_binary: _gcc,
     linker:         "",
     extensions:     [".c", ".s", ".S"],
-});
+};
 
-set_linking("cpp", #{
+linking["cpp"] = #{
     abi:        "c++",
     compatible: ["c", "fortran"],
     linker:     "",
     extensions: [".cpp", ".cppm", ".cc", ".cxx", ".c++"],
-});
+};
 
 fn check() {
     let bins = ["g++", "g++-14", "g++-13", "g++-12", "g++-11", "g++-10"];
@@ -101,12 +99,12 @@ fn check() {
 
 fn load() {
     if arch == "x86_64" || arch == "x64" {
-        add_flags("cc",  "-m64");
-        add_flags("cxx", "-m64");
-        add_flags("ld",  "-m64");
+        load_flags["cc"]  += ["-m64"];
+        load_flags["cxx"] += ["-m64"];
+        load_flags["ld"]  += ["-m64"];
     } else if arch == "i386" || arch == "x86" {
-        add_flags("cc",  "-m32");
-        add_flags("cxx", "-m32");
-        add_flags("ld",  "-m32");
+        load_flags["cc"]  += ["-m32"];
+        load_flags["cxx"] += ["-m32"];
+        load_flags["ld"]  += ["-m32"];
     }
 }

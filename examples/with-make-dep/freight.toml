@@ -1,0 +1,16 @@
+[package]
+name        = "with-make-dep"
+version     = "0.1.0"
+description = "Linking a local Makefile library as a path dependency"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "with-make-dep"
+src  = "src/main.c"
+
+# freight auto-detects the Makefile in vendor/strutil, runs make, then finds
+# libstrutil.a there.  include/ is auto-detected.
+[dependencies]
+strutil = { path = "vendor/strutil" }
