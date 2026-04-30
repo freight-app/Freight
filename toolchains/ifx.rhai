@@ -1,19 +1,19 @@
 // Intel Fortran Compiler (ifx) — LLVM-based, replaces the classic ifort.
 // Part of Intel oneAPI. Supports Fortran 2018 and OpenMP 5.x offloading.
 
-compiler["name"]          = "ifx";
-compiler["homepage"]      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html";
-compiler["binary"]        = "ifx";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "(\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "ifx";
+homepage      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html";
+binary        = "ifx";
+version_arg   = "--version";
+version_regex = "(\\d+\\.\\d+\\.\\d+)";
+extensions    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
+passthrough        = false;
+passthrough_prefix = "";
 // Intel Fortran (ifx) is available on x86/x86_64 Linux and Windows.
-compiler["supported_archs"] = ["x86", "x86_64"];
-compiler["supported_os"]    = ["linux", "windows"];
+supported_archs = ["x86", "x86_64"];
+supported_os    = ["linux", "windows"];
 // ONEAPI_ROOT is exported by setvars.sh / setvars.bat.
-compiler["required_env"] = ["ONEAPI_ROOT"];
+required_env = ["ONEAPI_ROOT"];
 
 toolset["ld"]    = "ifx";
 toolset["ar"]    = "ar";
@@ -46,15 +46,15 @@ standards["f2003"] = "-std=f2003";
 standards["f2008"] = "-std=f2008";
 standards["f2018"] = "-std=f2018";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
 // -cpp enables the C preprocessor; -MMD/-MF generate Makefile dep files.
-structure["dep_file"]     = "-cpp -MMD -MF {path}";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+dep_file     = "-cpp -MMD -MF {path}";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

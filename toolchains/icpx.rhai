@@ -1,21 +1,21 @@
 // Intel oneAPI DPC++ compiler — SYCL heterogeneous compute.
 // -fsycl is injected as an always-flag; host code is standard C++.
 
-compiler["name"]          = "icpx";
-compiler["homepage"]      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler.html";
-compiler["binary"]        = "icpx";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
-compiler["extensions"]    = [".cpp", ".cc", ".cxx", ".c++", ".sycl"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "icpx";
+homepage      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler.html";
+binary        = "icpx";
+version_arg   = "--version";
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+extensions    = [".cpp", ".cc", ".cxx", ".c++", ".sycl"];
+passthrough        = false;
+passthrough_prefix = "";
 // Intel oneAPI is available on x86/x86_64 Linux and Windows.
-compiler["supported_archs"] = ["x86", "x86_64"];
-compiler["supported_os"]    = ["linux", "windows"];
+supported_archs = ["x86", "x86_64"];
+supported_os    = ["linux", "windows"];
 // ONEAPI_ROOT is exported by setvars.sh / setvars.bat; its absence means
 // the environment has not been initialised and compilation will fail.
-compiler["required_env"]  = ["ONEAPI_ROOT"];
-compiler["always_flags"]  = ["-fsycl"];
+required_env  = ["ONEAPI_ROOT"];
+always_flags  = ["-fsycl"];
 
 toolset["ld"] = "icpx";
 
@@ -46,14 +46,14 @@ standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";
 standards["c++23"] = "-std=c++23";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MMD -MF {path}";
-structure["target"]       = "--target={triple}";
-structure["sysroot"]      = "--sysroot={path}";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";
+target       = "--target={triple}";
+sysroot      = "--sysroot={path}";
 
 modules["style"] = "none";
 

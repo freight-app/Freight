@@ -2,19 +2,19 @@
 // Clang-compatible flag set; fully supports C++20 modules via the Clang two-step.
 // https://www.circle-lang.org/
 
-compiler["name"]          = "circle";
-compiler["homepage"]      = "https://www.circle-lang.org/";
-compiler["binary"]        = "circle";
-compiler["version_arg"]   = "--version";
+name          = "circle";
+homepage      = "https://www.circle-lang.org/";
+binary        = "circle";
+version_arg   = "--version";
 // Circle versions are typically reported as a build number ("build 212") or
 // embed the underlying Clang version — accept either form.
-compiler["version_regex"] = "(?:build (\\d+))|(\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+version_regex = "(?:build (\\d+))|(\\d+\\.\\d+\\.\\d+)";
+extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
+passthrough        = false;
+passthrough_prefix = "";
 // Circle prebuilt binaries are published for x86_64 and aarch64 Linux only.
-compiler["supported_archs"] = ["x86_64", "aarch64"];
-compiler["supported_os"]    = ["linux"];
+supported_archs = ["x86_64", "aarch64"];
+supported_os    = ["linux"];
 
 toolset["ld"]    = "circle";
 toolset["ar"]    = "ar";
@@ -50,14 +50,14 @@ standards["c++23"] = "-std=c++23";
 standards["c11"]   = "-std=c11";
 standards["c17"]   = "-std=c17";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MMD -MF {path}";
-structure["target"]       = "--target={triple}";
-structure["sysroot"]      = "--sysroot={path}";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";
+target       = "--target={triple}";
+sysroot      = "--sysroot={path}";
 
 modules["style"]         = "clang";
 modules["precompile"]    = "--precompile";

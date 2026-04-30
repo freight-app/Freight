@@ -1,16 +1,16 @@
 // NASM assembler — x86/x86_64 assembly.
 // Output format is arch+OS dependent; arch_flags selects -f elf64 etc.
 
-compiler["name"]          = "nasm";
-compiler["homepage"]      = "https://www.nasm.us/";
-compiler["binary"]        = "nasm";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "NASM version (\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".asm", ".nasm"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "nasm";
+homepage      = "https://www.nasm.us/";
+binary        = "nasm";
+version_arg   = "--version";
+version_regex = "NASM version (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".asm", ".nasm"];
+passthrough        = false;
+passthrough_prefix = "";
 // NASM only understands x86 assembly syntax; useless on non-x86 hosts.
-compiler["supported_archs"] = ["x86", "x86_64"];
+supported_archs = ["x86", "x86_64"];
 
 toolset["as"] = "nasm";
 
@@ -36,14 +36,14 @@ flags["lto"]["false"] = "";
 flags["strip"]["true"]  = "";
 flags["strip"]["false"] = "";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "";
-structure["dep_file"]     = "";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
 // Output format is arch+OS dependent.
 // freight picks the most-specific key ("arch.os" first, then "arch").

@@ -1,14 +1,14 @@
 // D reference compiler. Flag conventions also apply to LDC/GDC.
 // D has no -std= flag; language version tracks the compiler version.
 
-compiler["name"]          = "dmd";
-compiler["homepage"]      = "https://dlang.org/";
-compiler["binary"]        = "dmd";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "v(\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".d"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "dmd";
+homepage      = "https://dlang.org/";
+binary        = "dmd";
+version_arg   = "--version";
+version_regex = "v(\\d+\\.\\d+\\.\\d+)";
+extensions    = [".d"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["ld"] = "dmd";
 
@@ -33,14 +33,14 @@ flags["lto"]["false"] = "";
 flags["strip"]["true"]  = "-L-s";
 flags["strip"]["false"] = "";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-version={name}";
-structure["define_value"] = "-version={name}";
-structure["output"]       = "-of={path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-version={name}";
+define_value = "-version={name}";
+output       = "-of={path}";
+compile_only = "-c";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

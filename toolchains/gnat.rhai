@@ -1,11 +1,11 @@
-compiler["name"]          = "gnat";
-compiler["homepage"]      = "https://gcc.gnu.org/onlinedocs/gnat/";
-compiler["binary"]        = "gnatmake";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
-compiler["extensions"]    = [".adb", ".ads"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "gnat";
+homepage      = "https://gcc.gnu.org/onlinedocs/gnat/";
+binary        = "gnatmake";
+version_arg   = "--version";
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+extensions    = [".adb", ".ads"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["ld"] = "gnatmake";
 toolset["ar"] = "ar";
@@ -35,14 +35,14 @@ standards["ada2005"] = "-gnat05";
 standards["ada2012"] = "-gnat12";
 standards["ada2022"] = "-gnat22";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

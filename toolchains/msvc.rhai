@@ -7,15 +7,15 @@
 // Dependency tracking uses /showIncludes (stdout mode) instead of -MMD.
 // LTO uses two separate flags: /GL at compile time and /LTCG at link time.
 
-compiler["name"]          = "msvc";
-compiler["homepage"]      = "https://visualstudio.microsoft.com/";
-compiler["binary"]        = "link.exe";
-compiler["version_arg"]   = "";           // cl.exe prints version on stderr with no args
-compiler["version_regex"] = "Version (\\d+\\.\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
-compiler["supported_os"] = ["windows"];
+name          = "msvc";
+homepage      = "https://visualstudio.microsoft.com/";
+binary        = "link.exe";
+version_arg   = "";           // cl.exe prints version on stderr with no args
+version_regex = "Version (\\d+\\.\\d+\\.\\d+\\.\\d+)";
+extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
+passthrough        = false;
+passthrough_prefix = "";
+supported_os = ["windows"];
 
 toolset["cc"]    = "cl.exe";
 toolset["cxx"]   = "cl.exe";
@@ -58,17 +58,17 @@ standards["c++23"]   = "/std:c++latest";
 standards["c17"]     = "/std:c17";
 standards["c11"]     = "/std:c11";
 
-structure["include_dir"]   = "/I{path}";
-structure["define"]        = "/D{name}";
-structure["define_value"]  = "/D{name}={value}";
-structure["output_obj"]    = "/Fo{path}";   // compile-step output
-structure["output_bin"]    = "/Fe{path}";   // link-step output (also used by link.exe /OUT)
-structure["compile_only"]  = "/c";
-structure["dep_file"]      = "/showIncludes";
-structure["dep_file_mode"] = "stdout";       // parse Note: including file: lines
-structure["system_lib"]    = "{name}.lib";   // MSVC links by filename, not -l
-structure["target"]        = "";             // cross via dedicated toolchain
-structure["sysroot"]       = "";
+include_dir   = "/I{path}";
+define        = "/D{name}";
+define_value  = "/D{name}={value}";
+output_obj    = "/Fo{path}";   // compile-step output
+output_bin    = "/Fe{path}";   // link-step output (also used by link.exe /OUT)
+compile_only  = "/c";
+dep_file      = "/showIncludes";
+dep_file_mode = "stdout";       // parse Note: including file: lines
+system_lib    = "{name}.lib";   // MSVC links by filename, not -l
+target        = "";             // cross via dedicated toolchain
+sysroot       = "";
 
 modules["style"] = "none";   // C++20 modules not yet supported in this template
 

@@ -1,21 +1,21 @@
-compiler["name"]          = "nvcc";
-compiler["homepage"]      = "https://developer.nvidia.com/cuda-toolkit";
-compiler["binary"]        = "nvcc";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "release (\\d+\\.\\d+)";
-compiler["extensions"]    = [".cu", ".cuh"];
-compiler["passthrough"]        = true;
-compiler["passthrough_prefix"] = "-Xcompiler";
+name          = "nvcc";
+homepage      = "https://developer.nvidia.com/cuda-toolkit";
+binary        = "nvcc";
+version_arg   = "--version";
+version_regex = "release (\\d+\\.\\d+)";
+extensions    = [".cu", ".cuh"];
+passthrough        = true;
+passthrough_prefix = "-Xcompiler";
 // CUDA Toolkit is available on x86_64 and aarch64 (Jetson / Grace) Linux and Windows.
 // macOS support was dropped in CUDA 11.6.
-compiler["supported_archs"] = ["x86_64", "aarch64"];
-compiler["supported_os"]    = ["linux", "windows"];
+supported_archs = ["x86_64", "aarch64"];
+supported_os    = ["linux", "windows"];
 // ptxas and fatbinary are bundled with the CUDA Toolkit alongside nvcc.
 // Their absence means a partial or broken toolkit installation.
-compiler["required_tools"] = ["ptxas", "fatbinary"];
+required_tools = ["ptxas", "fatbinary"];
 // nvcc produces device code but delegates final linking to the host C++ linker.
-compiler["requires_toolchain"] = ["cpp"];
-compiler["always_flags"] = ["--expt-relaxed-constexpr", "--extended-lambda"];
+requires_toolchain = ["cpp"];
+always_flags = ["--expt-relaxed-constexpr", "--extended-lambda"];
 
 toolset["ld"] = "nvcc";
 
@@ -40,14 +40,14 @@ flags["lto"]["false"] = "";
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MD -MF {path}";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MD -MF {path}";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

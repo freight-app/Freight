@@ -14,14 +14,14 @@ for _b in _cxx_bins {
 // "clang++".len() == 7, so sub_string(7) strips the "clang++" prefix.
 let _cc = if _cxx == "clang++" { "clang" } else { "clang" + _cxx.sub_string(7) };
 
-compiler["name"]          = "clang";
-compiler["homepage"]      = "https://clang.llvm.org/";
-compiler["binary"]        = _cxx;
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
-compiler["extensions"]    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "clang";
+homepage      = "https://clang.llvm.org/";
+binary        = _cxx;
+version_arg   = "--version";
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+extensions    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["cc"]    = _cc;
 toolset["cxx"]   = _cxx;
@@ -60,14 +60,14 @@ standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";
 standards["c++23"] = "-std=c++23";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MMD -MF {path}";
-structure["target"]       = "--target={triple}";
-structure["sysroot"]      = "--sysroot={path}";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";
+target       = "--target={triple}";
+sysroot      = "--sysroot={path}";
 
 modules["style"]         = "clang";
 modules["precompile"]    = "--precompile";

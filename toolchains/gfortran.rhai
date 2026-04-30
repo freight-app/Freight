@@ -1,11 +1,11 @@
-compiler["name"]          = "gfortran";
-compiler["homepage"]      = "https://gcc.gnu.org/fortran/";
-compiler["binary"]        = "gfortran";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
-compiler["extensions"]    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "gfortran";
+homepage      = "https://gcc.gnu.org/fortran/";
+binary        = "gfortran";
+version_arg   = "--version";
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+extensions    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["ld"]    = "gfortran";
 toolset["ar"]    = "ar";
@@ -39,14 +39,14 @@ standards["f2003"] = "-std=f2003";
 standards["f2008"] = "-std=f2008";
 standards["f2018"] = "-std=f2018";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-cpp -MMD -MF {path}";
-structure["target"]       = "";
-structure["sysroot"]      = "--sysroot={path}";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-cpp -MMD -MF {path}";
+target       = "";
+sysroot      = "--sysroot={path}";
 
 modules["style"] = "none";
 

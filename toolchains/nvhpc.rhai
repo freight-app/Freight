@@ -2,17 +2,17 @@
 // Successor to the Portland Group (PGI) compilers. Used in scientific and HPC workloads.
 // Supports OpenACC, OpenMP offloading, and CUDA Fortran.
 
-compiler["name"]          = "nvhpc";
-compiler["homepage"]      = "https://developer.nvidia.com/hpc-sdk";
-compiler["binary"]        = "nvc++";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "nvc\\+\\+ (\\d+\\.\\d+)";
-compiler["extensions"]    = [".cpp", ".cc", ".cxx", ".c++", ".c", ".f90", ".f95", ".f", ".F90"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "nvhpc";
+homepage      = "https://developer.nvidia.com/hpc-sdk";
+binary        = "nvc++";
+version_arg   = "--version";
+version_regex = "nvc\\+\\+ (\\d+\\.\\d+)";
+extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c", ".f90", ".f95", ".f", ".F90"];
+passthrough        = false;
+passthrough_prefix = "";
 // NVIDIA HPC SDK is available on x86_64 and aarch64 (Grace) Linux only.
-compiler["supported_archs"] = ["x86_64", "aarch64"];
-compiler["supported_os"]    = ["linux"];
+supported_archs = ["x86_64", "aarch64"];
+supported_os    = ["linux"];
 
 toolset["cc"]  = "nvc";
 toolset["cxx"] = "nvc++";
@@ -51,14 +51,14 @@ standards["f2003"] = "-Mstandard";
 standards["f2008"] = "-Mstandard";
 standards["f2018"] = "-Mstandard";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MMD -MF {path}";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

@@ -1,14 +1,14 @@
 // LDC — LLVM-based D compiler. Flag-compatible with DMD for common settings;
 // adds LLVM ThinLTO, better optimisation, and native cross-compilation via --mtriple.
 
-compiler["name"]          = "ldc2";
-compiler["homepage"]      = "https://github.com/ldc-developers/ldc";
-compiler["binary"]        = "ldc2";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "LDC - the LLVM D compiler \\((\\d+\\.\\d+\\.\\d+)\\)";
-compiler["extensions"]    = [".d"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "ldc2";
+homepage      = "https://github.com/ldc-developers/ldc";
+binary        = "ldc2";
+version_arg   = "--version";
+version_regex = "LDC - the LLVM D compiler \\((\\d+\\.\\d+\\.\\d+)\\)";
+extensions    = [".d"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["ld"]    = "ldc2";
 toolset["ar"]    = "ar";
@@ -35,14 +35,14 @@ flags["lto"]["false"] = "";
 flags["strip"]["true"]  = "--strip";
 flags["strip"]["false"] = "";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-d-version={name}";
-structure["define_value"] = "-d-version={name}";
-structure["output"]       = "-of={path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "";
-structure["target"]       = "--mtriple={triple}";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-d-version={name}";
+define_value = "-d-version={name}";
+output       = "-of={path}";
+compile_only = "-c";
+dep_file     = "";
+target       = "--mtriple={triple}";
+sysroot      = "";
 
 modules["style"] = "none";
 

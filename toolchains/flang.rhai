@@ -4,14 +4,14 @@
 
 let _flang = if find_tool("flang") != () { "flang" } else { "flang-new" };
 
-compiler["name"]          = "flang";
-compiler["homepage"]      = "https://flang.llvm.org/";
-compiler["binary"]        = _flang;
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "flang(?:-new)? version (\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "flang";
+homepage      = "https://flang.llvm.org/";
+binary        = _flang;
+version_arg   = "--version";
+version_regex = "flang(?:-new)? version (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["ld"]    = _flang;
 toolset["ar"]    = "ar";
@@ -43,14 +43,14 @@ standards["f2003"] = "-std=f2003";
 standards["f2008"] = "-std=f2008";
 standards["f2018"] = "-std=f2018";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MMD -MF {path}";
-structure["target"]       = "--target={triple}";
-structure["sysroot"]      = "--sysroot={path}";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";
+target       = "--target={triple}";
+sysroot      = "--sysroot={path}";
 
 modules["style"] = "none";
 

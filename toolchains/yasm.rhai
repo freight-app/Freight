@@ -1,16 +1,16 @@
 // YASM — NASM-compatible x86/x86_64 assembler.
 // Drop-in replacement for NASM; accepts the same -f output format flags.
 
-compiler["name"]          = "yasm";
-compiler["homepage"]      = "https://yasm.tortall.net/";
-compiler["binary"]        = "yasm";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "yasm (\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".asm", ".nasm"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "yasm";
+homepage      = "https://yasm.tortall.net/";
+binary        = "yasm";
+version_arg   = "--version";
+version_regex = "yasm (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".asm", ".nasm"];
+passthrough        = false;
+passthrough_prefix = "";
 // YASM only assembles x86 syntax; useless on non-x86 hosts.
-compiler["supported_archs"] = ["x86", "x86_64"];
+supported_archs = ["x86", "x86_64"];
 
 toolset["as"] = "yasm";
 
@@ -36,14 +36,14 @@ flags["lto"]["false"] = "";
 flags["strip"]["true"]  = "";
 flags["strip"]["false"] = "";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "";
-structure["dep_file"]     = "";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
 // Output format is arch+OS dependent — same table as NASM.
 arch_flags["x86_64.linux"]   = "-f elf64";

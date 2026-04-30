@@ -1,18 +1,18 @@
 // Compiles OpenCL C kernel files (.cl) using clang in OpenCL mode.
 // Host code (C or C++) is compiled separately by the gcc/clang template.
 
-compiler["name"]          = "opencl";
-compiler["homepage"]      = "https://www.khronos.org/opencl/";
-compiler["binary"]        = "clang";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
-compiler["extensions"]    = [".cl"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
-compiler["always_flags"] = ["-x", "cl"];
+name          = "opencl";
+homepage      = "https://www.khronos.org/opencl/";
+binary        = "clang";
+version_arg   = "--version";
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
+extensions    = [".cl"];
+passthrough        = false;
+passthrough_prefix = "";
+always_flags = ["-x", "cl"];
 // OpenCL kernel compilation uses clang in -x cl mode; the final binary
 // is linked by the host C++ application that drives the OpenCL runtime.
-compiler["requires_toolchain"] = ["cpp"];
+requires_toolchain = ["cpp"];
 
 toolset["ld"] = "clang";
 
@@ -43,14 +43,14 @@ standards["CL1.2"] = "-cl-std=CL1.2";
 standards["CL2.0"] = "-cl-std=CL2.0";
 standards["CL3.0"] = "-cl-std=CL3.0";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MF {path}";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MF {path}";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

@@ -68,114 +68,52 @@ impl Drop for Guard {
 }
 
 // ── Map types exposed to templates ────────────────────────────────────────────
+//
+// Fixed-schema fields (identity, structure) are plain Rhai scope variables —
+// readable and writeable like any local. Open-ended keyed data (flags, standards,
+// linking, modules, toolset, arch_flags, load_flags) uses custom map types so
+// that indexer_set writes go directly to thread-local state.
+//
+// Plain variable fields:
+//   name, homepage, binary, version_arg, version_regex, extensions, always_flags,
+//   passthrough, passthrough_prefix, min_version, supported_archs, supported_os,
+//   required_tools, required_env, requires_toolchain
+//   include_dir, define, define_value, output, compile_only, dep_file, target, sysroot
+//
+// Map fields:
+//   flags       — flags["opt"]["2"] = "-O2"
+//   standards   — standards["c++20"] = "-std=c++20"
+//   linking     — linking["cpp"] = #{ abi: "c++", ... }
+//   modules     — modules["style"] = "gcc"; modules["compile_miu"] = "..."
+//   toolset     — toolset["cc"] = "gcc"
+//   load_flags  — load_flags["cc"] += ["-m64"]   (in fn load())
+//   arch_flags  — arch_flags["x86_64.linux"] = "-f elf64"
+//   env         — env["CC"]  (read-only)
 
-/// `compiler` — top-level identity, constraints, and metadata.
-///
-/// ```rhai
-/// compiler["name"]               = "gcc";
-/// compiler["binary"]             = "g++";
-/// compiler["version_arg"]        = "--version";
-/// compiler["version_regex"]      = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
-/// compiler["extensions"]         = [".cpp", ".cc", ".c"];
-/// compiler["always_flags"]       = ["--expt-relaxed-constexpr"];
-/// compiler["passthrough"]        = false;
-/// compiler["passthrough_prefix"] = "";
-/// compiler["min_version"]        = "12.0";
-/// compiler["supported_archs"]    = ["x86_64", "aarch64"];
-/// compiler["supported_os"]       = ["linux", "windows"];
-/// compiler["required_tools"]     = ["ptxas", "fatbinary"];
-/// compiler["required_env"]       = ["ONEAPI_ROOT"];
-/// compiler["requires_toolchain"] = ["cpp"];
-/// compiler["homepage"]           = "https://...";  // informational
-/// ```
-#[derive(Clone)] struct CompilerMap;
-
-/// `flags` — two-level flag map.
-///
-/// Assign a whole category at once or write individual entries; both forms work:
-/// ```rhai
-/// flags["opt"] = #{"0": "-O0", "1": "-O1", "2": "-O2", "3": "-O3"};
-/// flags["debug"]["true"]  = "-g";   // chained write-back also works
-/// flags["debug"]["false"] = "";
-/// flags["sanitize"] = #{"template": "-fsanitize={values}"};
-/// ```
+/// `flags` — two-level: `flags["opt"]["2"] = "-O2"` or `flags["opt"] = #{...}`.
+/// Chained write-back: get returns inner Map copy → mutated → set called with result.
 #[derive(Clone)] struct FlagsMap;
 
-/// `standards` — language standard → compiler flag.
-/// ```rhai
-/// standards["c++20"] = "-std=c++20";
-/// ```
+/// `standards` — `standards["c++20"] = "-std=c++20"`.
 #[derive(Clone)] struct StandardsMap;
 
-/// `structure` — template patterns for flag assembly.
-/// ```rhai
-/// structure["include_dir"]  = "-I{path}";
-/// structure["define"]       = "-D{name}";
-/// structure["define_value"] = "-D{name}={value}";
-/// structure["output"]       = "-o {path}";
-/// structure["compile_only"] = "-c";
-/// structure["dep_file"]     = "-MMD -MF {path}";
-/// structure["target"]       = "--target={triple}";  // "" = unsupported
-/// structure["sysroot"]      = "--sysroot={path}";
-/// ```
-#[derive(Clone)] struct StructureMap;
-
-/// `modules` — C++ module configuration.
-/// ```rhai
-/// modules["style"]         = "gcc";          // "gcc" | "clang" | "none"
-/// modules["enable_flag"]   = "-fmodules-ts";
-/// modules["compile_miu"]   = "-fmodule-output={pcm_path}";
-/// modules["import_module"] = "-fmodule-file={name}={pcm_path}";
-/// modules["header_unit"]   = "-fmodule-header";
-/// modules["precompile"]    = "--precompile"; // clang two-step
-/// ```
+/// `modules` — `modules["style"] = "gcc"` etc.
 #[derive(Clone)] struct ModulesMap;
 
-/// `linking` — language ABI declarations.
-/// ```rhai
-/// linking["cpp"] = #{
-///     abi:            "c++",
-///     compatible:     ["c", "fortran"],
-///     compile_binary: "g++",  // optional override
-///     linker:         "",
-///     extensions:     [".cpp", ".cc", ".cxx"],
-/// };
-/// ```
+/// `linking` — `linking["cpp"] = #{ abi: "c++", compatible: [...], ... }`.
 #[derive(Clone)] struct LinkingMap;
 
-/// `toolset` — role → binary mapping.
-/// ```rhai
-/// toolset["cc"]    = "gcc";
-/// toolset["cxx"]   = "g++";
-/// toolset["ld"]    = "g++";
-/// toolset["ar"]    = "ar";
-/// toolset["strip"] = "strip";
-/// ```
+/// `toolset` — `toolset["cc"] = "gcc"`.
 #[derive(Clone)] struct ToolsetMap;
 
-/// `load_flags` — role-specific flags added at load time (inside `fn load()`).
-/// ```rhai
-/// fn load() {
-///     if arch == "x86_64" {
-///         load_flags["cc"]  += ["-m64"];
-///         load_flags["cxx"] += ["-m64"];
-///         load_flags["ld"]  += ["-m64"];
-///     }
-/// }
-/// ```
+/// `load_flags` — `load_flags["cc"] += ["-m64"]` (inside `fn load()`).
+/// get returns Array copy so `+=` write-back works correctly.
 #[derive(Clone)] struct LoadFlagsMap;
 
-/// `arch_flags` — arch+OS key → output-format flag (primarily for assemblers).
-/// ```rhai
-/// arch_flags["x86_64.linux"]   = "-f elf64";
-/// arch_flags["x86_64.windows"] = "-f win64";
-/// ```
+/// `arch_flags` — `arch_flags["x86_64.linux"] = "-f elf64"`.
 #[derive(Clone)] struct ArchFlagsMap;
 
-/// `env` — read-only access to host environment variables.
-/// ```rhai
-/// let root = env["ONEAPI_ROOT"];  // () when unset
-/// ```
+/// `env` — read-only host environment: `env["ONEAPI_ROOT"]` → string or `()`.
 #[derive(Clone)] struct EnvMap;
 
 // ── Script evaluation ─────────────────────────────────────────────────────────
@@ -191,18 +129,46 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     let _guard = Guard;
 
     let mut scope = Scope::new();
-    // Map objects — all writes go directly to thread-local CURRENT state.
-    scope.push("compiler",   CompilerMap);
+
+    // ── Plain variables — identity & constraints ───────────────────────────
+    for key in &[
+        "name", "homepage", "binary", "version_arg", "version_regex",
+        "passthrough_prefix", "min_version",
+    ] {
+        scope.push(*key, String::new());
+    }
+    for key in &[
+        "extensions", "always_flags",
+        "supported_archs", "supported_os",
+        "required_tools", "required_env", "requires_toolchain",
+    ] {
+        scope.push(*key, Array::new());
+    }
+    scope.push("passthrough", false);
+
+    // ── Plain variables — compiler flag structure ──────────────────────────
+    // Fixed schema: every toolchain declares exactly these slots (empty = unsupported).
+    for key in &[
+        "include_dir", "define", "define_value",
+        "output", "compile_only", "dep_file",
+        "target", "sysroot",
+        // Extended structure slots (MSVC and other toolchains that differ from the defaults).
+        "output_obj", "output_bin", "dep_file_mode", "system_lib",
+    ] {
+        scope.push(*key, String::new());
+    }
+
+    // ── Map objects ────────────────────────────────────────────────────────
     scope.push("flags",      FlagsMap);
     scope.push("standards",  StandardsMap);
-    scope.push("structure",  StructureMap);
     scope.push("modules",    ModulesMap);
     scope.push("linking",    LinkingMap);
     scope.push("toolset",    ToolsetMap);
     scope.push("load_flags", LoadFlagsMap);
     scope.push("arch_flags", ArchFlagsMap);
     scope.push("env",        EnvMap);
-    // Read-only host info — available as plain variables everywhere.
+
+    // ── Host info ──────────────────────────────────────────────────────────
     scope.push("arch", std::env::consts::ARCH.to_string());
     scope.push("os",   std::env::consts::OS.to_string());
 
@@ -210,16 +176,53 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
         .run_ast_with_scope(&mut scope, &ast)
         .map_err(|e| FreightError::TemplateError(format!("script error: {e}")))?;
 
-    // fn check() and fn load() see the same scope (and same thread-local state).
+    // fn load() can append to load_flags via the map type (immediate side-effects).
     let _ = engine.call_fn::<()>(&mut scope, &ast, "load", ());
 
-    let def = CURRENT
+    // ── Collect map data from thread-local state ───────────────────────────
+    let mut def = CURRENT
         .with(|c| c.borrow_mut().take())
         .ok_or_else(|| FreightError::TemplateError("builder lost after eval".into()))?;
 
+    // ── Read plain variables from scope ────────────────────────────────────
+    macro_rules! str  { ($k:expr) => { scope.get_value::<String>($k).unwrap_or_default() }; }
+    macro_rules! arr  { ($k:expr) => {
+        scope.get_value::<Array>($k).unwrap_or_default()
+            .into_iter().filter_map(|v| v.try_cast::<String>()).collect::<Vec<_>>()
+    }; }
+    macro_rules! bool { ($k:expr) => { scope.get_value::<bool>($k).unwrap_or_default() }; }
+
+    def.name               = str!("name");
+    def.binary             = str!("binary");
+    def.version_arg        = str!("version_arg");
+    def.version_regex      = str!("version_regex");
+    def.extensions         = arr!("extensions");
+    def.always_flags       = arr!("always_flags");
+    def.passthrough_enabled = bool!("passthrough");
+    def.passthrough_prefix  = str!("passthrough_prefix");
+    def.supported_archs    = arr!("supported_archs");
+    def.supported_os       = arr!("supported_os");
+    def.required_tools     = arr!("required_tools");
+    def.required_env       = arr!("required_env");
+    def.requires_toolchain = arr!("requires_toolchain");
+
+    let mv = str!("min_version");
+    if !mv.is_empty() { def.min_version = Some(mv); }
+
+    // Structure: insert every slot (empty string = unsupported/unused).
+    for key in &[
+        "include_dir", "define", "define_value",
+        "output", "compile_only", "dep_file",
+        "target", "sysroot",
+        // Extended structure slots (MSVC and other toolchains that differ from the defaults).
+        "output_obj", "output_bin", "dep_file_mode", "system_lib",
+    ] {
+        def.structure.insert(key.to_string(), str!(key));
+    }
+
     if def.name.is_empty() {
         return Err(FreightError::TemplateError(
-            "toolchain script must set compiler[\"name\"]".into(),
+            "toolchain script must set `name = \"...\"`".into(),
         ));
     }
 
@@ -232,36 +235,11 @@ fn make_engine() -> Engine {
     let mut e = Engine::new();
     e.set_max_operations(100_000);
 
-    // ── compiler map ─────────────────────────────────────────────────────────
-    e.register_type_with_name::<CompilerMap>("Compiler");
-    e.register_indexer_set(|_: &mut CompilerMap, key: ImmutableString, val: Dynamic| {
-        with_def(|d| match key.as_str() {
-            "name"               => { if let Some(s) = val.try_cast::<String>() { d.name = s; } }
-            "binary"             => { if let Some(s) = val.try_cast::<String>() { d.binary = s; } }
-            "version_arg"        => { if let Some(s) = val.try_cast::<String>() { d.version_arg = s; } }
-            "version_regex"      => { if let Some(s) = val.try_cast::<String>() { d.version_regex = s; } }
-            "extensions"         => { if let Some(a) = val.try_cast::<Array>() { d.extensions = strings_from(a); } }
-            "always_flags"       => { if let Some(a) = val.try_cast::<Array>() { d.always_flags = strings_from(a); } }
-            "passthrough"        => { if let Some(b) = val.try_cast::<bool>() { d.passthrough_enabled = b; } }
-            "passthrough_prefix" => { if let Some(s) = val.try_cast::<String>() { d.passthrough_prefix = s; } }
-            "min_version"        => { if let Some(s) = val.try_cast::<String>() { d.min_version = Some(s); } }
-            "supported_archs"    => { if let Some(a) = val.try_cast::<Array>() { d.supported_archs = strings_from(a); } }
-            "supported_os"       => { if let Some(a) = val.try_cast::<Array>() { d.supported_os = strings_from(a); } }
-            "required_tools"     => { if let Some(a) = val.try_cast::<Array>() { d.required_tools = strings_from(a); } }
-            "required_env"       => { if let Some(a) = val.try_cast::<Array>() { d.required_env = strings_from(a); } }
-            "requires_toolchain" => { if let Some(a) = val.try_cast::<Array>() { d.requires_toolchain = strings_from(a); } }
-            "homepage"           => {} // informational only
-            _ => {}
-        });
-    });
-    e.register_indexer_get(|_: &mut CompilerMap, _: ImmutableString| -> Dynamic {
-        Dynamic::UNIT
-    });
-
     // ── flags map ─────────────────────────────────────────────────────────────
-    // get returns a copy of the inner map so chained assignment write-back works:
-    //   flags["debug"]["true"] = "-g"
-    //   → get("debug") → Map  →  map["true"] = "-g"  →  set("debug", map)
+    // get returns an inner Map copy so chained `flags["opt"]["2"] = "-O2"` works:
+    //   1. get("opt")       → Map (current state or empty)
+    //   2. map["2"] = "-O2" → mutates the copy
+    //   3. set("opt", map)  → writes back to CURRENT
     e.register_type_with_name::<FlagsMap>("FlagsMap");
     e.register_indexer_get(|_: &mut FlagsMap, cat: ImmutableString| -> Dynamic {
         CURRENT.with(|c| {
@@ -294,24 +272,12 @@ fn make_engine() -> Engine {
         Dynamic::UNIT
     });
 
-    // ── structure map ─────────────────────────────────────────────────────────
-    e.register_type_with_name::<StructureMap>("StructureMap");
-    e.register_indexer_set(|_: &mut StructureMap, key: ImmutableString, val: String| {
-        with_def(|d| { d.structure.insert(key.to_string(), val); });
-    });
-    e.register_indexer_get(|_: &mut StructureMap, _: ImmutableString| -> Dynamic {
-        Dynamic::UNIT
-    });
-
     // ── modules map ───────────────────────────────────────────────────────────
     e.register_type_with_name::<ModulesMap>("ModulesMap");
     e.register_indexer_set(|_: &mut ModulesMap, key: ImmutableString, val: String| {
         with_def(|d| {
-            if key.as_str() == "style" {
-                d.module_style = val;
-            } else {
-                d.module_params.insert(key.to_string(), val);
-            }
+            if key.as_str() == "style" { d.module_style = val; }
+            else { d.module_params.insert(key.to_string(), val); }
         });
     });
     e.register_indexer_get(|_: &mut ModulesMap, _: ImmutableString| -> Dynamic {
@@ -322,8 +288,7 @@ fn make_engine() -> Engine {
     e.register_type_with_name::<LinkingMap>("LinkingMap");
     e.register_indexer_set(|_: &mut LinkingMap, lang: ImmutableString, val: Dynamic| {
         if let Some(m) = val.try_cast::<Map>() {
-            let lp = extract_linking(m);
-            with_def(|d| d.linking.push((lang.to_string(), lp)));
+            with_def(|d| d.linking.push((lang.to_string(), extract_linking(m))));
         }
     });
     e.register_indexer_get(|_: &mut LinkingMap, _: ImmutableString| -> Dynamic {
@@ -340,9 +305,10 @@ fn make_engine() -> Engine {
     });
 
     // ── load_flags map ────────────────────────────────────────────────────────
-    // get returns a copy of the current Array so += write-back works:
-    //   load_flags["cc"] += ["-m64"]
-    //   → get("cc") → Array  →  array += ["-m64"]  →  set("cc", array)
+    // get returns Array copy so `load_flags["cc"] += ["-m64"]` write-back works:
+    //   1. get("cc")          → Array (current state or empty)
+    //   2. array += ["-m64"]  → appends
+    //   3. set("cc", array)   → writes back to CURRENT
     e.register_type_with_name::<LoadFlagsMap>("LoadFlagsMap");
     e.register_indexer_get(|_: &mut LoadFlagsMap, role: ImmutableString| -> Array {
         CURRENT.with(|c| {
@@ -381,10 +347,6 @@ fn make_engine() -> Engine {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn strings_from(arr: Array) -> Vec<String> {
-    arr.into_iter().filter_map(|v| v.try_cast::<String>()).collect()
-}
 
 fn extract_linking(params: Map) -> LinkingParams {
     let mut lp = LinkingParams::default();

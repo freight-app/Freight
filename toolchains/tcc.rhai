@@ -2,14 +2,14 @@
 // No optimisation levels, no LTO, no sanitizers, and no dependency file generation
 // (dep_file is empty — freight falls back to mtime-only dirty checking for TCC projects).
 
-compiler["name"]          = "tcc";
-compiler["homepage"]      = "https://bellard.org/tcc/";
-compiler["binary"]        = "tcc";
-compiler["version_arg"]   = "-v";
-compiler["version_regex"] = "version (\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".c"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "tcc";
+homepage      = "https://bellard.org/tcc/";
+binary        = "tcc";
+version_arg   = "-v";
+version_regex = "version (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".c"];
+passthrough        = false;
+passthrough_prefix = "";
 
 toolset["cc"]  = "tcc";
 toolset["ld"]  = "tcc";
@@ -41,14 +41,14 @@ standards["c99"] = "-std=c99";
 standards["c11"] = "-std=c11";
 standards["c17"] = "-std=c17";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 

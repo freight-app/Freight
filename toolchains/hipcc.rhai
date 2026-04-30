@@ -1,20 +1,20 @@
 // AMD ROCm HIP compiler — AMD's CUDA equivalent.
 
-compiler["name"]          = "hipcc";
-compiler["homepage"]      = "https://rocm.docs.amd.com/";
-compiler["binary"]        = "hipcc";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "HIP version: (\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".hip", ".cpp", ".cc", ".cxx"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "hipcc";
+homepage      = "https://rocm.docs.amd.com/";
+binary        = "hipcc";
+version_arg   = "--version";
+version_regex = "HIP version: (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".hip", ".cpp", ".cc", ".cxx"];
+passthrough        = false;
+passthrough_prefix = "";
 // AMD ROCm supports x86_64 Linux only.
-compiler["supported_archs"] = ["x86_64"];
-compiler["supported_os"]    = ["linux"];
+supported_archs = ["x86_64"];
+supported_os    = ["linux"];
 // hipconfig is bundled with every ROCm installation and confirms a complete install.
-compiler["required_tools"] = ["hipconfig"];
+required_tools = ["hipconfig"];
 // hipcc wraps clang and delegates final linking to the host C++ linker.
-compiler["requires_toolchain"] = ["cpp"];
+requires_toolchain = ["cpp"];
 
 toolset["ld"] = "hipcc";
 
@@ -43,14 +43,14 @@ standards["c++14"] = "-std=c++14";
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "-c";
-structure["dep_file"]     = "-MMD -MF {path}";
-structure["target"]       = "--target={triple}";
-structure["sysroot"]      = "--sysroot={path}";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";
+target       = "--target={triple}";
+sysroot      = "--sysroot={path}";
 
 modules["style"] = "none";
 

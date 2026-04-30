@@ -1,18 +1,18 @@
 // Intel SPMD Program Compiler — vectorising compiler for CPU SIMD.
 // Outputs a .o + a C header. The host links the .o from C or C++.
 
-compiler["name"]          = "ispc";
-compiler["homepage"]      = "https://ispc.github.io/";
-compiler["binary"]        = "ispc";
-compiler["version_arg"]   = "--version";
-compiler["version_regex"] = "(\\d+\\.\\d+\\.\\d+)";
-compiler["extensions"]    = [".ispc"];
-compiler["passthrough"]        = false;
-compiler["passthrough_prefix"] = "";
+name          = "ispc";
+homepage      = "https://ispc.github.io/";
+binary        = "ispc";
+version_arg   = "--version";
+version_regex = "(\\d+\\.\\d+\\.\\d+)";
+extensions    = [".ispc"];
+passthrough        = false;
+passthrough_prefix = "";
 // ISPC compiler binaries are published for x86_64 and aarch64.
-compiler["supported_archs"] = ["x86_64", "aarch64"];
+supported_archs = ["x86_64", "aarch64"];
 // ISPC outputs .o + a C header; the host C++ application links everything.
-compiler["requires_toolchain"] = ["cpp"];
+requires_toolchain = ["cpp"];
 
 toolset["ld"] = "ispc";
 
@@ -37,14 +37,14 @@ flags["lto"]["false"] = "";
 flags["strip"]["true"]  = "";
 flags["strip"]["false"] = "";
 
-structure["include_dir"]  = "-I{path}";
-structure["define"]       = "-D{name}";
-structure["define_value"] = "-D{name}={value}";
-structure["output"]       = "-o {path}";
-structure["compile_only"] = "";
-structure["dep_file"]     = "-MMM {path}";
-structure["target"]       = "";
-structure["sysroot"]      = "";
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "";
+dep_file     = "-MMM {path}";
+target       = "";
+sysroot      = "";
 
 modules["style"] = "none";
 
