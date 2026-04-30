@@ -1,0 +1,12 @@
+[package]
+name    = "crane-doc"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crane-doc"
+path = "src/main.rs"
+
+[dependencies]
+crane-core = { path = "../crane-core" }
+clap       = { workspace = true }

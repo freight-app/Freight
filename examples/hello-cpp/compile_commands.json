@@ -1,0 +1,40 @@
+[
+  {
+    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
+    "file": "src/main.cpp",
+    "arguments": [
+      "/usr/sbin/clang++",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++20",
+      "-Iinc",
+      "-c",
+      "src/main.cpp",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  },
+  {
+    "directory": "/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
+    "file": "src/stats.cpp",
+    "arguments": [
+      "/usr/sbin/clang++",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++20",
+      "-Iinc",
+      "-c",
+      "src/stats.cpp",
+      "-o",
+      "target/dev/objs/src/stats.o"
+    ],
+    "output": "target/dev/objs/src/stats.o"
+  }
+]

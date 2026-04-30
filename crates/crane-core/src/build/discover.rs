@@ -118,6 +118,19 @@ pub(crate) fn build_ext_map(manifest: &Manifest, templates: &[CompilerTemplate])
         }
     }
 
+    // Assembly language keys are always active when their template is installed —
+    // users should not need to declare [language.asm] just to include .asm files.
+    const ASM_KEYS: &[&str] = &["asm"];
+    for &lang_key in ASM_KEYS {
+        for template in templates {
+            if let Some(linking) = template.linking.get(lang_key) {
+                for ext in &linking.extensions {
+                    ext_map.entry(ext.clone()).or_insert_with(|| lang_key.to_string());
+                }
+            }
+        }
+    }
+
     ext_map
 }
 

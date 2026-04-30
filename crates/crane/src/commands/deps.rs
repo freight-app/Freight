@@ -2,7 +2,8 @@ use std::path::Path;
 
 use crane_core::dep_cmds::{
     locate_project, manifest_add_dep, manifest_remove_dep, regen_lock,
-    fetch_git_deps, update_git_deps, DetailedDep, GitDepAction, RegenLockOutcome,
+    fetch_git_deps, fetch_url_deps, update_git_deps, invalidate_url_dep,
+    DetailedDep, GitDepAction, RegenLockOutcome,
 };
 use crane_core::manifest::types::{Dependency, Manifest};
 use crane_core::manifest::{find_manifest_dir, load_manifest};
@@ -38,7 +39,11 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
                 println!("{}{}{} {} (registry)", prefix, connector, name, ver);
             }
             Dependency::Detailed(d) if d.system.is_some() => {
-                println!("{}{}{}  (system)", prefix, connector, name);
+                if let Some(query) = &d.pkg_config {
+                    println!("{}{}{} (system, pkg-config: {})", prefix, connector, name, query);
+                } else {
+                    println!("{}{}{} (system)", prefix, connector, name);
+                }
             }
             Dependency::Detailed(d) if d.path.is_some() => {
                 let rel = d.path.as_deref().unwrap_or("?");
@@ -53,6 +58,10 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
             Dependency::Detailed(d) if d.git.is_some() => {
                 let url = d.git.as_deref().unwrap_or("?");
                 println!("{}{}{} (git+{})", prefix, connector, name, url);
+            }
+            Dependency::Detailed(d) if d.url.is_some() => {
+                let url = d.url.as_deref().unwrap_or("?");
+                println!("{}{}{} (url: {})", prefix, connector, name, url);
             }
             Dependency::Detailed(d) => {
                 let ver = d.version.as_deref().unwrap_or("*");
@@ -220,7 +229,37 @@ pub fn cmd_update(package: Option<&str>) {
         Err(e) => { print_error(&e.to_string()); return; }
     }
 
-    if path_count == 0 && !manifest.dependencies.values().any(|d| matches!(d, Dependency::Detailed(dd) if dd.git.is_some())) {
+    // Re-download url deps (invalidate sentinel, then re-fetch).
+    let url_count = manifest.dependencies.iter()
+        .filter(|(name, dep)| {
+            target.as_deref().map_or(true, |t| t == name.as_str())
+                && matches!(dep, Dependency::Detailed(d) if d.url.is_some())
+        })
+        .count();
+    if url_count > 0 {
+        for (name, dep) in &manifest.dependencies {
+            if target.as_deref().map_or(true, |t| t == name.as_str()) {
+                if let Dependency::Detailed(d) = dep {
+                    if d.url.is_some() {
+                        invalidate_url_dep(&project_dir, name);
+                    }
+                }
+            }
+        }
+        match fetch_url_deps(&project_dir) {
+            Ok(outcomes) => {
+                for (name, _) in outcomes {
+                    print_success(&format!("re-fetched `{name}`"));
+                }
+            }
+            Err(e) => { print_error(&e.to_string()); return; }
+        }
+    }
+
+    if path_count == 0
+        && !manifest.dependencies.values().any(|d| matches!(d, Dependency::Detailed(dd) if dd.git.is_some()))
+        && url_count == 0
+    {
         if let Some(pkg) = package {
             print_error(&format!("`{pkg}` not found in [dependencies]"));
         } else {
@@ -288,6 +327,21 @@ pub fn cmd_fetch() {
                     GitDepAction::Cloned        => print_success(&format!("cloned `{}`", o.name)),
                     GitDepAction::AlreadyPresent => print_status("ok",   &format!("{} (git, up to date)", o.name)),
                     _ => {}
+                }
+            }
+        }
+        Err(e) => { print_error(&e.to_string()); all_ok = false; }
+    }
+
+    // Download url deps.
+    match fetch_url_deps(&project_dir) {
+        Ok(outcomes) => {
+            for (name, already_present) in outcomes {
+                any_work = true;
+                if already_present {
+                    print_status("ok", &format!("{name} (http, up to date)"));
+                } else {
+                    print_success(&format!("fetched `{name}`"));
                 }
             }
         }

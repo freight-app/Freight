@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crane_core::toolchain::{detect_all_cached, load_all_templates, toolchain_add, user_templates_dir};
+use crane_core::toolchain::{
+    detect_all_cached, detect_debuggers, load_all_templates, load_debugger_templates,
+    toolchain_add, user_templates_dir,
+};
 
 use crate::output::{print_error, print_success, print_warning};
 
@@ -14,18 +17,27 @@ pub fn cmd_toolchain_list() {
     let detected = detect_all_cached(&templates);
     if detected.is_empty() {
         println!("No supported compilers found on PATH.");
-        return;
+    } else {
+        println!("{:<12} {:<12} {}", "Compiler", "Version", "Path");
+        println!("{}", "-".repeat(60));
+        for d in &detected {
+            println!("{:<12} {:<12} {}", d.template.name, d.version, d.path.display());
+        }
     }
 
-    println!("{:<12} {:<12} {}", "Compiler", "Version", "Path");
-    println!("{}", "-".repeat(60));
-    for d in &detected {
-        println!(
-            "{:<12} {:<12} {}",
-            d.template.name,
-            d.version,
-            d.path.display()
-        );
+    // Show debuggers in a separate section.
+    let dbg_templates = load_debugger_templates();
+    let debuggers = detect_debuggers(&dbg_templates);
+    if !debuggers.is_empty() {
+        println!();
+        println!("{:<12} {:<12} {}", "Debugger", "Version", "Path");
+        println!("{}", "-".repeat(60));
+        for d in &debuggers {
+            let dap = d.dap_path.as_ref()
+                .map(|p| format!("  (dap: {})", p.display()))
+                .unwrap_or_default();
+            println!("{:<12} {:<12} {}{}", d.template.name, d.version, d.path.display(), dap);
+        }
     }
 }
 

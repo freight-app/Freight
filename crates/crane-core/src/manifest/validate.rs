@@ -43,6 +43,7 @@ pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<Vali
     validate_platforms(manifest, &mut errors);
     validate_dep_env_filters(manifest, &mut errors);
     validate_features(manifest, &mut errors);
+    validate_http_deps(manifest, &mut errors);
 
     errors
 }
@@ -97,6 +98,28 @@ fn validate_features(m: &Manifest, errors: &mut Vec<ValidationError>) {
             // For now, just flag if `default-features = false` with no features listed.
             let _ = (dep_name, feat);  // reserved for future cross-manifest checks
         }
+    }
+}
+
+fn validate_http_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    for (name, dep) in &m.dependencies {
+        let Dependency::Detailed(d) = dep else { continue };
+        let ctx = format!("[dependencies.{name}]");
+
+        // pkg_config is for system-installed libraries. It can be used alone
+        // (`{ pkg_config = "zlib" }`) or with system as a -l{name} fallback
+        // (`{ system = "z", pkg_config = "zlib" }`). It must not be combined
+        // with source dep kinds (path / git / url).
+        if d.pkg_config.is_some() {
+            let has_source = d.path.is_some() || d.git.is_some() || d.url.is_some();
+            if has_source {
+                errors.push(ValidationError::new(
+                    &ctx,
+                    "pkg_config cannot be combined with path, git, or url",
+                ));
+            }
+        }
+
     }
 }
 

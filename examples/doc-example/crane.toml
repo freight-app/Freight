@@ -1,0 +1,14 @@
+[package]
+name        = "doc-example"
+version     = "0.1.0"
+description = "Multi-language doc comment showcase for crane-doc"
+
+[language.cpp]
+std = "c++17"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "doc-example"
+src  = "src/main.cpp"

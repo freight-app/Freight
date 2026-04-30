@@ -20,7 +20,7 @@ pub struct LinkResult {
 ///
 /// - Each `[[bin]]` → executable in `target/{profile}/{name}`
 /// - `[lib] type = "static"` → `target/{profile}/lib{name}.a` (via `ar`)
-/// - `[lib] type = "shared"` → `target/{profile}/lib{name}.so`
+/// - `[lib] type = "shared"` → `target/{profile}/lib{name}.so` (Linux), `.dylib` (macOS), `.dll` (Windows)
 /// - `[lib] type = "header-only"` → nothing to link
 ///
 /// `dep_libs` are pre-built `.a` archives from `.deps/` that are linked in
@@ -33,6 +33,7 @@ pub fn link_targets(
     detected: &[DetectedCompiler],
     templates: &[CompilerTemplate],
     dep_libs: &[PathBuf],
+    extra_link_flags: &[String],
 ) -> Result<LinkResult, CraneError> {
     let mut outputs: Vec<PathBuf> = Vec::new();
 
@@ -52,7 +53,7 @@ pub fn link_targets(
             .collect();
 
         print_linking(&bin.name);
-        link_executable(&bin_objects, &out, linker, manifest, profile, project_dir, dep_libs)?;
+        link_executable(&bin_objects, &out, linker, manifest, profile, dep_libs, extra_link_flags)?;
         outputs.push(out);
     }
 
@@ -61,17 +62,19 @@ pub fn link_targets(
             LibType::Static => {
                 let out = project_dir.join("target").join(profile)
                     .join(format!("lib{}.a", manifest.package.name));
+                let linker = select_linker(manifest, detected, templates)
+                    .ok_or_else(|| CraneError::CompilerNotFound("no suitable linker found".into()))?;
                 print_archiving(out.file_name().unwrap_or_default().to_str().unwrap_or("lib"));
-                link_static(&out, objects)?;
+                link_static(&out, objects, linker.template.ar_binary())?;
                 outputs.push(out);
             }
             LibType::Shared => {
-                let out = project_dir.join("target").join(profile)
-                    .join(format!("lib{}.so", manifest.package.name));
+                let lib_name = shared_lib_name(&manifest.package.name);
+                let out = project_dir.join("target").join(profile).join(&lib_name);
                 let linker = select_linker(manifest, detected, templates)
                     .ok_or_else(|| CraneError::CompilerNotFound("no suitable linker found".into()))?;
                 print_linking(out.file_name().unwrap_or_default().to_str().unwrap_or("lib"));
-                link_shared(objects, &out, linker, manifest, profile, project_dir, dep_libs)?;
+                link_shared(objects, &out, linker, manifest, profile, dep_libs, extra_link_flags)?;
                 outputs.push(out);
             }
             LibType::HeaderOnly => {}
@@ -87,20 +90,20 @@ pub fn link_test_binary(
     out: &Path,
     manifest: &Manifest,
     profile: &str,
-    project_dir: &Path,
     detected: &[DetectedCompiler],
     templates: &[CompilerTemplate],
     dep_libs: &[PathBuf],
+    extra_link_flags: &[String],
 ) -> Result<(), CraneError> {
     let linker = select_linker(manifest, detected, templates)
         .ok_or_else(|| CraneError::CompilerNotFound("no suitable linker found".into()))?;
-    link_executable(objects, out, linker, manifest, profile, project_dir, dep_libs)
+    link_executable(objects, out, linker, manifest, profile, dep_libs, extra_link_flags)
 }
 
-/// Archive a set of object files into a static library using `ar`.
-/// Used to produce dep `.a` files during the dep build step.
-pub fn link_static_lib(objects: &[PathBuf], out: &Path) -> Result<(), CraneError> {
-    link_static(out, objects)
+/// Archive a set of object files into a static library.
+/// `ar_bin` is the archiver binary to use (from `CompilerTemplate::ar_binary()`).
+pub fn link_static_lib(objects: &[PathBuf], out: &Path, ar_bin: &str) -> Result<(), CraneError> {
+    link_static(out, objects, ar_bin)
 }
 
 /// Pick the compiler binary that drives the final link step.
@@ -148,24 +151,33 @@ fn link_executable(
     linker: &DetectedCompiler,
     manifest: &Manifest,
     profile: &str,
-    _project_dir: &Path,
     dep_libs: &[PathBuf],
+    extra_link_flags: &[String],
 ) -> Result<(), CraneError> {
     let mut cmd = Command::new(&linker.path);
-    cmd.args(linker.template.assemble_flags(&link_settings(manifest, profile)));
+    cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
     cmd.args(objects);
     cmd.args(dep_libs);
-    for flag in collect_system_lib_flags(manifest) {
+    for flag in collect_system_lib_flags(manifest, &linker.template) {
         cmd.arg(flag);
     }
-    cmd.args(linker.template.output_flag(out));
+    cmd.args(extra_link_flags);
+    cmd.args(linker.template.output_bin_flag(out));
     run_cmd(cmd, out)
 }
 
-fn link_static(out: &Path, objects: &[PathBuf]) -> Result<(), CraneError> {
-    let mut cmd = Command::new("ar");
+fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<(), CraneError> {
+    let mut cmd = Command::new(ar_bin);
     cmd.arg("rcs").arg(out).args(objects);
     run_cmd(cmd, out)
+}
+
+fn shared_lib_name(name: &str) -> String {
+    match std::env::consts::OS {
+        "macos" => format!("lib{name}.dylib"),
+        "windows" => format!("{name}.dll"),
+        _ => format!("lib{name}.so"),
+    }
 }
 
 fn link_shared(
@@ -174,18 +186,20 @@ fn link_shared(
     linker: &DetectedCompiler,
     manifest: &Manifest,
     profile: &str,
-    _project_dir: &Path,
     dep_libs: &[PathBuf],
+    extra_link_flags: &[String],
 ) -> Result<(), CraneError> {
+    let shared_flag = if std::env::consts::OS == "macos" { "-dynamiclib" } else { "-shared" };
     let mut cmd = Command::new(&linker.path);
-    cmd.args(linker.template.assemble_flags(&link_settings(manifest, profile)));
-    cmd.arg("-shared");
+    cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
+    cmd.arg(shared_flag);
     cmd.args(objects);
     cmd.args(dep_libs);
-    for flag in collect_system_lib_flags(manifest) {
+    for flag in collect_system_lib_flags(manifest, &linker.template) {
         cmd.arg(flag);
     }
-    cmd.args(linker.template.output_flag(out));
+    cmd.args(extra_link_flags);
+    cmd.args(linker.template.output_bin_flag(out));
     run_cmd(cmd, out)
 }
 
@@ -203,15 +217,26 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), CraneError> {
 
 // ── Dependency helpers ────────────────────────────────────────────────────────
 
-/// Collect `-l{name}` flags for every `system = "..."` dependency.
-fn collect_system_lib_flags(manifest: &Manifest) -> Vec<String> {
+/// Collect system library link flags for every `system = "..."` dependency.
+///
+/// The flag format is determined by `linker.system_lib_flag(name)` — GCC/Clang produce
+/// `-l{name}`, MSVC produces `{name}.lib`.
+///
+/// Deps with `pkg_config = "..."` are skipped here — pkg-config already provides the
+/// correct link flags via `raw_link_flags` from `build_foreign_deps`.
+fn collect_system_lib_flags(manifest: &Manifest, linker: &CompilerTemplate) -> Vec<String> {
     let effective = manifest.effective_dependencies();
     effective.values()
         .chain(manifest.dev_dependencies.values())
         .filter_map(|dep| {
-            if let Dependency::Detailed(d) = dep { d.system.as_deref() } else { None }
+            if let Dependency::Detailed(d) = dep {
+                if d.pkg_config.is_some() { return None; }
+                d.system.as_deref()
+            } else {
+                None
+            }
         })
-        .map(|name| format!("-l{name}"))
+        .map(|name| linker.system_lib_flag(name))
         .collect()
 }
 
@@ -249,10 +274,17 @@ mod tests {
 
     const TEMPLATES_DIR: &str =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
+    const GCC_RHAI: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains/gcc.rhai"));
+    const MSVC_RHAI: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains/msvc.rhai"));
 
     fn templates() -> Vec<CompilerTemplate> {
         crate::toolchain::load_templates(std::path::Path::new(TEMPLATES_DIR))
     }
+
+    fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
+    fn msvc() -> CompilerTemplate { CompilerTemplate::from_rhai(MSVC_RHAI).unwrap() }
 
     fn fake_detected(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {
         templates.iter().map(|t| DetectedCompiler {
@@ -352,14 +384,33 @@ src  = "src/main.cpp"
 OpenBLAS = { system = "openblas" }
 "#;
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
-        let flags = collect_system_lib_flags(&m);
+        let flags = collect_system_lib_flags(&m, &gcc());
         assert!(flags.contains(&"-lopenblas".to_string()));
     }
 
     #[test]
     fn no_system_deps_returns_empty() {
         let m = manifest("cpp");
-        assert!(collect_system_lib_flags(&m).is_empty());
+        assert!(collect_system_lib_flags(&m, &gcc()).is_empty());
+    }
+
+    #[test]
+    fn msvc_system_dep_uses_dot_lib_format() {
+        let manifest_src = r#"
+[package]
+name    = "p"
+version = "0.1.0"
+[language.cpp]
+[[bin]]
+name = "p"
+src  = "src/main.cpp"
+[dependencies]
+OpenSSL = { system = "ssl" }
+"#;
+        let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
+        let flags = collect_system_lib_flags(&m, &msvc());
+        assert!(flags.contains(&"ssl.lib".to_string()), "MSVC should use {{name}}.lib, got: {flags:?}");
+        assert!(!flags.iter().any(|f| f.starts_with("-l")), "MSVC must not emit -l flags");
     }
 
     // ── link_settings ─────────────────────────────────────────────────────────

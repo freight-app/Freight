@@ -2,6 +2,7 @@
 members = [
     "crates/crane",
     "crates/crane-core",
+    "crates/crane-doc",
     "crates/crane-migrator",
     "crates/crane-lsp",
 ]
@@ -10,6 +11,7 @@ resolver = "2"
 [workspace.dependencies]
 # CLI
 clap          = { version = "4", features = ["derive"] }
+clap_mangen   = "0.2"
 owo-colors    = "4"
 indicatif     = "0.17"
 
@@ -27,6 +29,7 @@ git2          = { version = "0.19", features = ["vendored-libgit2", "vendored-op
 
 # Dependency resolution
 semver        = "1"
+pulldown-cmark = "0.12"
 
 # Error handling
 anyhow        = "1"
@@ -36,3 +39,4 @@ thiserror     = "2"
 tower-lsp     = "0.20"
 tokio         = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync"] }
 dashmap       = "6"
+rhai          = "1"

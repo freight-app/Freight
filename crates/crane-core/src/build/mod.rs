@@ -1,8 +1,11 @@
 pub mod compile;
+pub mod compile_commands;
 pub mod deps;
 pub mod discover;
 pub mod features;
 pub mod foreign;
+pub mod header_units;
+pub mod http;
 pub mod link;
 pub mod modules;
 
@@ -69,7 +72,7 @@ pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, CraneError> {
     let mut outputs = Vec::new();
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        outputs.push(build_project_at(&member_dir, profile)?);
+        outputs.push(build_project_at(&member_dir, profile, &[], true)?);
     }
     Ok(outputs)
 }
@@ -101,7 +104,7 @@ pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary
     let mut total_failed = 0;
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        let s = test_project_at(&member_dir, profile, filter)?;
+        let s = test_project_at(&member_dir, profile, filter, &[], true)?;
         total_passed += s.passed;
         total_failed += s.failed;
     }
@@ -114,15 +117,15 @@ pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary
 /// caller decides how to present results. Progress-line output (`Building`,
 /// `Compiling foo.cpp`, `Linking ...`) currently goes to stdout directly;
 /// routing it through a callback is future work.
-pub fn build_project(profile: &str) -> Result<BuildOutput, CraneError> {
+pub fn build_project(profile: &str, features: &[String], use_defaults: bool) -> Result<BuildOutput, CraneError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    build_project_at(&project_dir, profile)
+    build_project_at(&project_dir, profile, features, use_defaults)
 }
 
 /// Build the project at a specific `project_dir`.
-pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput, CraneError> {
+pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], use_defaults: bool) -> Result<BuildOutput, CraneError> {
     let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
@@ -130,7 +133,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
     println!("  {} {} ({profile})", "Building".bold(), manifest.package.name);
 
     let feature_defines = {
-        let active = features::resolve_features(&manifest.features, &[], true)?;
+        let active = features::resolve_features(&manifest.features, features, use_defaults)?;
         features::to_defines(&active)
     };
 
@@ -140,21 +143,39 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
+    let mut all_raw_link_flags: Vec<String> = Vec::new();
     for f in foreign_built {
         all_libs.extend(f.libs);
         all_dep_includes.extend(f.include_dirs);
+        all_raw_link_flags.extend(f.raw_link_flags);
     }
 
     // Merge dep include dirs into the set passed to the root compile step.
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines)?;
+    // When the project uses C++20+, precompile dep headers as header units so
+    // consumers can write `import "dep.h";` instead of `#include "dep.h"`.
+    // Failures are non-fatal — we just skip and compile normally.
+    let hu_flags: Vec<String> = if let Some(cpp_std) = manifest.language.get("cpp")
+        .and_then(|l| l.std.as_deref())
+        .filter(|s| header_units::is_module_std(s))
+    {
+        let units = header_units::precompile_dep_headers(
+            project_dir, &all_dep_includes, cpp_std,
+            &manifest.compiler.backend, detected, profile,
+        );
+        if let Some(compiler) = compile::select_compiler("cpp", &manifest.compiler.backend, detected) {
+            header_units::import_flags(&units, compiler)
+        } else { vec![] }
+    } else { vec![] };
+
+    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines, &hu_flags)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
         &compile_result.objects, detected, templates,
-        &all_libs,
+        &all_libs, &all_raw_link_flags,
     )?;
 
     // Keep crane.lock in sync with the resolved dep graph. Lock-write failures
@@ -164,8 +185,18 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
         eprintln!("warning: could not write crane.lock: {e}");
     }
 
+    // Regenerate compile_commands.json so IDEs (clangd, fortls, serve-d…) stay
+    // in sync. Non-fatal — a write failure must not abort a successful build.
+    let cc = compile_commands::generate(
+        project_dir, manifest, detected, profile,
+        &found.sources, &include_dirs, &feature_defines,
+    );
+    if let Err(e) = compile_commands::write(project_dir, &cc) {
+        eprintln!("warning: could not write compile_commands.json: {e}");
+    }
+
     let binaries = link_result.outputs.iter()
-        .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so"))
+        .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so" || e == "dylib" || e == "dll"))
         .cloned()
         .collect();
 
@@ -175,6 +206,29 @@ pub fn build_project_at(project_dir: &Path, profile: &str) -> Result<BuildOutput
         compiled: compile_result.compiled,
         skipped: compile_result.skipped,
     })
+}
+
+/// Generate `compile_commands.json` without running a full build.
+///
+/// Uses only the project's own include dirs (not built dep dirs), so running
+/// `crane build` first gives more complete entries. Returns the number of
+/// entries written.
+pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result<usize, CraneError> {
+    let ctx = load_project_at(project_dir, profile)?;
+    let ProjectContext { project_dir, manifest, templates: _, detected, found } = &ctx;
+
+    let feature_defines = {
+        let active = features::resolve_features(&manifest.features, &[], true)?;
+        features::to_defines(&active)
+    };
+
+    let commands = compile_commands::generate(
+        project_dir, manifest, detected, profile,
+        &found.sources, &found.include_dirs, &feature_defines,
+    );
+    let count = commands.len();
+    compile_commands::write(project_dir, &commands)?;
+    Ok(count)
 }
 
 /// Wipe the project's `target/` directory (finds project by walking up from cwd).
@@ -195,15 +249,15 @@ pub fn clean_project_at(project_dir: &Path) -> Result<(), CraneError> {
 }
 
 /// Build and run the tests of the project rooted at the current working directory.
-pub fn test_project(profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+pub fn test_project(profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<TestSummary, CraneError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| CraneError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    test_project_at(&project_dir, profile, filter)
+    test_project_at(&project_dir, profile, filter, features, use_defaults)
 }
 
 /// Build and execute the project's test binaries.
-pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) -> Result<TestSummary, CraneError> {
+pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<TestSummary, CraneError> {
     let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
@@ -211,7 +265,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
     println!("  {} {} ({profile})", "Testing".bold(), manifest.package.name);
 
     let feature_defines = {
-        let active = features::resolve_features(&manifest.features, &[], true)?;
+        let active = features::resolve_features(&manifest.features, features, use_defaults)?;
         features::to_defines(&active)
     };
 
@@ -222,15 +276,17 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
+    let mut all_raw_link_flags: Vec<String> = Vec::new();
     for f in foreign_built {
         all_libs.extend(f.libs);
         all_dep_includes.extend(f.include_dirs);
+        all_raw_link_flags.extend(f.raw_link_flags);
     }
 
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines)?;
+    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &feature_defines, &[])?;
 
     // Objects from [[bin]] sources contain a main() — exclude from test linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
@@ -275,7 +331,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
     }
 
     let test_compile = compile_sources(
-        project_dir, manifest, profile, &test_srcs, &include_dirs, detected, &feature_defines,
+        project_dir, manifest, profile, &test_srcs, &include_dirs, detected, &feature_defines, &[],
     )?;
 
     let out_dir = project_dir.join("target").join(profile).join("tests");
@@ -296,8 +352,8 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>) 
             .chain(lib_objects.iter().cloned())
             .collect();
         link_test_binary(
-            &all_objs, &test_bin, manifest, profile, project_dir,
-            detected, templates, &all_libs,
+            &all_objs, &test_bin, manifest, profile,
+            detected, templates, &all_libs, &all_raw_link_flags,
         )?;
 
         print!("test {stem} ... ");
@@ -329,13 +385,14 @@ fn build_sources(
     include_dirs: &[PathBuf],
     detected: &[DetectedCompiler],
     feature_defines: &[String],
+    header_unit_flags: &[String],
 ) -> Result<CompileResult, CraneError> {
     let scanned = scan_sources(project_dir, sources);
     if has_modules(&scanned) {
         let mut plan = plan_module_build(project_dir, profile, scanned)?;
-        compile_module_sources(project_dir, manifest, profile, &mut plan, include_dirs, detected, feature_defines)
+        compile_module_sources(project_dir, manifest, profile, &mut plan, include_dirs, detected, feature_defines, header_unit_flags)
     } else {
-        compile_sources(project_dir, manifest, profile, sources, include_dirs, detected, feature_defines)
+        compile_sources(project_dir, manifest, profile, sources, include_dirs, detected, feature_defines, header_unit_flags)
     }
 }
 
@@ -398,7 +455,7 @@ fn build_resolved_deps(
 
         let compile_result = compile_sources(
             &dep.dir, &dep.manifest, profile,
-            &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines,
+            &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines, &[],
         )?;
 
         let lib_out = dep.dir.join("target").join(profile)
@@ -407,7 +464,10 @@ fn build_resolved_deps(
 
         if !lib_out.exists() || compile_result.compiled > 0 {
             println!(" {} lib{}.a", "Archiving".bold().cyan(), dep.name);
-            link_static_lib(&compile_result.objects, &lib_out)?;
+            let ar = select_linker(&dep.manifest, detected, templates)
+                .map(|l| l.template.ar_binary().to_owned())
+                .unwrap_or_else(|| "ar".to_owned());
+            link_static_lib(&compile_result.objects, &lib_out, &ar)?;
         }
 
         libs.push(lib_out);

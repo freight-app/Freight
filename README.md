@@ -18,6 +18,18 @@ Crane handles C, C++, Fortran, assembly, CUDA, HIP, OpenCL, and more — with a 
 - **Cross-compilation** — `[compiler] target` and `sysroot` for toolchain-native cross builds
 - **`crane migrate`** — import an existing CMake, Makefile, or Meson project in one command
 - **Language server** — `crane lsp` for `crane.toml` completions, hover docs, and go-to-definition
+- **API docs** — `crane doc` extracts doc comments and renders HTML, Markdown, LaTeX, or PDF with full math support
+
+## Naming conventions
+
+| Name | Meaning |
+|---|---|
+| `crane` | The CLI binary |
+| `crane.toml` | Project manifest (commit this) |
+| `crane.lock` | Auto-generated lockfile (commit this) |
+| `~/.crane/` | Global cache: toolchain cache, user templates, credentials |
+| `crane.dev` | The package registry (not yet live) |
+| `build.crane` | Optional pre-build hook script (planned) |
 
 ## Installation
 
@@ -158,6 +170,10 @@ crane update [<package>]
 crane tree                          print dependency tree
 crane migrate [--from cmake|makefile|meson] [--dry-run] [--force]
 crane lsp                           run language server on stdio
+crane debug [<binary>] [--debugger <name>] [--launch-json] [-- <args>]
+crane compile-commands [--release]  generate compile_commands.json
+crane doc [--format html|md|latex|pdf|all]
+crane man [--out-dir DIR]           generate man pages
 ```
 
 ## Examples
@@ -173,6 +189,8 @@ The `examples/` directory contains fully buildable projects:
 | `multi-bin/` | Two binaries from one source tree |
 | `cpp-modules/` | C++20 named modules, ASCII ray tracer |
 | `tri-lang/` | Fortran + C + C++ N-body gravity |
+| `asm-hello/` | C + NASM assembly |
+| `doc-example/` | C, C++, Fortran with LaTeX math in comments |
 | `migrated-from-cmake/` | Before/after for `crane migrate` |
 
 ```sh
@@ -180,6 +198,62 @@ cd examples/hello-cpp
 crane build
 crane run
 ```
+
+## Generating API docs
+
+`crane doc` extracts doc comments from your project's sources and renders them in one or more formats:
+
+```sh
+crane doc                        # → target/doc/index.html  (HTML with MathJax)
+crane doc --format md            # → target/doc/index.md    (GFM Markdown)
+crane doc --format latex         # → target/doc/docs.tex    (LaTeX source)
+crane doc --format pdf           # → target/doc/docs.pdf    (requires xelatex or pdflatex)
+crane doc --format all           # → target/doc/html/  md/  latex/  pdf/
+```
+
+Recognised doc comment styles:
+
+| Language | Styles |
+|---|---|
+| C / C++ | `/** */`, `/*! */`, `///` — Doxygen `@param`/`@return`/`@brief`/… |
+| Rust | `///`, `/** */` |
+| Fortran | `!>` block opener, `!!` continuation — FORD conventions |
+| D | `/++ +/`, `/**`, `///` — DDoc |
+| Ada | `--!`, `---` |
+
+Doc comment bodies are processed as Markdown (bold, italic, code spans, tables, lists).
+LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim so MathJax
+(HTML/Markdown) and LaTeX itself can render it.
+
+The `crane-doc` standalone binary works without a `crane.toml`:
+
+```sh
+crane-doc src/ --format all --out docs/api
+crane-doc src/ --dry-run       # list extracted items without writing
+```
+
+## Relation to xmake
+
+After starting this project I discovered [xmake](https://xmake.io), which covers similar ground — build tool for native languages, Lua-scripted toolchain definitions, package management. The surface resemblance is real and unintentional; I wasn't aware of it when crane was started.
+
+The underlying approach is different enough that I want to keep going:
+
+- **crane.toml is declarative, not a build script.** xmake's `xmake.lua` is executable Lua — the project description and the build logic are the same file. crane separates them: `crane.toml` is pure data (like `Cargo.toml`), and only toolchain definitions use scripting (Rhai, planned).
+- **crane is Cargo-flavoured.** The workflow — `crane add`, `crane.lock`, a central registry, `crane test` conventions — follows Cargo's model. The goal is that a Rust developer picking up a C++ project feels at home immediately.
+- **crane owns the build graph.** No Ninja or Make underneath. The DAG, dirty checking, parallel compilation, and C++20 module ordering all happen in crane itself.
+
+If xmake already does what you need, use it. Crane is a different bet on how the UX should feel.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/manifest-reference.md](docs/manifest-reference.md) | Complete `crane.toml` field reference |
+| [docs/compiler-templates.md](docs/compiler-templates.md) | Writing Rhai compiler scripts; debugger template schema |
+| [docs/architecture.md](docs/architecture.md) | Repository layout, build pipeline, architecture rules |
+| [docs/roadmap.md](docs/roadmap.md) | Development roadmap and phase status |
+| [docs/future-toolchains.md](docs/future-toolchains.md) | Planned compiler, assembler, and debugger additions |
+| [docs/registry-plan.md](docs/registry-plan.md) | Architecture plan for the crane.dev registry server |
 
 ## Contributing
 

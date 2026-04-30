@@ -46,6 +46,9 @@ pub struct Manifest {
     pub profile: Profiles,
     #[serde(default)]
     pub features: HashMap<String, Vec<String>>,
+    /// Assembly / CPU target configuration: arch override and CPU extensions.
+    #[serde(default)]
+    pub target: TargetConfig,
     /// Per-platform overlays keyed by OS name (`linux`, `windows`, `macos`,
     /// `freebsd`, …) or family alias (`unix`, `bsd`). Matching overlays are
     /// merged into the base config in a defined order (see [`host_platforms`])
@@ -100,6 +103,9 @@ impl Manifest {
             extra_flags: flags,
             target_triple: self.compiler.target.clone(),
             sysroot: self.compiler.sysroot.as_deref().map(PathBuf::from),
+            arch: self.target.arch.clone()
+                .unwrap_or_else(|| std::env::consts::ARCH.to_string()),
+            cpu_extensions: self.target.cpu_extensions.clone(),
             ..Default::default()
         };
 
@@ -386,6 +392,22 @@ pub struct DetailedDep {
     /// `cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cmake_args: Vec<String>,
+    /// URL to a source archive (`.tar.gz`, `.tar.bz2`, `.tar.xz`, `.zip`).
+    /// Any scheme that `curl` supports works: `https://`, `http://`, `ftp://`, etc.
+    /// The archive is downloaded, optionally verified with `sha256`, extracted to
+    /// `.deps/{name}/`, and then built by the auto-detected build system (or treated
+    /// as header-only if no source files are found).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Expected SHA-256 checksum (lowercase hex) of the downloaded archive.
+    /// Recommended for `url` deps; `crane fetch` rejects archives with a mismatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// pkg-config query string, e.g. `"libfoo >= 2.0"`. Crane runs
+    /// `pkg-config --cflags --libs <query>` and injects the result into
+    /// compilation and linking. No source build is performed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pkg_config: Option<String>,
 }
 
 fn default_true() -> bool { true }
@@ -406,6 +428,22 @@ where
         OneOrMany::One(s) => vec![s],
         OneOrMany::Many(v) => v,
     }))
+}
+
+// ── Target / assembly config ──────────────────────────────────────────────────
+
+/// `[target]` — CPU architecture and extension settings for assembly builds.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct TargetConfig {
+    /// Override the host CPU architecture used for assembler format selection
+    /// (e.g. `arch = "x86_64"`). Defaults to the host arch at build time.
+    #[serde(default)]
+    pub arch: Option<String>,
+    /// CPU extensions to enable (e.g. `["avx2", "fma"]`).
+    /// Each entry produces a compiler flag via the template's `cpu_extension` pattern,
+    /// e.g. `"-mavx2"` from `cpu_extension = "-m{name}"` in gcc.toml.
+    #[serde(default)]
+    pub cpu_extensions: Vec<String>,
 }
 
 // ── Compiler config ───────────────────────────────────────────────────────────

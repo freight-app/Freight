@@ -21,7 +21,7 @@ fn at_workspace_root() -> bool {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-pub fn cmd_build(release: bool) {
+pub fn cmd_build(release: bool, features: &[String], use_defaults: bool) {
     let profile = if release { "release" } else { "dev" };
 
     if at_workspace_root() {
@@ -43,7 +43,7 @@ pub fn cmd_build(release: bool) {
         return;
     }
 
-    match build_project(profile) {
+    match build_project(profile, features, use_defaults) {
         Ok(output) => {
             println!();
             print_success(&format!(
@@ -58,7 +58,7 @@ pub fn cmd_build(release: bool) {
     }
 }
 
-pub fn cmd_run(release: bool, run_args: &[String]) {
+pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaults: bool, run_args: &[String]) {
     let profile = if release { "release" } else { "dev" };
 
     if at_workspace_root() {
@@ -66,36 +66,61 @@ pub fn cmd_run(release: bool, run_args: &[String]) {
         return;
     }
 
-    let output = match build_project(profile) {
+    let output = match build_project(profile, features, use_defaults) {
         Ok(o) => o,
         Err(e) => { println!(); print_error(&e.to_string()); return; }
     };
 
-    match output.binaries.as_slice() {
-        [] => {
-            print_error("no binary target produced — add a [[bin]] section to crane.toml");
-        }
-        [bin] => {
-            println!();
-            use owo_colors::OwoColorize;
-            println!("    {} {}", "Running".bold().green(), bin.display());
-            println!();
-            let status = Command::new(bin).args(run_args).status();
-            match status {
-                Ok(s) if !s.success() => {
-                    if let Some(code) = s.code() {
-                        print_error(&format!("process exited with code {code}"));
-                    }
+    let candidate: Option<&std::path::PathBuf> = match bin {
+        Some(name) => {
+            let matched: Vec<_> = output.binaries.iter()
+                .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                .collect();
+            match matched.as_slice() {
+                [b] => Some(b),
+                [] => {
+                    print_error(&format!("no binary named {name:?} — available: {}",
+                        output.binaries.iter()
+                            .filter_map(|p| p.file_name()?.to_str())
+                            .collect::<Vec<_>>().join(", ")
+                    ));
+                    return;
                 }
-                Err(e) => print_error(&format!("failed to run binary: {e}")),
-                Ok(_) => {}
+                _ => Some(matched[0]),
             }
         }
-        _ => {
-            print_error("multiple [[bin]] targets — specify which to run (not yet supported)");
-            for b in &output.binaries {
-                eprintln!("  {}", b.display());
+        None => match output.binaries.as_slice() {
+            [] => {
+                print_error("no binary target produced — add a [[bin]] section to crane.toml");
+                return;
             }
+            [b] => Some(b),
+            _ => {
+                print_error(&format!(
+                    "multiple [[bin]] targets — use --bin <name> to select one: {}",
+                    output.binaries.iter()
+                        .filter_map(|p| p.file_name()?.to_str())
+                        .collect::<Vec<_>>().join(", ")
+                ));
+                return;
+            }
+        },
+    };
+
+    if let Some(bin_path) = candidate {
+        println!();
+        use owo_colors::OwoColorize;
+        println!("    {} {}", "Running".bold().green(), bin_path.display());
+        println!();
+        let status = Command::new(bin_path).args(run_args).status();
+        match status {
+            Ok(s) if !s.success() => {
+                if let Some(code) = s.code() {
+                    print_error(&format!("process exited with code {code}"));
+                }
+            }
+            Err(e) => print_error(&format!("failed to run binary: {e}")),
+            Ok(_) => {}
         }
     }
 }
@@ -115,7 +140,7 @@ pub fn cmd_clean() {
     }
 }
 
-pub fn cmd_test(filter: Option<&str>) {
+pub fn cmd_test(filter: Option<&str>, features: &[String], use_defaults: bool) {
     if at_workspace_root() {
         match test_workspace("dev", filter) {
             Ok(summary) => {
@@ -140,7 +165,7 @@ pub fn cmd_test(filter: Option<&str>) {
         return;
     }
 
-    match test_project("dev", filter) {
+    match test_project("dev", filter, features, use_defaults) {
         Ok(summary) => {
             println!();
             if summary.total == 0 {

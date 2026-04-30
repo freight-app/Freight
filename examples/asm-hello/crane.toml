@@ -1,0 +1,11 @@
+[package]
+name        = "asm-hello"
+version     = "0.1.0"
+description = "C + NASM assembly in one project"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "asm-hello"
+src  = "src/main.c"

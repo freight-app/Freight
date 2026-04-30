@@ -1,0 +1,15 @@
+name          = "gdb"
+binary        = "gdb"
+version_arg   = "--version"
+version_regex = "GNU gdb[^\\d]+(\\d+\\.\\d+)"
+
+[launch]
+# gdb --args <binary> [args]
+separator = "--args"
+
+[dap]
+# GDB gained native DAP support in version 14 (--interpreter=dap).
+# Probed as a fallback; empty = not available as a standalone adapter binary.
+binaries    = []
+vscode_type = "cppdbg"
+mi_mode     = "gdb"

@@ -1,0 +1,28 @@
+[package]
+name        = "with-external-deps"
+version     = "0.1.0"
+description = "Example: url, git, and system+pkg_config dependencies"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "with-external-deps"
+src  = "src/main.cpp"
+
+[dependencies]
+# URL archive dep — any scheme curl supports: https://, http://, ftp://, …
+# Header-only: crane detects no source files after fetching, skips building.
+# sha256 is optional but recommended to pin the exact archive.
+# Run `crane fetch` to download before `crane build`.
+json    = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz", include = ["single_include"] }
+cxxopts = { url = "https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.2.1.tar.gz", include = ["include"] }
+
+# System-installed library with pkg-config — system = "z" is the bare -lfoo fallback
+# if pkg-config is not available; pkg_config = "zlib" runs `pkg-config --cflags --libs zlib`
+# to discover include dirs and the exact linker flags automatically.
+zlib = { system = "z", pkg_config = "zlib" }
+
+[profile.dev]
+opt-level = 0
+debug     = true

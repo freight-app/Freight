@@ -246,6 +246,7 @@ pub fn compile_module_sources(
     include_dirs: &[PathBuf],
     detected: &[DetectedCompiler],
     feature_defines: &[String],
+    header_unit_flags: &[String],
 ) -> Result<CompileResult, CraneError> {
     let mut all_objects: Vec<PathBuf> = Vec::new();
     let mut total_compiled = 0usize;
@@ -258,7 +259,7 @@ pub fn compile_module_sources(
         let results: Result<Vec<(PathBuf, bool)>, CraneError> = batch
             .par_iter()
             .map(|scanned| {
-                compile_miu(project_dir, manifest, profile, scanned, include_dirs, detected, &bmi_snapshot, feature_defines)
+                compile_miu(project_dir, manifest, profile, scanned, include_dirs, detected, &bmi_snapshot, feature_defines, header_unit_flags)
             })
             .collect();
 
@@ -274,7 +275,7 @@ pub fn compile_module_sources(
         .par_iter()
         .map(|scanned| {
             let mflags = import_flags(&scanned.imports, bmi_map);
-            compile_non_miu(project_dir, manifest, profile, scanned, include_dirs, detected, &mflags, feature_defines)
+            compile_non_miu(project_dir, manifest, profile, scanned, include_dirs, detected, &mflags, feature_defines, header_unit_flags)
         })
         .collect();
 
@@ -297,6 +298,7 @@ fn compile_miu(
     detected: &[DetectedCompiler],
     bmi_map: &HashMap<String, PathBuf>,
     feature_defines: &[String],
+    header_unit_flags: &[String],
 ) -> Result<(PathBuf, bool), CraneError> {
     let src_abs = project_dir.join(&scanned.source.path);
     let obj = object_path(project_dir, profile, &scanned.source.path);
@@ -330,9 +332,10 @@ fn compile_miu(
             let bmi_flag = miu_flag_tmpl.replace("{pcm_path}", &bmi.to_string_lossy());
             let mut mflags = split_flags(&bmi_flag);
             mflags.extend_from_slice(&dep_import_flags);
+            mflags.extend_from_slice(header_unit_flags);
             compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, &mflags)?;
         }
-        ModuleStyle::Clang { precompile: precompile_flag, import_module: import_tmpl } => {
+        ModuleStyle::Clang { precompile: precompile_flag, import_module: import_tmpl, .. } => {
             // Step 1: --precompile → BMI (.pcm); no object produced.
             precompile_clang(
                 &src_abs, &bmi, &compile_bin, compiler, &settings,
@@ -344,6 +347,7 @@ fn compile_miu(
                 .replace("{pcm_path}", &bmi.to_string_lossy());
             let mut mflags = split_flags(&own_flag);
             mflags.extend_from_slice(&dep_import_flags);
+            mflags.extend_from_slice(header_unit_flags);
             compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, &mflags)?;
         }
         ModuleStyle::Unsupported => {
@@ -396,6 +400,7 @@ fn compile_non_miu(
     detected: &[DetectedCompiler],
     module_flags_slice: &[String],
     feature_defines: &[String],
+    header_unit_flags: &[String],
 ) -> Result<(PathBuf, bool), CraneError> {
     let src_abs = project_dir.join(&scanned.source.path);
     let obj = object_path(project_dir, profile, &scanned.source.path);
@@ -411,9 +416,12 @@ fn compile_non_miu(
     let settings = settings_for_lang(manifest, profile, &scanned.source.lang_key, include_dirs, project_dir, feature_defines);
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
 
+    let mut all_flags: Vec<String> = module_flags_slice.to_vec();
+    all_flags.extend_from_slice(header_unit_flags);
+
     fs::create_dir_all(obj.parent().unwrap())?;
     print_compiling(&scanned.source.path);
-    compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, module_flags_slice)?;
+    compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, &all_flags)?;
     Ok((obj, true))
 }
 

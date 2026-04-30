@@ -17,6 +17,9 @@ pub struct ForeignBuilt {
     pub name: String,
     pub libs: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
+    /// Raw linker flags (e.g. `-pthread`, `-L/usr/lib`, `-lfoo`) produced by
+    /// pkg-config queries. Appended verbatim to the linker command.
+    pub raw_link_flags: Vec<String>,
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -32,27 +35,64 @@ pub fn build_foreign_deps(
     for (name, dep) in &manifest.dependencies {
         let Dependency::Detailed(d) = dep else { continue };
 
+        // ── pkg-config dep ────────────────────────────────────────────────────
+        // Can be standalone (`{ pkg_config = "zlib" }`) or combined with
+        // `system` (`{ system = "z", pkg_config = "zlib" }`). When combined,
+        // `system` is the bare -l{name} fallback if pkg-config is unavailable.
+        if let Some(query) = &d.pkg_config {
+            use owo_colors::OwoColorize;
+            println!("  {} {} (pkg-config)", "Resolving".dimmed(), name);
+            match super::http::pkg_config_query(query) {
+                Ok(pc) => {
+                    results.push(ForeignBuilt {
+                        name: name.clone(),
+                        libs: vec![],
+                        include_dirs: pc.include_dirs,
+                        raw_link_flags: pc.link_flags,
+                    });
+                }
+                Err(e) => {
+                    if let Some(fallback) = &d.system {
+                        println!(
+                            "  {} pkg-config for '{name}' failed ({e}); \
+                             falling back to -l{fallback}",
+                            "warning:".yellow()
+                        );
+                        // Push -l{fallback} via raw_link_flags so the flag
+                        // reaches the linker. collect_system_lib_flags skips
+                        // all deps with pkg_config set to avoid double-linking.
+                        results.push(ForeignBuilt {
+                            name: name.clone(),
+                            libs: vec![],
+                            include_dirs: vec![],
+                            raw_link_flags: vec![format!("-l{fallback}")],
+                        });
+                    } else {
+                        return Err(CraneError::ManifestParse(format!(
+                            "pkg-config failed for '{name}' and no system fallback: {e}"
+                        )));
+                    }
+                }
+            }
+            continue;
+        }
+
+        // ── Pure system dep (no pkg_config) ──────────────────────────────────
+        // -l{name} is collected by collect_system_lib_flags; nothing to do here.
+        if d.system.is_some() {
+            continue;
+        }
+
+        // ── Determine source directory ─────────────────────────────────────────
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
         } else if d.git.is_some() {
             project_dir.join(".deps").join(name)
+        } else if let Some(url) = &d.url {
+            super::http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir)?
         } else {
+            // Version dep — not a foreign build.
             continue;
-        };
-
-        // Resolve effective build system: explicit > auto-detect > skip (crane project).
-        // For path deps that have a crane.toml, crane owns the build regardless.
-        let bs = match &d.build_system {
-            Some(bs) => bs.clone(),
-            None => {
-                if d.path.is_some() && dep_dir.join("crane.toml").exists() {
-                    continue;
-                }
-                match detect_build_system(&dep_dir) {
-                    Some(detected) => detected,
-                    None => continue,
-                }
-            }
         };
 
         if !dep_dir.exists() {
@@ -62,26 +102,82 @@ pub fn build_foreign_deps(
             )));
         }
 
+        // ── Resolve build system ──────────────────────────────────────────────
+        // Explicit > auto-detect > header-only fallback > skip (crane native).
+        let bs = match &d.build_system {
+            Some(bs) if bs == "none" => {
+                let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
+                results.push(ForeignBuilt {
+                    name: name.clone(),
+                    libs: vec![],
+                    include_dirs,
+                    raw_link_flags: vec![],
+                });
+                continue;
+            }
+            Some(bs) => bs.clone(),
+            None => {
+                if d.path.is_some() && dep_dir.join("crane.toml").exists() {
+                    continue;
+                }
+                match detect_build_system(&dep_dir) {
+                    Some(detected) => detected,
+                    None => {
+                        // No known build system. If the dep has no compilable
+                        // source files it is header-only — collect include dirs
+                        // without building. Otherwise skip silently.
+                        if !has_source_files(&dep_dir) {
+                            let include_dirs =
+                                collect_include_dirs(&dep_dir, &d.include, None);
+                            if !include_dirs.is_empty() {
+                                results.push(ForeignBuilt {
+                                    name: name.clone(),
+                                    libs: vec![],
+                                    include_dirs,
+                                    raw_link_flags: vec![],
+                                });
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+        };
+
         let build_dir = dep_dir.join(".crane-build");
         let libs = invoke_build_system(&dep_dir, &build_dir, name, &bs, profile, &d.cmake_args)?;
 
-        // Explicit `include = [...]` wins; if absent, probe common conventions.
-        // Autotools installs headers to .crane-build/install/include/, so probe that too.
-        let include_dirs: Vec<PathBuf> = if !d.include.is_empty() {
-            d.include.iter().map(|p| dep_dir.join(p)).collect()
-        } else {
-            let candidates = [
-                dep_dir.join("include"),
-                dep_dir.join("inc"),
-                build_dir.join("install").join("include"),
-            ];
-            candidates.into_iter().filter(|p| p.is_dir()).collect()
-        };
+        let include_dirs = collect_include_dirs(&dep_dir, &d.include, Some(&build_dir));
 
-        results.push(ForeignBuilt { name: name.clone(), libs, include_dirs });
+        results.push(ForeignBuilt {
+            name: name.clone(),
+            libs,
+            include_dirs,
+            raw_link_flags: vec![],
+        });
     }
 
     Ok(results)
+}
+
+/// Resolve include directories for a dep.
+///
+/// Explicit `include = [...]` in the manifest wins. When absent, probe common
+/// conventions: `include/`, `inc/`, and (if `build_dir` is provided) the
+/// autotools/cmake install tree at `<build_dir>/install/include/`.
+fn collect_include_dirs(
+    dep_dir: &Path,
+    explicit: &[String],
+    build_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    if !explicit.is_empty() {
+        return explicit.iter().map(|p| dep_dir.join(p)).collect();
+    }
+    let mut candidates = vec![dep_dir.join("include"), dep_dir.join("inc")];
+    if let Some(bd) = build_dir {
+        candidates.push(bd.join("install").join("include"));
+    }
+    candidates.into_iter().filter(|p| p.is_dir()).collect()
 }
 
 // ── Build system dispatch ─────────────────────────────────────────────────────
@@ -118,7 +214,7 @@ fn invoke_build_system(
         other => {
             return Err(CraneError::ManifestParse(format!(
                 "unknown build_system '{other}' for '{name}'; \
-                 expected: cmake, make, meson, autotools, scons, auto"
+                 expected: cmake, make, meson, autotools, scons, auto, none"
             )));
         }
     };
@@ -142,6 +238,33 @@ pub(crate) fn detect_build_system(dep_dir: &Path) -> Option<String> {
         return Some("make".into());
     }
     None
+}
+
+/// Return `true` if `dir` contains at least one compilable source file
+/// (checked recursively, depth-limited to avoid scanning huge trees).
+fn has_source_files(dir: &Path) -> bool {
+    const SOURCE_EXTS: &[&str] = &[
+        "c", "cpp", "cc", "cxx", "c++", "cppm",
+        "f", "f90", "f95", "f03", "f08",
+        "s", "asm", "nasm",
+        "cu", "hip", "cl",
+        "d", "ada", "adb",
+    ];
+    fn walk(dir: &Path, depth: u8) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else { return false };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if depth > 0 && walk(&p, depth - 1) { return true; }
+            } else if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                if SOURCE_EXTS.contains(&ext.to_ascii_lowercase().as_str()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    walk(dir, 4)
 }
 
 // ── Individual build system runners ──────────────────────────────────────────
