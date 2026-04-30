@@ -22,6 +22,7 @@ use std::process::Command;
 use walkdir::WalkDir;
 
 use crate::error::FreightError;
+use crate::git;
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::validate::{validate, validate_dep_compat};
@@ -137,6 +138,12 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         let active = features::resolve_features(&manifest.features, features, use_defaults)?;
         features::to_defines(&active)
     };
+
+    ensure_git_deps_fetched(project_dir, manifest)?;
+    let existing_lock = LockFile::load(project_dir);
+    if let Some(ref lock) = existing_lock {
+        verify_git_dep_shas(project_dir, manifest, lock);
+    }
 
     let resolved_deps = resolve_dep_graph(project_dir, manifest, false)?;
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
@@ -281,6 +288,12 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
         features::to_defines(&active)
     };
 
+    ensure_git_deps_fetched(project_dir, manifest)?;
+    let existing_lock = LockFile::load(project_dir);
+    if let Some(ref lock) = existing_lock {
+        verify_git_dep_shas(project_dir, manifest, lock);
+    }
+
     // Build deps (include dev-dependencies for test runs).
     let resolved_deps = resolve_dep_graph(project_dir, manifest, true)?;
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
@@ -393,6 +406,81 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     }
 
     Ok(TestSummary { passed, failed, total: passed + failed })
+}
+
+// ── Git dep helpers ───────────────────────────────────────────────────────────
+
+/// Auto-clone any git deps whose `.deps/<name>/` directory doesn't exist yet.
+/// Runs silently when all deps are present.
+fn ensure_git_deps_fetched(project_dir: &Path, manifest: &Manifest) -> Result<(), FreightError> {
+    let deps_dir = project_dir.join(".deps");
+
+    for (name, dep) in &manifest.dependencies {
+        let Dependency::Detailed(d) = dep else { continue };
+        let Some(url) = &d.git else { continue };
+
+        let dest = deps_dir.join(name);
+        if dest.exists() {
+            continue;
+        }
+
+        use owo_colors::OwoColorize;
+        println!("    {} {} (git+{})", "Fetching".bold().cyan(), name, url);
+        std::fs::create_dir_all(&deps_dir)?;
+        git::clone_dep(&dest, url, d.branch.as_deref(), d.tag.as_deref(), d.rev.as_deref())?;
+        println!();
+    }
+
+    Ok(())
+}
+
+/// After the dep graph is resolved, check each git dep's current commit against
+/// the lock file. If a dep was pinned with `rev =` in the manifest, silently
+/// enforce the pin by checking out that exact SHA. For branch-tracked deps,
+/// print a warning when the repo has drifted from the locked SHA so the user
+/// knows to run `freight update`.
+fn verify_git_dep_shas(project_dir: &Path, manifest: &Manifest, lock: &LockFile) {
+    for (name, dep) in &manifest.dependencies {
+        let Dependency::Detailed(d) = dep else { continue };
+        let Some(_url) = &d.git else { continue };
+
+        let dep_dir = project_dir.join(".deps").join(name);
+        if !dep_dir.exists() { continue; }
+
+        let current = match git::current_rev(&dep_dir) {
+            Some(sha) => sha,
+            None => continue,
+        };
+
+        // Find the SHA the lock file recorded for this dep.
+        let locked_sha = lock.packages.iter()
+            .find(|p| &p.name == name)
+            .and_then(|p| p.source.as_deref())
+            .and_then(|src| src.split('#').nth(1))
+            .map(str::to_string);
+
+        let Some(locked) = locked_sha else { continue };
+
+        // Rev-pinned: enforce the exact SHA.
+        if let Some(pinned) = &d.rev {
+            if !current.starts_with(pinned.as_str()) {
+                if let Err(e) = git::checkout_rev(&dep_dir, pinned) {
+                    eprintln!("warning: could not checkout pinned rev for `{name}`: {e}");
+                }
+            }
+            continue;
+        }
+
+        // Branch/tag tracked: warn on drift.
+        if !current.starts_with(locked.as_str()) && !locked.starts_with(current.as_str()) {
+            eprintln!(
+                "warning: git dep `{name}` is at {}, lock expects {}; \
+                 run `freight update` to record the new SHA",
+                &current[..current.len().min(12)],
+                &locked[..locked.len().min(12)],
+            );
+        }
+    }
 }
 
 // ── Source compilation (module-aware) ────────────────────────────────────────
