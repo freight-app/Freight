@@ -4,7 +4,7 @@
 // to prepare the source tree: probe the system, run external tools, and tell
 // the build engine what extra flags, includes, and sources to use.
 
-let out = out_dir();
+let out = dir.out;
 
 // ── 1. Optional system library ────────────────────────────────────────────────
 //

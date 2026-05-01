@@ -10,8 +10,11 @@
 //! let name = package_name();    // "myproject"
 //! let ver  = package_version(); // "0.1.0"
 //! let prof = profile();         // "dev" | "release"
-//! let out  = out_dir();         // "target/dev/build/"
-//! let src  = source_dir();      // project root
+//!
+//! // ── dir object (read-only) ───────────────────────────────────────────────
+//! dir.src   // project root  (absolute)
+//! dir.out   // target/{profile}/build/  — always on the include path
+//! dir.inc   // primary include directory from the manifest, or ""
 //!
 //! // ── toolchain map (read-only) ────────────────────────────────────────────
 //! let backend = toolchain["backend"]; // "gcc" | "clang" | "auto" | …
@@ -60,8 +63,8 @@
 //! }
 //!
 //! // Run cmake configure only when CMakeLists changed or build dir is absent:
-//! if changed_files("CMakeLists.txt").len() > 0 || !path_exists(out + "/Makefile") {
-//!     run("cmake", ["-S", source_dir(), "-B", out, "-DCMAKE_BUILD_TYPE=Release"]);
+//! if changed_files("CMakeLists.txt").len() > 0 || !path_exists(dir.out + "/Makefile") {
+//!     run("cmake", ["-S", dir.src, "-B", dir.out, "-DCMAKE_BUILD_TYPE=Release"]);
 //! }
 //!
 //! // ── Diagnostics ──────────────────────────────────────────────────────────
@@ -82,7 +85,8 @@
 //!     // No pkg_config_apply needed — freight already injected -I and -l flags.
 //! }
 //!
-//! // packages["name"].version → "1.2.8" (or "" when not found)
+//! // packages["name"].version      → "1.2.8" (or "" when not found)
+//! // packages["name"].dir.inc      → primary include path from pkg-config (or "")
 //!
 //! // ── Environment probing ──────────────────────────────────────────────────
 //! let git = run("git", ["rev-parse", "--short", "HEAD"]);
@@ -167,6 +171,14 @@ pub fn out_dir(project_dir: &Path, profile: &str) -> PathBuf {
 
 #[derive(Clone)]
 struct RhaiEnv;
+
+/// Read-only directory paths: `dir.src`, `dir.out`, `dir.inc`.
+#[derive(Clone)]
+struct RhaiDir {
+    src: String,   // project root
+    out: String,   // target/{profile}/build/
+    inc: String,   // primary include dir, or ""
+}
 
 /// Read-only toolchain info available as `toolchain["key"]` in scripts.
 #[derive(Clone)]
@@ -318,7 +330,7 @@ pub fn run_build_script(
 
     let mut engine = Engine::new();
 
-    // ── Map types ─────────────────────────────────────────────────────────────
+    // ── Map / object types ────────────────────────────────────────────────────
 
     engine.register_type_with_name::<RhaiEnv>("Env");
     engine.register_indexer_get(|_: &mut RhaiEnv, key: ImmutableString| -> String {
@@ -327,6 +339,11 @@ pub fn run_build_script(
     engine.register_indexer_set(|_: &mut RhaiEnv, key: ImmutableString, val: String| {
         with_state(|s| s.output.env_overrides.push((key.to_string(), val)));
     });
+
+    engine.register_type_with_name::<RhaiDir>("Dir");
+    engine.register_get("src", |d: &mut RhaiDir| d.src.clone());
+    engine.register_get("out", |d: &mut RhaiDir| d.out.clone());
+    engine.register_get("inc", |d: &mut RhaiDir| d.inc.clone());
 
     engine.register_type_with_name::<RhaiToolchain>("Toolchain");
     engine.register_indexer_get(|t: &mut RhaiToolchain, key: ImmutableString| -> Dynamic {
@@ -350,12 +367,6 @@ pub fn run_build_script(
 
     let s = profile.to_string();
     engine.register_fn("profile", move || s.clone());
-
-    let s = out_d.to_string_lossy().into_owned();
-    engine.register_fn("out_dir", move || s.clone());
-
-    let s = project_dir.to_string_lossy().into_owned();
-    engine.register_fn("source_dir", move || s.clone());
 
     // ── Output setters ────────────────────────────────────────────────────────
 
@@ -421,6 +432,12 @@ pub fn run_build_script(
         Path::new(&path).exists()
     });
 
+    engine.register_fn("mkdir",
+        |path: String| -> Result<(), Box<rhai::EvalAltResult>> {
+            std::fs::create_dir_all(path).map_err(|e| e.to_string().into())
+        },
+    );
+
     // ── pkg-config integration ────────────────────────────────────────────────
 
     // pkg_config_cflags("openssl") → "-I/usr/include/openssl …" or ""
@@ -460,12 +477,14 @@ pub fn run_build_script(
             .unwrap_or(false)
     });
 
-    engine.register_fn("run", |cmd: String, args: Array| -> Map {
+    let proj_dir_run = project_dir.to_path_buf();
+    engine.register_fn("run", move |cmd: String, args: Array| -> Map {
         let args: Vec<_> = args.into_iter()
             .filter_map(|v| v.try_cast::<String>())
             .collect();
         let mut command = std::process::Command::new(&cmd);
         command.args(&args);
+        command.current_dir(&proj_dir_run);
         STATE.with(|c| {
             if let Some(s) = c.borrow().as_ref() {
                 for (k, v) in &s.output.env_overrides {
@@ -551,20 +570,37 @@ pub fn run_build_script(
 
     // ── Scope ─────────────────────────────────────────────────────────────────
 
+    let inc_dir = manifest.lib.as_ref()
+        .and_then(|l| l.include.as_deref())
+        .map(|p| project_dir.join(p).to_string_lossy().into_owned())
+        .unwrap_or_else(|| {
+            let p = project_dir.join("include");
+            if p.is_dir() { p.to_string_lossy().into_owned() } else { String::new() }
+        });
+
     let mut scope = Scope::new();
     scope.push("env", RhaiEnv);
+    scope.push_constant("dir", RhaiDir {
+        src: project_dir.to_string_lossy().into_owned(),
+        out: out_d.to_string_lossy().into_owned(),
+        inc: inc_dir,
+    });
     scope.push("toolchain", RhaiToolchain {
         backend: manifest.compiler.backend.0.clone(),
         version: compiler_version,
         target:  compiler_target,
     });
 
-    // packages["zlib"].found / .version — read-only view of resolved pkg-config deps.
+    // packages["name"].found / .version / .dir.inc — resolved pkg-config deps.
     let mut packages_map = Map::new();
     for pc in pkg_configs {
+        let inc = pc.include_dirs.first()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let mut entry = Map::new();
         entry.insert("found".into(),   Dynamic::from(pc.found));
         entry.insert("version".into(), Dynamic::from(pc.version.clone()));
+        entry.insert("dir".into(),     Dynamic::from(RhaiDir { src: String::new(), out: String::new(), inc }));
         packages_map.insert(pc.name.clone().into(), Dynamic::from_map(entry));
     }
     scope.push_constant("packages", packages_map);

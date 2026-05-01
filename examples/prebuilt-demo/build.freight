@@ -7,7 +7,7 @@
 //   3.  Run external commands and embed their output at build time
 //   4.  Incremental re-execution with rerun_if
 
-let out = out_dir();  // target/{profile}/build/  — always on the include path
+let out = dir.out;  // target/{profile}/build/  — always on the include path
 
 // ── 1. Code generation ────────────────────────────────────────────────────────
 //

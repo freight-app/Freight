@@ -24,9 +24,11 @@ pub struct ForeignBuilt {
 
 /// Resolved pkg-config dep result exposed to `build.freight` as `packages["name"]`.
 pub struct ResolvedPkgConfig {
-    pub name:    String,
-    pub found:   bool,
-    pub version: String,
+    pub name:         String,
+    pub found:        bool,
+    pub version:      String,
+    /// Resolved include directories from `pkg-config --cflags`.
+    pub include_dirs: Vec<PathBuf>,
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -54,7 +56,12 @@ pub fn build_foreign_deps(
             match super::http::pkg_config_query(query) {
                 Ok(pc) => {
                     let version = pkg_config_version(query);
-                    pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: true, version });
+                    pkg_results.push(ResolvedPkgConfig {
+                        name: name.clone(),
+                        found: true,
+                        version,
+                        include_dirs: pc.include_dirs.clone(),
+                    });
                     results.push(ForeignBuilt {
                         name: name.clone(),
                         libs: vec![],
@@ -69,7 +76,7 @@ pub fn build_foreign_deps(
                              falling back to -l{fallback}",
                             "warning:".yellow()
                         );
-                        pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: false, version: String::new() });
+                        pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: false, version: String::new(), include_dirs: vec![] });
                         results.push(ForeignBuilt {
                             name: name.clone(),
                             libs: vec![],
@@ -81,7 +88,7 @@ pub fn build_foreign_deps(
                             "  {} pkg-config for '{name}' not found (optional, skipping)",
                             "warning:".yellow()
                         );
-                        pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: false, version: String::new() });
+                        pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: false, version: String::new(), include_dirs: vec![] });
                     } else {
                         return Err(FreightError::ManifestParse(format!(
                             "pkg-config failed for '{name}' and no system fallback: {e}"
