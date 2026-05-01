@@ -8,15 +8,16 @@ use freight_doc::{render, OutputFormat};
 #[derive(Parser)]
 #[command(
     name = "freight-doc",
-    about = "Multi-language doc comment extractor — outputs Markdown or JSON",
+    about = "Multi-language doc comment extractor — outputs Markdown, JSON, or MessagePack",
     long_about = "\
 Scans source directories for documented items in C/C++ (Doxygen /** */, ///),
 Rust (///), Fortran (!> / !!), D (/++), and Ada (--!) and renders them.
 
 Output formats
-  md    GitHub-Flavored Markdown with cross-document links (default)
-  json  Single docs.json — structured data for websites and tooling
-  all   Both formats in sub-directories md/ and json/",
+  md       GitHub-Flavored Markdown with cross-document links (default)
+  json     Single docs.json — structured data for websites and tooling
+  msgpack  Single docs.msgpack — same schema as JSON, binary-encoded
+  all      All three formats in sub-directories md/, json/, and msgpack/",
 )]
 struct Cli {
     /// Source directories to scan (default: current directory)
@@ -27,7 +28,7 @@ struct Cli {
     #[arg(short, long, value_name = "DIR", default_value = "target/doc")]
     out: PathBuf,
 
-    /// Output format: md | json | all
+    /// Output format: md | json | msgpack | all
     #[arg(short, long, value_name = "FORMAT", default_value = "md")]
     format: String,
 
@@ -91,7 +92,7 @@ fn main() {
     } else {
         let fmt = OutputFormat::from_str(&cli.format).unwrap_or_else(|| {
             eprintln!(
-                "error: unknown format {:?} — expected md, json, or all",
+                "error: unknown format {:?} — expected md, json, msgpack, or all",
                 cli.format
             );
             std::process::exit(1);
@@ -110,10 +111,11 @@ fn run_format(set: &DocSet, out_dir: &PathBuf, fmt: &OutputFormat, total: usize)
 }
 
 fn run_all_formats(set: &DocSet, base_out: &PathBuf, total: usize) {
-    for fmt in &[OutputFormat::Markdown, OutputFormat::Json] {
+    for fmt in &[OutputFormat::Markdown, OutputFormat::Json, OutputFormat::MsgPack] {
         let sub = match fmt {
             OutputFormat::Markdown => "md",
             OutputFormat::Json     => "json",
+            OutputFormat::MsgPack  => "msgpack",
         };
         let out_dir = base_out.join(sub);
         if let Err(e) = render(set, &out_dir, fmt) {
@@ -127,7 +129,8 @@ fn run_all_formats(set: &DocSet, base_out: &PathBuf, total: usize) {
 
 fn format_label(fmt: &OutputFormat) -> (&'static str, &'static str) {
     match fmt {
-        OutputFormat::Markdown => ("md",   "index.md"),
-        OutputFormat::Json     => ("json", "docs.json"),
+        OutputFormat::Markdown => ("md",      "index.md"),
+        OutputFormat::Json     => ("json",    "docs.json"),
+        OutputFormat::MsgPack  => ("msgpack", "docs.msgpack"),
     }
 }

@@ -32,7 +32,7 @@ struct JsonTag<'a> {
     text: &'a str,
 }
 
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Public entry points ───────────────────────────────────────────────────────
 
 /// Write `docs.json` to `out_dir`.
 pub fn render_json(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
@@ -63,6 +63,36 @@ pub fn render_json(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
     std::fs::write(out_dir.join("docs.json"), json)
+}
+
+/// Write `docs.msgpack` to `out_dir` (same schema as JSON, binary-encoded).
+pub fn render_msgpack(set: &DocSet, out_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(out_dir)?;
+
+    let items: Vec<JsonItem> = set.items.iter().map(|item| {
+        let file = item.file
+            .strip_prefix(&set.source_root)
+            .unwrap_or(&item.file)
+            .to_string_lossy()
+            .into_owned();
+        JsonItem {
+            file,
+            line:      item.line,
+            lang:      lang_str(&item.lang),
+            kind:      kind_str(&item.kind),
+            name:      &item.name,
+            signature: &item.signature,
+            brief:     &item.brief,
+            body:      &item.body,
+            tags:      item.tags.iter().map(tag_json).collect(),
+        }
+    }).collect();
+
+    let doc = JsonDoc { items };
+    let bytes = rmp_serde::to_vec_named(&doc)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    std::fs::write(out_dir.join("docs.msgpack"), bytes)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

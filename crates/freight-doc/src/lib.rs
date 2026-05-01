@@ -17,13 +17,16 @@ pub enum OutputFormat {
     Markdown,
     /// Single `docs.json` — easy to consume from a website or tooling.
     Json,
+    /// Single `docs.msgpack` — same schema as JSON, binary-encoded for compactness.
+    MsgPack,
 }
 
 impl OutputFormat {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "md" | "markdown" => Some(Self::Markdown),
-            "json"            => Some(Self::Json),
+            "md" | "markdown"        => Some(Self::Markdown),
+            "json"                   => Some(Self::Json),
+            "msgpack" | "msg-pack"   => Some(Self::MsgPack),
             _ => None,
         }
     }
@@ -34,5 +37,6 @@ pub fn render(set: &DocSet, out_dir: &Path, format: &OutputFormat) -> std::io::R
     match format {
         OutputFormat::Markdown => render_md::render_markdown(set, out_dir),
         OutputFormat::Json     => render_json::render_json(set, out_dir),
+        OutputFormat::MsgPack  => render_json::render_msgpack(set, out_dir),
     }
 }

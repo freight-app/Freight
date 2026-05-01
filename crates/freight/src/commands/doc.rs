@@ -89,14 +89,15 @@ pub fn cmd_doc(format: &str) {
     let combined = DocSet { items: all_items, source_root: project_dir };
 
     let fmt = OutputFormat::from_str(format).unwrap_or_else(|| {
-        print_error(&format!("unknown format {format:?} — expected md, json, or all"));
+        print_error(&format!("unknown format {format:?} — expected md, json, msgpack, or all"));
         std::process::exit(1);
     });
 
     let render_one = |f: &OutputFormat, dir: &PathBuf| {
         let (label, index_file) = match f {
-            OutputFormat::Markdown => ("md",   "index.md"),
-            OutputFormat::Json     => ("json", "docs.json"),
+            OutputFormat::Markdown => ("md",      "index.md"),
+            OutputFormat::Json     => ("json",    "docs.json"),
+            OutputFormat::MsgPack  => ("msgpack", "docs.msgpack"),
         };
         match render(&combined, dir, f) {
             Ok(()) => print_success(&format!("{total} items [{label}] → {}", dir.join(index_file).display())),
@@ -105,10 +106,11 @@ pub fn cmd_doc(format: &str) {
     };
 
     if format.eq_ignore_ascii_case("all") {
-        for f in &[OutputFormat::Markdown, OutputFormat::Json] {
+        for f in &[OutputFormat::Markdown, OutputFormat::Json, OutputFormat::MsgPack] {
             let sub = match f {
                 OutputFormat::Markdown => "md",
                 OutputFormat::Json     => "json",
+                OutputFormat::MsgPack  => "msgpack",
             };
             render_one(f, &out_dir.join(sub));
         }
