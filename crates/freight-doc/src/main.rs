@@ -4,37 +4,31 @@ use clap::Parser;
 use freight_doc::extract::{extract_dir, DocSet};
 use freight_doc::{render, OutputFormat};
 
-/// Extract doc comments from source files and render a documentation site.
+/// Extract doc comments from source files and render documentation.
 #[derive(Parser)]
 #[command(
     name = "freight-doc",
-    about = "Multi-language doc comment extractor — outputs HTML, Markdown, LaTeX, or PDF",
+    about = "Multi-language doc comment extractor — outputs Markdown or JSON",
     long_about = "\
 Scans source directories for documented items in C/C++ (Doxygen /** */, ///),
 Rust (///), Fortran (!> / !!), D (/++), and Ada (--!) and renders them.
 
 Output formats
-  html      Self-contained HTML with MathJax (default)
-  md        GitHub-Flavored Markdown with cross-document links
-  latex     LaTeX source only (docs.tex)
-  pdf       LaTeX source + compiled PDF (requires xelatex or pdflatex)
-  all       All four formats in sub-directories html/, md/, latex/, pdf/
-
-Math support
-  $...$  and  $$...$$  pass through verbatim in all formats so MathJax,
-  KaTeX, or LaTeX renderers render them without modification.",
+  md    GitHub-Flavored Markdown with cross-document links (default)
+  json  Single docs.json — structured data for websites and tooling
+  all   Both formats in sub-directories md/ and json/",
 )]
 struct Cli {
     /// Source directories to scan (default: current directory)
     #[arg(value_name = "DIR")]
     dirs: Vec<PathBuf>,
 
-    /// Output directory for the generated site
+    /// Output directory for the generated documentation
     #[arg(short, long, value_name = "DIR", default_value = "target/doc")]
     out: PathBuf,
 
-    /// Output format: html | md | latex | pdf | all
-    #[arg(short, long, value_name = "FORMAT", default_value = "html")]
+    /// Output format: md | json | all
+    #[arg(short, long, value_name = "FORMAT", default_value = "md")]
     format: String,
 
     /// List extracted items without writing any files
@@ -97,7 +91,7 @@ fn main() {
     } else {
         let fmt = OutputFormat::from_str(&cli.format).unwrap_or_else(|| {
             eprintln!(
-                "error: unknown format {:?} — expected html, md, latex, pdf, or all",
+                "error: unknown format {:?} — expected md, json, or all",
                 cli.format
             );
             std::process::exit(1);
@@ -116,36 +110,24 @@ fn run_format(set: &DocSet, out_dir: &PathBuf, fmt: &OutputFormat, total: usize)
 }
 
 fn run_all_formats(set: &DocSet, base_out: &PathBuf, total: usize) {
-    for fmt in &[OutputFormat::Html, OutputFormat::Markdown, OutputFormat::Latex, OutputFormat::Pdf] {
-        let (label, sub) = match fmt {
-            OutputFormat::Html     => ("html",   "html"),
-            OutputFormat::Markdown => ("md",     "md"),
-            OutputFormat::Latex    => ("latex",  "latex"),
-            OutputFormat::Pdf      => ("pdf",    "pdf"),
+    for fmt in &[OutputFormat::Markdown, OutputFormat::Json] {
+        let sub = match fmt {
+            OutputFormat::Markdown => "md",
+            OutputFormat::Json     => "json",
         };
         let out_dir = base_out.join(sub);
-        match render(set, &out_dir, fmt) {
-            Ok(()) => {
-                let (_, filename) = format_label(fmt);
-                println!("✓ {total} items [{label}] → {}", out_dir.join(filename).display());
-            }
-            Err(e) if fmt == &OutputFormat::Pdf => {
-                // PDF is best-effort — missing LaTeX is a warning, not a hard failure
-                eprintln!("warning: PDF skipped — {e}");
-            }
-            Err(e) => {
-                eprintln!("error [{label}]: {e}");
-                std::process::exit(1);
-            }
+        if let Err(e) = render(set, &out_dir, fmt) {
+            eprintln!("error [{sub}]: {e}");
+            std::process::exit(1);
         }
+        let (label, filename) = format_label(fmt);
+        println!("✓ {total} items [{label}] → {}", out_dir.join(filename).display());
     }
 }
 
 fn format_label(fmt: &OutputFormat) -> (&'static str, &'static str) {
     match fmt {
-        OutputFormat::Html     => ("html",  "index.html"),
-        OutputFormat::Markdown => ("md",    "index.md"),
-        OutputFormat::Latex    => ("latex", "docs.tex"),
-        OutputFormat::Pdf      => ("pdf",   "docs.pdf"),
+        OutputFormat::Markdown => ("md",   "index.md"),
+        OutputFormat::Json     => ("json", "docs.json"),
     }
 }

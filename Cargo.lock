@@ -476,6 +476,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "pulldown-cmark",
+ "serde",
+ "serde_json",
  "walkdir",
 ]
 

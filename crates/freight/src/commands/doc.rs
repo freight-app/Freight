@@ -89,31 +89,26 @@ pub fn cmd_doc(format: &str) {
     let combined = DocSet { items: all_items, source_root: project_dir };
 
     let fmt = OutputFormat::from_str(format).unwrap_or_else(|| {
-        print_error(&format!("unknown format {format:?} — expected html, md, latex, pdf, or all"));
+        print_error(&format!("unknown format {format:?} — expected md, json, or all"));
         std::process::exit(1);
     });
 
     let render_one = |f: &OutputFormat, dir: &PathBuf| {
         let (label, index_file) = match f {
-            OutputFormat::Html     => ("html",  "index.html"),
-            OutputFormat::Markdown => ("md",    "index.md"),
-            OutputFormat::Latex    => ("latex", "docs.tex"),
-            OutputFormat::Pdf      => ("pdf",   "docs.pdf"),
+            OutputFormat::Markdown => ("md",   "index.md"),
+            OutputFormat::Json     => ("json", "docs.json"),
         };
         match render(&combined, dir, f) {
             Ok(()) => print_success(&format!("{total} items [{label}] → {}", dir.join(index_file).display())),
-            Err(e) if f == &OutputFormat::Pdf => print_warning(&format!("PDF skipped — {e}")),
             Err(e) => print_error(&format!("failed to write docs [{label}]: {e}")),
         }
     };
 
     if format.eq_ignore_ascii_case("all") {
-        for f in &[OutputFormat::Html, OutputFormat::Markdown, OutputFormat::Latex, OutputFormat::Pdf] {
+        for f in &[OutputFormat::Markdown, OutputFormat::Json] {
             let sub = match f {
-                OutputFormat::Html     => "html",
                 OutputFormat::Markdown => "md",
-                OutputFormat::Latex    => "latex",
-                OutputFormat::Pdf      => "pdf",
+                OutputFormat::Json     => "json",
             };
             render_one(f, &out_dir.join(sub));
         }
