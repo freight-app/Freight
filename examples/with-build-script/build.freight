@@ -6,18 +6,17 @@
 
 let out = out_dir();
 
-// ── 1. System probing via pkg-config ─────────────────────────────────────────
+// ── 1. Optional system library ────────────────────────────────────────────────
 //
-// pkg_config_apply() queries --cflags and --libs and applies them:
-//   -I flags  → add_include (passed to the compiler)
-//   -l flags  → add_link_lib (passed to the linker)
-//   -L flags  → add_link_flag
+// Declare optional pkg-config deps in freight.toml:
+//   [dependencies]
+//   zlib = { pkg-config = "zlib", optional = true }
 //
-// pkg_config_cflags / pkg_config_libs return the raw strings when you need
-// to inspect or filter them yourself.
+// freight resolves them before this script runs and populates the read-only
+// `packages` map. The script only needs to set the feature define — freight
+// already injected the -I and -l flags from pkg-config.
 
-if pkg_config_exists("zlib") {
-    pkg_config_apply("zlib");
+if packages["zlib"].found {
     add_define("HAVE_ZLIB");
 } else {
     warning("zlib not found — building without compression");
