@@ -11,10 +11,8 @@
 //! let ver  = package_version(); // "0.1.0"
 //! let prof = profile();         // "dev" | "release"
 //!
-//! // ── dir object (read-only) ───────────────────────────────────────────────
-//! dir.src   // project root  (absolute)
-//! dir.out   // target/{profile}/build/  — always on the include path
-//! dir.inc   // primary include directory from the manifest, or ""
+//! let out = out_dir();    // target/{profile}/build/  — always on the include path
+//! let src = src_dir();    // project root (absolute)
 //!
 //! // ── toolchain map (read-only) ────────────────────────────────────────────
 //! let backend = toolchain["backend"]; // "gcc" | "clang" | "auto" | …
@@ -63,8 +61,8 @@
 //! }
 //!
 //! // Run cmake configure only when CMakeLists changed or build dir is absent:
-//! if changed_files("CMakeLists.txt").len() > 0 || !path_exists(dir.out + "/Makefile") {
-//!     run("cmake", ["-S", dir.src, "-B", dir.out, "-DCMAKE_BUILD_TYPE=Release"]);
+//! if changed_files("CMakeLists.txt").len() > 0 || !path_exists(out_dir() + "/Makefile") {
+//!     run("cmake", ["-S", src_dir(), "-B", out_dir(), "-DCMAKE_BUILD_TYPE=Release"]);
 //! }
 //!
 //! // ── Diagnostics ──────────────────────────────────────────────────────────
@@ -86,7 +84,6 @@
 //! }
 //!
 //! // packages["name"].version      → "1.2.8" (or "" when not found)
-//! // packages["name"].dir.inc      → primary include path from pkg-config (or "")
 //!
 //! // ── Environment probing ──────────────────────────────────────────────────
 //! let git = run("git", ["rev-parse", "--short", "HEAD"]);
@@ -171,14 +168,6 @@ pub fn out_dir(project_dir: &Path, profile: &str) -> PathBuf {
 
 #[derive(Clone)]
 struct RhaiEnv;
-
-/// Read-only directory paths: `dir.src`, `dir.out`, `dir.inc`.
-#[derive(Clone)]
-struct RhaiDir {
-    src: String,   // project root
-    out: String,   // target/{profile}/build/
-    inc: String,   // primary include dir, or ""
-}
 
 /// Read-only toolchain info available as `toolchain["key"]` in scripts.
 #[derive(Clone)]
@@ -340,11 +329,6 @@ pub fn run_build_script(
         with_state(|s| s.output.env_overrides.push((key.to_string(), val)));
     });
 
-    engine.register_type_with_name::<RhaiDir>("Dir");
-    engine.register_get("src", |d: &mut RhaiDir| d.src.clone());
-    engine.register_get("out", |d: &mut RhaiDir| d.out.clone());
-    engine.register_get("inc", |d: &mut RhaiDir| d.inc.clone());
-
     engine.register_type_with_name::<RhaiToolchain>("Toolchain");
     engine.register_indexer_get(|t: &mut RhaiToolchain, key: ImmutableString| -> Dynamic {
         match key.as_str() {
@@ -367,6 +351,12 @@ pub fn run_build_script(
 
     let s = profile.to_string();
     engine.register_fn("profile", move || s.clone());
+
+    let s = out_d.to_string_lossy().into_owned();
+    engine.register_fn("out_dir", move || s.clone());
+
+    let s = project_dir.to_string_lossy().into_owned();
+    engine.register_fn("src_dir", move || s.clone());
 
     // ── Output setters ────────────────────────────────────────────────────────
 
@@ -570,37 +560,20 @@ pub fn run_build_script(
 
     // ── Scope ─────────────────────────────────────────────────────────────────
 
-    let inc_dir = manifest.lib.as_ref()
-        .and_then(|l| l.include.as_deref())
-        .map(|p| project_dir.join(p).to_string_lossy().into_owned())
-        .unwrap_or_else(|| {
-            let p = project_dir.join("include");
-            if p.is_dir() { p.to_string_lossy().into_owned() } else { String::new() }
-        });
-
     let mut scope = Scope::new();
     scope.push("env", RhaiEnv);
-    scope.push_constant("dir", RhaiDir {
-        src: project_dir.to_string_lossy().into_owned(),
-        out: out_d.to_string_lossy().into_owned(),
-        inc: inc_dir,
-    });
     scope.push("toolchain", RhaiToolchain {
         backend: manifest.compiler.backend.0.clone(),
         version: compiler_version,
         target:  compiler_target,
     });
 
-    // packages["name"].found / .version / .dir.inc — resolved pkg-config deps.
+    // packages["name"].found / .version — resolved pkg-config deps.
     let mut packages_map = Map::new();
     for pc in pkg_configs {
-        let inc = pc.include_dirs.first()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
         let mut entry = Map::new();
         entry.insert("found".into(),   Dynamic::from(pc.found));
         entry.insert("version".into(), Dynamic::from(pc.version.clone()));
-        entry.insert("dir".into(),     Dynamic::from(RhaiDir { src: String::new(), out: String::new(), inc }));
         packages_map.insert(pc.name.clone().into(), Dynamic::from_map(entry));
     }
     scope.push_constant("packages", packages_map);
