@@ -165,7 +165,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
 
     let resolved_deps = resolve_dep_graph(project_dir, manifest, false)?;
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
-    let foreign_built = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+    let (foreign_built, pkg_configs) = foreign::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -181,7 +181,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     include_dirs.extend(all_dep_includes.iter().cloned());
 
     // Run build.freight (if present) and collect extra settings.
-    let script_out = script::run_build_script(project_dir, manifest, profile, detected)?;
+    let script_out = script::run_build_script(project_dir, manifest, profile, detected, &pkg_configs)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
     compile_defines.extend(script_out.to_defines());
@@ -353,7 +353,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     // Build deps (include dev-dependencies for test runs).
     let resolved_deps = resolve_dep_graph(project_dir, manifest, true)?;
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
-    let foreign_built = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+    let (foreign_built, pkg_configs) = foreign::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -367,7 +367,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let script_out = script::run_build_script(project_dir, manifest, profile, detected)?;
+    let script_out = script::run_build_script(project_dir, manifest, profile, detected, &pkg_configs)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
     compile_defines.extend(script_out.to_defines());

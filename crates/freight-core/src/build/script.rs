@@ -68,11 +68,21 @@
 //! warning("zlib not found, disabling compression");
 //! fail("openssl not found — install libssl-dev");
 //!
-//! // ── pkg-config integration ───────────────────────────────────────────────
-//! let has_ssl  = pkg_config_exists("openssl");
-//! let cflags   = pkg_config_cflags("openssl");   // "-I/usr/include/openssl …"
-//! let libs     = pkg_config_libs("openssl");     // "-lssl -lcrypto …"
-//! pkg_config_apply("openssl");    // auto-applies cflags + libs (includes, link_libs, …)
+//! // ── packages map — resolved pkg-config deps (read-only) ─────────────────
+//! //
+//! // Declare deps in freight.toml:
+//! //   [dependencies]
+//! //   zlib = { pkg-config = "zlib", optional = true }
+//! //
+//! // freight resolves them before running this script; the script just
+//! // checks the result and adds the feature define:
+//!
+//! if packages["zlib"].found {
+//!     add_define("HAVE_ZLIB");
+//!     // No pkg_config_apply needed — freight already injected -I and -l flags.
+//! }
+//!
+//! // packages["name"].version → "1.2.8" (or "" when not found)
 //!
 //! // ── Environment probing ──────────────────────────────────────────────────
 //! let git = run("git", ["rev-parse", "--short", "HEAD"]);
@@ -99,6 +109,7 @@ use crate::error::FreightError;
 use crate::manifest::types::Manifest;
 use crate::toolchain::DetectedCompiler;
 use super::compile::select_compiler;
+use super::foreign::ResolvedPkgConfig;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -255,6 +266,8 @@ fn save_stamp(project_dir: &Path, profile: &str, script_path: &Path, deps: &[Pat
 /// Evaluate `build.freight` in `project_dir` and return what it contributed.
 ///
 /// `detected` is used to expose `toolchain["version"]` to the script.
+/// `pkg_configs` is the resolved list of pkg-config deps, exposed as the
+/// read-only `packages` map (e.g. `packages["zlib"].found`, `.version`).
 /// Returns an empty [`ScriptOutput`] (with `out_dir` already in `include_dirs`)
 /// when no script is present.
 pub fn run_build_script(
@@ -262,6 +275,7 @@ pub fn run_build_script(
     manifest: &Manifest,
     profile: &str,
     detected: &[DetectedCompiler],
+    pkg_configs: &[ResolvedPkgConfig],
 ) -> Result<ScriptOutput, FreightError> {
     let script_path = project_dir.join(SCRIPT_NAME);
     if !script_path.is_file() {
@@ -544,6 +558,16 @@ pub fn run_build_script(
         version: compiler_version,
         target:  compiler_target,
     });
+
+    // packages["zlib"].found / .version — read-only view of resolved pkg-config deps.
+    let mut packages_map = Map::new();
+    for pc in pkg_configs {
+        let mut entry = Map::new();
+        entry.insert("found".into(),   Dynamic::from(pc.found));
+        entry.insert("version".into(), Dynamic::from(pc.version.clone()));
+        packages_map.insert(pc.name.clone().into(), Dynamic::from_map(entry));
+    }
+    scope.push_constant("packages", packages_map);
 
     // ── Evaluate ──────────────────────────────────────────────────────────────
 

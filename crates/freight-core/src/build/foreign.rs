@@ -22,15 +22,24 @@ pub struct ForeignBuilt {
     pub raw_link_flags: Vec<String>,
 }
 
+/// Resolved pkg-config dep result exposed to `build.freight` as `packages["name"]`.
+pub struct ResolvedPkgConfig {
+    pub name:    String,
+    pub found:   bool,
+    pub version: String,
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Build all foreign deps declared in `manifest` and return their link artifacts.
+/// Build all foreign deps declared in `manifest` and return their link artifacts
+/// alongside the resolved pkg-config results (for `build.freight` `packages` map).
 pub fn build_foreign_deps(
     project_dir: &Path,
     manifest: &Manifest,
     profile: &str,
-) -> Result<Vec<ForeignBuilt>, FreightError> {
+) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>), FreightError> {
     let mut results = Vec::new();
+    let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
         let Dependency::Detailed(d) = dep else { continue };
@@ -44,6 +53,8 @@ pub fn build_foreign_deps(
             println!("  {} {} (pkg-config)", "Resolving".dimmed(), name);
             match super::http::pkg_config_query(query) {
                 Ok(pc) => {
+                    let version = pkg_config_version(query);
+                    pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: true, version });
                     results.push(ForeignBuilt {
                         name: name.clone(),
                         libs: vec![],
@@ -58,15 +69,19 @@ pub fn build_foreign_deps(
                              falling back to -l{fallback}",
                             "warning:".yellow()
                         );
-                        // Push -l{fallback} via raw_link_flags so the flag
-                        // reaches the linker. collect_system_lib_flags skips
-                        // all deps with pkg_config set to avoid double-linking.
+                        pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: false, version: String::new() });
                         results.push(ForeignBuilt {
                             name: name.clone(),
                             libs: vec![],
                             include_dirs: vec![],
                             raw_link_flags: vec![format!("-l{fallback}")],
                         });
+                    } else if d.optional {
+                        println!(
+                            "  {} pkg-config for '{name}' not found (optional, skipping)",
+                            "warning:".yellow()
+                        );
+                        pkg_results.push(ResolvedPkgConfig { name: name.clone(), found: false, version: String::new() });
                     } else {
                         return Err(FreightError::ManifestParse(format!(
                             "pkg-config failed for '{name}' and no system fallback: {e}"
@@ -157,7 +172,20 @@ pub fn build_foreign_deps(
         });
     }
 
-    Ok(results)
+    Ok((results, pkg_results))
+}
+
+/// Query `pkg-config --modversion` and return the version string, or empty on failure.
+fn pkg_config_version(query: &str) -> String {
+    // Use only the first token (the package name) for --modversion.
+    let pkg_name = query.split_whitespace().next().unwrap_or(query);
+    let out = std::process::Command::new("pkg-config")
+        .args(["--modversion", pkg_name])
+        .output()
+        .ok();
+    out.filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .unwrap_or_default()
 }
 
 /// Resolve include directories for a dep.
