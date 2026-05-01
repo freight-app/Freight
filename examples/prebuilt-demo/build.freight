@@ -44,7 +44,7 @@ add_source(out + "/build_info.c");
 // We only need to set the feature flag — freight already injected the -I/-l flags.
 
 if packages["zlib"].found {
-    add_define("HAVE_ZLIB");
+    define("HAVE_ZLIB");
 } else {
     warning("zlib not found — building without compression support");
 }

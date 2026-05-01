@@ -25,8 +25,8 @@
 //! env["PKG_CONFIG_PATH"] = "/opt/lib/pkgconfig";
 //!
 //! // ── Output setters ───────────────────────────────────────────────────────
-//! set_define("VERSION", "1.2.3"); // → -DVERSION=1.2.3
-//! add_define("NDEBUG");           // → -DNDEBUG
+//! define("NDEBUG");               // → -DNDEBUG
+//! define_value("VERSION", "1.2.3"); // → -DVERSION=1.2.3
 //! add_include(out);               // extra -I path
 //! add_flag("-march=native");      // raw compiler flag
 //! add_link_lib("z");              // → -lz
@@ -78,7 +78,7 @@
 //! // checks the result and adds the feature define:
 //!
 //! if packages["zlib"].found {
-//!     add_define("HAVE_ZLIB");
+//!     define("HAVE_ZLIB");
 //!     // No pkg_config_apply needed — freight already injected -I and -l flags.
 //! }
 //!
@@ -359,11 +359,11 @@ pub fn run_build_script(
 
     // ── Output setters ────────────────────────────────────────────────────────
 
-    engine.register_fn("set_define", |k: String, v: String| {
-        with_state(|s| s.output.defines.push((k, Some(v))));
-    });
-    engine.register_fn("add_define", |k: String| {
+    engine.register_fn("define", |k: String| {
         with_state(|s| s.output.defines.push((k, None)));
+    });
+    engine.register_fn("define_value", |k: String, v: String| {
+        with_state(|s| s.output.defines.push((k, Some(v))));
     });
     engine.register_fn("add_include", |p: String| {
         with_state(|s| s.output.include_dirs.push(PathBuf::from(p)));

@@ -17,7 +17,7 @@ let out = out_dir();
 // already injected the -I and -l flags from pkg-config.
 
 if packages["zlib"].found {
-    add_define("HAVE_ZLIB");
+    define("HAVE_ZLIB");
 } else {
     warning("zlib not found — building without compression");
 }
