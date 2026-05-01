@@ -64,6 +64,10 @@ struct BuiltDeps {
 ///
 /// Members are built in the order declared in `[workspace].members`. If any
 /// member fails, the build stops and the error is returned.
+///
+/// After all members are built a merged `compile_commands.json` is written to
+/// the workspace root so that clangd (and other LSP clients) can serve the
+/// entire workspace from a single database.
 pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, FreightError> {
     let cwd = std::env::current_dir()?;
     let ws_dir = find_manifest_dir(&cwd)
@@ -72,10 +76,24 @@ pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, FreightError> 
         .ok_or_else(|| FreightError::ManifestParse("not a workspace root".into()))?;
 
     let mut outputs = Vec::new();
+    let mut member_dirs: Vec<PathBuf> = Vec::new();
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
         outputs.push(build_project_at(&member_dir, profile, &[], true)?);
+        member_dirs.push(member_dir);
     }
+
+    // Merge every member's compile_commands.json into a single workspace-root
+    // file so clangd / other LSP clients see the full project in one database.
+    let mut all_commands: Vec<compile_commands::CompileCommand> = Vec::new();
+    for dir in &member_dirs {
+        all_commands.extend(compile_commands::load(dir));
+    }
+    all_commands.sort_by(|a, b| a.file.cmp(&b.file));
+    if let Err(e) = compile_commands::write(&ws_dir, &all_commands) {
+        eprintln!("warning: could not write workspace compile_commands.json: {e}");
+    }
+
     Ok(outputs)
 }
 
@@ -163,7 +181,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     include_dirs.extend(all_dep_includes.iter().cloned());
 
     // Run build.freight (if present) and collect extra settings.
-    let script_out = script::run_build_script(project_dir, manifest, profile)?;
+    let script_out = script::run_build_script(project_dir, manifest, profile, detected)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
     compile_defines.extend(script_out.to_defines());
@@ -172,6 +190,23 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         all_raw_link_flags.push(format!("-l{lib}"));
     }
     all_raw_link_flags.extend(script_out.link_flags.iter().cloned());
+
+    // Merge script-generated sources (add_source / compile_proto) into the
+    // source list.  Language key is derived from file extension via ext_map.
+    let mut all_sources = found.sources.clone();
+    if !script_out.extra_sources.is_empty() {
+        let ext_map = discover::build_ext_map(manifest, templates);
+        for src_path in &script_out.extra_sources {
+            let rel = src_path.strip_prefix(project_dir).unwrap_or(src_path).to_path_buf();
+            let ext = rel.extension().and_then(|e| e.to_str())
+                .map(|e| format!(".{e}")).unwrap_or_default();
+            if let Some(lang_key) = ext_map.get(ext.as_str()) {
+                if !all_sources.iter().any(|s| s.path == rel) {
+                    all_sources.push(SourceFile { path: rel, lang_key: lang_key.clone() });
+                }
+            }
+        }
+    }
 
     // When the project uses C++20+, precompile dep headers as header units so
     // consumers can write `import "dep.h";` instead of `#include "dep.h"`.
@@ -189,7 +224,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         } else { vec![] }
     } else { vec![] };
 
-    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &compile_defines, &hu_flags)?;
+    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &hu_flags)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
@@ -208,7 +243,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     // in sync. Non-fatal — a write failure must not abort a successful build.
     let cc = compile_commands::generate(
         project_dir, manifest, detected, profile,
-        &found.sources, &include_dirs, &feature_defines,
+        &all_sources, &include_dirs, &feature_defines,
     );
     if let Err(e) = compile_commands::write(project_dir, &cc) {
         eprintln!("warning: could not write compile_commands.json: {e}");
@@ -229,9 +264,9 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
 
 /// Generate `compile_commands.json` without running a full build.
 ///
-/// Uses only the project's own include dirs (not built dep dirs), so running
-/// `freight build` first gives more complete entries. Returns the number of
-/// entries written.
+/// Resolves the dep graph to collect dep include dirs (no compilation), so
+/// entries include the same `-I` flags that a real build would use. Returns
+/// the number of entries written.
 pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result<usize, FreightError> {
     let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext { project_dir, manifest, templates: _, detected, found } = &ctx;
@@ -241,13 +276,34 @@ pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result
         features::to_defines(&active)
     };
 
+    // Collect dep include dirs without triggering compilation.  Resolution
+    // failures are non-fatal — we fall back to project-local dirs only.
+    let dep_includes = collect_dep_include_dirs(project_dir, manifest);
+    let mut include_dirs = found.include_dirs.clone();
+    include_dirs.extend(dep_includes);
+
     let commands = compile_commands::generate(
         project_dir, manifest, detected, profile,
-        &found.sources, &found.include_dirs, &feature_defines,
+        &found.sources, &include_dirs, &feature_defines,
     );
     let count = commands.len();
     compile_commands::write(project_dir, &commands)?;
     Ok(count)
+}
+
+/// Collect every dep's exported include dirs without compiling anything.
+///
+/// Used by `generate_compile_commands_at` so the standalone
+/// `freight compile-commands` command produces complete `-I` flags even when
+/// the project has not been built yet.  Resolution errors are silently ignored.
+fn collect_dep_include_dirs(project_dir: &Path, manifest: &Manifest) -> Vec<PathBuf> {
+    let Ok(resolved) = resolve_dep_graph(project_dir, manifest, false) else {
+        return vec![];
+    };
+    resolved
+        .iter()
+        .flat_map(|dep| deps::dep_include_dirs(&dep.dir, &dep.manifest))
+        .collect()
 }
 
 /// Wipe the project's `target/` directory (finds project by walking up from cwd).
@@ -311,7 +367,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let script_out = script::run_build_script(project_dir, manifest, profile)?;
+    let script_out = script::run_build_script(project_dir, manifest, profile, detected)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
     compile_defines.extend(script_out.to_defines());
@@ -321,7 +377,22 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     }
     all_raw_link_flags.extend(script_out.link_flags.iter().cloned());
 
-    let compile_result = build_sources(project_dir, manifest, profile, &found.sources, &include_dirs, detected, &compile_defines, &[])?;
+    let mut all_sources = found.sources.clone();
+    if !script_out.extra_sources.is_empty() {
+        let ext_map = discover::build_ext_map(manifest, templates);
+        for src_path in &script_out.extra_sources {
+            let rel = src_path.strip_prefix(project_dir).unwrap_or(src_path).to_path_buf();
+            let ext = rel.extension().and_then(|e| e.to_str())
+                .map(|e| format!(".{e}")).unwrap_or_default();
+            if let Some(lang_key) = ext_map.get(ext.as_str()) {
+                if !all_sources.iter().any(|s| s.path == rel) {
+                    all_sources.push(SourceFile { path: rel, lang_key: lang_key.clone() });
+                }
+            }
+        }
+    }
+
+    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &[])?;
 
     // Objects from [[bin]] sources contain a main() — exclude from test linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()

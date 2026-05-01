@@ -17,10 +17,12 @@
 //! let backend = toolchain["backend"]; // "gcc" | "clang" | "auto" | …
 //! let arch    = toolchain["arch"];    // "x86_64" | "aarch64" | …
 //! let os      = toolchain["os"];      // "linux" | "macos" | "windows" | …
+//! let ver     = toolchain["version"]; // "13.2.0" | "" when unknown
+//! let tgt     = toolchain["target"];  // "aarch64-linux-gnu" | "" for native
 //!
 //! // ── env map (read / write) ───────────────────────────────────────────────
 //! let cc = env["CC"];                   // "" when unset
-//! env["PKG_CONFIG_PATH"] = "/opt/lib/pkgconfig"; // override for run() + compiler
+//! env["PKG_CONFIG_PATH"] = "/opt/lib/pkgconfig";
 //!
 //! // ── Output setters ───────────────────────────────────────────────────────
 //! set_define("VERSION", "1.2.3"); // → -DVERSION=1.2.3
@@ -29,60 +31,103 @@
 //! add_flag("-march=native");      // raw compiler flag
 //! add_link_lib("z");              // → -lz
 //! add_link_flag("-L/opt/local/lib");
+//! link_path("/opt/local/lib");    // convenience alias for add_link_flag("-L…")
+//! add_source(out + "/generated.cpp"); // compile a generated source file
 //!
-//! // ── File generation ──────────────────────────────────────────────────────
-//! // write_file is a no-op when content unchanged → avoids spurious rebuilds.
-//! // String values belong here; use set_define/add_define for booleans/numbers.
-//! write_file(out + "/version.h",
-//!     "#pragma once\n#define VERSION \"" + package_version() + "\"\n");
+//! // ── File helpers ─────────────────────────────────────────────────────────
+//! write_file(out + "/stub.h", "#pragma once\n");  // no-op when unchanged
+//! let content = read_file("config.txt");          // "" on error
+//! let exists  = path_exists("include/foo.h");     // bool
+//! let stem    = file_stem("proto/msgs.proto");    // "msgs"
+//! let name    = file_name("proto/msgs.proto");    // "msgs.proto"
+//! let dir     = file_dir("proto/msgs.proto");     // "proto"
+//!
+//! // ── File discovery ───────────────────────────────────────────────────────
+//! //
+//! // glob(pattern)           → all matching files (sorted), relative to project root
+//! // changed_files(pattern)  → subset of glob that is newer than the last build stamp
+//! //
+//! // Patterns support * (within a directory), ** (across directories), and ?.
+//! // Both functions return arrays of path strings.
+//! //
+//! // Typical use — re-run a code generator only for files that changed:
+//!
+//! for file in changed_files("proto/**/*.proto") {
+//!     let r = run("protoc", ["--proto_path=proto", "--cpp_out=" + out, file]);
+//!     if !r.ok { fail("protoc failed for " + file + ": " + r.stderr); }
+//!     add_source(out + "/" + file_stem(file) + ".pb.cc");
+//!     rerun_if(file);
+//! }
+//!
+//! // Run cmake configure only when CMakeLists changed or build dir is absent:
+//! if changed_files("CMakeLists.txt").len() > 0 || !path_exists(out + "/Makefile") {
+//!     run("cmake", ["-S", source_dir(), "-B", out, "-DCMAKE_BUILD_TYPE=Release"]);
+//! }
+//!
+//! // ── Diagnostics ──────────────────────────────────────────────────────────
+//! warning("zlib not found, disabling compression");
+//! fail("openssl not found — install libssl-dev");
+//!
+//! // ── pkg-config integration ───────────────────────────────────────────────
+//! let has_ssl  = pkg_config_exists("openssl");
+//! let cflags   = pkg_config_cflags("openssl");   // "-I/usr/include/openssl …"
+//! let libs     = pkg_config_libs("openssl");     // "-lssl -lcrypto …"
+//! pkg_config_apply("openssl");    // auto-applies cflags + libs (includes, link_libs, …)
 //!
 //! // ── Environment probing ──────────────────────────────────────────────────
 //! let git = run("git", ["rev-parse", "--short", "HEAD"]);
 //! if git.ok { /* git.stdout, git.stderr, git.status */ }
 //!
-//! let has_ssl = pkg_config_exists("openssl");
-//! if !has_ssl { fail("openssl not found — install libssl-dev"); }
-//!
 //! let cmake = find_tool("cmake"); // full path or ()
 //!
-//! // Hint incremental builds (not yet used for skipping, reserved for v2)
-//! rerun_if("version.txt");
+//! // ── Incremental re-execution ─────────────────────────────────────────────
+//! // Once rerun_if is called at least once, freight caches this script's output
+//! // and skips re-execution on future builds unless a listed path (or
+//! // build.freight itself) has changed.  changed_files() uses the same stamp
+//! // as its reference time.
+//! rerun_if("CMakeLists.txt");
 //! ```
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use rhai::{Array, Dynamic, Engine, ImmutableString, Map, Scope};
+use serde::{Deserialize, Serialize};
 
 use crate::error::FreightError;
 use crate::manifest::types::Manifest;
+use crate::toolchain::DetectedCompiler;
+use super::compile::select_compiler;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
 pub const SCRIPT_NAME: &str = "build.freight";
 
 /// Everything a `build.freight` script contributes to the build.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ScriptOutput {
     /// Key + optional value pairs; rendered as `KEY` or `KEY=VALUE` (no `-D`).
-    pub defines:      Vec<(String, Option<String>)>,
-    /// Extra include directories (in addition to those from the manifest).
-    /// `out_dir()` is always prepended automatically.
-    pub include_dirs: Vec<PathBuf>,
+    pub defines:       Vec<(String, Option<String>)>,
+    /// Extra include directories.
+    pub include_dirs:  Vec<PathBuf>,
     /// Raw compiler flags appended after the assembled flag set.
-    pub extra_flags:  Vec<String>,
-    /// System libraries to link (`-l{name}` on GCC/Clang).
-    pub link_libs:    Vec<String>,
+    pub extra_flags:   Vec<String>,
+    /// System libraries to link (`-l{name}`).
+    pub link_libs:     Vec<String>,
     /// Raw linker flags.
-    pub link_flags:   Vec<String>,
-    /// Environment variable overrides set via `env["KEY"] = "value"`.
-    /// Applied to `run()` child processes and to compiler invocations.
+    pub link_flags:    Vec<String>,
+    /// Environment variable overrides (applied to `run()` and compiler invocations).
     pub env_overrides: Vec<(String, String)>,
+    /// Dynamically added source files (generated code, protoc output, etc.).
+    /// The build engine compiles these alongside the project's own sources.
+    pub extra_sources: Vec<PathBuf>,
+    /// Non-fatal warnings emitted by `warning(msg)`.
+    pub warnings:      Vec<String>,
 }
 
 impl ScriptOutput {
-    /// Render `defines` as define strings (WITHOUT `-D` prefix) for `BuildSettings.defines`.
-    /// The `-D` prefix is added by `assemble_flags` via the compiler template.
+    /// Render `defines` as define strings WITHOUT the `-D` prefix.
     pub fn to_defines(&self) -> Vec<String> {
         self.defines.iter().map(|(k, v)| match v {
             Some(val) => format!("{k}={val}"),
@@ -90,7 +135,6 @@ impl ScriptOutput {
         }).collect()
     }
 
-    /// `true` when the script produced no output at all.
     pub fn is_empty(&self) -> bool {
         self.defines.is_empty()
             && self.include_dirs.is_empty()
@@ -98,6 +142,8 @@ impl ScriptOutput {
             && self.link_libs.is_empty()
             && self.link_flags.is_empty()
             && self.env_overrides.is_empty()
+            && self.extra_sources.is_empty()
+            && self.warnings.is_empty()
     }
 }
 
@@ -108,60 +154,153 @@ pub fn out_dir(project_dir: &Path, profile: &str) -> PathBuf {
 
 // ── Map types exposed to scripts ──────────────────────────────────────────────
 
-/// `env` — read/write access to environment variables.
-///
-/// - `env["KEY"]`         → current value of `KEY` (`""` when unset)
-/// - `env["KEY"] = "val"` → stored in [`ScriptOutput::env_overrides`]; applied
-///   to every subsequent `run()` call and to compiler invocations.
 #[derive(Clone)]
 struct RhaiEnv;
 
-/// `toolchain` — read-only info about the active compiler configuration.
-///
-/// - `toolchain["backend"]` — compiler backend name (`"gcc"`, `"clang"`, `"auto"`, …)
-/// - `toolchain["arch"]`    — host CPU architecture (`"x86_64"`, `"aarch64"`, …)
-/// - `toolchain["os"]`      — host OS (`"linux"`, `"macos"`, `"windows"`, …)
+/// Read-only toolchain info available as `toolchain["key"]` in scripts.
 #[derive(Clone)]
 struct RhaiToolchain {
     backend: String,
+    version: String,   // "" when unknown
+    target:  String,   // "" for native builds
 }
 
 // ── Thread-local accumulator ──────────────────────────────────────────────────
 
-thread_local! {
-    static STATE: RefCell<Option<ScriptOutput>> = RefCell::new(None);
+struct ScriptState {
+    output:     ScriptOutput,
+    rerun_deps: Vec<PathBuf>,
 }
 
-fn with_state<F: FnOnce(&mut ScriptOutput)>(f: F) {
+thread_local! {
+    static STATE: RefCell<Option<ScriptState>> = RefCell::new(None);
+}
+
+fn with_state<F: FnOnce(&mut ScriptState)>(f: F) {
     STATE.with(|c| {
         if let Some(s) = c.borrow_mut().as_mut() { f(s); }
     });
+}
+
+// ── Stamp file — rerun_if caching ─────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+struct StampEntry {
+    path:           PathBuf,
+    modified_secs:  u64,
+    modified_nanos: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ScriptStamp {
+    deps:   Vec<StampEntry>,
+    output: ScriptOutput,
+}
+
+fn stamp_path(project_dir: &Path, profile: &str) -> PathBuf {
+    out_dir(project_dir, profile).join(".script-stamp.json")
+}
+
+fn file_mtime(path: &Path) -> Option<(u64, u32)> {
+    let mt = std::fs::metadata(path).ok()?.modified().ok()?;
+    let dur = mt.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    Some((dur.as_secs(), dur.subsec_nanos()))
+}
+
+/// If a stamp exists and every listed dep (including `build.freight` itself) is
+/// unchanged, return the cached `ScriptOutput`. Otherwise return `None`.
+fn load_stamp_if_current(project_dir: &Path, profile: &str, script_path: &Path) -> Option<ScriptOutput> {
+    let bytes = std::fs::read(stamp_path(project_dir, profile)).ok()?;
+    let stamp: ScriptStamp = serde_json::from_slice(&bytes).ok()?;
+    // No deps → script never called rerun_if → always re-run.
+    if stamp.deps.is_empty() { return None; }
+    for entry in &stamp.deps {
+        let (secs, nanos) = file_mtime(&entry.path)?;
+        if secs != entry.modified_secs || nanos != entry.modified_nanos {
+            return None;
+        }
+    }
+    // Also check the script file itself for changes.
+    if let Some((secs, nanos)) = file_mtime(script_path) {
+        let script_entry = stamp.deps.iter().find(|e| e.path == script_path);
+        if let Some(e) = script_entry {
+            if secs != e.modified_secs || nanos != e.modified_nanos {
+                return None;
+            }
+        }
+    }
+    Some(stamp.output)
+}
+
+fn save_stamp(project_dir: &Path, profile: &str, script_path: &Path, deps: &[PathBuf], output: &ScriptOutput) {
+    // Always include build.freight in the dep list.
+    let mut all: Vec<&Path> = deps.iter().map(PathBuf::as_path).collect();
+    if !all.contains(&script_path) {
+        all.push(script_path);
+    }
+    let entries: Vec<StampEntry> = all.iter()
+        .filter_map(|p| {
+            let (secs, nanos) = file_mtime(p)?;
+            Some(StampEntry { path: p.to_path_buf(), modified_secs: secs, modified_nanos: nanos })
+        })
+        .collect();
+    let stamp = ScriptStamp { deps: entries, output: output.clone() };
+    if let Ok(json) = serde_json::to_string_pretty(&stamp) {
+        let _ = std::fs::write(stamp_path(project_dir, profile), json);
+    }
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Evaluate `build.freight` in `project_dir` and return what it contributed.
 ///
+/// `detected` is used to expose `toolchain["version"]` to the script.
 /// Returns an empty [`ScriptOutput`] (with `out_dir` already in `include_dirs`)
 /// when no script is present.
 pub fn run_build_script(
     project_dir: &Path,
     manifest: &Manifest,
     profile: &str,
+    detected: &[DetectedCompiler],
 ) -> Result<ScriptOutput, FreightError> {
     let script_path = project_dir.join(SCRIPT_NAME);
     if !script_path.is_file() {
         return Ok(ScriptOutput::default());
     }
 
+    let out_d = out_dir(project_dir, profile);
+    std::fs::create_dir_all(&out_d)?;
+
+    // Skip re-execution if all rerun_if deps are unchanged.
+    if let Some(mut cached) = load_stamp_if_current(project_dir, profile, &script_path) {
+        use owo_colors::OwoColorize;
+        println!("  {} {SCRIPT_NAME} (cached)", "Running".bold().cyan());
+        if !cached.include_dirs.contains(&out_d) {
+            cached.include_dirs.insert(0, out_d);
+        }
+        print_warnings(&cached.warnings);
+        return Ok(cached);
+    }
+
     use owo_colors::OwoColorize;
     println!("  {} {SCRIPT_NAME}", "Running".bold().cyan());
 
     let src = std::fs::read_to_string(&script_path)?;
-    let out_d = out_dir(project_dir, profile);
-    std::fs::create_dir_all(&out_d)?;
 
-    STATE.with(|c| *c.borrow_mut() = Some(ScriptOutput::default()));
+    STATE.with(|c| *c.borrow_mut() = Some(ScriptState {
+        output:     ScriptOutput::default(),
+        rerun_deps: Vec::new(),
+    }));
+
+    // ── Toolchain info ────────────────────────────────────────────────────────
+
+    // Pick the first detected compiler that matches the configured backend to
+    // expose its version string.
+    let primary_lang = manifest.language.keys().next().map(|s| s.as_str()).unwrap_or("cpp");
+    let compiler_version = select_compiler(primary_lang, &manifest.compiler.backend, detected)
+        .map(|c| c.version.clone())
+        .unwrap_or_default();
+    let compiler_target = manifest.compiler.target.as_deref().unwrap_or("").to_string();
 
     let mut engine = Engine::new();
 
@@ -172,7 +311,7 @@ pub fn run_build_script(
         std::env::var(key.as_str()).unwrap_or_default()
     });
     engine.register_indexer_set(|_: &mut RhaiEnv, key: ImmutableString, val: String| {
-        with_state(|s| s.env_overrides.push((key.to_string(), val)));
+        with_state(|s| s.output.env_overrides.push((key.to_string(), val)));
     });
 
     engine.register_type_with_name::<RhaiToolchain>("Toolchain");
@@ -181,6 +320,8 @@ pub fn run_build_script(
             "backend" => Dynamic::from(t.backend.clone()),
             "arch"    => Dynamic::from(std::env::consts::ARCH.to_string()),
             "os"      => Dynamic::from(std::env::consts::OS.to_string()),
+            "version" => Dynamic::from(t.version.clone()),
+            "target"  => Dynamic::from(t.target.clone()),
             _         => Dynamic::UNIT,
         }
     });
@@ -205,26 +346,40 @@ pub fn run_build_script(
     // ── Output setters ────────────────────────────────────────────────────────
 
     engine.register_fn("set_define", |k: String, v: String| {
-        with_state(|s| s.defines.push((k, Some(v))));
+        with_state(|s| s.output.defines.push((k, Some(v))));
     });
     engine.register_fn("add_define", |k: String| {
-        with_state(|s| s.defines.push((k, None)));
+        with_state(|s| s.output.defines.push((k, None)));
     });
     engine.register_fn("add_include", |p: String| {
-        with_state(|s| s.include_dirs.push(PathBuf::from(p)));
+        with_state(|s| s.output.include_dirs.push(PathBuf::from(p)));
     });
     engine.register_fn("add_flag", |f: String| {
-        with_state(|s| s.extra_flags.push(f));
+        with_state(|s| s.output.extra_flags.push(f));
     });
     engine.register_fn("add_link_lib", |n: String| {
-        with_state(|s| s.link_libs.push(n));
+        with_state(|s| s.output.link_libs.push(n));
     });
     engine.register_fn("add_link_flag", |f: String| {
-        with_state(|s| s.link_flags.push(f));
+        with_state(|s| s.output.link_flags.push(f));
+    });
+    engine.register_fn("link_path", |dir: String| {
+        with_state(|s| s.output.link_flags.push(format!("-L{dir}")));
+    });
+    engine.register_fn("add_source", |path: String| {
+        with_state(|s| s.output.extra_sources.push(PathBuf::from(path)));
+    });
+    engine.register_fn("warning", |msg: String| {
+        use owo_colors::OwoColorize;
+        eprintln!("  {} {msg}", "warning:".yellow().bold());
+        with_state(|s| s.output.warnings.push(msg));
     });
 
-    // Accepted for forward-compatibility; incremental skip logic is v2.
-    engine.register_fn("rerun_if", |_path: String| {});
+    // ── Incremental re-execution ──────────────────────────────────────────────
+
+    engine.register_fn("rerun_if", |path: String| {
+        with_state(|s| s.rerun_deps.push(PathBuf::from(path)));
+    });
 
     // ── File generation ───────────────────────────────────────────────────────
 
@@ -236,7 +391,6 @@ pub fn run_build_script(
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
             }
-            // Only write when content changed — avoids invalidating dependents.
             if std::fs::read_to_string(&p).ok().as_deref() == Some(content.as_str()) {
                 return Ok(());
             }
@@ -245,16 +399,43 @@ pub fn run_build_script(
         },
     );
 
+    engine.register_fn("read_file", |path: String| -> String {
+        std::fs::read_to_string(path).unwrap_or_default()
+    });
+
+    engine.register_fn("path_exists", |path: String| -> bool {
+        Path::new(&path).exists()
+    });
+
+    // ── pkg-config integration ────────────────────────────────────────────────
+
+    // pkg_config_cflags("openssl") → "-I/usr/include/openssl …" or ""
+    engine.register_fn("pkg_config_cflags", |name: String| -> String {
+        pkg_config_query(&name, "--cflags").unwrap_or_default()
+    });
+
+    // pkg_config_libs("openssl") → "-lssl -lcrypto …" or ""
+    engine.register_fn("pkg_config_libs", |name: String| -> String {
+        pkg_config_query(&name, "--libs").unwrap_or_default()
+    });
+
+    // pkg_config_apply("openssl") — runs both queries and applies the results:
+    //   cflags: -I → add_include, other → add_flag
+    //   libs:   -l → add_link_lib, -L → link_flag, other → add_link_flag
+    engine.register_fn("pkg_config_apply", |name: String| {
+        let cflags = pkg_config_query(&name, "--cflags").unwrap_or_default();
+        let libs   = pkg_config_query(&name, "--libs").unwrap_or_default();
+        apply_pkg_config_output(&cflags, &libs);
+    });
+
     // ── Environment probing ───────────────────────────────────────────────────
 
-    // find_tool("cmake") → "/usr/bin/cmake" | ()
     engine.register_fn("find_tool", |name: String| -> Dynamic {
         which(&name)
             .map(|p| Dynamic::from(p.to_string_lossy().into_owned()))
             .unwrap_or(Dynamic::UNIT)
     });
 
-    // pkg_config_exists("openssl") → bool
     engine.register_fn("pkg_config_exists", |name: String| -> bool {
         std::process::Command::new("pkg-config")
             .args(["--exists", name.as_str()])
@@ -265,8 +446,6 @@ pub fn run_build_script(
             .unwrap_or(false)
     });
 
-    // run("git", ["rev-parse", "--short", "HEAD"]) → #{ok, status, stdout, stderr}
-    // Applies env overrides that have been written to `env[...]` so far.
     engine.register_fn("run", |cmd: String, args: Array| -> Map {
         let args: Vec<_> = args.into_iter()
             .filter_map(|v| v.try_cast::<String>())
@@ -275,7 +454,7 @@ pub fn run_build_script(
         command.args(&args);
         STATE.with(|c| {
             if let Some(s) = c.borrow().as_ref() {
-                for (k, v) in &s.env_overrides {
+                for (k, v) in &s.output.env_overrides {
                     command.env(k, v);
                 }
             }
@@ -299,10 +478,62 @@ pub fn run_build_script(
         m
     });
 
-    // fail("openssl not found") — abort the build with a clear message
     engine.register_fn("fail",
         |msg: String| -> Result<(), Box<rhai::EvalAltResult>> { Err(msg.into()) },
     );
+
+    // ── File discovery ────────────────────────────────────────────────────────
+
+    // glob("proto/**/*.proto") → sorted array of matching paths relative to project root
+    let proj_dir_g = project_dir.to_path_buf();
+    engine.register_fn("glob", move |pattern: String| -> Array {
+        glob_files(&proj_dir_g, &pattern)
+            .into_iter()
+            .map(|p| Dynamic::from(p.to_string_lossy().into_owned()))
+            .collect()
+    });
+
+    // changed_files("proto/**/*.proto") → files newer than the last build stamp.
+    // Returns all matching files on the first build (no stamp yet).
+    let proj_dir_c  = project_dir.to_path_buf();
+    let stamp_ref   = stamp_path(project_dir, profile);
+    engine.register_fn("changed_files", move |pattern: String| -> Array {
+        let ref_time = std::fs::metadata(&stamp_ref)
+            .and_then(|m| m.modified())
+            .ok();
+        glob_files(&proj_dir_c, &pattern)
+            .into_iter()
+            .filter(|p| {
+                let Some(ref_t) = ref_time else { return true }; // no stamp → all changed
+                std::fs::metadata(proj_dir_c.join(p))
+                    .and_then(|m| m.modified())
+                    .map(|mt| mt > ref_t)
+                    .unwrap_or(true)
+            })
+            .map(|p| Dynamic::from(p.to_string_lossy().into_owned()))
+            .collect()
+    });
+
+    // ── Path helpers ──────────────────────────────────────────────────────────
+
+    engine.register_fn("file_stem", |path: String| -> String {
+        Path::new(&path).file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    });
+    engine.register_fn("file_name", |path: String| -> String {
+        Path::new(&path).file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    });
+    engine.register_fn("file_dir", |path: String| -> String {
+        Path::new(&path).parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("")
+            .to_string()
+    });
 
     // ── Scope ─────────────────────────────────────────────────────────────────
 
@@ -310,6 +541,8 @@ pub fn run_build_script(
     scope.push("env", RhaiEnv);
     scope.push("toolchain", RhaiToolchain {
         backend: manifest.compiler.backend.0.clone(),
+        version: compiler_version,
+        target:  compiler_target,
     });
 
     // ── Evaluate ──────────────────────────────────────────────────────────────
@@ -318,11 +551,22 @@ pub fn run_build_script(
         FreightError::BuildScriptFailed(script_path.display().to_string(), e.to_string())
     })?;
 
-    let mut output = STATE.with(|c| c.borrow_mut().take().unwrap_or_default());
+    let state = STATE.with(|c| c.borrow_mut().take().unwrap_or_else(|| ScriptState {
+        output: ScriptOutput::default(), rerun_deps: vec![],
+    }));
+
+    let mut output  = state.output;
+    let rerun_deps  = state.rerun_deps;
 
     // out_dir is always on the include path so generated headers are found.
+    let out_d = out_dir(project_dir, profile);
     if !output.include_dirs.contains(&out_d) {
         output.include_dirs.insert(0, out_d);
+    }
+
+    // Persist stamp when the script declared at least one rerun_if dep.
+    if !rerun_deps.is_empty() {
+        save_stamp(project_dir, profile, &script_path, &rerun_deps, &output);
     }
 
     Ok(output)
@@ -337,4 +581,206 @@ fn which(name: &str) -> Option<PathBuf> {
         if p.is_file() { return Some(p); }
     }
     None
+}
+
+/// Run `pkg-config <flag> <name>` and return trimmed output, or `None` on failure.
+fn pkg_config_query(name: &str, flag: &str) -> Option<String> {
+    let out = std::process::Command::new("pkg-config")
+        .args([flag, name])
+        .output().ok()?;
+    if !out.status.success() { return None; }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Parse `pkg-config --cflags` + `--libs` output and accumulate into the
+/// thread-local script state.
+fn apply_pkg_config_output(cflags: &str, libs: &str) {
+    for token in cflags.split_whitespace() {
+        if let Some(path) = token.strip_prefix("-I") {
+            with_state(|s| s.output.include_dirs.push(PathBuf::from(path)));
+        } else if let Some(rest) = token.strip_prefix("-D") {
+            if let Some((k, v)) = rest.split_once('=') {
+                let (k, v) = (k.to_string(), v.to_string());
+                with_state(|s| s.output.defines.push((k, Some(v))));
+            } else {
+                let k = rest.to_string();
+                with_state(|s| s.output.defines.push((k, None)));
+            }
+        } else if !token.is_empty() {
+            let t = token.to_string();
+            with_state(|s| s.output.extra_flags.push(t));
+        }
+    }
+    for token in libs.split_whitespace() {
+        if let Some(name) = token.strip_prefix("-l") {
+            let n = name.to_string();
+            with_state(|s| s.output.link_libs.push(n));
+        } else if let Some(dir) = token.strip_prefix("-L") {
+            let f = format!("-L{dir}");
+            with_state(|s| s.output.link_flags.push(f));
+        } else if !token.is_empty() {
+            let f = token.to_string();
+            with_state(|s| s.output.link_flags.push(f));
+        }
+    }
+}
+
+// ── File discovery (glob + changed_files) ────────────────────────────────────
+
+/// Convert a glob pattern to a `regex::Regex` that matches relative paths.
+///
+/// Supported wildcards:
+///   `**`  — any sequence of characters including `/`
+///   `*`   — any sequence of characters except `/`
+///   `?`   — any single character except `/`
+fn glob_to_regex(pattern: &str) -> regex::Regex {
+    let mut re = String::from("^");
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' if chars.peek() == Some(&'*') => {
+                chars.next();
+                re.push_str(".*");
+                // consume optional trailing slash after **
+                if chars.peek() == Some(&'/') { chars.next(); }
+            }
+            '*'  => re.push_str("[^/]*"),
+            '?'  => re.push_str("[^/]"),
+            '.'  => re.push_str("\\."),
+            '+'  | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
+                re.push('\\'); re.push(c);
+            }
+            _ => re.push(c),
+        }
+    }
+    re.push('$');
+    regex::Regex::new(&re).unwrap_or_else(|_| regex::Regex::new("^$").unwrap())
+}
+
+/// Walk `project_dir` and return all files whose path relative to
+/// `project_dir` matches `pattern`.  Results are sorted for stability.
+fn glob_files(project_dir: &Path, pattern: &str) -> Vec<PathBuf> {
+    // Narrow the walk to the subtree before the first wildcard.
+    let base_prefix = pattern.split(['*', '?']).next().unwrap_or("");
+    let base_dir = if base_prefix.is_empty() {
+        project_dir.to_path_buf()
+    } else {
+        let p = Path::new(base_prefix.trim_end_matches('/'));
+        project_dir.join(p.components().take_while(|c| {
+            !matches!(c, std::path::Component::Normal(_) if {
+                let s = c.as_os_str().to_string_lossy();
+                s.contains('*') || s.contains('?')
+            })
+        }).collect::<PathBuf>())
+    };
+
+    let re = glob_to_regex(pattern);
+    let mut results = Vec::new();
+
+    let walker = walkdir::WalkDir::new(&base_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file());
+
+    for entry in walker {
+        let rel = entry.path()
+            .strip_prefix(project_dir)
+            .unwrap_or(entry.path());
+        // Normalise to forward slashes for cross-platform pattern matching.
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        if re.is_match(&rel_str) {
+            results.push(rel.to_path_buf());
+        }
+    }
+
+    results.sort();
+    results
+}
+
+fn print_warnings(warnings: &[String]) {
+    use owo_colors::OwoColorize;
+    for w in warnings {
+        eprintln!("  {} {w}", "warning:".yellow().bold());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── glob_to_regex ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn glob_star_matches_within_dir() {
+        let re = glob_to_regex("proto/*.proto");
+        assert!( re.is_match("proto/messages.proto"));
+        assert!( re.is_match("proto/service.proto"));
+        assert!(!re.is_match("proto/sub/messages.proto")); // * doesn't cross /
+        assert!(!re.is_match("other/messages.proto"));
+    }
+
+    #[test]
+    fn glob_double_star_crosses_dirs() {
+        let re = glob_to_regex("src/**/*.cpp");
+        assert!( re.is_match("src/main.cpp"));
+        assert!( re.is_match("src/foo/bar.cpp"));
+        assert!( re.is_match("src/a/b/c/deep.cpp"));
+        assert!(!re.is_match("src/main.c"));
+        assert!(!re.is_match("other/main.cpp"));
+    }
+
+    #[test]
+    fn glob_question_mark() {
+        let re = glob_to_regex("src/?.c");
+        assert!( re.is_match("src/a.c"));
+        assert!(!re.is_match("src/ab.c"));
+        assert!(!re.is_match("src/a/b.c"));
+    }
+
+    #[test]
+    fn glob_literal_dot_not_any_char() {
+        let re = glob_to_regex("*.proto");
+        assert!( re.is_match("messages.proto"));
+        assert!(!re.is_match("messagesXproto")); // dot must be literal
+    }
+
+    // ── glob_files ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn glob_files_finds_matching() {
+        let dir = tempfile::tempdir().unwrap();
+        let proto_dir = dir.path().join("proto");
+        std::fs::create_dir_all(&proto_dir).unwrap();
+        std::fs::write(proto_dir.join("a.proto"), "").unwrap();
+        std::fs::write(proto_dir.join("b.proto"), "").unwrap();
+        std::fs::write(proto_dir.join("c.txt"),   "").unwrap();
+
+        let files = glob_files(dir.path(), "proto/*.proto");
+        let names: Vec<_> = files.iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(names, &["a.proto", "b.proto"]);
+    }
+
+    #[test]
+    fn glob_files_double_star_recurses() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("src").join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.path().join("src").join("root.c"), "").unwrap();
+        std::fs::write(sub.join("deep.c"), "").unwrap();
+        std::fs::write(sub.join("skip.h"), "").unwrap();
+
+        let files = glob_files(dir.path(), "src/**/*.c");
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn glob_files_empty_when_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.cpp"), "").unwrap();
+        let files = glob_files(dir.path(), "*.proto");
+        assert!(files.is_empty());
+    }
 }
