@@ -256,6 +256,18 @@ pub struct PassthroughConfig {
     pub prefix: String,
 }
 
+/// Precompiled header (PCH) configuration for a compiler template.
+#[derive(Debug, Clone, Default)]
+pub struct PchConfig {
+    /// Flag(s) to compile a header as a PCH, e.g. `"-x c++-header"`.
+    pub compile: String,
+    /// Flag template to inject the PCH into consumers.
+    /// Placeholders: `{header_path}` = original header, `{pch_path}` = compiled PCH output.
+    pub use_flag: String,
+    /// File extension for the PCH output, e.g. `".pch"` or `".gch"`.
+    pub extension: String,
+}
+
 /// A fully-parsed compiler template loaded from a `.toml` file.
 #[derive(Debug, Clone)]
 pub struct CompilerTemplate {
@@ -303,6 +315,8 @@ pub struct CompilerTemplate {
     pub arch_flags: HashMap<String, String>,
     /// Toolchain role → binary map (e.g. `"ar"` → `"ar"`, `"cc"` → `"gcc"`).
     pub toolset: HashMap<String, String>,
+    /// Precompiled header support configuration.
+    pub pch: PchConfig,
     flags_opt: HashMap<String, String>,
     flags_debug: HashMap<String, String>,
     flags_warnings: HashMap<String, String>,
@@ -389,6 +403,7 @@ impl CompilerTemplate {
             requires_toolchain: vec![],
             arch_flags: raw.arch_flags,
             toolset: HashMap::new(),
+            pch: PchConfig::default(),
             linking,
             flags_opt: raw.flags.opt,
             flags_debug: raw.flags.debug,
@@ -495,6 +510,13 @@ impl CompilerTemplate {
             }
         }
 
+        let get_pch = |k: &str| def.pch.get(k).cloned().unwrap_or_default();
+        let pch = PchConfig {
+            compile:   get_pch("compile"),
+            use_flag:  get_pch("use"),
+            extension: get_pch("extension"),
+        };
+
         Ok(Self {
             name:                  def.name,
             family:                def.family,
@@ -519,6 +541,7 @@ impl CompilerTemplate {
             requires_toolchain:  def.requires_toolchain,
             arch_flags:          def.arch_flags,
             toolset:             def.toolset,
+            pch,
             linking,
             flags_opt:           get_flags("opt"),
             flags_debug:         get_flags("debug"),

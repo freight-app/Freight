@@ -109,26 +109,61 @@ impl Manifest {
             ..Default::default()
         };
 
-        let profile = match profile_name {
-            "dev" => self.profile.dev.as_ref(),
-            "release" => self.profile.release.as_ref(),
-            _ => None,
-        };
-
-        let Some(p) = profile else { return base };
+        let resolved = self.resolve_profile(profile_name);
+        let Some(p) = resolved else { return base };
 
         BuildSettings {
             opt_level: p.opt_level.map(|v| v.to_string()).unwrap_or(base.opt_level),
             debug: p.debug.unwrap_or(base.debug),
             lto: p.lto.unwrap_or(base.lto),
             strip: p.strip.unwrap_or(base.strip),
-            sanitize: if p.sanitize.is_empty() {
-                base.sanitize
-            } else {
-                p.sanitize.clone()
-            },
+            sanitize: if p.sanitize.is_empty() { base.sanitize } else { p.sanitize },
             ..base
         }
+    }
+
+    /// Walk the `inherits` chain for `name` and return a merged `Profile`.
+    ///
+    /// Resolution order: leaf overrides parent where `Some`/non-empty; the root
+    /// (deepest ancestor) provides defaults. Cycles are broken at the first
+    /// repeated name; the chain is capped at 16 hops.
+    fn resolve_profile(&self, name: &str) -> Option<Profile> {
+        let mut visited: Vec<String> = Vec::new();
+        let mut current_name = name.to_string();
+        // Accumulate layers from leaf to root, then merge root-first.
+        let mut chain: Vec<Profile> = Vec::new();
+        loop {
+            if visited.len() >= 16 { break; } // max-hop guard
+            if visited.contains(&current_name) { break; } // cycle guard
+            visited.push(current_name.clone());
+            let p = match current_name.as_str() {
+                "dev"     => self.profile.dev.clone()?,
+                "release" => self.profile.release.clone()?,
+                _         => self.profile.custom.get(&current_name).cloned()?,
+            };
+            let next = p.inherits.clone();
+            chain.push(p);
+            match next {
+                Some(parent) => current_name = parent,
+                None => break,
+            }
+        }
+        // Merge: last in chain is the root (no inherits), first is the leaf.
+        // Root provides defaults; each child overrides.
+        let mut merged = chain.pop()?; // root
+        for child in chain.into_iter().rev() {
+            if child.opt_level.is_some() { merged.opt_level = child.opt_level; }
+            if child.debug.is_some()     { merged.debug     = child.debug; }
+            if child.lto.is_some()       { merged.lto       = child.lto; }
+            if child.strip.is_some()     { merged.strip      = child.strip; }
+            if !child.sanitize.is_empty() { merged.sanitize  = child.sanitize; }
+            if !child.features.is_empty() {
+                for f in child.features {
+                    if !merged.features.contains(&f) { merged.features.push(f); }
+                }
+            }
+        }
+        Some(merged)
     }
 
     /// Iterate over `(name, dep)` pairs for the base `[dependencies]` plus any
@@ -478,6 +513,11 @@ pub struct CompilerConfig {
     /// Path to the target sysroot. Reserved for the cross-compilation phase.
     #[serde(default)]
     pub sysroot: Option<String>,
+    /// Path to a header to precompile (relative to the project root).
+    /// E.g. `pch = "include/stdafx.h"`. The PCH is compiled once and
+    /// injected into every source file of the matching language.
+    #[serde(default)]
+    pub pch: Option<String>,
 }
 
 impl Default for CompilerConfig {
@@ -493,6 +533,7 @@ impl Default for CompilerConfig {
             overrides: HashMap::default(),
             target: None,
             sysroot: None,
+            pch: None,
         }
     }
 }
@@ -530,10 +571,18 @@ pub struct Profiles {
     pub dev: Option<Profile>,
     #[serde(default)]
     pub release: Option<Profile>,
+    /// Any `[profile.<name>]` other than dev/release.
+    #[serde(flatten, default)]
+    pub custom: std::collections::HashMap<String, Profile>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Profile {
+    /// Inherit settings from another named profile. The child overrides fields
+    /// where specified; the parent fills in the rest. Up to 16 hops; cycles are
+    /// silently broken at the first repeated name.
+    #[serde(default)]
+    pub inherits: Option<String>,
     #[serde(rename = "opt-level", default)]
     pub opt_level: Option<u8>,
     #[serde(default)]

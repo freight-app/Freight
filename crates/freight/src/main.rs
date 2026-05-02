@@ -62,6 +62,9 @@ enum Commands {
         /// Do not activate default features
         #[arg(long)]
         no_default_features: bool,
+        /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
+        #[arg(long, value_name = "LIST", value_delimiter = ',')]
+        sanitize: Vec<String>,
     },
     /// Build and run the default binary
     Run {
@@ -79,6 +82,9 @@ enum Commands {
         /// Arguments to pass to the binary
         #[arg(last = true)]
         args: Vec<String>,
+        /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
+        #[arg(long, value_name = "LIST", value_delimiter = ',')]
+        sanitize: Vec<String>,
     },
     /// Build and run tests
     Test {
@@ -91,6 +97,9 @@ enum Commands {
         /// Do not activate default features
         #[arg(long)]
         no_default_features: bool,
+        /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
+        #[arg(long, value_name = "LIST", value_delimiter = ',')]
+        sanitize: Vec<String>,
     },
     /// Build (debug) and launch an interactive debugger session
     Debug {
@@ -250,14 +259,14 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::New { name, lang } => cmd_new(&name, &lang),
         Commands::Init { lang } => cmd_init(lang.as_deref()),
-        Commands::Build { release, features, no_default_features } => {
-            cmd_build(release, &features, !no_default_features);
+        Commands::Build { release, features, no_default_features, sanitize } => {
+            cmd_build(release, &features, !no_default_features, &sanitize);
         }
-        Commands::Run { release, bin, features, no_default_features, args } => {
-            cmd_run(release, bin.as_deref(), &features, !no_default_features, &args);
+        Commands::Run { release, bin, features, no_default_features, args, sanitize } => {
+            cmd_run(release, bin.as_deref(), &features, !no_default_features, &args, &sanitize);
         }
-        Commands::Test { name, release, features, no_default_features } => {
-            cmd_test(name.as_deref(), release, &features, !no_default_features);
+        Commands::Test { name, release, features, no_default_features, sanitize } => {
+            cmd_test(name.as_deref(), release, &features, !no_default_features, &sanitize);
         }
         Commands::Watch { release } => cmd_watch(release),
         Commands::Debug { binary, debugger, launch_json, args } => {

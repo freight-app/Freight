@@ -77,7 +77,7 @@ pub fn cmd_debug(
     };
 
     // ── Build with debug profile ───────────────────────────────────────────────
-    let output = match build_project("debug", &[], true) {
+    let output = match build_project("debug", &[], true, &[]) {
         Ok(o) => o,
         Err(e) => { print_error(&e.to_string()); return; }
     };

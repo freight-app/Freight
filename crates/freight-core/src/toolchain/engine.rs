@@ -41,6 +41,8 @@ pub(super) struct ToolchainDef {
     pub requires_toolchain: Vec<String>,
     pub family: String,
     pub supported_sanitizers: Vec<String>,
+    /// PCH params: "compile" flag, "use" template, "extension" (e.g. ".pch" / ".gch")
+    pub pch: HashMap<String, String>,
 }
 
 #[derive(Debug, Default)]
@@ -115,6 +117,9 @@ impl Drop for Guard {
 /// `arch_flags` — `arch_flags["x86_64.linux"] = "-f elf64"`.
 #[derive(Clone)] struct ArchFlagsMap;
 
+/// `pch` — `pch["compile"] = "-x c++-header"` etc.
+#[derive(Clone)] struct PchMap;
+
 /// `env` — read-only host environment: `env["ONEAPI_ROOT"]` → string or `()`.
 #[derive(Clone)] struct EnvMap;
 
@@ -169,6 +174,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     scope.push("toolset",    ToolsetMap);
     scope.push("load_flags", LoadFlagsMap);
     scope.push("arch_flags", ArchFlagsMap);
+    scope.push("pch",        PchMap);
     scope.push("env",        EnvMap);
 
     // ── Host info ──────────────────────────────────────────────────────────
@@ -335,6 +341,20 @@ fn make_engine() -> Engine {
     });
     e.register_indexer_get(|_: &mut ArchFlagsMap, _: ImmutableString| -> Dynamic {
         Dynamic::UNIT
+    });
+
+    // ── pch map ───────────────────────────────────────────────────────────────
+    e.register_type_with_name::<PchMap>("PchMap");
+    e.register_indexer_set(|_: &mut PchMap, key: ImmutableString, val: ImmutableString| {
+        with_def(|d| { d.pch.insert(key.to_string(), val.to_string()); });
+    });
+    e.register_indexer_get(|_: &mut PchMap, key: ImmutableString| -> ImmutableString {
+        CURRENT.with(|c| {
+            c.borrow().as_ref()
+                .and_then(|d| d.pch.get(key.as_str()).cloned())
+                .unwrap_or_default()
+                .into()
+        })
     });
 
     // ── env map (read-only) ───────────────────────────────────────────────────

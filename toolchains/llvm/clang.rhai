@@ -76,6 +76,10 @@ modules["precompile"]    = "--precompile";
 modules["import_module"] = "-fmodule-file={name}={pcm_path}";
 modules["header_unit"]   = "-x c++-header";
 
+pch["compile"]   = "-x c++-header";
+pch["use"]       = "-include-pch {pch_path}";
+pch["extension"] = ".pch";
+
 linking["c"] = #{
     abi:            "c",
     compatible:     ["fortran", "asm"],

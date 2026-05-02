@@ -8,6 +8,7 @@ pub mod header_units;
 pub mod http;
 pub mod link;
 pub mod modules;
+pub mod pch;
 pub mod script;
 
 pub use compile::{CompileResult, compile_sources, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
@@ -80,7 +81,7 @@ pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, FreightError> 
     let mut member_dirs: Vec<PathBuf> = Vec::new();
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        outputs.push(build_project_at(&member_dir, profile, &[], true, None)?);
+        outputs.push(build_project_at(&member_dir, profile, &[], true, None, &[])?);
         member_dirs.push(member_dir);
     }
 
@@ -125,7 +126,7 @@ pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary
     let mut total_failed = 0;
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        let s = test_project_at(&member_dir, profile, filter, &[], true)?;
+        let s = test_project_at(&member_dir, profile, filter, &[], true, &[])?;
         total_passed += s.passed;
         total_failed += s.failed;
     }
@@ -138,21 +139,25 @@ pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary
 /// caller decides how to present results. Progress-line output (`Building`,
 /// `Compiling foo.cpp`, `Linking ...`) currently goes to stdout directly;
 /// routing it through a callback is future work.
-pub fn build_project(profile: &str, features: &[String], use_defaults: bool) -> Result<BuildOutput, FreightError> {
+pub fn build_project(profile: &str, features: &[String], use_defaults: bool, sanitize_override: &[String]) -> Result<BuildOutput, FreightError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    build_project_at(&project_dir, profile, features, use_defaults, None)
+    build_project_at(&project_dir, profile, features, use_defaults, None, sanitize_override)
 }
 
 /// Build the project at a specific `project_dir`.
 ///
 /// `target_override` replaces `[compiler] target` from the manifest — useful
 /// for `freight install --target <triple>` and `freight package --target <triple>`.
-pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], use_defaults: bool, target_override: Option<&str>) -> Result<BuildOutput, FreightError> {
+/// `sanitize_override` replaces the profile's `sanitize` list when non-empty.
+pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], use_defaults: bool, target_override: Option<&str>, sanitize_override: &[String]) -> Result<BuildOutput, FreightError> {
     let mut ctx = load_project_at(project_dir, profile)?;
     if let Some(t) = target_override {
         ctx.manifest.compiler.target = Some(t.to_string());
+    }
+    if !sanitize_override.is_empty() {
+        apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
@@ -160,12 +165,12 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     println!("  {} {} ({profile})", "Building".bold(), manifest.package.name);
 
     // Merge profile-level features into the caller-supplied list before resolving.
-    let profile_features: &[String] = match profile {
-        "dev"     => manifest.profile.dev.as_ref().map_or(&[], |p| p.features.as_slice()),
-        "release" => manifest.profile.release.as_ref().map_or(&[], |p| p.features.as_slice()),
-        _         => &[],
+    let profile_features_buf: Vec<String> = match profile {
+        "dev"     => manifest.profile.dev.as_ref().map_or(vec![], |p| p.features.clone()),
+        "release" => manifest.profile.release.as_ref().map_or(vec![], |p| p.features.clone()),
+        other     => manifest.profile.custom.get(other).map_or(vec![], |p| p.features.clone()),
     };
-    let all_requested: Vec<String> = features.iter().chain(profile_features.iter()).cloned().collect();
+    let all_requested: Vec<String> = features.iter().chain(profile_features_buf.iter()).cloned().collect();
 
     let resolution = features::resolve_features(&manifest.features, &all_requested, use_defaults)?;
     let feature_defines = features::to_defines(&resolution.active);
@@ -242,7 +247,29 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         } else { vec![] }
     } else { vec![] };
 
-    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &hu_flags)?;
+    // If a PCH header is configured, compile it and inject the use flag into
+    // every source file. Failures are non-fatal.
+    let pch_extra: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
+        let primary = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None)
+            .or_else(|| compile::select_compiler("c", &manifest.compiler.backend, detected, None));
+        if let Some(compiler) = primary {
+            match pch::compile_pch(
+                project_dir, pch_header, profile, compiler,
+                &include_dirs, &compile_defines, &[],
+            ) {
+                Ok(Some(compiled)) => compiled.use_flag
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+                Ok(None) => vec![],
+                Err(e) => { eprintln!("warning: PCH skipped: {e}"); vec![] }
+            }
+        } else { vec![] }
+    } else { vec![] };
+
+    let mut extra_flags = hu_flags.clone();
+    extra_flags.extend(pch_extra);
+    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &extra_flags)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
@@ -341,27 +368,30 @@ pub fn clean_project_at(project_dir: &Path) -> Result<(), FreightError> {
 }
 
 /// Build and run the tests of the project rooted at the current working directory.
-pub fn test_project(profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<TestSummary, FreightError> {
+pub fn test_project(profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool, sanitize_override: &[String]) -> Result<TestSummary, FreightError> {
     let cwd = std::env::current_dir()?;
     let project_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
-    test_project_at(&project_dir, profile, filter, features, use_defaults)
+    test_project_at(&project_dir, profile, filter, features, use_defaults, sanitize_override)
 }
 
 /// Build and execute the project's test binaries.
-pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<TestSummary, FreightError> {
-    let ctx = load_project_at(project_dir, profile)?;
+pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, features: &[String], use_defaults: bool, sanitize_override: &[String]) -> Result<TestSummary, FreightError> {
+    let mut ctx = load_project_at(project_dir, profile)?;
+    if !sanitize_override.is_empty() {
+        apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
+    }
     let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
     println!("  {} {} ({profile})", "Testing".bold(), manifest.package.name);
 
-    let profile_features: &[String] = match profile {
-        "dev"     => manifest.profile.dev.as_ref().map_or(&[], |p| p.features.as_slice()),
-        "release" => manifest.profile.release.as_ref().map_or(&[], |p| p.features.as_slice()),
-        _         => &[],
+    let profile_features_buf: Vec<String> = match profile {
+        "dev"     => manifest.profile.dev.as_ref().map_or(vec![], |p| p.features.clone()),
+        "release" => manifest.profile.release.as_ref().map_or(vec![], |p| p.features.clone()),
+        other     => manifest.profile.custom.get(other).map_or(vec![], |p| p.features.clone()),
     };
-    let all_requested: Vec<String> = features.iter().chain(profile_features.iter()).cloned().collect();
+    let all_requested: Vec<String> = features.iter().chain(profile_features_buf.iter()).cloned().collect();
 
     let resolution = features::resolve_features(&manifest.features, &all_requested, use_defaults)?;
     let feature_defines = features::to_defines(&resolution.active);
@@ -419,7 +449,26 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
         }
     }
 
-    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &[])?;
+    // PCH injection for test builds (same logic as build_project_at).
+    let pch_extra_test: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
+        let primary = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None)
+            .or_else(|| compile::select_compiler("c", &manifest.compiler.backend, detected, None));
+        if let Some(compiler) = primary {
+            match pch::compile_pch(
+                project_dir, pch_header, profile, compiler,
+                &include_dirs, &compile_defines, &[],
+            ) {
+                Ok(Some(compiled)) => compiled.use_flag
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+                Ok(None) => vec![],
+                Err(e) => { eprintln!("warning: PCH skipped: {e}"); vec![] }
+            }
+        } else { vec![] }
+    } else { vec![] };
+
+    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &pch_extra_test)?;
 
     // Objects from [[bin]] sources contain a main() — exclude from test linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
@@ -684,6 +733,28 @@ fn build_resolved_deps(
     }
 
     Ok(BuiltDeps { libs, include_dirs: all_include_dirs })
+}
+
+// ── Sanitizer override helper ─────────────────────────────────────────────────
+
+/// Patch the active profile's sanitize list in-place.
+/// Creates the profile entry if it does not exist yet.
+fn apply_sanitize_override(manifest: &mut crate::manifest::types::Manifest, profile: &str, sanitize: &[String]) {
+    let list = sanitize.to_vec();
+    match profile {
+        "dev" => {
+            manifest.profile.dev.get_or_insert_with(Default::default).sanitize = list;
+        }
+        "release" => {
+            manifest.profile.release.get_or_insert_with(Default::default).sanitize = list;
+        }
+        other => {
+            manifest.profile.custom
+                .entry(other.to_string())
+                .or_insert_with(Default::default)
+                .sanitize = list;
+        }
+    }
 }
 
 // ── Shared project loading ────────────────────────────────────────────────────

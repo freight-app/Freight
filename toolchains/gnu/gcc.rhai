@@ -76,6 +76,10 @@ modules["compile_miu"]   = "-fmodule-output={pcm_path}";
 modules["import_module"] = "-fmodule-file={name}={pcm_path}";
 modules["header_unit"]   = "-fmodule-header";
 
+pch["compile"]   = "-x c++-header";
+pch["use"]       = "-include {header_path}";
+pch["extension"] = ".gch";
+
 linking["c"] = #{
     abi:            "c",
     compatible:     ["fortran", "asm"],

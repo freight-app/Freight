@@ -26,7 +26,7 @@ fn at_workspace_root() -> bool {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-pub fn cmd_build(release: bool, features: &[String], use_defaults: bool) {
+pub fn cmd_build(release: bool, features: &[String], use_defaults: bool, sanitize: &[String]) {
     let profile = if release { "release" } else { "dev" };
 
     if at_workspace_root() {
@@ -48,7 +48,7 @@ pub fn cmd_build(release: bool, features: &[String], use_defaults: bool) {
         return;
     }
 
-    match build_project(profile, features, use_defaults) {
+    match build_project(profile, features, use_defaults, sanitize) {
         Ok(output) => {
             println!();
             print_success(&format!(
@@ -63,7 +63,7 @@ pub fn cmd_build(release: bool, features: &[String], use_defaults: bool) {
     }
 }
 
-pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaults: bool, run_args: &[String]) {
+pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaults: bool, run_args: &[String], sanitize: &[String]) {
     let profile = if release { "release" } else { "dev" };
 
     if at_workspace_root() {
@@ -71,7 +71,7 @@ pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaul
         return;
     }
 
-    let output = match build_project(profile, features, use_defaults) {
+    let output = match build_project(profile, features, use_defaults, sanitize) {
         Ok(o) => o,
         Err(e) => { println!(); print_error(&e.to_string()); return; }
     };
@@ -220,7 +220,7 @@ fn is_relevant(ev: &Event) -> bool {
 fn run_build(profile: &str, project_dir: &std::path::Path) {
     use owo_colors::OwoColorize;
     println!("\n  {} …", "Rebuilding".bold().cyan());
-    match build_project(profile, &[], true) {
+    match build_project(profile, &[], true, &[]) {
         Ok(output) => {
             println!();
             print_success(&format!(
@@ -233,7 +233,7 @@ fn run_build(profile: &str, project_dir: &std::path::Path) {
     }
 }
 
-pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_defaults: bool) {
+pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_defaults: bool, sanitize: &[String]) {
     let profile = if release { "release" } else { "dev" };
     if at_workspace_root() {
         match test_workspace(profile, filter) {
@@ -259,7 +259,7 @@ pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_de
         return;
     }
 
-    match test_project(profile, filter, features, use_defaults) {
+    match test_project(profile, filter, features, use_defaults, sanitize) {
         Ok(summary) => {
             println!();
             if summary.total == 0 {
