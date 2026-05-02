@@ -494,8 +494,6 @@ LSP for `freight.toml`, built on `tower-lsp` + `tokio`. Invokable as `freight ls
 
 - **`freight toolchain use <name>`** — set default compiler backend globally; deferred, low demand
 - **Slot-based substitution** — `provides` currently only detects conflicts; auto-routing a dep request to a compatible provider (e.g. root has `mkl`, sub-dep requests `openblas`, both provide `blas`) is complex and deferred to Phase 13+
-- **`[patch]`** — name-level dep override (`openblas = { path = "deps/mkl" }`); adds user friction, deferred
-- **C-ABI boundary awareness** — knowing when a `provides` conflict is safe because deps are isolated behind `extern "C"` interfaces; no good static signal, deferred
 - **Progress callbacks** — build output currently goes to stdout via `println!`; routing through a callback for GUI/TUI frontends is future work
 - **Per-language `[platform]` overlays** — `[platform.linux.language.cpp]` deliberately excluded from v1
 - **JWT/OAuth for registry** — v1 uses static bearer tokens only

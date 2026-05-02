@@ -87,18 +87,6 @@ sub-dep requests `openblas`, both declare `provides = ["blas"]`, freight uses
 `mkl` without any `[patch]` entry. Complex to implement correctly; deferred
 until the registry resolver exists.
 
-### `[patch]`
-Name-level dep override: `[patch] openblas = { path = "deps/mkl" }` — redirect
-any request for `openblas` to `mkl` across the entire dep graph. Simpler than
-slots but requires the user to know what they're replacing. Deferred in favour
-of the `provides` conflict-detection approach for now.
-
-### C-ABI boundary awareness
-A `provides` slot conflict is safe when the two providers are fully isolated
-behind `extern "C"` interfaces (no C++ ABI leaks across the boundary). No good
-static signal to detect this from freight's side; would need an explicit
-`extern-c = true` manifest field. Deferred.
-
 ### Workspace support improvements
 Per-member feature flags (`freight build -p mylib --features tls`), workspace-
 level `[patch]` overrides, and `freight workspace graph` visualisation.
