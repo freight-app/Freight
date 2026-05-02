@@ -38,7 +38,7 @@ pub fn precompile_dep_headers(
 ) -> Vec<HeaderUnit> {
     if include_dirs.is_empty() { return vec![]; }
 
-    let Some(compiler) = select_compiler("cpp", backend, detected) else { return vec![]; };
+    let Some(compiler) = select_compiler("cpp", backend, detected, None) else { return vec![]; };
     if !compiler.template.supports_header_units() { return vec![]; }
 
     let std_flag = match compiler.template.standards.get(cpp_std) {

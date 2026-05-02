@@ -8,6 +8,7 @@
 // LTO uses two separate flags: /GL at compile time and /LTCG at link time.
 
 name          = "msvc";
+family        = "";
 homepage      = "https://visualstudio.microsoft.com/";
 binary        = "link.exe";
 version_arg   = "";           // cl.exe prints version on stderr with no args

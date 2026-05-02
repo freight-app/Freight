@@ -12,6 +12,7 @@
 // Use comptime constants instead of preprocessor defines in .zig source.
 
 name          = "zig";
+family        = "llvm";
 homepage      = "https://ziglang.org/";
 binary        = "zig";
 version_arg   = "version";

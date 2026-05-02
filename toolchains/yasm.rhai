@@ -2,6 +2,7 @@
 // Drop-in replacement for NASM; accepts the same -f output format flags.
 
 name          = "yasm";
+family        = "";
 homepage      = "https://yasm.tortall.net/";
 binary        = "yasm";
 version_arg   = "--version";

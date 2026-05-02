@@ -1,4 +1,5 @@
 name          = "gfortran";
+family        = "gnu";
 homepage      = "https://gcc.gnu.org/fortran/";
 binary        = "gfortran";
 version_arg   = "--version";

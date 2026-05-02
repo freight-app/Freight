@@ -39,6 +39,7 @@ pub(super) struct ToolchainDef {
     pub required_env: Vec<String>,
     pub min_version: Option<String>,
     pub requires_toolchain: Vec<String>,
+    pub family: String,
 }
 
 #[derive(Debug, Default)]
@@ -133,7 +134,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     // ── Plain variables — identity & constraints ───────────────────────────
     for key in &[
         "name", "homepage", "binary", "version_arg", "version_regex",
-        "passthrough_prefix", "min_version",
+        "passthrough_prefix", "min_version", "family",
     ] {
         scope.push(*key, String::new());
     }
@@ -193,6 +194,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     macro_rules! bool { ($k:expr) => { scope.get_value::<bool>($k).unwrap_or_default() }; }
 
     def.name               = str!("name");
+    def.family             = str!("family");
     def.binary             = str!("binary");
     def.version_arg        = str!("version_arg");
     def.version_regex      = str!("version_regex");

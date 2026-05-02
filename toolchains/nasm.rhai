@@ -2,6 +2,7 @@
 // Output format is arch+OS dependent; arch_flags selects -f elf64 etc.
 
 name          = "nasm";
+family        = "";
 homepage      = "https://www.nasm.us/";
 binary        = "nasm";
 version_arg   = "--version";

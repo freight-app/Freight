@@ -1,6 +1,7 @@
 // AMD ROCm HIP compiler — AMD's CUDA equivalent.
 
 name          = "hipcc";
+family        = "amd";
 homepage      = "https://rocm.docs.amd.com/";
 binary        = "hipcc";
 version_arg   = "--version";

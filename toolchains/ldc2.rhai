@@ -2,6 +2,7 @@
 // adds LLVM ThinLTO, better optimisation, and native cross-compilation via --mtriple.
 
 name          = "ldc2";
+family        = "llvm";
 homepage      = "https://github.com/ldc-developers/ldc";
 binary        = "ldc2";
 version_arg   = "--version";

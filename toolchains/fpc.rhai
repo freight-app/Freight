@@ -8,6 +8,7 @@
 // Supported targets: Linux, Windows, macOS, FreeBSD, Haiku, embedded (AVR, ARM).
 
 name          = "fpc";
+family        = "";
 homepage      = "https://www.freepascal.org/";
 binary        = "fpc";
 version_arg   = "-iV";

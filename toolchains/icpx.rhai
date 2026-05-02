@@ -2,6 +2,7 @@
 // -fsycl is injected as an always-flag; host code is standard C++.
 
 name          = "icpx";
+family        = "intel";
 homepage      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler.html";
 binary        = "icpx";
 version_arg   = "--version";

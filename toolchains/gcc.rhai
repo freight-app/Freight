@@ -14,6 +14,7 @@ for _b in _gxx_bins {
 let _gcc = if _gxx == "g++" { "gcc" } else { "gcc" + _gxx.sub_string(3) };
 
 name          = "gcc";
+family        = "gnu";
 homepage      = "https://gcc.gnu.org/";
 binary        = _gxx;
 version_arg   = "--version";

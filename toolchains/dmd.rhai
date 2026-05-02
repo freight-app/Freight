@@ -2,6 +2,7 @@
 // D has no -std= flag; language version tracks the compiler version.
 
 name          = "dmd";
+family        = "";
 homepage      = "https://dlang.org/";
 binary        = "dmd";
 version_arg   = "--version";

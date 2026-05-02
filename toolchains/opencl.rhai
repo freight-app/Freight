@@ -2,6 +2,7 @@
 // Host code (C or C++) is compiled separately by the gcc/clang template.
 
 name          = "opencl";
+family        = "llvm";
 homepage      = "https://www.khronos.org/opencl/";
 binary        = "clang";
 version_arg   = "--version";

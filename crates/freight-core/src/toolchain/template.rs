@@ -260,6 +260,10 @@ pub struct PassthroughConfig {
 #[derive(Debug, Clone)]
 pub struct CompilerTemplate {
     pub name: String,
+    /// Compiler family label used for same-family selection when `backend = "auto"`.
+    /// E.g. `"gnu"` for GCC/gfortran/gnat, `"llvm"` for Clang/flang, `"intel"` for icpx/ifx.
+    /// Empty string = no family preference.
+    pub family: String,
     pub binary: String,
     pub version_arg: String,
     pub version_regex: String,
@@ -340,6 +344,7 @@ impl CompilerTemplate {
 
         Ok(Self {
             name: raw.name,
+            family: String::new(),
             binary: raw.binary,
             version_arg: raw.version_arg,
             version_regex: raw.version_regex,
@@ -488,6 +493,7 @@ impl CompilerTemplate {
 
         Ok(Self {
             name:          def.name,
+            family:        def.family,
             binary,
             version_arg:   def.version_arg,
             version_regex: def.version_regex,

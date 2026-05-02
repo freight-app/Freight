@@ -10,6 +10,7 @@
 // which maps to Odin build-time constant overrides.
 
 name          = "odin";
+family        = "";
 homepage      = "https://odin-lang.org/";
 binary        = "odin";
 version_arg   = "version";

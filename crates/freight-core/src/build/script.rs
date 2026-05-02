@@ -312,7 +312,7 @@ pub fn run_build_script(
     // Pick the first detected compiler that matches the configured backend to
     // expose its version string.
     let primary_lang = manifest.language.keys().next().map(|s| s.as_str()).unwrap_or("cpp");
-    let compiler_version = select_compiler(primary_lang, &manifest.compiler.backend, detected)
+    let compiler_version = select_compiler(primary_lang, &manifest.compiler.backend, detected, None)
         .map(|c| c.version.clone())
         .unwrap_or_default();
     let compiler_target = manifest.compiler.target.as_deref().unwrap_or("").to_string();

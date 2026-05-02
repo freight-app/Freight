@@ -64,6 +64,8 @@ pub fn compile_sources(
     feature_defines: &[String],
     header_unit_flags: &[String],
 ) -> Result<CompileResult, FreightError> {
+    let pf = primary_family(&manifest.compiler.backend, detected);
+
     let results: Result<Vec<(PathBuf, bool)>, FreightError> = sources
         .par_iter()
         .map(|src| -> Result<(PathBuf, bool), FreightError> {
@@ -76,7 +78,7 @@ pub fn compile_sources(
                 return Ok((obj, false));
             }
 
-            let compiler = select_compiler(&src.lang_key, &manifest.compiler.backend, detected)
+            let compiler = select_compiler(&src.lang_key, &manifest.compiler.backend, detected, pf)
                 .ok_or_else(|| FreightError::NoCompilerForLang(src.lang_key.clone()))?;
 
             let settings = settings_for_lang(manifest, profile, &src.lang_key, include_dirs, project_dir, feature_defines);
@@ -104,18 +106,42 @@ pub fn compile_sources(
 /// Pick the compiler to use for `lang_key` given the backend preference.
 ///
 /// `backend = "auto"` → first detected compiler whose template declares `lang_key`.
-/// Any other name     → the detected compiler whose template name matches exactly.
+///   When `preferred_family` is `Some(f)` and non-empty, prefer a compiler in that
+///   family; fall back to any compiler that handles `lang_key` when no family match
+///   is found.
+/// Any other name → the detected compiler whose template name matches exactly.
 pub fn select_compiler<'a>(
     lang_key: &str,
     backend: &Backend,
     detected: &'a [DetectedCompiler],
+    preferred_family: Option<&str>,
 ) -> Option<&'a DetectedCompiler> {
     if backend.is_auto() {
+        if let Some(family) = preferred_family.filter(|f| !f.is_empty()) {
+            if let Some(c) = detected.iter().find(|d| {
+                d.template.linking.contains_key(lang_key) && d.template.family == family
+            }) {
+                return Some(c);
+            }
+        }
         detected.iter().find(|d| d.template.linking.contains_key(lang_key))
     } else {
         let name = backend.name();
         detected.iter().find(|d| d.template.name == name)
     }
+}
+
+/// Return the compiler family for the project's primary language (cpp → c → fortran → any),
+/// used to bias secondary-language selection toward the same toolchain family.
+pub fn primary_family<'a>(backend: &Backend, detected: &'a [DetectedCompiler]) -> Option<&'a str> {
+    for lang in &["cpp", "c", "fortran"] {
+        if let Some(c) = select_compiler(lang, backend, detected, None) {
+            if !c.template.family.is_empty() {
+                return Some(&c.template.family);
+            }
+        }
+    }
+    None
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -371,7 +397,7 @@ mod tests {
         let ts = templates();
         let detected = fake_detected(&ts);
         let backend = Backend::default();
-        let found = select_compiler("cpp", &backend, &detected);
+        let found = select_compiler("cpp", &backend, &detected, None);
         assert!(found.is_some(), "should find a C++ compiler");
         assert!(found.unwrap().template.linking.contains_key("cpp"));
     }
@@ -381,7 +407,7 @@ mod tests {
         let ts = templates();
         let detected = fake_detected(&ts);
         let backend = Backend("gcc".into());
-        let found = select_compiler("cpp", &backend, &detected);
+        let found = select_compiler("cpp", &backend, &detected, None);
         assert!(found.is_some());
         assert_eq!(found.unwrap().template.name, "gcc");
     }
@@ -391,7 +417,7 @@ mod tests {
         let ts = templates();
         let detected = fake_detected(&ts);
         let backend = Backend("nonexistent".into());
-        assert!(select_compiler("cpp", &backend, &detected).is_none());
+        assert!(select_compiler("cpp", &backend, &detected, None).is_none());
     }
 
     #[test]
@@ -399,7 +425,7 @@ mod tests {
         let ts = templates();
         let detected = fake_detected(&ts);
         let backend = Backend::default();
-        let found = select_compiler("cuda", &backend, &detected);
+        let found = select_compiler("cuda", &backend, &detected, None);
         assert!(found.is_some(), "should find a CUDA compiler");
         assert_eq!(found.unwrap().template.name, "nvcc");
     }
@@ -490,7 +516,7 @@ src  = "src/main.cpp"
     fn cpp_lang_key_finds_compiler_with_cpp_linking() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let compiler = select_compiler("cpp", &Backend::default(), &detected).unwrap();
+        let compiler = select_compiler("cpp", &Backend::default(), &detected, None).unwrap();
         assert!(compiler.template.linking.contains_key("cpp"));
     }
 
@@ -498,7 +524,7 @@ src  = "src/main.cpp"
     fn c_lang_key_finds_compiler_with_c_linking_and_compile_binary() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let compiler = select_compiler("c", &Backend::default(), &detected).unwrap();
+        let compiler = select_compiler("c", &Backend::default(), &detected, None).unwrap();
         let c_info = compiler.template.linking.get("c").expect("should have linking.c");
         assert_eq!(c_info.abi, "c");
         assert!(c_info.compile_binary.is_some(),
@@ -509,7 +535,7 @@ src  = "src/main.cpp"
     fn c_files_use_different_binary_than_cpp_files() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let compiler = select_compiler("c", &Backend::default(), &detected).unwrap();
+        let compiler = select_compiler("c", &Backend::default(), &detected, None).unwrap();
         let c_info = compiler.template.linking.get("c").unwrap();
         // The compile_binary for C must differ from the template's main linker binary.
         assert_ne!(
@@ -523,7 +549,7 @@ src  = "src/main.cpp"
     fn resolve_compile_binary_returns_override_for_c() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let compiler = select_compiler("c", &Backend::default(), &detected).unwrap();
+        let compiler = select_compiler("c", &Backend::default(), &detected, None).unwrap();
         let bin = resolve_compile_binary(compiler, "c");
         // The resolved binary should NOT be g++ or clang++.
         let name = bin.file_name().unwrap().to_string_lossy();
@@ -534,7 +560,7 @@ src  = "src/main.cpp"
     fn resolve_compile_binary_returns_compiler_path_for_cpp() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let compiler = select_compiler("cpp", &Backend::default(), &detected).unwrap();
+        let compiler = select_compiler("cpp", &Backend::default(), &detected, None).unwrap();
         let bin = resolve_compile_binary(compiler, "cpp");
         assert_eq!(bin, compiler.path, "C++ should compile with the template's main binary");
     }

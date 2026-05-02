@@ -10,7 +10,7 @@ pub mod link;
 pub mod modules;
 pub mod script;
 
-pub use compile::{CompileResult, compile_sources, dep_file_path, object_path, select_compiler, settings_for_lang};
+pub use compile::{CompileResult, compile_sources, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
 pub use deps::{ResolvedDep, check_slot_conflicts, resolve_dep_graph};
 pub use discover::{DiscoveredSources, SourceFile, discover};
 pub use link::{LinkResult, link_static_lib, link_targets, link_test_binary, select_linker};
@@ -237,7 +237,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
             project_dir, &all_dep_includes, cpp_std,
             &manifest.compiler.backend, detected, profile,
         );
-        if let Some(compiler) = compile::select_compiler("cpp", &manifest.compiler.backend, detected) {
+        if let Some(compiler) = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None) {
             header_units::import_flags(&units, compiler)
         } else { vec![] }
     } else { vec![] };

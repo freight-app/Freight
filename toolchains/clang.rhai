@@ -15,6 +15,7 @@ for _b in _cxx_bins {
 let _cc = if _cxx == "clang++" { "clang" } else { "clang" + _cxx.sub_string(7) };
 
 name          = "clang";
+family        = "llvm";
 homepage      = "https://clang.llvm.org/";
 binary        = _cxx;
 version_arg   = "--version";

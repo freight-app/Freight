@@ -6,6 +6,7 @@
 // The `-emit-object` flag enables the compile-to-object workflow.
 
 name          = "mojo";
+family        = "llvm";
 homepage      = "https://www.modular.com/mojo";
 binary        = "mojo";
 version_arg   = "--version";

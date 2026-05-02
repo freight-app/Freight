@@ -9,6 +9,7 @@
 // sysroot, or when targeting musl instead of glibc.
 
 name          = "zig-cc";
+family        = "llvm";
 homepage      = "https://ziglang.org/learn/overview/#cross-compiling-is-a-first-class-use-case";
 binary        = "zig";
 version_arg   = "version";

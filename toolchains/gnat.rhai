@@ -1,4 +1,5 @@
 name          = "gnat";
+family        = "gnu";
 homepage      = "https://gcc.gnu.org/onlinedocs/gnat/";
 binary        = "gnatmake";
 version_arg   = "--version";

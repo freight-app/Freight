@@ -87,7 +87,7 @@ pub fn generate(
 
     for source in sources {
         let Some(compiler) =
-            select_compiler(&source.lang_key, &manifest.compiler.backend, detected)
+            select_compiler(&source.lang_key, &manifest.compiler.backend, detected, None)
         else {
             continue;
         };

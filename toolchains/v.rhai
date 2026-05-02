@@ -8,6 +8,7 @@
 // than a target triple.
 
 name          = "v";
+family        = "";
 homepage      = "https://vlang.io/";
 binary        = "v";
 version_arg   = "version";

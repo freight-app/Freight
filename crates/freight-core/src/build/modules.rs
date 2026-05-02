@@ -314,7 +314,7 @@ fn compile_miu(
         return Ok((obj, false));
     }
 
-    let compiler = select_compiler(&scanned.source.lang_key, &manifest.compiler.backend, detected)
+    let compiler = select_compiler(&scanned.source.lang_key, &manifest.compiler.backend, detected, None)
         .ok_or_else(|| FreightError::NoCompilerForLang(scanned.source.lang_key.clone()))?;
     let settings = settings_for_lang(manifest, profile, &scanned.source.lang_key, include_dirs, project_dir, feature_defines);
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
@@ -411,7 +411,7 @@ fn compile_non_miu(
         return Ok((obj, false));
     }
 
-    let compiler = select_compiler(&scanned.source.lang_key, &manifest.compiler.backend, detected)
+    let compiler = select_compiler(&scanned.source.lang_key, &manifest.compiler.backend, detected, None)
         .ok_or_else(|| FreightError::NoCompilerForLang(scanned.source.lang_key.clone()))?;
     let settings = settings_for_lang(manifest, profile, &scanned.source.lang_key, include_dirs, project_dir, feature_defines);
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);

@@ -3,6 +3,7 @@
 // (dep_file is empty — freight falls back to mtime-only dirty checking for TCC projects).
 
 name          = "tcc";
+family        = "";
 homepage      = "https://bellard.org/tcc/";
 binary        = "tcc";
 version_arg   = "-v";
