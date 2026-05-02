@@ -4,7 +4,7 @@
 // Cross-compilation is via `-target <triple>` (e.g. `aarch64-apple-macosx14.0`).
 
 name          = "swift";
-family        = "llvm";
+family        = "";
 homepage      = "https://swift.org/";
 binary        = "swiftc";
 version_arg   = "--version";

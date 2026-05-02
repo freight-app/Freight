@@ -10,7 +10,7 @@
 //   Foundation = { system = "Foundation" }
 
 name          = "objc";
-family        = "llvm";
+family        = "";
 homepage      = "https://clang.llvm.org/docs/ObjectiveCLiterals.html";
 binary        = "clang";
 version_arg   = "--version";

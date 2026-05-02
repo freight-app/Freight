@@ -3,7 +3,7 @@
 // https://www.circle-lang.org/
 
 name          = "circle";
-family        = "llvm";
+family        = "";
 homepage      = "https://www.circle-lang.org/";
 binary        = "circle";
 version_arg   = "--version";

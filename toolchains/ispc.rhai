@@ -2,7 +2,7 @@
 // Outputs a .o + a C header. The host links the .o from C or C++.
 
 name          = "ispc";
-family        = "llvm";
+family        = "";
 homepage      = "https://ispc.github.io/";
 binary        = "ispc";
 version_arg   = "--version";
