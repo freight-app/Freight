@@ -11,6 +11,7 @@
 
 name          = "odin";
 family        = "";
+supported_sanitizers = [];
 homepage      = "https://odin-lang.org/";
 binary        = "odin";
 version_arg   = "version";

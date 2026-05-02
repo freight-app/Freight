@@ -1,5 +1,6 @@
 name          = "gfortran";
 family        = "gnu";
+supported_sanitizers = ["address", "undefined"];
 homepage      = "https://gcc.gnu.org/fortran/";
 binary        = "gfortran";
 version_arg   = "--version";

@@ -264,6 +264,9 @@ pub struct CompilerTemplate {
     /// E.g. `"gnu"` for GCC/gfortran/gnat, `"llvm"` for Clang/flang, `"intel"` for icpx/ifx.
     /// Empty string = no family preference.
     pub family: String,
+    /// Sanitizer names this compiler supports (e.g. `"address"`, `"undefined"`).
+    /// Empty = no declaration (don't validate — assume all pass through).
+    pub supported_sanitizers: Vec<String>,
     pub binary: String,
     pub version_arg: String,
     pub version_regex: String,
@@ -345,6 +348,7 @@ impl CompilerTemplate {
         Ok(Self {
             name: raw.name,
             family: String::new(),
+            supported_sanitizers: vec![],
             binary: raw.binary,
             version_arg: raw.version_arg,
             version_regex: raw.version_regex,
@@ -492,10 +496,11 @@ impl CompilerTemplate {
         }
 
         Ok(Self {
-            name:          def.name,
-            family:        def.family,
+            name:                  def.name,
+            family:                def.family,
+            supported_sanitizers:  def.supported_sanitizers,
             binary,
-            version_arg:   def.version_arg,
+            version_arg:           def.version_arg,
             version_regex: def.version_regex,
             extensions:    def.extensions,
             standards:     def.standards,
@@ -567,9 +572,26 @@ impl CompilerTemplate {
 
         // Sanitizers
         if !settings.sanitize.is_empty() && !self.flags_sanitize.is_empty() {
-            let values = settings.sanitize.join(",");
-            let flag = self.flags_sanitize.replace("{values}", &values);
-            push_flag_str(&mut flags, &flag);
+            let active: Vec<&str> = if self.supported_sanitizers.is_empty() {
+                settings.sanitize.iter().map(|s| s.as_str()).collect()
+            } else {
+                let mut active = Vec::new();
+                for s in &settings.sanitize {
+                    if self.supported_sanitizers.contains(s) {
+                        active.push(s.as_str());
+                    } else {
+                        eprintln!(
+                            "warning: sanitizer '{}' is not supported by '{}', skipping",
+                            s, self.name,
+                        );
+                    }
+                }
+                active
+            };
+            if !active.is_empty() {
+                let flag = self.flags_sanitize.replace("{values}", &active.join(","));
+                push_flag_str(&mut flags, &flag);
+            }
         }
 
         // Language standard

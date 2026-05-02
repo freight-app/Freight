@@ -40,6 +40,7 @@ pub(super) struct ToolchainDef {
     pub min_version: Option<String>,
     pub requires_toolchain: Vec<String>,
     pub family: String,
+    pub supported_sanitizers: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -142,6 +143,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
         "extensions", "always_flags",
         "supported_archs", "supported_os",
         "required_tools", "required_env", "requires_toolchain",
+        "supported_sanitizers",
     ] {
         scope.push(*key, Array::new());
     }
@@ -206,7 +208,8 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     def.supported_os       = arr!("supported_os");
     def.required_tools     = arr!("required_tools");
     def.required_env       = arr!("required_env");
-    def.requires_toolchain = arr!("requires_toolchain");
+    def.requires_toolchain     = arr!("requires_toolchain");
+    def.supported_sanitizers   = arr!("supported_sanitizers");
 
     let mv = str!("min_version");
     if !mv.is_empty() { def.min_version = Some(mv); }

@@ -4,6 +4,7 @@
 
 name          = "tcc";
 family        = "";
+supported_sanitizers = [];
 homepage      = "https://bellard.org/tcc/";
 binary        = "tcc";
 version_arg   = "-v";

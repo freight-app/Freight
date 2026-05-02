@@ -15,6 +15,7 @@ let _gcc = if _gxx == "g++" { "gcc" } else { "gcc" + _gxx.sub_string(3) };
 
 name          = "gcc";
 family        = "gnu";
+supported_sanitizers = ["address", "undefined", "thread", "leak"];
 homepage      = "https://gcc.gnu.org/";
 binary        = _gxx;
 version_arg   = "--version";

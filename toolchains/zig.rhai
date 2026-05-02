@@ -13,6 +13,7 @@
 
 name          = "zig";
 family        = "";
+supported_sanitizers = [];
 homepage      = "https://ziglang.org/";
 binary        = "zig";
 version_arg   = "version";

@@ -1,5 +1,6 @@
 name          = "gnat";
 family        = "gnu";
+supported_sanitizers = ["address", "undefined"];
 homepage      = "https://gcc.gnu.org/onlinedocs/gnat/";
 binary        = "gnatmake";
 version_arg   = "--version";

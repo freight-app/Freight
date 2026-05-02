@@ -10,6 +10,7 @@
 
 name          = "zig-cc";
 family        = "";
+supported_sanitizers = ["address", "undefined", "thread"];
 homepage      = "https://ziglang.org/learn/overview/#cross-compiling-is-a-first-class-use-case";
 binary        = "zig";
 version_arg   = "version";
