@@ -23,9 +23,11 @@ binaries whose names match `bench_*` or live in `benches/`. Time each run,
 print a simple table. Optional integration with `criterion` via a flag.
 
 ### Better diagnostics
-Parse compiler error output (GCC/Clang column markers, MSVC error codes) and
-re-emit with clickable `file:line:col` references. Show a snippet of the
-source line. Reduce wall-of-text compile errors to a concise summary.
+Compiler warnings and notes are already forwarded to stderr on every successful
+compilation. Compiler errors are captured and surfaced via `FreightError::CompileFailed`.
+The remaining work: parse GCC/Clang column markers and MSVC error codes and
+re-emit with clickable `file:line:col` references, show a source snippet, and
+reduce wall-of-text compile errors to a concise summary.
 
 ### `freight outdated`
 Compare locked dependency versions (path: current rev, registry: semver range)

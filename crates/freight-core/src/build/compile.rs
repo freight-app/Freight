@@ -276,6 +276,13 @@ pub(crate) fn compile_one(
         ));
     }
 
+    // Always forward compiler warnings/notes to stderr so the user sees them.
+    // Compiler diagnostics on a successful exit are warnings — always relevant.
+    // The full compiler command is only printed in --verbose mode (above).
+    if !out.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+
     Ok(())
 }
 
