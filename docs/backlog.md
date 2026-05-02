@@ -45,7 +45,7 @@ full flag set for a profiling or coverage profile.
 list from the command line without editing `freight.toml`. Useful for one-off
 checks without polluting the manifest.
 
-### `rerun_if` implementation in `build.freight`
+### `rerun_if` in `build.freight`
 `rerun_if_changed("path/to/file")` and `rerun_if_env_changed("VAR")` — skip
 re-running the build script when none of the declared inputs changed. Currently
 the script always re-runs on every build.
@@ -64,9 +64,38 @@ better cross-TU inlining without LTO overhead.
 When `FREIGHT_SYSROOT` is set, automatically inject `--sysroot=` even without
 a `[compiler] sysroot` entry. Reduces boilerplate for SDK-based cross builds.
 
+### Per-language `[platform]` overlays
+`[platform.linux.language.cpp]` — deliberately excluded from v1. Per-language
+platform overrides are useful for e.g. switching to a newer C++ standard only
+on Linux where the compiler supports it.
+
+### Progress callbacks
+Build output currently goes to stdout via `println!`. Routing through a
+callback would allow GUI/TUI frontends (and the LSP) to consume structured
+build events rather than parsing raw text.
+
 ---
 
 ## Dependencies
+
+### Slot-based substitution
+Currently `provides = [...]` only detects conflicts. Full slot substitution
+would auto-route a dep request to a compatible provider — e.g. root has `mkl`,
+sub-dep requests `openblas`, both declare `provides = ["blas"]`, freight uses
+`mkl` without any `[patch]` entry. Complex to implement correctly; deferred
+until the registry resolver exists.
+
+### `[patch]`
+Name-level dep override: `[patch] openblas = { path = "deps/mkl" }` — redirect
+any request for `openblas` to `mkl` across the entire dep graph. Simpler than
+slots but requires the user to know what they're replacing. Deferred in favour
+of the `provides` conflict-detection approach for now.
+
+### C-ABI boundary awareness
+A `provides` slot conflict is safe when the two providers are fully isolated
+behind `extern "C"` interfaces (no C++ ABI leaks across the boundary). No good
+static signal to detect this from freight's side; would need an explicit
+`extern-c = true` manifest field. Deferred.
 
 ### Workspace support improvements
 Per-member feature flags (`freight build -p mylib --features tls`), workspace-
@@ -76,17 +105,39 @@ level `[patch]` overrides, and `freight workspace graph` visualisation.
 Emit the dependency graph as DOT or Mermaid so it can be rendered. Useful for
 large projects to audit transitive deps.
 
+### Git dep recursive fetch
+Freight intentionally does not fetch transitive deps — user manages `.deps/`
+manually. Revisit when the registry exists and a lockfile-driven fetch strategy
+can guarantee reproducibility.
+
+---
+
+## Registry
+
+### JWT / OAuth for freight.dev
+v1 uses static bearer tokens in `registry-data/tokens.toml`. Proper auth
+(GitHub OAuth, OIDC, or JWT with refresh tokens) deferred until v1 is stable
+and self-hosted deployments exist.
+
 ### Private registry support
 `FREIGHT_REGISTRY_URL` env override so teams can point at an internal registry
 without editing `freight.toml`. Credential storage in `~/.freight/credentials.toml`.
+The env var is already planned for Phase 13; this item tracks the UX polish
+(credential helpers, keychain integration).
 
 ---
 
 ## Tooling integration
 
+### `freight toolchain use <name>`
+Set the default compiler backend globally, persisted in `~/.freight/config.toml`.
+Low demand so far — `backend = "..."` in `freight.toml` covers most cases.
+
 ### VS Code extension
 Activates on `freight.toml`, delegates to `freight lsp` for diagnostics,
 completions, and go-to-definition. Publish to the VS Code Marketplace.
+Tracked in Phase 14 of the roadmap; this entry is for the marketplace publishing
+and extension store maintenance side.
 
 ### `compile_commands.json` incremental update
 Currently regenerated from scratch on every run. Cache the previous output and
@@ -94,23 +145,15 @@ only emit entries for sources that changed, so large projects don't incur a
 full re-scan on every `freight build`.
 
 ### `--emit asm`
-`freight build --emit asm` — compile to `.s` and open (or write to
-`target/{profile}/asm/`) so developers can inspect codegen without a
-separate `objdump` / `godbolt` workflow.
+`freight build --emit asm` — compile to `.s` and write to
+`target/{profile}/asm/` so developers can inspect codegen without a
+separate `objdump` / Godbolt workflow.
 
 ### `--time-passes`
 Instrument each compilation step and print a table of per-file build times
 sorted descending. Helps identify which TUs dominate build time.
 
----
-
-## Packaging
-
-### `freight package`
-Bundle the project into a distributable tarball (`{name}-{version}.tar.gz`)
-with sources, `freight.toml`, and a generated `Makefile` fallback for systems
-without freight installed.
-
 ### macOS / Windows distribution
-`freight install` for binary crates (analogous to `cargo install`). Cross-
-compiled `.exe` via a Windows sysroot / `x86_64-w64-mingw32` toolchain.
+Cross-compiled `.exe` via a Windows sysroot / `x86_64-w64-mingw32` toolchain.
+`freight package --target x86_64-windows` producing a `.zip` instead of
+`.tar.gz` on Windows targets.
