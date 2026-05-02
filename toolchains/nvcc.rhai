@@ -1,5 +1,5 @@
 name          = "nvcc";
-family        = "nvidia";
+family        = "";
 homepage      = "https://developer.nvidia.com/cuda-toolkit";
 binary        = "nvcc";
 version_arg   = "--version";

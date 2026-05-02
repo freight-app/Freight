@@ -2,7 +2,7 @@
 // Part of Intel oneAPI. Supports Fortran 2018 and OpenMP 5.x offloading.
 
 name          = "ifx";
-family        = "intel";
+family        = "llvm";
 homepage      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html";
 binary        = "ifx";
 version_arg   = "--version";

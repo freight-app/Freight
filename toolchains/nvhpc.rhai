@@ -3,7 +3,7 @@
 // Supports OpenACC, OpenMP offloading, and CUDA Fortran.
 
 name          = "nvhpc";
-family        = "nvidia";
+family        = "";
 homepage      = "https://developer.nvidia.com/hpc-sdk";
 binary        = "nvc++";
 version_arg   = "--version";
