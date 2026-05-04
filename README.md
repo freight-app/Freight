@@ -248,18 +248,6 @@ freight-doc src/ --format all --out docs/api
 freight-doc src/ --dry-run       # list extracted items without writing
 ```
 
-## Relation to xmake
-
-After starting this project I discovered [xmake](https://xmake.io), which covers similar ground — build tool for native languages, Lua-scripted toolchain definitions, package management. The surface resemblance is real and unintentional; I wasn't aware of it when freight was started.
-
-The underlying approach is different enough that I want to keep going:
-
-- **freight.toml is declarative, not a build script.** xmake's `xmake.lua` is executable Lua — the project description and the build logic are the same file. freight separates them: `freight.toml` is pure data (like `Cargo.toml`), and only toolchain definitions use scripting (Rhai, planned).
-- **freight is Cargo-flavoured.** The workflow — `freight add`, `freight.lock`, a central registry, `freight test` conventions — follows Cargo's model. The goal is that a Rust developer picking up a C++ project feels at home immediately.
-- **freight owns the build graph.** No Ninja or Make underneath. The DAG, dirty checking, parallel compilation, and C++20 module ordering all happen in freight itself.
-
-If xmake already does what you need, use it. Freight is a different bet on how the UX should feel.
-
 ## Documentation
 
 | Document | Contents |
