@@ -1,0 +1,27 @@
+[package]
+name        = "odin-hello"
+version     = "0.1.0"
+description = "Odin — procedures, structs, and parametric polymorphism"
+
+# Requires odin on $PATH.
+# Install: https://odin-lang.org/docs/install/
+# macOS: brew install odin
+# Arch Linux: yay -S odin
+
+[language.odin]
+
+[[bin]]
+name = "odin-hello"
+src  = "src/main.odin"
+
+[compiler]
+backend  = "odin"
+warnings = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+debug     = false

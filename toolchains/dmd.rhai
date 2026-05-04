@@ -1,55 +1,57 @@
 // D reference compiler. Flag conventions also apply to LDC/GDC.
 // D has no -std= flag; language version tracks the compiler version.
 
-set_name("dmd");
-set_homepage("https://dlang.org/");
-set_binary("dmd");
-set_version_arg("--version");
-set_version_regex("v(\\d+\\.\\d+\\.\\d+)");
+name          = "dmd";
+family        = "";
+supported_sanitizers = [];
+homepage      = "https://dlang.org/";
+binary        = "dmd";
+version_arg   = "--version";
+version_regex = "v(\\d+\\.\\d+\\.\\d+)";
+extensions    = [".d"];
+passthrough        = false;
+passthrough_prefix = "";
 
-set_toolset("ld", "dmd");
+toolset["ld"] = "dmd";
 
-set_extensions([".d"]);
+flags["opt"]["0"] = "";
+flags["opt"]["1"] = "-O";
+flags["opt"]["2"] = "-O";
+flags["opt"]["3"] = "-O -release";
+flags["opt"]["s"] = "-O";
+flags["opt"]["z"] = "-O";
 
-set_flag("opt", "0", "");
-set_flag("opt", "1", "-O");
-set_flag("opt", "2", "-O");
-set_flag("opt", "3", "-O -release");
-set_flag("opt", "s", "-O");
-set_flag("opt", "z", "-O");
+flags["debug"]["true"]  = "-g";
+flags["debug"]["false"] = "";
 
-set_flag("debug", "true",  "-g");
-set_flag("debug", "false", "");
+flags["warnings"]["none"]    = "";
+flags["warnings"]["default"] = "-wi";
+flags["warnings"]["all"]     = "-w";
+flags["warnings"]["error"]   = "-w";
 
-set_flag("warnings", "none",    "");
-set_flag("warnings", "default", "-wi");
-set_flag("warnings", "all",     "-w");
-set_flag("warnings", "error",   "-w");
+flags["lto"]["true"]  = "";
+flags["lto"]["false"] = "";
 
-set_flag("lto", "true",  "");
-set_flag("lto", "false", "");
+flags["strip"]["true"]  = "-L-s";
+flags["strip"]["false"] = "";
 
-set_flag("strip", "true",  "-L-s");
-set_flag("strip", "false", "");
+include_dir  = "-I{path}";
+define       = "-version={name}";
+define_value = "-version={name}";
+output       = "-of={path}";
+compile_only = "-c";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
-set_structure("include_dir",  "-I{path}");
-set_structure("define",       "-version={name}");
-set_structure("define_value", "-version={name}");
-set_structure("output",       "-of={path}");
-set_structure("compile_only", "-c");
-set_structure("dep_file",     "");
-set_structure("target",       "");
-set_structure("sysroot",      "");
+modules["style"] = "none";
 
-set_module_style("none");
-set_passthrough(false, "");
-
-set_linking("d", #{
+linking["d"] = #{
     abi:        "d",
     compatible: ["c", "fortran"],
     linker:     "",
     extensions: [".d"],
-});
+};
 
 fn check() {
     find_tool("dmd") != ()

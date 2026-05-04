@@ -1,0 +1,3 @@
+name    = "macos"
+kind    = "os"
+aliases = ["darwin"]

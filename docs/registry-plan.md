@@ -1,26 +1,26 @@
-# crane.dev Registry — Implementation Plan
+# freight.dev Registry — Implementation Plan
 
 ## Overview
 
-crane.dev is the official package registry for crane. It stores and serves source archives.
-Publishers upload a tarball; consumers download it and build locally — crane is a
+freight.dev is the official package registry for freight. It stores and serves source archives.
+Publishers upload a tarball; consumers download it and build locally — freight is a
 source-based package manager (like Cargo), not a binary distribution.
 
 This document covers:
-- **Server** (`crates/crane-registry/`) — the Axum HTTP service
-- **Client** (`crane-core`) — download, resolve, fetch
-- **CLI** (`crane`) — wiring the Phase 9 stubs to the real API
+- **Server** (`crates/freight-registry/`) — the Axum HTTP service
+- **Client** (`freight-core`) — download, resolve, fetch
+- **CLI** (`freight`) — wiring the Phase 9 stubs to the real API
 
 ---
 
 ## Architecture
 
 ```
-crane add mylib@1.0                 crane publish
+freight add mylib@1.0                 freight publish
         │                                  │
         ▼                                  ▼
 ┌──────────────────────────────────────────────────┐
-│  crane.dev  (Axum HTTP, tokio)                   │
+│  freight.dev  (Axum HTTP, tokio)                   │
 │                                                  │
 │  GET  /api/v1/packages/{name}                    │
 │  GET  /api/v1/packages/{name}/{version}/download │
@@ -47,11 +47,11 @@ crane add mylib@1.0                 crane publish
 
 ## Package model
 
-A crane package is a source archive with `crane.toml` at the top level. It:
+A freight package is a source archive with `freight.toml` at the top level. It:
 - Must contain every source file needed to build
-- Must NOT contain `target/`, `.crane-build/`, or `.deps/`
-- Is produced by `crane publish` via `tar --exclude=target --exclude=.deps -czf`
-- Is identified by `[package].name` + `[package].version` in the bundled `crane.toml`
+- Must NOT contain `target/`, `.freight-build/`, or `.deps/`
+- Is produced by `freight publish` via `tar --exclude=target --exclude=.deps -czf`
+- Is identified by `[package].name` + `[package].version` in the bundled `freight.toml`
 
 Semver versioning is enforced. The registry rejects non-semver versions at publish time.
 
@@ -153,8 +153,8 @@ Streams the `.tar.gz` archive. Sets `Content-Type: application/octet-stream` and
 `X-Checksum-SHA256: <hex>` for the client to verify without reading the full body first.
 
 `404` if version unknown. `410 Gone` if yanked (unless the request carries
-`Accept: application/x-crane-locked`, which `crane fetch` sends when the version is
-pinned in `crane.lock` — yanked versions remain downloadable for locked projects).
+`Accept: application/x-freight-locked`, which `freight fetch` sends when the version is
+pinned in `freight.lock` — yanked versions remain downloadable for locked projects).
 
 #### `GET /api/v1/search?q=<query>[&limit=<n>]`
 
@@ -179,11 +179,11 @@ header is missing, `403` if the token is unknown.
 #### `POST /api/v1/publish`
 
 Body: `multipart/form-data` with two parts:
-- `manifest` — the `crane.toml` content (text/plain)
+- `manifest` — the `freight.toml` content (text/plain)
 - `tarball` — the source archive (application/octet-stream)
 
 Server validation order:
-1. Parse + validate `crane.toml` (same logic as `crane check`)
+1. Parse + validate `freight.toml` (same logic as `freight check`)
 2. Check name is a valid package name (letters, digits, `-`, `_`)
 3. Check version is valid semver and not already published
 4. If package already exists in the index: verify token owner matches package owner
@@ -197,12 +197,12 @@ Server validation order:
 ```
 
 `409 Conflict` if the version already exists.
-`422 Unprocessable` if `crane.toml` is invalid (includes the validation error messages).
+`422 Unprocessable` if `freight.toml` is invalid (includes the validation error messages).
 
 #### `POST /api/v1/yank/{name}/{version}`
 
-Marks the version as yanked. Future `crane add` resolution skips yanked versions.
-Existing `crane.lock` pins still download successfully (see download endpoint above).
+Marks the version as yanked. Future `freight add` resolution skips yanked versions.
+Existing `freight.lock` pins still download successfully (see download endpoint above).
 
 `403` if the caller is not the package owner.
 
@@ -212,7 +212,7 @@ Removes yank status. Same ownership check.
 
 ---
 
-## crane.lock additions
+## freight.lock additions
 
 Registry dep entries get a `source` field that encodes the registry URL:
 
@@ -227,103 +227,103 @@ dependencies = ["mylib"]
 [[package]]
 name         = "mylib"
 version      = "1.0.1"
-source       = "registry+https://crane.dev"
+source       = "registry+https://freight.dev"
 checksum     = "def456..."
 dependencies = []
 ```
 
 The `source` field format is `registry+<url>`. This allows projects to mix packages
-from crane.dev with packages from private self-hosted registries.
+from freight.dev with packages from private self-hosted registries.
 
 ---
 
-## Client-side changes (`crane-core`)
+## Client-side changes (`freight-core`)
 
 ### New module: `src/registry.rs`
 
 ```rust
 pub struct RegistryClient {
-    registry_url: String,   // e.g. "https://crane.dev"
-    token: Option<String>,  // from ~/.crane/credentials.toml
+    registry_url: String,   // e.g. "https://freight.dev"
+    token: Option<String>,  // from ~/.freight/credentials.toml
 }
 
 impl RegistryClient {
     /// Fetch all version records for a package.
-    pub fn package_info(name) -> Result<PackageInfo, CraneError>
+    pub fn package_info(name) -> Result<PackageInfo, FreightError>
 
     /// Resolve the highest non-yanked version satisfying a semver req.
-    pub fn resolve_version(name, req) -> Result<(String, String), CraneError>
+    pub fn resolve_version(name, req) -> Result<(String, String), FreightError>
     //                                            ↑version  ↑sha256
 
     /// Download and extract a specific version to .deps/<name>/.
-    /// Skips if .crane-fetched sentinel already exists.
-    pub fn fetch_dep(name, version, sha256, project_dir) -> Result<PathBuf, CraneError>
+    /// Skips if .freight-fetched sentinel already exists.
+    pub fn fetch_dep(name, version, sha256, project_dir) -> Result<PathBuf, FreightError>
 
     /// Upload a package tarball to the registry.
-    pub fn publish(manifest_src, tarball_bytes) -> Result<PublishResult, CraneError>
+    pub fn publish(manifest_src, tarball_bytes) -> Result<PublishResult, FreightError>
 
     /// Search for packages matching a query string.
-    pub fn search(query, limit) -> Result<Vec<SearchResult>, CraneError>
+    pub fn search(query, limit) -> Result<Vec<SearchResult>, FreightError>
 }
 ```
 
-`fetch_dep` reuses the same `--strip-components=1` extraction + `.crane-fetched`
+`fetch_dep` reuses the same `--strip-components=1` extraction + `.freight-fetched`
 sentinel pattern as `build/http.rs`. The only difference is the download source:
 `GET /api/v1/packages/{name}/{version}/download` instead of a direct URL.
 
 ### Config resolution
 
 `RegistryClient::new()` reads:
-1. `CRANE_REGISTRY_URL` env var → override the default `https://crane.dev`
-2. `~/.crane/credentials.toml` → look up token for the resolved URL
+1. `FREIGHT_REGISTRY_URL` env var → override the default `https://freight.dev`
+2. `~/.freight/credentials.toml` → look up token for the resolved URL
 
 ```toml
-# ~/.crane/credentials.toml
+# ~/.freight/credentials.toml
 [registries]
-"https://crane.dev" = "abc123secret"
+"https://freight.dev" = "abc123secret"
 "https://registry.mycompany.com" = "xyz789secret"
 ```
 
 ### Wiring into `build_foreign_deps`
 
-Registry deps are identified by `source = "registry+..."` in `crane.lock`. The build
+Registry deps are identified by `source = "registry+..."` in `freight.lock`. The build
 step calls `RegistryClient::fetch_dep` for each such entry, then treats the extracted
 directory exactly like an http dep (foreign build system detection → compile → link).
 
-### Semver resolution in `crane add`
+### Semver resolution in `freight add`
 
-`crane add mylib@1.0`:
+`freight add mylib@1.0`:
 1. `RegistryClient::resolve_version("mylib", "^1.0")` → `("1.0.2", "sha256...")`
 2. Write `mylib = "1.0"` to `[dependencies]` (user-facing range, not pinned)
-3. Append to `crane.lock`: `name=mylib version=1.0.2 source=registry+https://crane.dev checksum=sha256...`
+3. Append to `freight.lock`: `name=mylib version=1.0.2 source=registry+https://freight.dev checksum=sha256...`
 
-`crane add mylib` (no version) → resolve to `*` → pick latest non-yanked.
+`freight add mylib` (no version) → resolve to `*` → pick latest non-yanked.
 
 ---
 
-## CLI wiring (`crane`)
+## CLI wiring (`freight`)
 
 Phase 9 left these commands as stubs. Each wires to a `RegistryClient` method:
 
 | Command | Registry call | Notes |
 |---|---|---|
-| `crane add <name>[@ver]` | `resolve_version` + lock write | Already does path/git/system; add registry path |
-| `crane fetch` | `fetch_dep` for registry lock entries | Already handles git + http deps |
-| `crane search <query>` | `search` | Print formatted results table |
-| `crane info <name>` | `package_info` | Print version list + description |
-| `crane login` | Write credentials file | Interactive token prompt |
-| `crane publish` | Bundle + `publish` | Needs tarball assembly step |
-| `crane yank <name> <version>` | `yank` / `unyank` | Add `--undo` flag for unyank |
+| `freight add <name>[@ver]` | `resolve_version` + lock write | Already does path/git/system; add registry path |
+| `freight fetch` | `fetch_dep` for registry lock entries | Already handles git + http deps |
+| `freight search <query>` | `search` | Print formatted results table |
+| `freight info <name>` | `package_info` | Print version list + description |
+| `freight login` | Write credentials file | Interactive token prompt |
+| `freight publish` | Bundle + `publish` | Needs tarball assembly step |
+| `freight yank <name> <version>` | `yank` / `unyank` | Add `--undo` flag for unyank |
 
 ---
 
-## New crate: `crates/crane-registry`
+## New crate: `crates/freight-registry`
 
 Binary crate (not a library — the server has no consumers). Workspace entry:
 
 ```toml
 # Cargo.toml
-members = [..., "crates/crane-registry"]
+members = [..., "crates/freight-registry"]
 
 [workspace.dependencies]
 axum        = "0.7"
@@ -331,9 +331,9 @@ tower-http  = { version = "0.5", features = ["fs", "trace", "cors"] }
 ```
 
 ```
-crates/crane-registry/
+crates/freight-registry/
   src/
-    main.rs       # CLI: crane-registry serve [--data <dir>] [--addr <addr>]
+    main.rs       # CLI: freight-registry serve [--data <dir>] [--addr <addr>]
     server.rs     # axum router setup, state initialization
     index.rs      # IndexStore: load/save/search index files + flock writes
     storage.rs    # archive read/write under packages/<name>/<ver>.tar.gz
@@ -374,9 +374,9 @@ Use a custom `ApiError` type that implements `IntoResponse`.
 
 ### Step 1 — Crate scaffold + read-only API
 
-Goal: `cargo run -p crane-registry -- serve` starts a server that can answer read queries.
+Goal: `cargo run -p freight-registry -- serve` starts a server that can answer read queries.
 
-- [ ] Add `crates/crane-registry/` to workspace
+- [ ] Add `crates/freight-registry/` to workspace
 - [ ] `main.rs` + `server.rs`: Axum router, bind address from env/args, graceful shutdown
 - [ ] `index.rs`: load index files from disk, in-memory search
 - [ ] `storage.rs`: stream archive files from disk
@@ -386,43 +386,43 @@ Goal: `cargo run -p crane-registry -- serve` starts a server that can answer rea
 
 ### Step 2 — Auth middleware + write API
 
-Goal: `crane publish` and `crane yank` work end-to-end with a test token.
+Goal: `freight publish` and `freight yank` work end-to-end with a test token.
 
 - [ ] `auth.rs`: extract `Authorization: Bearer` header, look up in `TokenStore`
 - [ ] `tokens.toml` loading + SIGHUP reload
-- [ ] `handlers/publish.rs`: multipart parse, `crane.toml` validation, SHA-256, write
+- [ ] `handlers/publish.rs`: multipart parse, `freight.toml` validation, SHA-256, write
 - [ ] `handlers/yank.rs`: flip `yanked` flag in index, ownership check
 - [ ] Concurrent write safety: `flock` on index file during publish/yank
 - [ ] Integration tests: publish → fetch → yank → verify yank blocks resolution
 
-### Step 3 — Client download + `crane fetch`
+### Step 3 — Client download + `freight fetch`
 
-Goal: `crane build` on a project with a registry dep fetches and builds it automatically.
+Goal: `freight build` on a project with a registry dep fetches and builds it automatically.
 
-- [ ] `crane-core/src/registry.rs`: `RegistryClient`, `fetch_dep`
+- [ ] `freight-core/src/registry.rs`: `RegistryClient`, `fetch_dep`
 - [ ] Wire `LockPackage` with `source = "registry+..."` into `build_foreign_deps`
-- [ ] `crane fetch` pre-fetches registry deps (same as git/http deps)
-- [ ] Integration test: publish a tiny C library, add it to a test project, `crane build`
+- [ ] `freight fetch` pre-fetches registry deps (same as git/http deps)
+- [ ] Integration test: publish a tiny C library, add it to a test project, `freight build`
 
-### Step 4 — `crane add` semver resolution
+### Step 4 — `freight add` semver resolution
 
-Goal: `crane add mylib@1.0` resolves, pins, writes manifest + lock.
+Goal: `freight add mylib@1.0` resolves, pins, writes manifest + lock.
 
 - [ ] `RegistryClient::resolve_version` — fetch index, semver filter, return best match
 - [ ] Update `cmd_add` to accept the registry path (currently only path/git/system)
-- [ ] `crane.lock` write for registry deps
-- [ ] Integration test: publish two versions, `crane add` resolves to the higher one
+- [ ] `freight.lock` write for registry deps
+- [ ] Integration test: publish two versions, `freight add` resolves to the higher one
 
-### Step 5 — `crane login` / `crane publish` / `crane yank`
+### Step 5 — `freight login` / `freight publish` / `freight yank`
 
 Goal: the full publisher workflow works from the CLI.
 
 - [ ] `cmd_login`: prompt, validate token against `GET /api/v1/auth/whoami`, write credentials
-- [ ] `cmd_publish`: `tar` bundling respecting `target/` and `.crane-build/` exclusions, POST
+- [ ] `cmd_publish`: `tar` bundling respecting `target/` and `.freight-build/` exclusions, POST
 - [ ] `cmd_yank`: `POST/DELETE /api/v1/yank/{name}/{version}` with `--undo` flag
-- [ ] `crane publish` dry-run: `--dry-run` prints what would be uploaded without sending
+- [ ] `freight publish` dry-run: `--dry-run` prints what would be uploaded without sending
 
-### Step 6 — `crane search` / `crane info`
+### Step 6 — `freight search` / `freight info`
 
 Goal: package discovery works from the CLI.
 
@@ -434,8 +434,8 @@ Goal: package discovery works from the CLI.
 ## Open questions
 
 **1. Tarball bundling scope**
-Should `crane publish` bundle everything except `target/` and `.deps/`, or should
-`crane.toml` support an explicit `[publish] include = [...]` / `exclude = [...]`?
+Should `freight publish` bundle everything except `target/` and `.deps/`, or should
+`freight.toml` support an explicit `[publish] include = [...]` / `exclude = [...]`?
 Cargo uses include/exclude lists. v1 will use a fixed exclusion list; manifest keys
 can be added in v2 without breaking published packages.
 
@@ -447,17 +447,17 @@ thought in resolution and manifest syntax. v1 uses flat names; namespaces are ad
 **3. Transitive resolution**
 v1 resolves only direct deps. Full transitive SAT solving (like Cargo's pubgrub) is deferred.
 Projects that need a specific transitive version can pin it as a direct dep in their
-`crane.toml`. A proper resolver unblocks this in v2.
+`freight.toml`. A proper resolver unblocks this in v2.
 
 **4. Index caching**
-Should `crane add` / `crane search` cache the package index locally in
-`~/.crane/registry-cache/` to work offline? v1 will always fetch from the server (fast
+Should `freight add` / `freight search` cache the package index locally in
+`~/.freight/registry-cache/` to work offline? v1 will always fetch from the server (fast
 enough for an index file). ETag-based conditional fetch + local cache comes in v2.
 
 **5. Self-hosting**
-The `crane-registry` binary should be deployable with zero config beyond a data directory:
+The `freight-registry` binary should be deployable with zero config beyond a data directory:
 ```
-CRANE_REGISTRY_DATA=/data crane-registry serve
+FREIGHT_REGISTRY_DATA=/data freight-registry serve
 ```
 TLS is handled by a reverse proxy (nginx/caddy). The binary will ship a Dockerfile.
-`CRANE_REGISTRY_URL` on the client side is how users point `crane` at a private registry.
+`FREIGHT_REGISTRY_URL` on the client side is how users point `freight` at a private registry.

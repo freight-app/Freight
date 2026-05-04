@@ -1,0 +1,3 @@
+name    = "i686"
+kind    = "arch"
+aliases = ["i386", "i586"]

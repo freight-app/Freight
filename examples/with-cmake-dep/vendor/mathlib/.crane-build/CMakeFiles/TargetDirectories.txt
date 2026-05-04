@@ -1,0 +1,3 @@
+/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/with-cmake-dep/vendor/mathlib/.crane-build/CMakeFiles/mathlib.dir
+/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/with-cmake-dep/vendor/mathlib/.crane-build/CMakeFiles/edit_cache.dir
+/home/max/crane/.claude/worktrees/bold-owl-vxoq/examples/with-cmake-dep/vendor/mathlib/.crane-build/CMakeFiles/rebuild_cache.dir

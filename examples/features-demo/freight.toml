@@ -1,0 +1,28 @@
+[package]
+name        = "features-demo"
+version     = "0.1.0"
+description = "Cargo-style conditional compilation features with #ifdef"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "features-demo"
+src  = "src/main.c"
+
+# Features: each name activates -D<NAME> for all sources when the feature is on.
+# "default" lists features that are active when no --features flag is passed.
+[features]
+default = ["logging"]
+logging = []
+json    = []
+tls     = ["net"]    # tls activates net automatically
+net     = []
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 2
+debug     = false

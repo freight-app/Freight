@@ -1,71 +1,72 @@
 // NASM assembler — x86/x86_64 assembly.
 // Output format is arch+OS dependent; arch_flags selects -f elf64 etc.
 
-set_name("nasm");
-set_homepage("https://www.nasm.us/");
-set_binary("nasm");
-set_version_arg("--version");
-set_version_regex("NASM version (\\d+\\.\\d+\\.\\d+)");
+name          = "nasm";
+family        = "";
+supported_sanitizers = [];
+homepage      = "https://www.nasm.us/";
+binary        = "nasm";
+version_arg   = "--version";
+version_regex = "NASM version (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".asm", ".nasm"];
+passthrough        = false;
+passthrough_prefix = "";
+// NASM only understands x86 assembly syntax; useless on non-x86 hosts.
+supported_archs = ["x86", "x86_64"];
 
-set_toolset("as", "nasm");
-
-set_extensions([".asm", ".nasm"]);
+toolset["as"] = "nasm";
 
 // NASM has no optimisation, LTO, sanitize or CPU extension flags.
-set_flag("opt", "0", "");
-set_flag("opt", "1", "");
-set_flag("opt", "2", "");
-set_flag("opt", "3", "");
-set_flag("opt", "s", "");
-set_flag("opt", "z", "");
+flags["opt"]["0"] = "";
+flags["opt"]["1"] = "";
+flags["opt"]["2"] = "";
+flags["opt"]["3"] = "";
+flags["opt"]["s"] = "";
+flags["opt"]["z"] = "";
 
-set_flag("debug", "true",  "-g -F dwarf");
-set_flag("debug", "false", "");
+flags["debug"]["true"]  = "-g -F dwarf";
+flags["debug"]["false"] = "";
 
-set_flag("warnings", "none",    "");
-set_flag("warnings", "default", "");
-set_flag("warnings", "all",     "-w+all");
-set_flag("warnings", "error",   "-w+all -Werror");
+flags["warnings"]["none"]    = "";
+flags["warnings"]["default"] = "";
+flags["warnings"]["all"]     = "-w+all";
+flags["warnings"]["error"]   = "-w+all -Werror";
 
-set_flag("lto", "true",  "");
-set_flag("lto", "false", "");
+flags["lto"]["true"]  = "";
+flags["lto"]["false"] = "";
 
-set_flag("strip", "true",  "");
-set_flag("strip", "false", "");
+flags["strip"]["true"]  = "";
+flags["strip"]["false"] = "";
 
-set_structure("include_dir",  "-I{path}");
-set_structure("define",       "-D{name}");
-set_structure("define_value", "-D{name}={value}");
-set_structure("output",       "-o {path}");
-set_structure("compile_only", "");
-set_structure("dep_file",     "");
-set_structure("target",       "");
-set_structure("sysroot",      "");
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "";
+dep_file     = "";
+target       = "";
+sysroot      = "";
 
 // Output format is arch+OS dependent.
-// crane picks the most-specific key ("arch.os" first, then "arch").
-set_arch_flag("x86_64.linux",   "-f elf64");
-set_arch_flag("x86_64.macos",   "-f macho64");
-set_arch_flag("x86_64.windows", "-f win64");
-set_arch_flag("x86.linux",      "-f elf32");
-set_arch_flag("x86.macos",      "-f macho32");
-set_arch_flag("x86.windows",    "-f win32");
+// freight picks the most-specific key ("arch.os" first, then "arch").
+arch_flags["x86_64.linux"]   = "-f elf64";
+arch_flags["x86_64.macos"]   = "-f macho64";
+arch_flags["x86_64.windows"] = "-f win64";
+arch_flags["x86.linux"]      = "-f elf32";
+arch_flags["x86.macos"]      = "-f macho32";
+arch_flags["x86.windows"]    = "-f win32";
 
-set_module_style("none");
-set_passthrough(false, "");
+modules["style"] = "none";
 
-// NASM only understands x86 assembly syntax; useless on non-x86 hosts.
-set_supported_archs(["x86", "x86_64"]);
-
-set_linking("asm", #{
+linking["asm"] = #{
     abi:        "c",
     compatible: ["c", "cpp"],
     linker:     "",
     extensions: [".asm", ".nasm"],
-});
+};
 
 fn check() {
-    let h = arch();
+    let h = arch;
     if h != "x86_64" && h != "x86" { return false; }
     find_tool("nasm") != ()
 }

@@ -1,0 +1,3 @@
+name    = "mips"
+kind    = "arch"
+aliases = ["mipsel"]

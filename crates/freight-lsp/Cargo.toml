@@ -1,0 +1,19 @@
+[package]
+name    = "freight-lsp"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "freight_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "freight-lsp"
+path = "src/main.rs"
+
+[dependencies]
+freight-core = { path = "../freight-core" }
+tower-lsp  = { workspace = true }
+tokio      = { workspace = true }
+dashmap    = { workspace = true }
+serde_json = { workspace = true }

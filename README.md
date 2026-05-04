@@ -1,14 +1,14 @@
-# crane
+# freight
 
 A Cargo-inspired build tool and package manager for compiled languages that target GCC or Clang.
 
-Crane handles C, C++, Fortran, assembly, CUDA, HIP, OpenCL, and more — with a single declarative `crane.toml`, no Makefile or CMake required.
+Freight handles C, C++, Fortran, assembly, CUDA, HIP, OpenCL, and more — with a single declarative `freight.toml`, no Makefile or CMake required.
 
 ## Features
 
-- **One file, one command** — describe your project in `crane.toml`, run `crane build`
-- **No external build system** — crane owns the entire build graph; no Ninja or Make underneath
-- **Multi-language** — C, C++, Fortran, CUDA, HIP, OpenCL, Ada, D, ISPC, and assembly in one project
+- **One file, one command** — describe your project in `freight.toml`, run `freight build`
+- **No external build system** — freight owns the entire build graph; no Ninja or Make underneath
+- **Multi-language** — C, C++, Fortran, Swift, Zig, Objective-C, Pascal, CUDA, HIP, OpenCL, Ada, D, ISPC, Odin, V, Mojo, and assembly in one project
 - **C++20 modules** — scans sources for `export module` / `import`, builds a parallel-aware DAG automatically
 - **Incremental builds** — mtime dirty checking via `.d` dep files tracks source + headers
 - **Parallel compilation** — sources compiled in parallel with rayon
@@ -16,56 +16,59 @@ Crane handles C, C++, Fortran, assembly, CUDA, HIP, OpenCL, and more — with a 
 - **Platform overlays** — `[platform.linux]`, `[platform.windows]` for OS-specific deps and flags
 - **Dependency filters** — `os`, `arch`, and `targets` fields gate deps by host OS, CPU architecture, or cross-compilation triple
 - **Cross-compilation** — `[compiler] target` and `sysroot` for toolchain-native cross builds
-- **`crane migrate`** — import an existing CMake, Makefile, or Meson project in one command
-- **Language server** — `crane lsp` for `crane.toml` completions, hover docs, and go-to-definition
-- **API docs** — `crane doc` extracts doc comments and renders HTML, Markdown, LaTeX, or PDF with full math support
+- **`freight watch`** — rebuild automatically on file changes (200 ms debounce)
+- **ccache / sccache** — compile cache wrappers detected automatically; opt out with `FREIGHT_NO_CACHE=1`
+- **Git dependencies** — `{ git = "url", branch = "main" }` with lock SHA enforcement and auto-fetch
+- **`freight migrate`** — import an existing CMake, Makefile, or Meson project in one command
+- **Language server** — `freight lsp` for `freight.toml` completions, hover docs, and go-to-definition
+- **API docs** — `freight doc` extracts doc comments and renders HTML, Markdown, LaTeX, or PDF with full math support
 
 ## Naming conventions
 
 | Name | Meaning |
 |---|---|
-| `crane` | The CLI binary |
-| `crane.toml` | Project manifest (commit this) |
-| `crane.lock` | Auto-generated lockfile (commit this) |
-| `~/.crane/` | Global cache: toolchain cache, user templates, credentials |
-| `crane.dev` | The package registry (not yet live) |
-| `build.crane` | Optional pre-build hook script (planned) |
+| `freight` | The CLI binary |
+| `freight.toml` | Project manifest (commit this) |
+| `freight.lock` | Auto-generated lockfile (commit this) |
+| `~/.freight/` | Global cache: toolchain cache, user templates, credentials |
+| `freight.dev` | The package registry (not yet live) |
+| `build.freight` | Optional pre-build hook script (planned) |
 
 ## Installation
 
 **Prerequisites:** Rust toolchain (stable), and at least one of gcc/clang/gfortran/nasm on `$PATH`.
 
 ```sh
-git clone https://github.com/TiniTinyTerminator/crane.git
-cd crane
-cargo install --path crates/crane
+git clone https://github.com/TiniTinyTerminator/freight.git
+cd freight
+cargo install --path crates/freight
 ```
 
 ## Quick start
 
 ```sh
 # Scaffold a new C++ project
-crane new myapp --lang cpp
+freight new myapp --lang cpp
 cd myapp
 
 # Build (dev profile by default)
-crane build
+freight build
 
 # Build and run
-crane run
+freight run
 
 # Release build
-crane build --release
-crane run --release
+freight build --release
+freight run --release
 
 # Run tests
-crane test
+freight test
 
-# Validate crane.toml
-crane check
+# Validate freight.toml
+freight check
 ```
 
-## crane.toml
+## freight.toml
 
 ```toml
 [package]
@@ -96,7 +99,7 @@ strip     = true
 debug     = false
 
 [dependencies]
-# Path dependency — compiles a sibling crane project and links its archive
+# Path dependency — compiles a sibling freight project and links its archive
 myutils = { path = "../myutils" }
 # System dependency — links against a system-installed library
 openssl = { system = "openssl" }
@@ -116,64 +119,77 @@ defines = ["WIN32_LEAN_AND_MEAN"]
 
 ## Supported languages
 
-| Language | Key | Default compiler |
-|---|---|---|
-| C | `c` | gcc / clang |
-| C++ | `cpp` | g++ / clang++ |
-| Fortran | `fortran` | gfortran |
-| CUDA | `cuda` | nvcc |
-| HIP | `hip` | hipcc |
-| Ada | `ada` | gnat |
-| D | `d` | dmd |
-| Intel SPMD | `ispc` | ispc |
-| Assembly (NASM) | `nasm` | nasm |
-| Assembly (GAS) | `gas` | as |
+| Language | Key | Compiler | Extensions |
+|---|---|---|---|
+| C | `c` | gcc / clang / zig-cc | `.c` |
+| C++ | `cpp` | g++ / clang++ / zig-cc | `.cpp` `.cc` `.cxx` `.c++` `.cppm` |
+| Fortran | `fortran` | gfortran / flang / ifx / nvhpc | `.f90` `.f95` `.f03` `.f08` `.f` |
+| Swift | `swift` | swiftc | `.swift` |
+| Zig | `zig` | zig | `.zig` |
+| Objective-C | `objc` | clang | `.m` |
+| Objective-C++ | `objcpp` | clang++ | `.mm` |
+| Pascal | `pascal` | fpc | `.pas` `.pp` `.lpr` |
+| CUDA | `cuda` | nvcc / nvhpc | `.cu` |
+| HIP | `hip` | hipcc | `.hip` |
+| OpenCL | `opencl` | clang | `.cl` |
+| Ada | `ada` | gnat | `.adb` `.ads` |
+| D | `d` | dmd / ldc2 | `.d` |
+| Odin | `odin` | odin | `.odin` |
+| V | `v` | v | `.v` |
+| Mojo | `mojo` | mojo | `.mojo` |
+| Intel SPMD | `ispc` | ispc | `.ispc` |
+| Assembly (NASM) | `nasm` | nasm | `.asm` `.nasm` |
+| Assembly (GAS) | `gas` | as | `.s` `.S` |
+| Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
 
-Mix any combination in a single project — crane routes each file extension to the right compiler automatically.
+Mix any combination in a single project — freight routes each file extension to the right compiler automatically.
+
+> **zig-cc** (`backend = "zig-cc"`) is a drop-in GCC-compatible C/C++ compiler that enables zero-setup cross-compilation — `zig cc -target aarch64-linux-musl` just works without installing a sysroot.
 
 ## Migrating an existing project
 
 ```sh
 cd my-cmake-project
-crane migrate              # auto-detect CMake / Makefile / Meson
-crane migrate --from cmake # explicit
-crane migrate --dry-run    # preview without writing
+freight migrate              # auto-detect CMake / Makefile / Meson
+freight migrate --from cmake # explicit
+freight migrate --dry-run    # preview without writing
 ```
 
-Recognized constructs are translated to `crane.toml`. Anything that couldn't be mapped is preserved as a `# CRANE:` comment for manual review.
+Recognized constructs are translated to `freight.toml`. Anything that couldn't be mapped is preserved as a `# FREIGHT:` comment for manual review.
 
 ## Workspaces
 
-A workspace root `crane.toml` with a `[workspace]` section builds all members:
+A workspace root `freight.toml` with a `[workspace]` section builds all members:
 
 ```toml
 [workspace]
 members = ["app/", "libfoo/", "libbar/"]
 ```
 
-`crane build`, `crane test`, and `crane clean` all operate across members from the workspace root.
+`freight build`, `freight test`, and `freight clean` all operate across members from the workspace root.
 
 ## CLI reference
 
 ```
-crane new <name> --lang <lang>      scaffold a new project
-crane init                          init crane in current directory
-crane build [--release]             build
-crane run   [--release] [-- <args>] build and run
-crane test  [<filter>]              build and run tests
-crane clean                         wipe target/
-crane check                         validate crane.toml
-crane toolchain list                show detected compilers
-crane add <name> [--path P] [--system] [--dev]
-crane remove <package>
-crane update [<package>]
-crane tree                          print dependency tree
-crane migrate [--from cmake|makefile|meson] [--dry-run] [--force]
-crane lsp                           run language server on stdio
-crane debug [<binary>] [--debugger <name>] [--launch-json] [-- <args>]
-crane compile-commands [--release]  generate compile_commands.json
-crane doc [--format html|md|latex|pdf|all]
-crane man [--out-dir DIR]           generate man pages
+freight new <name> --lang <lang>      scaffold a new project
+freight init                          init freight in current directory
+freight build [--release]             build
+freight run   [--release] [-- <args>] build and run
+freight test  [<filter>]              build and run tests
+freight watch [--release]             watch for changes and rebuild
+freight clean                         wipe target/
+freight check                         validate freight.toml
+freight toolchain list                show detected compilers
+freight add <name> [--path P] [--git URL [--branch B] [--rev R]] [--system] [--dev]
+freight remove <package>
+freight update [<package>]
+freight tree                          print dependency tree
+freight migrate [--from cmake|makefile|meson] [--dry-run] [--force]
+freight lsp                           run language server on stdio
+freight debug [<binary>] [--debugger <name>] [--launch-json] [-- <args>]
+freight compile-commands [--release]  generate compile_commands.json
+freight doc [--format html|md|latex|pdf|all]
+freight man [--out-dir DIR]           generate man pages
 ```
 
 ## Examples
@@ -191,24 +207,24 @@ The `examples/` directory contains fully buildable projects:
 | `tri-lang/` | Fortran + C + C++ N-body gravity |
 | `asm-hello/` | C + NASM assembly |
 | `doc-example/` | C, C++, Fortran with LaTeX math in comments |
-| `migrated-from-cmake/` | Before/after for `crane migrate` |
+| `migrated-from-cmake/` | Before/after for `freight migrate` |
 
 ```sh
 cd examples/hello-cpp
-crane build
-crane run
+freight build
+freight run
 ```
 
 ## Generating API docs
 
-`crane doc` extracts doc comments from your project's sources and renders them in one or more formats:
+`freight doc` extracts doc comments from your project's sources and renders them in one or more formats:
 
 ```sh
-crane doc                        # → target/doc/index.html  (HTML with MathJax)
-crane doc --format md            # → target/doc/index.md    (GFM Markdown)
-crane doc --format latex         # → target/doc/docs.tex    (LaTeX source)
-crane doc --format pdf           # → target/doc/docs.pdf    (requires xelatex or pdflatex)
-crane doc --format all           # → target/doc/html/  md/  latex/  pdf/
+freight doc                        # → target/doc/index.html  (HTML with MathJax)
+freight doc --format md            # → target/doc/index.md    (GFM Markdown)
+freight doc --format latex         # → target/doc/docs.tex    (LaTeX source)
+freight doc --format pdf           # → target/doc/docs.pdf    (requires xelatex or pdflatex)
+freight doc --format all           # → target/doc/html/  md/  latex/  pdf/
 ```
 
 Recognised doc comment styles:
@@ -225,23 +241,23 @@ Doc comment bodies are processed as Markdown (bold, italic, code spans, tables, 
 LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim so MathJax
 (HTML/Markdown) and LaTeX itself can render it.
 
-The `crane-doc` standalone binary works without a `crane.toml`:
+The `freight-doc` standalone binary works without a `freight.toml`:
 
 ```sh
-crane-doc src/ --format all --out docs/api
-crane-doc src/ --dry-run       # list extracted items without writing
+freight-doc src/ --format all --out docs/api
+freight-doc src/ --dry-run       # list extracted items without writing
 ```
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [docs/manifest-reference.md](docs/manifest-reference.md) | Complete `crane.toml` field reference |
+| [docs/manifest-reference.md](docs/manifest-reference.md) | Complete `freight.toml` field reference |
 | [docs/compiler-templates.md](docs/compiler-templates.md) | Writing Rhai compiler scripts; debugger template schema |
 | [docs/architecture.md](docs/architecture.md) | Repository layout, build pipeline, architecture rules |
 | [docs/roadmap.md](docs/roadmap.md) | Development roadmap and phase status |
 | [docs/future-toolchains.md](docs/future-toolchains.md) | Planned compiler, assembler, and debugger additions |
-| [docs/registry-plan.md](docs/registry-plan.md) | Architecture plan for the crane.dev registry server |
+| [docs/registry-plan.md](docs/registry-plan.md) | Architecture plan for the freight.dev registry server |
 
 ## Contributing
 

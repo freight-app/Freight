@@ -1,0 +1,43 @@
+[package]
+name        = "zigcc-cross"
+version     = "0.1.0"
+description = "C project built with zig cc — zero-setup cross-compilation to any target"
+
+# zig cc is a drop-in GCC/Clang replacement that ships its own musl and glibc
+# headers, so cross-compilation needs no sysroot installation.
+#
+# Requires zig on $PATH: https://ziglang.org/download/
+#
+# Native build:
+#   freight build
+#
+# Cross-compile to aarch64 Linux musl:
+#   # Uncomment the target line below, then:
+#   freight build --release
+#
+# The resulting binary can be run on any aarch64 Linux system (or with qemu-user).
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "zigcc-cross"
+src  = "src/main.c"
+
+[compiler]
+backend  = "zig-cc"
+warnings = "all"
+# Uncomment to cross-compile (no sysroot needed — zig ships its own libc headers):
+# target = "aarch64-linux-musl"
+# target = "x86_64-windows-gnu"
+# target = "riscv64-linux-musl"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+lto       = true
+strip     = true
+debug     = false

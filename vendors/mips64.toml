@@ -1,0 +1,3 @@
+name    = "mips64"
+kind    = "arch"
+aliases = ["mips64el"]

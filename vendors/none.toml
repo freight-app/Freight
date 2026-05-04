@@ -1,0 +1,3 @@
+name    = "none"
+kind    = "compiler"
+aliases = ["elf"]

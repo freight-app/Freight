@@ -1,6 +1,6 @@
-# crane.toml — Manifest Reference
+# freight.toml — Manifest Reference
 
-A `crane.toml` file at the root of a project describes everything crane needs to build, test, and
+A `freight.toml` file at the root of a project describes everything freight needs to build, test, and
 package it. Every field is optional unless noted as required.
 
 ---
@@ -13,7 +13,7 @@ Required. Identifies the project.
 [package]
 name        = "myproject"          # required — lowercase, hyphens allowed
 version     = "0.1.0"             # required — semver string
-authors     = ["Alice <a@b.com>"]  # optional — shown in crane info
+authors     = ["Alice <a@b.com>"]  # optional — shown in freight info
 description = "Short description"  # optional
 license     = "MIT"                # optional — SPDX identifier
 ```
@@ -57,7 +57,7 @@ src     = "src/"       # directory containing source files (default: "src/")
 include = "include/"   # public include directory exposed to dependents
 ```
 
-`header-only` libraries skip compilation entirely — crane records the include path so dependents
+`header-only` libraries skip compilation entirely — freight records the include path so dependents
 can use it, but no `.a` or `.so` is produced.
 
 ---
@@ -81,12 +81,12 @@ ensures that `main()` from one binary is not linked into another.
 ## `[dependencies]` and `[dev-dependencies]`
 
 Dependencies listed under `[dependencies]` are always compiled and linked. Those under
-`[dev-dependencies]` are only linked when running `crane test`.
+`[dev-dependencies]` are only linked when running `freight test`.
 
 ### Version dependency (registry)
 
 ```toml
-mylib = "1.2"          # resolved from crane.dev; exact pinning via crane.lock
+mylib = "1.2"          # resolved from freight.dev; exact pinning via freight.lock
 mylib = ">=1.0, <2.0"  # semver range
 ```
 
@@ -98,9 +98,9 @@ mylib = ">=1.0, <2.0"  # semver range
 myutils = { path = "../myutils" }
 ```
 
-Compiles the crane project at the given path and links its library archive. The dep's `include/`
-directory is added to the include path automatically. Path deps with a `crane.toml` are treated as
-crane projects; those without are treated as foreign build systems (see below).
+Compiles the freight project at the given path and links its library archive. The dep's `include/`
+directory is added to the include path automatically. Path deps with a `freight.toml` are treated as
+freight projects; those without are treated as foreign build systems (see below).
 
 ### System dependency
 
@@ -127,7 +127,7 @@ command. The query string is passed as-is to pkg-config, so version constraints 
 `"glib-2.0 >= 2.56"`.
 
 When both `system` and `pkg_config` are set, pkg-config is tried first. If it fails (not installed
-or package not found), crane falls back to `-l{system}` and prints a warning.
+or package not found), freight falls back to `-l{system}` and prints a warning.
 
 ### Git dependency
 
@@ -139,7 +139,7 @@ easyloggingpp = { git = "https://...", rev = "abc1234" }   # pin to commit
 ```
 
 Clones the repo into `.deps/<name>/`, then treats it exactly like a path dep — foreign build
-system detection applies. Run `crane fetch` to clone before building.
+system detection applies. Run `freight fetch` to clone before building.
 
 ### URL archive dependency
 
@@ -156,7 +156,7 @@ json = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.g
 Downloads the archive using `curl` (supports `https://`, `http://`, `ftp://`, and any other scheme
 curl handles), optionally verifies SHA-256, extracts to `.deps/<name>/` with `--strip-components=1`,
 then auto-detects the build system or treats as header-only if no source files are found. The
-sentinel `.deps/<name>/.crane-fetched` prevents re-downloading; `crane update <name>` invalidates it.
+sentinel `.deps/<name>/.freight-fetched` prevents re-downloading; `freight update <name>` invalidates it.
 
 For GitHub repos specifically: if you need to track a branch or make incremental updates, prefer
 `git = "https://github.com/..."` instead. `url` is for pinned release tarballs.
@@ -175,7 +175,7 @@ dep = {
 ```
 
 `build_system = "none"` skips the build entirely — useful when you want to explicitly declare a
-header-only dep. Crane also auto-detects header-only deps: if no compilable source files are found
+header-only dep. Freight also auto-detects header-only deps: if no compilable source files are found
 after fetching, the build step is skipped and include dirs are collected automatically.
 
 ### Dependency filters
@@ -279,7 +279,7 @@ correct output format (e.g. NASM `-f elf64` vs `-f macho64` vs `-f win64`).
 ## `[profile.<name>]`
 
 Named build profiles override `[compiler]` settings. Two profiles are always available: `dev`
-(default for `crane build`) and `release` (selected with `--release`). Custom profile names are
+(default for `freight build`) and `release` (selected with `--release`). Custom profile names are
 reserved for future use.
 
 ```toml

@@ -1,0 +1,28 @@
+[package]
+name        = "prebuilt-demo"
+version     = "1.0.0"
+description = "Demonstrates build.freight — the pre-build script"
+
+[language.c]
+std = "c11"
+
+# zlib is probed at build time; build.freight checks packages["zlib"].found.
+# Remove or omit this dep on systems without zlib-dev and it will build cleanly.
+[dependencies]
+zlib = { pkg-config = "zlib", optional = true }
+
+[[bin]]
+name = "prebuilt-demo"
+src  = "src/main.c"
+
+[compiler]
+backend  = "auto"
+warnings = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 2
+debug     = false

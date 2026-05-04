@@ -1,0 +1,3 @@
+name    = "s390x"
+kind    = "arch"
+aliases = []

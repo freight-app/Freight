@@ -5,18 +5,18 @@ Feature branches follow the convention `feature/<name>` off `master`.
 ---
 
 ### CLI Bootstrap ✓ COMPLETE
-- [x] Cargo workspace: `crane` (bin) + `crane-core` (lib)
+- [x] Cargo workspace: `freight` (bin) + `freight-core` (lib)
 - [x] `clap` wiring — all subcommands stubbed
-- [x] `CraneError` enum with `thiserror`
+- [x] `FreightError` enum with `thiserror`
 - [x] Coloured output helpers: success `✓`, warning `⚠`, error `✗`
-- [x] `crane new <name> --lang <lang>` — scaffold directory + crane.toml + hello-world src
-- [x] `crane init [--lang <lang>]` — init in current dir, auto-detects language from existing files
+- [x] `freight new <name> --lang <lang>` — scaffold directory + freight.toml + hello-world src
+- [x] `freight init [--lang <lang>]` — init in current dir, auto-detects language from existing files
 
 ### Manifest ✓ COMPLETE
-- [x] Serde structs for every crane.toml section (`manifest/types.rs`)
+- [x] Serde structs for every freight.toml section (`manifest/types.rs`)
 - [x] Parse + validate with `toml_edit`
-- [x] `crane check` — validate manifest, print clear errors or a summary
-- [x] `find_manifest_dir` — walk up the directory tree to locate `crane.toml`
+- [x] `freight check` — validate manifest, print clear errors or a summary
+- [x] `find_manifest_dir` — walk up the directory tree to locate `freight.toml`
 - [x] `Manifest::build_settings_for(profile)` — convert manifest + profile into `BuildSettings`
 - [x] ABI compatibility validation for path dependencies
 - [x] C/C++ standard consistency validation
@@ -25,8 +25,8 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Probe `$PATH` for known compiler binaries
 - [x] Load + evaluate compiler template `.rhai` scripts at runtime
 - [x] `CompilerTemplate` struct + `assemble_flags()` method (pure, unit-tested)
-- [x] `crane toolchain list`
-- [x] Toolchain version cache (`~/.crane/toolchain-cache.json`, mtime-validated)
+- [x] `freight toolchain list`
+- [x] Toolchain version cache (`~/.freight/toolchain-cache.json`, mtime-validated)
 - [x] 19 bundled toolchain scripts: gcc, clang, nasm, gfortran, gnat, nvcc, dmd, hipcc, icpx, opencl, ispc, tcc, nvhpc, ifx, flang, ldc2, yasm, circle, msvc
 - [x] gcc and clang scripts probe versioned binaries (`g++-14`, `clang++-17`, …) as fallbacks
 
@@ -36,9 +36,9 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Mtime dirty checking — source vs object, headers via `.d` dep files
 - [x] `.d` dep file generation (`-MMD -MF`) for transitive header tracking; stdout mode (`/showIncludes`) for MSVC
 - [x] Linker invocation — binary, static lib (`.a`), shared lib (`.so`)
-- [x] `crane build` + `crane run` end-to-end
-- [x] `crane test` — compiles test files, links against project objects (excluding `main()`), runs each test binary
-- [x] `crane clean` — wipes `target/`
+- [x] `freight build` + `freight run` end-to-end
+- [x] `freight test` — compiles test files, links against project objects (excluding `main()`), runs each test binary
+- [x] `freight clean` — wipes `target/`
 - [x] Multi-language builds — C + C++ in one project, each compiled with the right binary
 - [x] Multi-bin fix — each `[[bin]]` links only its own entry-point object
 - [x] Toolset roles — `output_obj`/`output_bin` split, `lto_link` flag category, `system_lib` format string
@@ -60,7 +60,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Foreign dep include + archive auto-discovery after build
 - [x] HTTP tarball deps — `{ http = "...", sha256 = "..." }` with SHA-256 verification
 - [x] GitHub release deps — `{ github = "owner/repo", tag = "v1.0" }` shorthand
-- [x] Download sentinel — `.deps/<name>/.crane-fetched` prevents re-downloading
+- [x] Download sentinel — `.deps/<name>/.freight-fetched` prevents re-downloading
 - [x] pkg-config deps — standalone or with system fallback
 - [x] `build_system = "none"` explicit header-only override
 - [x] Header-only auto-detection when no build system and no source files found
@@ -97,16 +97,16 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `targets = [...]` dep filter — gated by `compiler.target`
 - [x] `os = ...` dep filter — gated by host OS; accepts family aliases (`unix`, `bsd`)
 - [x] `arch = ...` dep filter — gated by `std::env::consts::ARCH`
-- [x] `crane toolchain add <path>` — validates and installs a local `.rhai` script
+- [x] `freight toolchain add <path>` — validates and installs a local `.rhai` script
 
 ### Migrator ✓ COMPLETE
-- [x] `crane migrate [--from cmake|makefile|meson] [--dry-run] [--force]`
+- [x] `freight migrate [--from cmake|makefile|meson] [--dry-run] [--force]`
 - [x] Auto-detection of source build system
 - [x] CMake, Makefile, Meson importers — all parse to shared `ImportedProject` IR
-- [x] `emit::to_toml` serializes to `crane.toml` with stable output ordering
+- [x] `emit::to_toml` serializes to `freight.toml` with stable output ordering
 - [x] Platform guards routed to `[platform.<os>]` overlays
 - [x] `find_package()` → `{ system = "..." }` dep with review comment
-- [x] `--dry-run` prints generated `crane.toml` to stdout
+- [x] `--dry-run` prints generated `freight.toml` to stdout
 - [x] `examples/migrated-from-cmake/` — before/after worked example
 
 ### Documentation Generator ✓ COMPLETE
@@ -115,9 +115,9 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `doc/render.rs` — HTML renderer with MathJax 3 CDN
 - [x] `doc/render_md.rs` — GFM Markdown renderer with per-file pages and index
 - [x] `doc/render_latex.rs` — LaTeX renderer + PDF via xelatex/pdflatex
-- [x] `crane doc [--format html|md|latex|pdf|all]`
-- [x] `crane man [--out-dir DIR]` — man pages via clap_mangen
-- [x] `crates/crane-doc/` — standalone `crane-doc` binary
+- [x] `freight doc [--format html|md|latex|pdf|all]`
+- [x] `freight man [--out-dir DIR]` — man pages via clap_mangen
+- [x] `crates/freight-doc/` — standalone `freight-doc` binary
 - [x] `examples/doc-example/` — C, C++, Fortran sources with LaTeX math in comments
 
 ### Rhai Toolchain Scripts ✓ COMPLETE
@@ -137,28 +137,28 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `DebuggerTemplate` struct — `name`, `binary`, `[launch]` separator, `[dap]` config
 - [x] `detect_debuggers()` — probes `$PATH`, extracts version, finds DAP adapter binary
 - [x] `toolchains/debuggers/lldb.toml` and `toolchains/debuggers/gdb.toml`
-- [x] `crane toolchain list` — second table section for debuggers
-- [x] `crane debug [<binary>] [--debugger <name>] [-- <args>]` — builds with debug profile, execs debugger
-- [x] `crane debug --launch-json` — writes/merges `.vscode/launch.json`
+- [x] `freight toolchain list` — second table section for debuggers
+- [x] `freight debug [<binary>] [--debugger <name>] [-- <args>]` — builds with debug profile, execs debugger
+- [x] `freight debug --launch-json` — writes/merges `.vscode/launch.json`
 
 ### Registry (in progress — `feature/registry-lockfile`, `feature/registry-server`)
 The registry spans two concerns that depend on each other: the client-side
-lockfile + CLI stubs (`crane add`, `crane fetch`, …) and the server that
+lockfile + CLI stubs (`freight add`, `freight fetch`, …) and the server that
 backs them. Server implementation unblocks the remaining client stubs.
 
-**Client (crane-core)**
-- [x] `crane.lock` read/write — deterministic dep pinning (version 1 format, sha256 checksums)
-- [x] `crane.lock` auto-generated on every `crane build`
-- [x] `crane tree` — dependency tree with dep type labels
-- [x] `crane add` / `crane remove` — manifest mutation + lock update
-- [x] `crane update [package]` — refreshes lockfile checksums for path deps
-- [x] `crane fetch` — verifies path deps exist
-- [x] `crane search / info / login / publish / yank` — stubs pending crane.dev
-- [ ] `crane fetch` — download version deps from crane.dev
-- [ ] `crane add` — resolve + lock exact version from crane.dev
+**Client (freight-core)**
+- [x] `freight.lock` read/write — deterministic dep pinning (version 1 format, sha256 checksums)
+- [x] `freight.lock` auto-generated on every `freight build`
+- [x] `freight tree` — dependency tree with dep type labels
+- [x] `freight add` / `freight remove` — manifest mutation + lock update
+- [x] `freight update [package]` — refreshes lockfile checksums for path deps
+- [x] `freight fetch` — verifies path deps exist
+- [x] `freight search / info / login / publish / yank` — stubs pending freight.dev
+- [ ] `freight fetch` — download version deps from freight.dev
+- [ ] `freight add` — resolve + lock exact version from freight.dev
 
-**Server (crates/crane-registry/)**
-- [ ] Axum-based HTTP server (`CRANE_REGISTRY_ADDR`, default `0.0.0.0:8080`)
+**Server (crates/freight-registry/)**
+- [ ] Axum-based HTTP server (`FREIGHT_REGISTRY_ADDR`, default `0.0.0.0:8080`)
 - [ ] Filesystem layout: `registry-data/index/<name>.json` + `registry-data/packages/<name>/<version>.tar.gz`
 - [ ] `GET /api/v1/packages/{name}` — versions + metadata
 - [ ] `GET /api/v1/packages/{name}/{version}/download`
@@ -166,19 +166,19 @@ backs them. Server implementation unblocks the remaining client stubs.
 - [ ] `POST /api/v1/publish` (bearer auth)
 - [ ] `POST /api/v1/yank` (bearer auth)
 - [ ] Static bearer tokens in `registry-data/tokens.toml` for v1
-- [ ] `CRANE_REGISTRY_URL` env var; credentials at `~/.crane/credentials.toml`
+- [ ] `FREIGHT_REGISTRY_URL` env var; credentials at `~/.freight/credentials.toml`
 - [ ] Wire CLI stubs to the real HTTP API
 - [ ] Integration tests: spin up on an ephemeral port, publish → fetch → build
 
 ### Language Server (in progress — `feature/lsp-server`)
-- [x] Crate scaffold: `crates/crane-lsp/` (lib + bin), `tower-lsp 0.20`, stdio transport
+- [x] Crate scaffold: `crates/freight-lsp/` (lib + bin), `tower-lsp 0.20`, stdio transport
 - [x] Document store backed by `DashMap<Url, String>` — full-sync updates
-- [x] Diagnostics via `crane-core`'s `validate()` + `validate_dep_compat()`
+- [x] Diagnostics via `freight-core`'s `validate()` + `validate_dep_compat()`
 - [x] Completion: section-aware (section headers, `backend`, `warnings`, `std`, `lib.type`, field snippets)
 - [x] Hover docs keyed by dotted path (`compiler.backend`, `lib.type`, …)
 - [x] Go-to-definition for `path = "..."` dependencies
-- [x] `crane lsp` CLI subcommand
-- [ ] VS Code extension that activates on `crane.toml`
+- [x] `freight lsp` CLI subcommand
+- [ ] VS Code extension that activates on `freight.toml`
 - [ ] Inlay hints showing resolved compiler flags per profile
 - [ ] Code actions: "add `[[bin]]` target", "convert version dep → detailed table"
 
@@ -194,5 +194,5 @@ backs them. Server implementation unblocks the remaining client stubs.
 - [x] `with-cmake-dep/` — foreign CMake dep (auto-detected)
 - [x] `with-make-dep/` — foreign Make dep (auto-detected)
 - [x] `with-git-dep/` — git dependency cloned and built automatically
-- [x] `migrated-from-cmake/` — before/after for `crane migrate --from cmake`
+- [x] `migrated-from-cmake/` — before/after for `freight migrate --from cmake`
 - [x] `doc-example/` — C, C++, Fortran sources with LaTeX math in doc comments

@@ -1,0 +1,3 @@
+name    = "loongarch64"
+kind    = "arch"
+aliases = []

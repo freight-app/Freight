@@ -1,0 +1,27 @@
+[package]
+name        = "swift-hello"
+version     = "0.1.0"
+description = "Swift — structs, protocols, and generics"
+
+# Requires swiftc on $PATH.
+# macOS: ships with Xcode / Command Line Tools.
+# Linux: install from https://swift.org/download/ or `apt install swift`.
+
+[language.swift]
+
+[[bin]]
+name = "swift-hello"
+src  = "src/main.swift"
+
+[compiler]
+backend  = "swift"
+warnings = "error"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+lto       = true
+debug     = false

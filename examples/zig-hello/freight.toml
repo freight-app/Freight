@@ -1,0 +1,26 @@
+[package]
+name        = "zig-hello"
+version     = "0.1.0"
+description = "Zig — comptime, tagged unions, and error handling"
+
+# Requires zig on $PATH.
+# Install: https://ziglang.org/download/
+# Debian/Ubuntu: snap install zig --classic
+# macOS: brew install zig
+
+[language.zig]
+
+[[bin]]
+name = "zig-hello"
+src  = "src/main.zig"
+
+[compiler]
+backend = "zig"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+debug     = false
