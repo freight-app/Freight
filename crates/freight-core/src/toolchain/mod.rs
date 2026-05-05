@@ -1,7 +1,7 @@
 pub mod cache;
 pub mod debugger;
 pub mod detect;
-mod engine;
+mod script;
 pub mod template;
 
 pub use cache::{ToolchainCache, freight_home};

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::error::FreightError;
-use super::engine;
+use super::script;
 
 // ── Raw deserialization structs (map directly to TOML layout) ─────────────────
 
@@ -418,11 +418,11 @@ impl CompilerTemplate {
 
     /// Parse a compiler template from a Rhai script.
     pub fn from_rhai(src: &str) -> Result<Self, FreightError> {
-        let def = engine::eval_script(src)?;
+        let def = script::eval_script(src)?;
         Self::from_def(def)
     }
 
-    fn from_def(def: engine::ToolchainDef) -> Result<Self, FreightError> {
+    fn from_def(def: script::ToolchainDef) -> Result<Self, FreightError> {
         // Primary binary: prefer explicit toolset roles, fall back to set_binary()
         let binary = ["ld", "cxx", "cc"]
             .iter()
