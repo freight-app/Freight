@@ -5,7 +5,6 @@ pub mod discover;
 pub mod features;
 pub mod foreign;
 pub mod header_units;
-pub mod http;
 pub mod link;
 pub mod modules;
 pub mod pch;
@@ -24,7 +23,8 @@ use std::process::Command;
 use walkdir::WalkDir;
 
 use crate::error::FreightError;
-use crate::git;
+use crate::fetch::git;
+use crate::fetch::http;
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::validate::{validate, validate_dep_compat};

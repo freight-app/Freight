@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item, Table, Value, value};
 
 use crate::build::deps::resolve_dep_graph;
 use crate::error::FreightError;
-use crate::git;
+use crate::fetch::git;
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest};
@@ -201,7 +201,7 @@ pub fn update_git_deps(project_dir: &Path, only: Option<&str>) -> Result<Vec<Git
 /// Already-fetched directories (sentinel `.freight-fetched` present) are skipped.
 /// Returns the names of deps that were fetched or were already present.
 pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, FreightError> {
-    use crate::build::http;
+    use crate::fetch::http;
     let manifest = load_manifest(project_dir)?;
     let mut outcomes = Vec::new();
 

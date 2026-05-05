@@ -1,5 +1,4 @@
 //! HTTP archive download, SHA-256 verification, and pkg-config integration.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

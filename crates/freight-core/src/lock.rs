@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::build::deps::ResolvedDep;
-use crate::git;
+use crate::fetch::git;
 use crate::manifest::types::{Dependency, Manifest};
 
 const LOCK_VERSION: u32 = 1;
