@@ -126,8 +126,9 @@ fn check_compiler_requirements(
 }
 ```
 
-`CompilerTemplate::call_validate` evaluates `fn validate(constraints)` from the
-`.rhai` file. If the function is absent the call is a no-op.
+`CompilerTemplate::call_validate` reads the `validate` variable from the parsed
+scope and calls it as a `FnPtr`. If the variable is absent the call is a no-op
+(backwards compatible with existing templates).
 
 Call site in `build_project`, immediately after the compiler detection block and
 before `discover()`.
@@ -138,7 +139,7 @@ before `discover()`.
 
 ```rust
 /// Free-form key/value constraints for `[compiler.<name>]` sections.
-/// Passed verbatim to the template's `fn validate(constraints)` callback.
+/// Passed verbatim to the template's `validate` closure.
 /// Keys and their meaning are defined by each template, not by freight.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CompilerConstraints(pub HashMap<String, String>);
@@ -153,40 +154,41 @@ pub compiler: HashMap<String, CompilerConstraints>,
 
 ---
 
-### 5. `fn validate(constraints)` in Rhai templates
+### 5. `validate` anonymous function in Rhai templates
 
-Each template opts in by implementing the callback. The argument is a Rhai map
-whose keys come from the manifest. The function returns `""` on success or an
-error string on failure.
+Templates assign an anonymous function to `validate`. This fits the existing
+style — all other template behaviour is expressed as data assignments, not named
+functions. The closure receives a map of constraints from the manifest and
+returns `""` on success or an error string on failure.
 
 **`nasm.rhai` / `yasm.rhai`** — arch constraint:
 
 ```rhai
-fn validate(constraints) {
+validate = |constraints| {
     if constraints["arch"] != () && constraints["arch"] != arch {
         return "assembler requires arch '" + constraints["arch"] +
                "' but the effective target is '" + arch + "'";
     }
     ""
-}
+};
 ```
 
 **`nvcc.rhai`** — version constraint:
 
 ```rhai
-fn validate(constraints) {
+validate = |constraints| {
     if constraints["min_version"] != () && version < constraints["min_version"] {
         return "nvcc " + version + " is below required minimum " +
                constraints["min_version"];
     }
     ""
-}
+};
 ```
 
 **`clang.rhai` / `gcc.rhai`** — version constraints:
 
 ```rhai
-fn validate(constraints) {
+validate = |constraints| {
     if constraints["min_version"] != () && version < constraints["min_version"] {
         return name + " " + version + " is below required minimum " +
                constraints["min_version"];
@@ -196,7 +198,7 @@ fn validate(constraints) {
                constraints["max_version"];
     }
     ""
-}
+};
 ```
 
 ---
