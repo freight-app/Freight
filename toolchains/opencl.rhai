@@ -3,7 +3,7 @@
 
 name          = "opencl";
 family        = "";
-supported_sanitizers = [];
+sanitizers    = [];
 homepage      = "https://www.khronos.org/opencl/";
 binary        = "clang";
 version_arg   = "--version";

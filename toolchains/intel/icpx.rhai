@@ -3,7 +3,7 @@
 
 name          = "icpx";
 family        = "intel";
-supported_sanitizers = ["address", "undefined", "thread", "leak"];
+sanitizers = ["address", "undefined", "thread", "leak"];
 homepage      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/dpc-compiler.html";
 binary        = "icpx";
 version_arg   = "--version";

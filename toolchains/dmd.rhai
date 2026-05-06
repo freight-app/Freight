@@ -3,7 +3,7 @@
 
 name          = "dmd";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://dlang.org/";
 binary        = "dmd";
 version_arg   = "--version";

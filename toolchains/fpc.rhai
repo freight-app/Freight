@@ -9,7 +9,7 @@
 
 name          = "fpc";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://www.freepascal.org/";
 binary        = "fpc";
 version_arg   = "-iV";

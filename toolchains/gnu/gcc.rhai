@@ -15,7 +15,7 @@ let _gcc = if _gxx == "g++" { "gcc" } else { "gcc" + _gxx.sub_string(3) };
 
 name          = "gcc";
 family        = "gnu";
-supported_sanitizers = ["address", "undefined", "thread", "leak"];
+sanitizers = ["address", "undefined", "thread", "leak"];
 homepage      = "https://gcc.gnu.org/";
 binary        = _gxx;
 version_arg   = "--version";
@@ -23,6 +23,8 @@ version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
 extensions    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
+stdlibs = ["libstdc++", "none"];
+runtimes = ["gnu", "musl", "none"];
 
 toolset["cc"]    = _gcc;
 toolset["cxx"]   = _gxx;

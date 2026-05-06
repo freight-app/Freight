@@ -4,7 +4,7 @@
 
 name          = "circle";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://www.circle-lang.org/";
 binary        = "circle";
 version_arg   = "--version";

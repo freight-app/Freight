@@ -15,6 +15,8 @@ pub(super) struct ToolchainDef {
     pub version_regex: String,
     pub extensions: Vec<String>,
     pub standards: HashMap<String, String>,
+    pub stdlibs: Vec<String>,
+    pub runtimes: Vec<String>,
     /// category → { key → flag }
     pub flags: HashMap<String, HashMap<String, String>>,
     /// structure key → template string
@@ -40,7 +42,7 @@ pub(super) struct ToolchainDef {
     pub min_version: Option<String>,
     pub requires_toolchain: Vec<String>,
     pub family: String,
-    pub supported_sanitizers: Vec<String>,
+    pub sanitizers: Vec<String>,
     /// PCH params: "compile" flag, "use" template, "extension" (e.g. ".pch" / ".gch")
     pub pch: HashMap<String, String>,
 }
@@ -148,7 +150,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
         "extensions", "always_flags",
         "supported_archs", "supported_os",
         "required_tools", "required_env", "requires_toolchain",
-        "supported_sanitizers",
+        "sanitizers", "stdlibs", "runtimes"
     ] {
         scope.push(*key, Array::new());
     }
@@ -201,23 +203,25 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     }; }
     macro_rules! bool { ($k:expr) => { scope.get_value::<bool>($k).unwrap_or_default() }; }
 
-    def.name               = str!("name");
-    def.family             = str!("family");
-    def.binary             = str!("binary");
-    def.version_arg        = str!("version_arg");
-    def.version_regex      = str!("version_regex");
-    def.extensions         = arr!("extensions");
-    def.always_flags       = arr!("always_flags");
+    def.name                = str!("name");
+    def.family              = str!("family");
+    def.binary              = str!("binary");
+    def.version_arg         = str!("version_arg");
+    def.version_regex       = str!("version_regex");
+    def.extensions          = arr!("extensions");
+    def.always_flags        = arr!("always_flags");
     def.passthrough_enabled = bool!("passthrough");
     def.passthrough_prefix  = str!("passthrough_prefix");
-    def.supported_archs    = arr!("supported_archs");
-    def.supported_os       = arr!("supported_os");
-    def.required_tools     = arr!("required_tools");
-    def.required_env       = arr!("required_env");
-    def.requires_toolchain     = arr!("requires_toolchain");
-    def.supported_sanitizers   = arr!("supported_sanitizers");
+    def.supported_archs     = arr!("supported_archs");
+    def.supported_os        = arr!("supported_os");
+    def.required_tools      = arr!("required_tools");
+    def.required_env        = arr!("required_env");
+    def.requires_toolchain  = arr!("requires_toolchain");
+    def.sanitizers          = arr!("sanitizers");
+    def.stdlibs             = arr!("stdlibs");
+    def.runtimes            = arr!("runtimes");
 
-    let mv = str!("min_version");
+    let mv          = str!("min_version");
     if !mv.is_empty() { def.min_version = Some(mv); }
 
     // Structure: insert every slot (empty string = unsupported/unused).

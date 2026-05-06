@@ -6,7 +6,7 @@ let _flang = if find_tool("flang") != () { "flang" } else { "flang-new" };
 
 name          = "flang";
 family        = "llvm";
-supported_sanitizers = ["address", "undefined"];
+sanitizers = ["address", "undefined"];
 homepage      = "https://flang.llvm.org/";
 binary        = _flang;
 version_arg   = "--version";

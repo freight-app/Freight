@@ -4,7 +4,7 @@
 
 name          = "nvhpc";
 family        = "nvidia";
-supported_sanitizers = ["address"];
+sanitizers = ["address"];
 homepage      = "https://developer.nvidia.com/hpc-sdk";
 binary        = "nvc++";
 version_arg   = "--version";

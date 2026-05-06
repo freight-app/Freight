@@ -3,7 +3,7 @@
 
 name          = "nasm";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://www.nasm.us/";
 binary        = "nasm";
 version_arg   = "--version";

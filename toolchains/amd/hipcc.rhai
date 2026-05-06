@@ -2,7 +2,7 @@
 
 name          = "hipcc";
 family        = "amd";
-supported_sanitizers = ["address", "undefined"];
+sanitizers = ["address", "undefined"];
 homepage      = "https://rocm.docs.amd.com/";
 binary        = "hipcc";
 version_arg   = "--version";

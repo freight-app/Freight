@@ -9,7 +9,7 @@
 
 name          = "msvc";
 family        = "";
-supported_sanitizers = ["address"];
+sanitizers    = ["address"];
 homepage      = "https://visualstudio.microsoft.com/";
 binary        = "link.exe";
 version_arg   = "";           // cl.exe prints version on stderr with no args
@@ -18,6 +18,7 @@ extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
 supported_os = ["windows"];
+runtimes = ["msvcrt", "ucrt", "none"];
 
 toolset["cc"]    = "cl.exe";
 toolset["cxx"]   = "cl.exe";

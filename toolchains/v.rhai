@@ -9,7 +9,7 @@
 
 name          = "v";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://vlang.io/";
 binary        = "v";
 version_arg   = "version";

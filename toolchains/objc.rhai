@@ -11,7 +11,7 @@
 
 name          = "objc";
 family        = "";
-supported_sanitizers = [];
+sanitizers    = [];
 homepage      = "https://clang.llvm.org/docs/ObjectiveCLiterals.html";
 binary        = "clang";
 version_arg   = "--version";

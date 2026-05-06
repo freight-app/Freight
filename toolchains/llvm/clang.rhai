@@ -16,7 +16,7 @@ let _cc = if _cxx == "clang++" { "clang" } else { "clang" + _cxx.sub_string(7) }
 
 name          = "clang";
 family        = "llvm";
-supported_sanitizers = ["address", "undefined", "thread", "memory", "leak", "hwaddress", "dataflow", "cfi", "safestack"];
+sanitizers    = ["address", "undefined", "thread", "memory", "leak", "hwaddress", "dataflow", "cfi", "safestack"];
 homepage      = "https://clang.llvm.org/";
 binary        = _cxx;
 version_arg   = "--version";
@@ -24,6 +24,9 @@ version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
 extensions    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
+stdlibs = ["libc++", "libstdc++", "none"];
+runtimes = ["gnu", "musl", "none"];
+
 
 toolset["cc"]    = _cc;
 toolset["cxx"]   = _cxx;

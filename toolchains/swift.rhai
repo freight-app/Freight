@@ -5,7 +5,7 @@
 
 name          = "swift";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://swift.org/";
 binary        = "swiftc";
 version_arg   = "--version";

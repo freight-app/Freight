@@ -278,7 +278,7 @@ pub struct CompilerTemplate {
     pub family: String,
     /// Sanitizer names this compiler supports (e.g. `"address"`, `"undefined"`).
     /// Empty = no declaration (don't validate — assume all pass through).
-    pub supported_sanitizers: Vec<String>,
+    pub sanitizers: Vec<String>,
     pub binary: String,
     pub version_arg: String,
     pub version_regex: String,
@@ -362,7 +362,7 @@ impl CompilerTemplate {
         Ok(Self {
             name: raw.name,
             family: String::new(),
-            supported_sanitizers: vec![],
+            sanitizers: vec![],
             binary: raw.binary,
             version_arg: raw.version_arg,
             version_regex: raw.version_regex,
@@ -520,39 +520,39 @@ impl CompilerTemplate {
         Ok(Self {
             name:                  def.name,
             family:                def.family,
-            supported_sanitizers:  def.supported_sanitizers,
+            sanitizers:            def.sanitizers,
             binary,
             version_arg:           def.version_arg,
-            version_regex: def.version_regex,
-            extensions:    def.extensions,
-            standards:     def.standards,
+            version_regex:         def.version_regex,
+            extensions:            def.extensions,
+            standards:             def.standards,
             structure,
             modules,
             passthrough: PassthroughConfig {
-                enabled: def.passthrough_enabled,
-                prefix:  def.passthrough_prefix,
+                enabled:           def.passthrough_enabled,
+                prefix:            def.passthrough_prefix,
             },
             always_flags,
-            supported_archs:     def.supported_archs,
-            supported_os:        def.supported_os,
-            required_tools:      def.required_tools,
-            required_env:        def.required_env,
-            min_version:         def.min_version,
-            requires_toolchain:  def.requires_toolchain,
-            arch_flags:          def.arch_flags,
-            toolset:             def.toolset,
+            supported_archs:       def.supported_archs,
+            supported_os:          def.supported_os,
+            required_tools:        def.required_tools,
+            required_env:          def.required_env,
+            min_version:           def.min_version,
+            requires_toolchain:    def.requires_toolchain,
+            arch_flags:            def.arch_flags,
+            toolset:               def.toolset,
             pch,
             linking,
-            flags_opt:           get_flags("opt"),
-            flags_debug:         get_flags("debug"),
-            flags_warnings:      get_flags("warnings"),
-            flags_lto:           get_flags("lto"),
-            flags_lto_link:      get_flags("lto_link"),
-            flags_strip:         get_flags("strip"),
-            flags_sanitize:      def.flags.get("sanitize")
+            flags_opt:             get_flags("opt"),
+            flags_debug:           get_flags("debug"),
+            flags_warnings:        get_flags("warnings"),
+            flags_lto:             get_flags("lto"),
+            flags_lto_link:        get_flags("lto_link"),
+            flags_strip:           get_flags("strip"),
+            flags_sanitize:        def.flags.get("sanitize")
                                      .and_then(|m| m.get("template")).cloned()
                                      .unwrap_or_default(),
-            flags_cpu_extension: def.flags.get("cpu_ext")
+            flags_cpu_extension:   def.flags.get("cpu_ext")
                                      .and_then(|m| m.get("template")).cloned()
                                      .unwrap_or_default(),
         })
@@ -595,12 +595,12 @@ impl CompilerTemplate {
 
         // Sanitizers
         if !settings.sanitize.is_empty() && !self.flags_sanitize.is_empty() {
-            let active: Vec<&str> = if self.supported_sanitizers.is_empty() {
+            let active: Vec<&str> = if self.sanitizers.is_empty() {
                 settings.sanitize.iter().map(|s| s.as_str()).collect()
             } else {
                 let mut active = Vec::new();
                 for s in &settings.sanitize {
-                    if self.supported_sanitizers.contains(s) {
+                    if self.sanitizers.contains(s) {
                         active.push(s.as_str());
                     } else {
                         eprintln!(

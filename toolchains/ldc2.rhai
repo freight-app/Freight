@@ -3,7 +3,7 @@
 
 name          = "ldc2";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://github.com/ldc-developers/ldc";
 binary        = "ldc2";
 version_arg   = "--version";

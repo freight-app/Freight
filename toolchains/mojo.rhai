@@ -7,7 +7,7 @@
 
 name          = "mojo";
 family        = "";
-supported_sanitizers = [];
+sanitizers = [];
 homepage      = "https://www.modular.com/mojo";
 binary        = "mojo";
 version_arg   = "--version";
