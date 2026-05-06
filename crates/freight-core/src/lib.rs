@@ -9,3 +9,4 @@ pub mod new;
 pub mod toolchain;
 pub mod vendor;
 pub mod fetch;
+pub mod meta;

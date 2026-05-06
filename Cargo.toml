@@ -26,6 +26,7 @@ rayon         = "1"
 walkdir       = "2"
 regex         = "1"
 sha2          = "0.10"
+curl          = { version = "0.4", features = ["static-curl"] }
 git2          = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
 
 # Dependency resolution

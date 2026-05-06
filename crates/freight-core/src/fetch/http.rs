@@ -1,25 +1,16 @@
-//! HTTP archive download, SHA-256 verification, and pkg-config integration.
+//! HTTP archive download and SHA-256 verification via libcurl.
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use curl::easy::Easy;
 use sha2::{Digest, Sha256};
 
 use crate::error::FreightError;
 
-// ── Public types ──────────────────────────────────────────────────────────────
-
-pub struct PkgConfigResult {
-    pub include_dirs: Vec<PathBuf>,
-    pub link_flags: Vec<String>,
-}
-
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/// Download a source archive from any URL that `curl` supports (`https://`,
-/// `http://`, `ftp://`, etc.) to `.deps/{name}/`, verify SHA-256, and extract.
+/// Download a source archive to `.deps/{name}/`, verify SHA-256, and extract.
 ///
-/// If `.deps/{name}/.freight-fetched` already exists the download is skipped
-/// (use `freight update <name>` to re-fetch). Returns the extracted source dir.
+/// If `.deps/{name}/.freight-fetched` already exists the download is skipped.
+/// Returns the extracted source dir.
 pub fn fetch_url_dep(
     name: &str,
     url: &str,
@@ -41,22 +32,8 @@ pub fn fetch_url_dep(
     let ext = archive_ext(url);
     let archive_path = project_dir.join(".deps").join(format!("{name}.{ext}"));
 
-    // Download with curl: -L follows redirects, --fail treats HTTP errors as
-    // failures, --silent suppresses the progress meter.
-    let status = Command::new("curl")
-        .args(["-L", "--fail", "--silent", "--show-error", "-o"])
-        .arg(&archive_path)
-        .arg(url)
-        .status()
-        .map_err(|e| FreightError::CompilerNotFound(format!("curl not found: {e}")))?;
+    download(url, &archive_path)?;
 
-    if !status.success() {
-        return Err(FreightError::ManifestParse(format!(
-            "failed to download '{url}' for dep '{name}'"
-        )));
-    }
-
-    // Verify SHA-256 when provided.
     if let Some(expected) = expected_sha256 {
         let actual = sha256_of_file(&archive_path)?;
         if actual != expected.to_lowercase() {
@@ -71,54 +48,45 @@ pub fn fetch_url_dep(
     extract_archive(&archive_path, &deps_dir, ext)?;
     let _ = std::fs::remove_file(&archive_path);
 
-    // Mark as successfully fetched so subsequent builds skip the download.
     std::fs::write(&sentinel, url)?;
-
     Ok(deps_dir)
-}
-
-/// Run `pkg-config` for the given query and return the compiler and linker flags.
-pub fn pkg_config_query(query: &str) -> Result<PkgConfigResult, FreightError> {
-    let cflags = run_pkg_config(query, "--cflags")?;
-    let libs   = run_pkg_config(query, "--libs")?;
-
-    let include_dirs = cflags.split_ascii_whitespace()
-        .filter_map(|f| f.strip_prefix("-I"))
-        .map(PathBuf::from)
-        .collect();
-
-    let link_flags = libs.split_ascii_whitespace()
-        .map(str::to_owned)
-        .collect();
-
-    Ok(PkgConfigResult { include_dirs, link_flags })
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-fn run_pkg_config(query: &str, flag: &str) -> Result<String, FreightError> {
-    let parts: Vec<&str> = query.split_whitespace().collect();
-    let out = Command::new("pkg-config")
-        .arg(flag)
-        .args(&parts)
-        .output()
-        .map_err(|e| FreightError::CompilerNotFound(format!("pkg-config not found: {e}")))?;
+fn download(url: &str, dest: &Path) -> Result<(), FreightError> {
+    let file = std::fs::File::create(dest)?;
+    let mut file = std::io::BufWriter::new(file);
 
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(FreightError::ManifestParse(format!(
-            "pkg-config failed for '{query}': {stderr}"
-        )));
+    let mut easy = Easy::new();
+    easy.url(url)
+        .map_err(|e| FreightError::ManifestParse(format!("curl url error: {e}")))?;
+    easy.follow_location(true)
+        .map_err(|e| FreightError::ManifestParse(format!("curl option error: {e}")))?;
+    easy.fail_on_error(true)
+        .map_err(|e| FreightError::ManifestParse(format!("curl option error: {e}")))?;
+
+    {
+        let mut transfer = easy.transfer();
+        transfer
+            .write_function(|data| {
+                file.write_all(data).ok();
+                Ok(data.len())
+            })
+            .map_err(|e| FreightError::ManifestParse(format!("curl write setup: {e}")))?;
+        transfer
+            .perform()
+            .map_err(|e| FreightError::ManifestParse(format!("download failed: {e}")))?;
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+
+    Ok(())
 }
 
 fn sha256_of_file(path: &Path) -> Result<String, FreightError> {
     let bytes = std::fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    let hash = hasher.finalize();
-    Ok(hash.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn archive_ext(url: &str) -> &'static str {
@@ -134,15 +102,13 @@ fn extract_archive(archive: &Path, dest: &Path, ext: &str) -> Result<(), Freight
     let dest_s    = dest.to_string_lossy().into_owned();
 
     let ok = if ext == "zip" {
-        Command::new("unzip")
+        std::process::Command::new("unzip")
             .args(["-q", &archive_s, "-d", &dest_s])
             .status()
             .map_err(|e| FreightError::CompilerNotFound(format!("unzip not found: {e}")))?
             .success()
     } else {
-        // tar -xf auto-detects compression; --strip-components=1 removes
-        // the single top-level directory that release archives usually contain.
-        Command::new("tar")
+        std::process::Command::new("tar")
             .args(["-xf", &archive_s, "-C", &dest_s, "--strip-components=1"])
             .status()
             .map_err(|e| FreightError::CompilerNotFound(format!("tar not found: {e}")))?

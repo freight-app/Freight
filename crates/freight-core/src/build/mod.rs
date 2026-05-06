@@ -3,7 +3,6 @@ pub mod compile_commands;
 pub mod deps;
 pub mod discover;
 pub mod features;
-pub mod foreign;
 pub mod header_units;
 pub mod link;
 pub mod modules;
@@ -24,7 +23,6 @@ use walkdir::WalkDir;
 
 use crate::error::FreightError;
 use crate::fetch::git;
-use crate::fetch::http;
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::validate::{validate, validate_dep_compat};
@@ -188,7 +186,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
-    let (foreign_built, pkg_configs) = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+    let (foreign_built, pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -412,7 +410,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
-    let (foreign_built, pkg_configs) = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+    let (foreign_built, pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
