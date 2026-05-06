@@ -2,7 +2,7 @@ use std::path::Path;
 
 use freight_core::toolchain::{
     detect_all_cached, detect_debuggers, load_all_templates, load_debugger_templates,
-    toolchain_add, user_templates_dir,
+    toolchain_add, toolchain_use, user_templates_dir,
 };
 
 use crate::output::{print_error, print_success, print_warning};
@@ -50,5 +50,24 @@ pub fn cmd_toolchain_add(path: &str) {
             }
         }
         Err(e) => print_error(&format!("failed to install template: {e}")),
+    }
+}
+
+pub fn cmd_toolchain_use(name: &str) {
+    let templates = load_all_templates();
+    match toolchain_use(name, &templates) {
+        Ok(()) => {
+            // Warn if the named compiler isn't currently on PATH.
+            let detected = detect_all_cached(&templates);
+            if !detected.iter().any(|d| d.template.name == name) {
+                print_warning(&format!(
+                    "{name} is not currently detected on PATH; \
+                     preference saved and will apply once it is installed"
+                ));
+            } else {
+                print_success(&format!("{name} set as default compiler backend"));
+            }
+        }
+        Err(e) => print_error(&format!("failed to set default toolchain: {e}")),
     }
 }

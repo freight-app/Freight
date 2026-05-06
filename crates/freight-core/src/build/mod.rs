@@ -27,7 +27,8 @@ use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::validate::{validate, validate_dep_compat};
 use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
-use crate::toolchain::{CompilerTemplate, DetectedCompiler, detect_all_cached, load_templates, templates_dir};
+use crate::toolchain::{CompilerTemplate, DetectedCompiler, GlobalConfig, detect_all_cached, load_templates, templates_dir};
+use crate::manifest::types::Backend;
 
 // ── Public results ────────────────────────────────────────────────────────────
 
@@ -760,7 +761,13 @@ fn apply_sanitize_override(manifest: &mut crate::manifest::types::Manifest, prof
 // ── Shared project loading ────────────────────────────────────────────────────
 
 fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, FreightError> {
-    let manifest = load_manifest(project_dir)?;
+    let mut manifest = load_manifest(project_dir)?;
+    // Apply the global default backend when the project leaves it as "auto".
+    if manifest.compiler.backend.is_auto() {
+        if let Some(name) = GlobalConfig::load().default_backend {
+            manifest.compiler.backend = Backend(name);
+        }
+    }
 
     let tdir = templates_dir()
         .ok_or_else(|| FreightError::CompilerNotFound(

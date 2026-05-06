@@ -422,6 +422,27 @@ pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, FreightError> {
     Ok(dest)
 }
 
+/// Set the global default compiler backend, stored in `~/.freight/config.toml`.
+///
+/// `name` must match a template name from the loaded templates (e.g. `"gcc"`, `"clang"`).
+/// Prints a warning if the named compiler is not currently detected on PATH, but still
+/// saves the preference (the compiler may not be installed yet).
+pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), FreightError> {
+    let known: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
+    if !known.contains(&name) {
+        return Err(FreightError::TemplateError(format!(
+            "unknown toolchain {:?}; known templates: {}",
+            name,
+            known.join(", "),
+        )));
+    }
+
+    let mut config = super::cache::GlobalConfig::load();
+    config.default_backend = Some(name.to_string());
+    config.save()?;
+    Ok(())
+}
+
 /// Checks (in order):
 ///   1. `CRANE_TEMPLATES_DIR` env var
 ///   2. `{binary_dir}/toolchains/`

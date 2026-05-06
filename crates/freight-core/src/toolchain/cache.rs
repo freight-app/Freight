@@ -69,6 +69,52 @@ fn cache_path() -> Option<PathBuf> {
     freight_home().map(|h| h.join("toolchain-cache.json"))
 }
 
+// ── Global config ─────────────────────────────────────────────────────────────
+
+/// Persistent global config stored at `~/.freight/config.toml`.
+///
+/// Settings here apply to every project on the machine and can be overridden
+/// by per-project `freight.toml` entries. Currently the only persisted setting
+/// is the default compiler backend (set by `freight toolchain use <name>`).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct GlobalConfig {
+    /// Default compiler backend: overrides `backend = "auto"` in project manifests.
+    /// `None` means fall back to the first detected compiler for each language.
+    pub default_backend: Option<String>,
+}
+
+impl GlobalConfig {
+    /// Load the config from disk. Returns a default (all `None`) config on any error.
+    pub fn load() -> Self {
+        let Some(path) = Self::path() else { return Self::default() };
+        let Ok(data) = std::fs::read_to_string(&path) else { return Self::default() };
+        toml_edit::de::from_str(&data).unwrap_or_default()
+    }
+
+    /// Persist the config to disk.
+    pub fn save(&self) -> Result<(), crate::error::FreightError> {
+        let path = Self::path().ok_or_else(|| {
+            crate::error::FreightError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "cannot determine ~/.freight directory",
+            ))
+        })?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let toml = toml_edit::ser::to_string_pretty(self)
+            .map_err(|e| crate::error::FreightError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other, e.to_string(),
+            )))?;
+        std::fs::write(&path, toml)?;
+        Ok(())
+    }
+
+    fn path() -> Option<PathBuf> {
+        freight_home().map(|h| h.join("config.toml"))
+    }
+}
+
 /// The freight home directory: `$CRANE_HOME` or `~/.freight`.
 pub fn freight_home() -> Option<PathBuf> {
     if let Ok(h) = std::env::var("CRANE_HOME") {
