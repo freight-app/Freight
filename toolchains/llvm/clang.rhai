@@ -55,6 +55,16 @@ flags["lto"]["false"] = "";
 flags["strip"]["true"]  = "-s";
 flags["strip"]["false"] = "";
 
+// Clang supports selecting the C++ standard library at both compile and link time.
+flags["stdlib"]["libc++"]    = "-stdlib=libc++";
+flags["stdlib"]["libstdc++"] = "-stdlib=libstdc++";
+flags["stdlib"]["none"]      = "-nostdlib";
+
+flags["runtime"]["glibc"]  = "";
+flags["runtime"]["musl"]   = "-static";
+flags["runtime"]["bionic"] = "";
+flags["runtime"]["none"]   = "-nostdlib -nodefaultlibs";
+
 flags["sanitize"]["template"] = "-fsanitize={values}";
 flags["cpu_ext"]["template"]  = "-m{name}";
 

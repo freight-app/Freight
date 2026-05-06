@@ -184,6 +184,10 @@ pub struct BuildSettings {
     /// CPU extension names (e.g. `["avx2", "fma"]`) that generate `-m<name>` flags
     /// via the template's `cpu_extension` field.
     pub cpu_extensions: Vec<String>,
+    /// C++ standard library: `"libc++"` | `"libstdc++"` | `"none"` | `""` (default/unset).
+    pub stdlib: String,
+    /// C runtime: `"glibc"` | `"musl"` | `"bionic"` | `"none"` | `""` (default/unset).
+    pub runtime: String,
 }
 
 impl Default for BuildSettings {
@@ -203,6 +207,8 @@ impl Default for BuildSettings {
             sysroot: None,
             arch: std::env::consts::ARCH.to_string(),
             cpu_extensions: vec![],
+            stdlib: String::new(),
+            runtime: String::new(),
         }
     }
 }
@@ -328,6 +334,10 @@ pub struct CompilerTemplate {
     flags_sanitize: String,
     /// Template for CPU-extension flags, e.g. `"-m{name}"`. Empty = unsupported.
     flags_cpu_extension: String,
+    /// C++ stdlib flags: key is stdlib name (e.g. `"libc++"`) → flag string.
+    pub flags_stdlib: HashMap<String, String>,
+    /// C runtime flags: key is runtime name (e.g. `"musl"`) → flag string.
+    pub flags_runtime: HashMap<String, String>,
 }
 
 impl CompilerTemplate {
@@ -413,6 +423,8 @@ impl CompilerTemplate {
             flags_strip: raw.flags.strip,
             flags_sanitize: raw.flags.sanitize,
             flags_cpu_extension: raw.flags.cpu_extension,
+            flags_stdlib: HashMap::new(),
+            flags_runtime: HashMap::new(),
         })
     }
 
@@ -555,6 +567,8 @@ impl CompilerTemplate {
             flags_cpu_extension:   def.flags.get("cpu_ext")
                                      .and_then(|m| m.get("template")).cloned()
                                      .unwrap_or_default(),
+            flags_stdlib:          get_flags("stdlib"),
+            flags_runtime:         get_flags("runtime"),
         })
     }
 
@@ -683,6 +697,20 @@ impl CompilerTemplate {
             push_flag_str(&mut flags, arch_flag);
         }
 
+        // C++ stdlib flag (e.g. `-stdlib=libc++`).
+        if !settings.stdlib.is_empty() {
+            if let Some(f) = self.flags_stdlib.get(&settings.stdlib) {
+                push_flag_str(&mut flags, f);
+            }
+        }
+
+        // C runtime flag.
+        if !settings.runtime.is_empty() {
+            if let Some(f) = self.flags_runtime.get(&settings.runtime) {
+                push_flag_str(&mut flags, f);
+            }
+        }
+
         // CPU extension flags (e.g. `-mavx2`, `-mfma`).
         if !self.flags_cpu_extension.is_empty() {
             for ext in &settings.cpu_extensions {
@@ -791,6 +819,18 @@ impl CompilerTemplate {
                 let f = self.structure.sysroot
                     .replace("{path}", &sysroot.to_string_lossy());
                 push_flag_str(&mut flags, &f);
+            }
+        }
+
+        // stdlib and runtime flags are also needed at link time.
+        if !settings.stdlib.is_empty() {
+            if let Some(f) = self.flags_stdlib.get(&settings.stdlib) {
+                push_flag_str(&mut flags, f);
+            }
+        }
+        if !settings.runtime.is_empty() {
+            if let Some(f) = self.flags_runtime.get(&settings.runtime) {
+                push_flag_str(&mut flags, f);
             }
         }
 
