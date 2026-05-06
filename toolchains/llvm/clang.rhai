@@ -24,9 +24,6 @@ version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
 extensions    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
-stdlibs = ["libc++", "libstdc++", "none"];
-runtimes = ["gnu", "musl", "none"];
-
 
 toolset["cc"]    = _cc;
 toolset["cxx"]   = _cxx;

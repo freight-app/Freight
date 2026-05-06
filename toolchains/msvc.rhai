@@ -18,7 +18,6 @@ extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
 supported_os = ["windows"];
-runtimes = ["msvcrt", "ucrt", "none"];
 
 toolset["cc"]    = "cl.exe";
 toolset["cxx"]   = "cl.exe";
