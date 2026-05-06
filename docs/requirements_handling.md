@@ -15,12 +15,25 @@ needed — the fix is enforcing that declaration upfront.
 
 ### Per-option callbacks
 
+Options that every compiler shares (opt level, warnings, LTO, debug, sanitizers,
+standard) are already handled by the existing template variables (`flags`,
+`standards`, `fn load()`, etc.) and are not part of this system.
+
+`compiler_option` and `language_option` are exclusively for **compiler-specific
+options** — things that only make sense for one particular tool and have no
+universal equivalent. Examples:
+
+- `nvcc`: GPU target architecture (`sm_arch = "sm_89"`)
+- `nasm`/`yasm`: output format override (`output_format = "elf64"`)
+- `msvc`: runtime library selection (`msvc_runtime = "MT"`)
+- `clang`: ThinLTO cache path (`thinlto_cache = "/tmp/thinlto"`)
+
 Two registration functions are available inside `.rhai` templates:
 
 | Function | Reads from | Typical use |
 |---|---|---|
-| `compiler_option("key", \|ctx\| { })` | `[compiler.<name>]` in manifest | version constraints, toolchain-wide flags |
-| `language_option("key", \|ctx\| { })` | `[language.<key>]` in manifest | arch checks, extra per-language flags, std overrides |
+| `compiler_option("key", \|ctx\| { })` | `[compiler.<name>]` in manifest | compiler-specific flags, version constraints |
+| `language_option("key", \|ctx\| { })` | `[language.<key>]` in manifest | compiler-specific per-language flags, arch checks |
 
 When freight evaluates a project, it collects every option declared in the
 manifest, looks up the registered callback for each key, and calls it with a
@@ -55,7 +68,7 @@ callback:
   to all source files of that language.
 - `compiler_option` callbacks are called once per active language the compiler
   handles. `ctx.lang_key` identifies which language, so a callback can
-  conditionally add flags only for `"cpp"` but not `"c"`, for example.
+  conditionally add flags only for `"cuda"` but not `"cpp"`, for example.
 
 ### `fn load()` and `compiler_option` / `language_option`
 
@@ -258,11 +271,11 @@ compiler_option("max_version", |ctx| {
 });
 ```
 
-**Any template** — extra flags via `language_option`:
+**`nvcc.rhai`** — GPU target architecture via `compiler_option`:
 
 ```rhai
-language_option("sanitize", |ctx| {
-    ctx.add_flag("-fsanitize=" + ctx.value);
+compiler_option("sm_arch", |ctx| {
+    ctx.add_flag("--gpu-architecture=" + ctx.value);
     ""
 });
 ```
@@ -275,7 +288,7 @@ language_option("sanitize", |ctx| {
 # CUDA project — freight errors immediately if nvcc is not on PATH
 [language.cuda]
 
-# x86-64 assembly — "arch" dispatched to language_option("arch", ...) in nasm/yasm
+# x86-64 assembly — "arch" is nasm/yasm-specific, dispatched to language_option("arch", ...)
 [language.asm]
 arch = "x86_64"
 
@@ -283,12 +296,13 @@ arch = "x86_64"
 [language.fortran]
 std = "f2018"
 
-# Compiler-level options — dispatched to compiler_option() callbacks
+# Compiler-specific options — dispatched to compiler_option() callbacks
 [compiler.clang]
-min_version = "14.0"
+min_version = "14.0"          # clang-specific version gate
 
 [compiler.nvcc]
-min_version = "11.8"
+min_version = "11.8"          # nvcc-specific version gate
+sm_arch     = "sm_89"         # nvcc-specific GPU target
 
 [compiler.gcc]
 min_version = "12.0"
