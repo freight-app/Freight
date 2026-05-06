@@ -125,7 +125,9 @@ set_module_style("clang", #{
 
 | Function | Purpose |
 |----------|---------|
-| `set_name(s)` | Toolchain identifier (used in `backend = "..."` in freight.toml) |
+| `set_name(s)` | Toolchain identifier; used in `backend = "..."` in freight.toml for standalone compilers |
+| `set_family(s)` | Family group this compiler belongs to (`"gnu"`, `"llvm"`, `"intel"`, `"nvidia"`, …). Compilers that share a family are displayed together in `freight toolchain list` and selected as a unit by `freight toolchain use`. Leave empty for standalone compilers (e.g. `tcc`, `msvc`). |
+| `set_requires_toolchain(list)` | Language keys that must be provided by another detected compiler. Non-empty = guest/extension: the compiler extends the active toolchain and cannot be selected via `freight toolchain use`. Used for wrappers (nvcc, hipcc) and assemblers (nasm, yasm). Example: `["c"]` for nasm, `["cpp"]` for nvcc. |
 | `set_binary(s)` | Primary binary (detection + linker fallback) |
 | `set_toolset(role, binary)` | Role overrides: `"cc"`, `"cxx"`, `"ld"`, `"ar"`, `"strip"`, `"as"` |
 | `set_extensions(list)` | File extensions this template claims during source discovery |
@@ -182,14 +184,16 @@ mi_mode      = "lldb"     # "MIMode" field (only relevant for cppdbg type)
 
 1. Create `toolchains/<name>.rhai`
 2. Call `set_name`, `set_binary`, `set_version_arg`, `set_version_regex`
-3. Call `set_extensions` with the file extensions this compiler claims
-4. Add `set_flag` entries for `opt`, `debug`, `warnings` at minimum
-5. Add `set_standard` for every standard string users might write
-6. Call `set_structure` — at minimum `include_dir`, `define`, `output`, `compile_only`
-7. Add `dep_file` structure if the compiler supports Makefile dep files (`-MMD -MF`)
-8. Call `set_linking` for every language the template handles
-9. Add `fn check()` to hide the toolchain when the binary is absent
-10. Test with `freight toolchain list` to verify detection, then `freight build` on a real project
+3. Set `set_family` if the compiler belongs to a suite (`"gnu"`, `"llvm"`, `"intel"`, …); leave empty for standalone tools
+4. Set `set_requires_toolchain` if the compiler wraps or extends another toolchain (e.g. `["cpp"]` for nvcc, `["c"]` for nasm); leave empty for self-contained compilers
+5. Call `set_extensions` with the file extensions this compiler claims
+6. Add `set_flag` entries for `opt`, `debug`, `warnings` at minimum
+7. Add `set_standard` for every standard string users might write
+8. Call `set_structure` — at minimum `include_dir`, `define`, `output`, `compile_only`
+9. Add `dep_file` structure if the compiler supports Makefile dep files (`-MMD -MF`)
+10. Call `set_linking` for every language the template handles
+11. Add `fn check()` to hide the toolchain when the binary is absent
+12. Test with `freight toolchain list` to verify detection, then `freight build` on a real project
 
 ### Installing
 
@@ -203,6 +207,33 @@ The new template is loaded on the next freight invocation.
 ---
 
 ## Key design decisions
+
+### Family grouping
+
+`freight toolchain list` groups compilers by `family`. Set the same `family` value in
+`gcc.rhai` and `gfortran.rhai` and they appear together as the `gnu` toolchain. The
+`family` value is what the user passes to `freight toolchain use`:
+
+```sh
+freight toolchain use gnu    # selects all compilers with family = "gnu"
+freight toolchain use llvm   # selects all compilers with family = "llvm"
+freight toolchain use msvc   # standalone compiler (family = ""), selected by name
+```
+
+### Guest/extension compilers
+
+Compilers with `requires_toolchain` non-empty are **guests** — they extend the active
+toolchain but cannot be selected directly. They appear in a separate "Extensions" section
+of `freight toolchain list` and are auto-selected when the active family satisfies their
+requirements:
+
+- `nvcc` (`requires_toolchain = ["cpp"]`) — CUDA extension for any C++ toolchain
+- `hipcc` (`requires_toolchain = ["cpp"]`) — HIP extension
+- `nasm` (`requires_toolchain = ["c"]`) — assembly extension; active whenever a C toolchain is present
+- `yasm` (`requires_toolchain = ["c"]`) — same as nasm
+
+If a required language key is not provided by any detected compiler, the guest is silently
+dropped from detection with a warning.
 
 ### One script per toolchain, not per language
 

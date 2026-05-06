@@ -363,7 +363,9 @@ freight lsp                                run language server on stdio        �
 - [x] Probe `$PATH` for known compiler binaries
 - [x] Load + deserialize compiler template `.rhai` files at runtime from `toolchains/`
 - [x] `CompilerTemplate` struct + `assemble_flags()` method (pure, unit-tested)
-- [x] `freight toolchain list`
+- [x] `freight toolchain list` — grouped by `family` (gnu, llvm, intel, nvidia); guest extensions shown in a separate section
+- [x] `family` field groups compilers into named suites; `freight toolchain use <name>` accepts family names
+- [x] `requires_toolchain` field classifies guest/extension compilers (nvcc, hipcc, nasm, yasm, …); dropped when no host detected
 - [x] Toolchain version cache (`~/.freight/toolchain-cache.json`, mtime-validated)
 - [x] Templates: gcc, clang, gfortran, gnat, dmd, nvcc, hipcc, icpx, opencl, ispc, nasm, msvc, zig, swift, odin, and more
 
@@ -434,7 +436,7 @@ freight lsp                                run language server on stdio        �
 - [x] `target` → `--target={triple}` via template; empty template field = unsupported (GCC uses dedicated cross binary)
 - [x] `sysroot` → `--sysroot={path}` via template
 - [x] `freight --target <triple>` CLI override takes precedence over `~/.freight/config.toml`
-- [x] `freight toolchain use <name>` — persist default backend to `~/.freight/config.toml`
+- [x] `freight toolchain use <name>` — persist default backend; accepts family names (`gnu`, `llvm`) and standalone primaries; rejects individual compilers with a family and guest extensions
 - [x] `targets = [...]` on any dep — filtered by active cross-compilation triple
 - [x] `os = ...` / `arch = ...` dep filters — host OS and CPU architecture
 - [x] `freight toolchain add <path>` — install custom compiler template
