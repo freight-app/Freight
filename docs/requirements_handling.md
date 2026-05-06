@@ -12,26 +12,38 @@ which produces confusing errors deep in the build pipeline.
 already means "this project needs a CUDA compiler." No new manifest section is
 needed — the fix is enforcing that declaration upfront.
 
-The one optional addition is an `arch` field on language sections for
-architecture-specific tools (primarily assembly).
+### Per-option callbacks via `add_compiler_option`
 
-### Rhai callbacks, not hardcoded Rust
+Each option a template wants to support is registered with its own anonymous
+callback. The Rust side exposes `add_compiler_option(name, callback)` as a Rhai
+function during template evaluation. When freight validates a project, it looks
+up which options the manifest declares under `[compiler.<name>]` or
+`[language.<key>]`, finds the registered callback for each one, and calls it
+with a `ctx` object carrying relevant information from the manifest and the
+detected compiler.
 
-Validation logic lives in the `.rhai` template, not in the Rust executable.
-This is consistent with the existing architecture — each template already has a
-`fn check()` callback for detection-time validation. The same pattern extends to
-project-level requirements via a new `fn validate(constraints)` callback.
+```rhai
+add_compiler_option("min_version", |ctx| {
+    if ctx.version < ctx.value {
+        return "clang " + ctx.version + " is below required minimum " + ctx.value;
+    }
+    ""
+});
+```
 
-| Callback | When called | Input | Returns |
-|---|---|---|---|
-| `fn check()` | During detection — is this compiler usable on this machine? | `arch`, `os`, `env`, `find_tool` globals | `bool` |
-| `fn validate(constraints)` | After selection — does this compiler meet the project's requirements? | map from the manifest's `[compiler.<name>]` or `[language.<key>]` section | `""` on success, error string on failure |
+This keeps each option self-contained. The Rust binary never interprets option
+names or values — it just dispatches to whatever the template registered.
+Templates without registered options pass validation unconditionally.
 
-This means the Rust side stays thin: call `validate(constraints)`, surface the
-returned string as a `FreightError` if non-empty. The template author decides
-what constraints make sense and how to evaluate them — no semver parsing or arch
-comparison baked into the binary. Templates without a `validate` function pass
-unconditionally (backwards compatible).
+### `ctx` fields
+
+| Field | Type | Description |
+|---|---|---|
+| `ctx.value` | string | The value from the manifest for this option |
+| `ctx.version` | string | Detected compiler version string |
+| `ctx.arch` | string | Effective target architecture (e.g. `"x86_64"`) |
+| `ctx.os` | string | Effective target OS (e.g. `"linux"`) |
+| `ctx.name` | string | Template name (e.g. `"clang"`) |
 
 ---
 
@@ -73,10 +85,6 @@ pub struct LanguageSettings {
 }
 ```
 
-Used primarily for `[language.asm]` to declare which ISA the assembly targets.
-Passed to the template's `fn validate(constraints)` callback; not interpreted
-by Rust directly.
-
 **Example manifest usage:**
 ```toml
 [language.asm]
@@ -85,61 +93,11 @@ arch = "x86_64"
 
 ---
 
-### 3. Add pre-build compiler validation — `build/mod.rs`
-
-After `detect_all_cached()` and before any compilation:
-
-1. For every `[language.<key>]` in the manifest, verify `select_compiler()`
-   returns something. If not, error immediately.
-2. For every selected compiler, call its `fn validate(constraints)` Rhai
-   callback with the relevant constraints map from the manifest. Surface any
-   non-empty return value as a `FreightError`.
+### 3. Compiler constraints manifest type — `manifest/types.rs`
 
 ```rust
-fn check_compiler_requirements(
-    manifest: &Manifest,
-    backend: &Backend,
-    detected: &[DetectedCompiler],
-) -> Result<(), FreightError> {
-    for lang_key in manifest.language.keys() {
-        let Some(dc) = select_compiler(lang_key, backend, detected, None) else {
-            return Err(FreightError::CompilerNotFound(format!(
-                "no compiler found for language '{lang_key}' \
-                 — install the required tool and ensure it is on PATH"
-            )));
-        };
-
-        // Pass language settings (arch, std, …) to fn validate(constraints).
-        let constraints = manifest.effective_language_settings(lang_key).to_constraint_map();
-        dc.template.call_validate(&constraints)?;
-    }
-
-    // Compiler-level constraints from [compiler.<name>] sections.
-    for (name, constraints) in &manifest.compiler {
-        let Some(dc) = detected.iter().find(|d| d.template.name == *name) else {
-            continue; // absent — only an error if also required by a language above
-        };
-        dc.template.call_validate(&constraints.as_map())?;
-    }
-
-    Ok(())
-}
-```
-
-`CompilerTemplate::call_validate` reads the `validate` variable from the parsed
-scope and calls it as a `FnPtr`. If the variable is absent the call is a no-op
-(backwards compatible with existing templates).
-
-Call site in `build_project`, immediately after the compiler detection block and
-before `discover()`.
-
----
-
-### 4. Compiler constraints manifest type — `manifest/types.rs`
-
-```rust
-/// Free-form key/value constraints for `[compiler.<name>]` sections.
-/// Passed verbatim to the template's `validate` closure.
+/// Free-form key/value options declared under `[compiler.<name>]`.
+/// Each key is dispatched to the callback registered via add_compiler_option().
 /// Keys and their meaning are defined by each template, not by freight.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CompilerConstraints(pub HashMap<String, String>);
@@ -154,51 +112,115 @@ pub compiler: HashMap<String, CompilerConstraints>,
 
 ---
 
-### 5. `validate` anonymous function in Rhai templates
+### 4. `add_compiler_option` Rhai API — `toolchain/template.rs`
 
-Templates assign an anonymous function to `validate`. This fits the existing
-style — all other template behaviour is expressed as data assignments, not named
-functions. The closure receives a map of constraints from the manifest and
-returns `""` on success or an error string on failure.
+During template evaluation, freight registers `add_compiler_option` as a Rhai
+function. Internally it stores a map of `option_name -> FnPtr` on the template.
 
-**`nasm.rhai` / `yasm.rhai`** — arch constraint:
-
-```rhai
-validate = |constraints| {
-    if constraints["arch"] != () && constraints["arch"] != arch {
-        return "assembler requires arch '" + constraints["arch"] +
-               "' but the effective target is '" + arch + "'";
-    }
-    ""
-};
+```rust
+// Stored on CompilerTemplate after evaluation:
+pub option_handlers: HashMap<String, rhai::FnPtr>,
 ```
 
-**`nvcc.rhai`** — version constraint:
+The Rust registration (pseudocode):
 
-```rhai
-validate = |constraints| {
-    if constraints["min_version"] != () && version < constraints["min_version"] {
-        return "nvcc " + version + " is below required minimum " +
-               constraints["min_version"];
-    }
-    ""
-};
+```rust
+engine.register_fn("add_compiler_option", move |name: String, handler: FnPtr| {
+    option_handlers.insert(name, handler);
+});
 ```
 
-**`clang.rhai` / `gcc.rhai`** — version constraints:
+---
+
+### 5. Pre-build validation — `build/mod.rs`
+
+After `detect_all_cached()` and before `discover()`:
+
+1. For every `[language.<key>]` in the manifest, verify `select_compiler()`
+   returns something. If not, error immediately.
+2. For each declared option in the manifest, look up the template's registered
+   callback and call it with a `ctx` built from the manifest + detected info.
+
+```rust
+fn check_compiler_requirements(
+    manifest: &Manifest,
+    backend: &Backend,
+    detected: &[DetectedCompiler],
+    effective_arch: &str,
+    effective_os: &str,
+) -> Result<(), FreightError> {
+    for lang_key in manifest.language.keys() {
+        let Some(dc) = select_compiler(lang_key, backend, detected, None) else {
+            return Err(FreightError::CompilerNotFound(format!(
+                "no compiler found for language '{lang_key}' \
+                 — install the required tool and ensure it is on PATH"
+            )));
+        };
+
+        let settings = manifest.effective_language_settings(lang_key);
+        let options = settings.to_option_map(); // e.g. {"arch": "x86_64"}
+        dc.template.run_option_handlers(&options, &dc.version, effective_arch, effective_os)?;
+    }
+
+    for (name, constraints) in &manifest.compiler {
+        let Some(dc) = detected.iter().find(|d| d.template.name == *name) else {
+            continue; // absent — only an error if also required by a language above
+        };
+        dc.template.run_option_handlers(&constraints.0, &dc.version, effective_arch, effective_os)?;
+    }
+
+    Ok(())
+}
+```
+
+`run_option_handlers` iterates the provided option map, looks up each key in
+`template.option_handlers`, builds the `ctx` map, and calls the `FnPtr`. Returns
+the first non-empty string as a `FreightError`. Unknown option keys (no handler
+registered) are silently ignored.
+
+---
+
+### 6. Per-option callbacks in Rhai templates
+
+**`nasm.rhai` / `yasm.rhai`:**
 
 ```rhai
-validate = |constraints| {
-    if constraints["min_version"] != () && version < constraints["min_version"] {
-        return name + " " + version + " is below required minimum " +
-               constraints["min_version"];
-    }
-    if constraints["max_version"] != () && version > constraints["max_version"] {
-        return name + " " + version + " exceeds required maximum " +
-               constraints["max_version"];
+add_compiler_option("arch", |ctx| {
+    if ctx.arch != ctx.value {
+        return "assembler requires arch '" + ctx.value +
+               "' but the effective target is '" + ctx.arch + "'";
     }
     ""
-};
+});
+```
+
+**`nvcc.rhai`:**
+
+```rhai
+add_compiler_option("min_version", |ctx| {
+    if ctx.version < ctx.value {
+        return "nvcc " + ctx.version + " is below required minimum " + ctx.value;
+    }
+    ""
+});
+```
+
+**`clang.rhai` / `gcc.rhai`:**
+
+```rhai
+add_compiler_option("min_version", |ctx| {
+    if ctx.version < ctx.value {
+        return ctx.name + " " + ctx.version + " is below required minimum " + ctx.value;
+    }
+    ""
+});
+
+add_compiler_option("max_version", |ctx| {
+    if ctx.version > ctx.value {
+        return ctx.name + " " + ctx.version + " exceeds required maximum " + ctx.value;
+    }
+    ""
+});
 ```
 
 ---
@@ -210,7 +232,7 @@ validate = |constraints| {
 [language.cuda]
 
 # x86-64 assembly — errors if no asm compiler found;
-# arch constraint passed to nasm/yasm's fn validate()
+# "arch" dispatched to nasm/yasm's add_compiler_option("arch", ...) callback
 [language.asm]
 arch = "x86_64"
 
@@ -218,7 +240,7 @@ arch = "x86_64"
 [language.fortran]
 std = "f2018"
 
-# Compiler version constraints — passed to fn validate() in the named template
+# Compiler option constraints — each key dispatched to its registered callback
 [compiler.clang]
 min_version = "14.0"
 
@@ -227,14 +249,15 @@ min_version = "11.8"
 
 [compiler.gcc]
 min_version = "12.0"
+max_version = "14.0"
 ```
 
 ---
 
 ## Error messages
 
-Error strings come from the template's `fn validate()` return value, so each
-template can tailor the wording. Examples with the implementations above:
+Error strings are returned by the callback, so each template controls the
+wording. Examples with the implementations above:
 
 | Situation | Message |
 |---|---|
@@ -242,7 +265,7 @@ template can tailor the wording. Examples with the implementations above:
 | `[language.asm]` declared, no asm template installed | `no compiler found for language 'asm' — install the required tool and ensure it is on PATH` |
 | `[language.asm]` `arch = "x86_64"`, target is `aarch64-linux-gnu` | `assembler requires arch 'x86_64' but the effective target is 'aarch64-linux-gnu'` |
 | `[compiler.clang]` `min_version = "14.0"`, clang 13.0.1 detected | `clang 13.0.1 is below required minimum 14.0` |
-| `[compiler.gcc]` `max_version = "13.0"`, gcc 14.1.0 detected | `gcc 14.1.0 exceeds required maximum 13.0` |
+| `[compiler.gcc]` `max_version = "14.0"`, gcc 14.1.0 detected | `gcc 14.1.0 exceeds required maximum 14.0` |
 
 ---
 
@@ -252,9 +275,9 @@ template can tailor the wording. Examples with the implementations above:
 |---|---|
 | `crates/freight-core/src/build/discover.rs` | Remove asm always-active block |
 | `crates/freight-core/src/manifest/types.rs` | Add `arch` to `LanguageSettings`; add `CompilerConstraints`; add `compiler` map to `Manifest` |
-| `crates/freight-core/src/toolchain/template.rs` | Add `call_validate()` method to `CompilerTemplate` |
+| `crates/freight-core/src/toolchain/template.rs` | Register `add_compiler_option` Rhai function; store `option_handlers` map; add `run_option_handlers()` |
 | `crates/freight-core/src/build/mod.rs` | Add `check_compiler_requirements()`, call before `discover()` |
-| `toolchains/nasm.rhai`, `toolchains/yasm.rhai` | Add `fn validate(constraints)` — arch check |
-| `toolchains/nvidia/nvcc.rhai` | Add `fn validate(constraints)` — version check |
-| `toolchains/llvm/clang.rhai`, `toolchains/gnu/gcc.rhai` | Add `fn validate(constraints)` — version check |
+| `toolchains/nasm.rhai`, `toolchains/yasm.rhai` | Register `"arch"` option callback |
+| `toolchains/nvidia/nvcc.rhai` | Register `"min_version"` option callback |
+| `toolchains/llvm/clang.rhai`, `toolchains/gnu/gcc.rhai` | Register `"min_version"` and `"max_version"` option callbacks |
 | `docs/manifest-reference.md` | Document `arch` under `[language.*]`; document `[compiler.*]` section |
