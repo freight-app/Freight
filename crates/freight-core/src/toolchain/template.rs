@@ -585,14 +585,6 @@ impl CompilerTemplate {
             push_flag_str(&mut flags, f);
         }
 
-        // Strip
-        if !self.flags_strip.is_empty() {
-            let strip_key = if settings.strip { "true" } else { "false" };
-            if let Some(f) = self.flags_strip.get(strip_key) {
-                push_flag_str(&mut flags, f);
-            }
-        }
-
         // Sanitizers
         if !settings.sanitize.is_empty() && !self.flags_sanitize.is_empty() {
             let active: Vec<&str> = if self.sanitizers.is_empty() {
@@ -743,6 +735,12 @@ impl CompilerTemplate {
         self.toolset.get("ar").map(|s| s.as_str()).unwrap_or("ar")
     }
 
+    /// The strip binary for this toolchain (`toolset["strip"]`), if one is defined and non-empty.
+    /// Returns `None` for toolchains that have no standalone strip tool (e.g. MSVC).
+    pub fn strip_binary(&self) -> Option<&str> {
+        self.toolset.get("strip").map(|s| s.as_str()).filter(|s| !s.is_empty())
+    }
+
     /// Format a system-library link flag using this toolchain's template.
     ///
     /// GCC/Clang: `"-lssl"`, MSVC: `"ssl.lib"`.
@@ -775,13 +773,6 @@ impl CompilerTemplate {
         };
         if let Some(f) = lto_f {
             push_flag_str(&mut flags, f);
-        }
-
-        if !self.flags_strip.is_empty() {
-            let strip_key = if settings.strip { "true" } else { "false" };
-            if let Some(f) = self.flags_strip.get(strip_key) {
-                push_flag_str(&mut flags, f);
-            }
         }
 
         for f in &self.always_flags {
@@ -1104,8 +1095,26 @@ mod tests {
         });
         assert!(flags.contains(&"-O3".to_string()), "opt-level 3");
         assert!(flags.contains(&"-flto".to_string()), "lto");
-        assert!(flags.contains(&"-s".to_string()), "strip");
+        // Strip is a post-link step, not a compiler flag — -s must not appear here.
+        assert!(!flags.contains(&"-s".to_string()), "strip is post-link, not a compile flag");
         assert!(!flags.contains(&"-g".to_string()), "no debug");
+    }
+
+    #[test]
+    fn strip_binary_returns_strip_tool() {
+        assert_eq!(gcc().strip_binary(), Some("strip"), "gcc toolset should declare strip binary");
+        assert_eq!(clang().strip_binary(), Some("strip"), "clang toolset should declare strip binary");
+    }
+
+    #[test]
+    fn strip_not_in_link_flags() {
+        let flags = gcc().assemble_link_flags(&BuildSettings {
+            opt_level: "3".into(),
+            lto: true,
+            strip: true,
+            ..Default::default()
+        });
+        assert!(!flags.contains(&"-s".to_string()), "strip flag must not appear in link flags");
     }
 
     #[test]
