@@ -249,7 +249,9 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
 
     // If a PCH header is configured, compile it and inject the use flag into
     // every source file. Failures are non-fatal.
-    let pch_extra: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
+    let mut pch_compile_flags: Vec<String> = vec![];
+    let mut pch_clangd_flags: Vec<String> = vec![];
+    if let Some(ref pch_header) = manifest.compiler.pch.clone() {
         let primary = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None)
             .or_else(|| compile::select_compiler("c", &manifest.compiler.backend, detected, None));
         if let Some(compiler) = primary {
@@ -257,18 +259,18 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
                 project_dir, pch_header, profile, compiler,
                 &include_dirs, &compile_defines, &[],
             ) {
-                Ok(Some(compiled)) => compiled.use_flag
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect(),
-                Ok(None) => vec![],
-                Err(e) => { eprintln!("warning: PCH skipped: {e}"); vec![] }
+                Ok(Some(compiled)) => {
+                    pch_compile_flags = compiled.use_flag.split_whitespace().map(str::to_owned).collect();
+                    pch_clangd_flags  = compiled.clangd_flag.split_whitespace().map(str::to_owned).collect();
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("warning: PCH skipped: {e}"),
             }
-        } else { vec![] }
-    } else { vec![] };
+        }
+    }
 
     let mut extra_flags = hu_flags.clone();
-    extra_flags.extend(pch_extra);
+    extra_flags.extend(pch_compile_flags);
     let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &extra_flags)?;
 
     let link_result = link_targets(
@@ -288,7 +290,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     // in sync. Non-fatal — a write failure must not abort a successful build.
     let cc = compile_commands::generate(
         project_dir, manifest, detected, profile,
-        &all_sources, &include_dirs, &feature_defines,
+        &all_sources, &include_dirs, &feature_defines, &pch_clangd_flags,
     );
     if let Err(e) = compile_commands::write(project_dir, &cc) {
         eprintln!("warning: could not write compile_commands.json: {e}");
@@ -327,7 +329,7 @@ pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result
 
     let commands = compile_commands::generate(
         project_dir, manifest, detected, profile,
-        &found.sources, &include_dirs, &feature_defines,
+        &found.sources, &include_dirs, &feature_defines, &[],
     );
     let count = commands.len();
     compile_commands::write(project_dir, &commands)?;
