@@ -3,8 +3,6 @@ members = [
     "crates/freight",
     "crates/freight-core",
     "crates/freight-doc",
-    "crates/freight-migrator",
-    "crates/freight-lsp",
 ]
 resolver = "2"
 

@@ -14,7 +14,6 @@ use crate::commands::deps::{
 };
 use crate::commands::doc::{cmd_doc, cmd_man};
 use crate::commands::install::{cmd_install, cmd_package};
-use crate::commands::migrate::cmd_migrate;
 use crate::commands::new::{cmd_init, cmd_new};
 use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list, cmd_toolchain_use};
 use crate::output::print_unimplemented;
@@ -168,18 +167,6 @@ enum Commands {
         #[arg(long)]
         release: bool,
     },
-    /// Import an existing build system (CMake, Makefile, or Meson)
-    Migrate {
-        /// Source build system; auto-detected when omitted
-        #[arg(long, value_name = "FORMAT")]
-        from: Option<String>,
-        /// Print generated freight.toml to stdout without writing
-        #[arg(long)]
-        dry_run: bool,
-        /// Overwrite an existing freight.toml
-        #[arg(long)]
-        force: bool,
-    },
     /// Extract doc comments and generate a documentation site in target/doc/
     Doc {
         /// Output format: html | md | latex | pdf | all  (default: html)
@@ -231,8 +218,6 @@ enum Commands {
         #[command(subcommand)]
         command: ToolchainCommands,
     },
-    /// Run the freight language server (for editor integration, stdio)
-    Lsp,
 }
 
 #[derive(Subcommand)]
@@ -284,9 +269,6 @@ fn main() -> Result<()> {
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
         Commands::CompileCommands { release } => cmd_compile_commands(release),
-        Commands::Migrate { from, dry_run, force } => {
-            cmd_migrate(from.as_deref(), dry_run, force);
-        }
         Commands::Install { prefix, destdir, release, no_build, target } => {
             cmd_install(Some(&prefix), destdir.as_deref(), release, no_build, target.as_deref());
         }
@@ -301,12 +283,6 @@ fn main() -> Result<()> {
             ToolchainCommands::Add { name } => cmd_toolchain_add(&name),
             ToolchainCommands::Use { name } => cmd_toolchain_use(&name),
         },
-        Commands::Lsp => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?;
-            rt.block_on(freight_lsp::run());
-        }
     }
 
     Ok(())

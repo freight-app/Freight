@@ -486,17 +486,23 @@ mod tests {
     fn named_backend_asm_guest_selected_for_any_family() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        // nasm (requires_toolchain = ["c"]) should be picked as a guest for "asm"
+        // An asm guest (e.g. nasm, yasm — requires_toolchain = ["c"]) should be picked
         // whenever the active family satisfies the "c" requirement.
         for backend_name in &["gnu", "llvm"] {
             let found = select_compiler("asm", &Backend(backend_name.to_string()), &detected, None);
             assert!(
                 found.is_some(),
-                "{backend_name} backend should find nasm for 'asm' files"
+                "{backend_name} backend should find an asm guest compiler"
             );
             let compiler = found.unwrap();
-            assert_eq!(compiler.template.name, "nasm");
-            assert!(compiler.template.requires_toolchain.contains(&"c".to_string()));
+            assert!(
+                compiler.template.linking.contains_key("asm"),
+                "selected compiler must handle 'asm'"
+            );
+            assert!(
+                compiler.template.requires_toolchain.contains(&"c".to_string()),
+                "selected compiler must require 'c' toolchain"
+            );
         }
     }
 
