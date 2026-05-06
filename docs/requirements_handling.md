@@ -40,10 +40,39 @@ dispatches and surfaces errors.
 | `ctx.arch` | string | Effective target architecture (e.g. `"x86_64"`) |
 | `ctx.os` | string | Effective target OS (e.g. `"linux"`) |
 | `ctx.name` | string | Template name (e.g. `"clang"`) |
+| `ctx.lang_key` | string | Language being compiled (e.g. `"cpp"`, `"c"`). Set for `language_option` callbacks; also set for `compiler_option` callbacks when triggered by a specific language. |
 
 The callback returns `""` on success (no error, no extra flags) or a non-empty
 string as an error message. To inject extra compiler flags the callback calls
 `ctx.add_flag(s)` as a side effect.
+
+### Flag scope
+
+Flags added via `ctx.add_flag` are scoped to the language that triggered the
+callback:
+
+- `language_option` callbacks always have a specific `lang_key` — flags apply
+  to all source files of that language.
+- `compiler_option` callbacks are called once per active language the compiler
+  handles. `ctx.lang_key` identifies which language, so a callback can
+  conditionally add flags only for `"cpp"` but not `"c"`, for example.
+
+### `fn load()` and `compiler_option` / `language_option`
+
+`fn load()` (currently used in `gcc.rhai`) runs once after detection and injects
+flags unconditionally based on the host environment. It is **not** superseded —
+it handles machine-level defaults that require no manifest input (e.g. `-m64` on
+x86_64). `compiler_option` and `language_option` callbacks run later and are
+driven by what the manifest declares. Both coexist; `fn load()` fires first.
+
+### `compiler_option` on non-active compilers
+
+A `[compiler.<name>]` section in the manifest applies even when that compiler is
+not the active backend — the intent is to enforce a constraint on any detected
+instance of that tool. If the named compiler is not detected at all, the callbacks
+are skipped silently (not an error). If it is detected but not active, the
+callbacks still run for validation; `ctx.add_flag` calls in that case are
+discarded since the compiler isn't producing any output.
 
 ---
 
