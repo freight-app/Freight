@@ -16,7 +16,7 @@ use crate::commands::doc::{cmd_doc, cmd_man};
 use crate::commands::install::{cmd_install, cmd_package};
 use crate::commands::migrate::cmd_migrate;
 use crate::commands::new::{cmd_init, cmd_new};
-use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list};
+use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list, cmd_toolchain_use};
 use crate::output::print_unimplemented;
 
 /// Returns the top-level [`clap::Command`] for this binary.
@@ -299,7 +299,7 @@ fn main() -> Result<()> {
         Commands::Toolchain { command } => match command {
             ToolchainCommands::List => cmd_toolchain_list(),
             ToolchainCommands::Add { name } => cmd_toolchain_add(&name),
-            ToolchainCommands::Use { .. } => print_unimplemented("toolchain use"),
+            ToolchainCommands::Use { name } => cmd_toolchain_use(&name),
         },
         Commands::Lsp => {
             let rt = tokio::runtime::Builder::new_multi_thread()

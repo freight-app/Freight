@@ -246,6 +246,24 @@ fn validate_language(m: &Manifest, templates: &[CompilerTemplate], errors: &mut 
                 ));
             }
         }
+
+        // Validate stdlib (C++) — checked against the union of flags_stdlib keys.
+        if key == "cpp" {
+            if let Some(stdlib) = &settings.stdlib {
+                let valid: HashSet<&str> = handling.iter()
+                    .flat_map(|t| t.flags_stdlib.keys().map(String::as_str))
+                    .collect();
+                if !valid.is_empty() && !valid.contains(stdlib.as_str()) {
+                    let mut sorted: Vec<&str> = valid.into_iter().collect();
+                    sorted.sort();
+                    errors.push(ValidationError::new(
+                        &ctx,
+                        format!("stdlib {:?} is not supported; valid values: {}", stdlib, sorted.join(", ")),
+                    ));
+                }
+            }
+        }
+
     }
 }
 
@@ -701,25 +719,6 @@ version = "bad"
 "#;
         let errs = errors(s);
         assert!(errs.len() >= 3, "expected at least 3 errors (name, version, no targets), got {}", errs.len());
-    }
-
-    // ── Language std edge cases ───────────────────────────────────────────────
-
-    #[test]
-    fn d_language_accepts_any_std() {
-        // D has no -std= flag so dmd.toml has an empty [compiler.standards] table.
-        // Any std value the user writes is treated as documentation — no validation error.
-        let s = r#"
-[package]
-name    = "foo"
-version = "0.1.0"
-[language.d]
-std = "2.106"
-[[bin]]
-name = "foo"
-src  = "src/main.d"
-"#;
-        assert!(errors(s).is_empty(), "D language should accept any std string");
     }
 
     // ── Dependency language compatibility ─────────────────────────────────────

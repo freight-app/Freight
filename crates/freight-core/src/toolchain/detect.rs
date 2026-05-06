@@ -307,10 +307,9 @@ mod tests {
     #[test]
     fn load_templates_finds_all() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        assert_eq!(templates.len(), 27,
-            "expected gcc, clang, gfortran, gnat, nvcc, dmd, opencl, hipcc, icpx, ispc, nasm, \
-             tcc, nvhpc, ifx, flang, ldc2, yasm, circle, msvc, \
-             swift, zig, zig-cc, objc, fpc, odin, v, mojo");
+        assert_eq!(templates.len(), 15,
+            "expected gcc, clang, gfortran, nvcc, opencl, hipcc, icpx, ispc, nasm, \
+             tcc, nvhpc, ifx, flang, yasm, msvc");
     }
 
     #[test]
@@ -421,6 +420,27 @@ pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, FreightError> {
     std::fs::write(&dest, &src).map_err(FreightError::Io)?;
 
     Ok(dest)
+}
+
+/// Set the global default compiler backend, stored in `~/.freight/config.toml`.
+///
+/// `name` must match a template name from the loaded templates (e.g. `"gcc"`, `"clang"`).
+/// Prints a warning if the named compiler is not currently detected on PATH, but still
+/// saves the preference (the compiler may not be installed yet).
+pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), FreightError> {
+    let known: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
+    if !known.contains(&name) {
+        return Err(FreightError::TemplateError(format!(
+            "unknown toolchain {:?}; known templates: {}",
+            name,
+            known.join(", "),
+        )));
+    }
+
+    let mut config = super::cache::GlobalConfig::load();
+    config.default_backend = Some(name.to_string());
+    config.save()?;
+    Ok(())
 }
 
 /// Checks (in order):

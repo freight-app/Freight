@@ -157,8 +157,12 @@ pub fn settings_for_lang(
     feature_defines: &[String],
 ) -> BuildSettings {
     let mut s = manifest.build_settings_for(profile);
+    let lang = manifest.effective_language_settings(lang_key);
     if s.standard.is_none() {
-        s.standard = manifest.language.get(lang_key).and_then(|l| l.std.clone());
+        s.standard = lang.std;
+    }
+    if let Some(stdlib) = lang.stdlib {
+        s.stdlib = stdlib;
     }
     for dir in extra_include_dirs {
         s.include_paths.push(project_dir.join(dir));

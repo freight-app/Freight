@@ -15,8 +15,6 @@ pub(super) struct ToolchainDef {
     pub version_regex: String,
     pub extensions: Vec<String>,
     pub standards: HashMap<String, String>,
-    pub stdlibs: Vec<String>,
-    pub runtimes: Vec<String>,
     /// category → { key → flag }
     pub flags: HashMap<String, HashMap<String, String>>,
     /// structure key → template string
@@ -150,7 +148,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
         "extensions", "always_flags",
         "supported_archs", "supported_os",
         "required_tools", "required_env", "requires_toolchain",
-        "sanitizers", "stdlibs", "runtimes"
+        "sanitizers"
     ] {
         scope.push(*key, Array::new());
     }
@@ -218,8 +216,6 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     def.required_env        = arr!("required_env");
     def.requires_toolchain  = arr!("requires_toolchain");
     def.sanitizers          = arr!("sanitizers");
-    def.stdlibs             = arr!("stdlibs");
-    def.runtimes            = arr!("runtimes");
 
     let mv          = str!("min_version");
     if !mv.is_empty() { def.min_version = Some(mv); }

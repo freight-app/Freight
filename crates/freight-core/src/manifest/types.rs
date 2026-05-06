@@ -194,6 +194,22 @@ impl Manifest {
         out
     }
 
+    /// Return the effective `LanguageSettings` for `lang_key`, applying any matching
+    /// platform overlays on top of the base `[language.<key>]` section.
+    /// Platform overlay fields win over base; `None` means no override.
+    pub fn effective_language_settings(&self, lang_key: &str) -> LanguageSettings {
+        let mut s = self.language.get(lang_key).cloned().unwrap_or_default();
+        for plat in host_platforms() {
+            if let Some(ov) = self.platform_overlay(plat) {
+                if let Some(lang_ov) = ov.language.get(lang_key) {
+                    if lang_ov.std.is_some()    { s.std    = lang_ov.std.clone(); }
+                    if lang_ov.stdlib.is_some() { s.stdlib = lang_ov.stdlib.clone(); }
+                }
+            }
+        }
+        s
+    }
+
     /// Case-insensitive lookup of a platform overlay.
     fn platform_overlay(&self, name: &str) -> Option<&PlatformOverlay> {
         self.platform
@@ -327,10 +343,14 @@ pub struct Package {
 
 /// Settings for one language entry under `[language.<key>]`.
 /// The key (e.g. `cpp`, `fortran`) is the language identifier.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LanguageSettings {
     #[serde(default)]
     pub std: Option<String>,
+    /// C++ standard library selection: `"libc++"` | `"libstdc++"` | `"none"`.
+    /// Only meaningful for `[language.cpp]`. Defaults to the toolchain's built-in choice.
+    #[serde(default)]
+    pub stdlib: Option<String>,
 }
 
 // ── Targets ───────────────────────────────────────────────────────────────────
@@ -611,6 +631,9 @@ pub struct PlatformOverlay {
     pub dependencies: HashMap<String, Dependency>,
     #[serde(default)]
     pub compiler: PlatformCompilerOverlay,
+    /// Per-language overrides — e.g. `[platform.linux.language.cpp]` can set `stdlib`.
+    #[serde(default)]
+    pub language: HashMap<String, LanguageSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

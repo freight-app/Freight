@@ -40,8 +40,6 @@ flags["warnings"]["error"]   = "-Minform=warn -Werror";
 flags["lto"]["true"]  = "";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "";
-flags["strip"]["false"] = "";
 
 flags["cpu_ext"]["template"] = "-m{name}";
 

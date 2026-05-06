@@ -39,8 +39,6 @@ flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
 flags["lto"]["true"]  = "-flto";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "-s";
-flags["strip"]["false"] = "";
 
 flags["sanitize"]["template"] = "-fsanitize={values}";
 

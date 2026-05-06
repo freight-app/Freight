@@ -36,8 +36,6 @@ flags["warnings"]["error"]   = "-Wall -Werror";
 flags["lto"]["true"]  = "";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "";
-flags["strip"]["false"] = "";
 
 standards["c99"] = "-std=c99";
 standards["c11"] = "-std=c11";

@@ -31,8 +31,6 @@ flags["warnings"]["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 flags["lto"]["true"]  = "-flto";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "-s";
-flags["strip"]["false"] = "";
 
 flags["sanitize"]["template"] = "-fsanitize={values}";
 

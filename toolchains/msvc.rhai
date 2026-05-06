@@ -18,7 +18,6 @@ extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
 supported_os = ["windows"];
-runtimes = ["msvcrt", "ucrt", "none"];
 
 toolset["cc"]    = "cl.exe";
 toolset["cxx"]   = "cl.exe";
@@ -49,8 +48,6 @@ flags["lto"]["false"] = "";
 flags["lto_link"]["true"]  = "/LTCG";
 flags["lto_link"]["false"] = "";
 
-flags["strip"]["true"]  = "";   // no strip flag; omit PDB at link time instead
-flags["strip"]["false"] = "";
 
 flags["sanitize"]["template"] = "/fsanitize={values}";
 flags["cpu_ext"]["template"]  = "";   // /arch:AVX2 etc. set via compiler.flags

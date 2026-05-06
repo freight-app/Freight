@@ -40,8 +40,6 @@ flags["warnings"]["error"]   = "-warn all -warn errors";
 flags["lto"]["true"]  = "-ipo";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "-s";
-flags["strip"]["false"] = "";
 
 standards["f95"]   = "-std=f95";
 standards["f2003"] = "-std=f2003";

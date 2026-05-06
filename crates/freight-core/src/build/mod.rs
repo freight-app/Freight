@@ -3,7 +3,6 @@ pub mod compile_commands;
 pub mod deps;
 pub mod discover;
 pub mod features;
-pub mod foreign;
 pub mod header_units;
 pub mod link;
 pub mod modules;
@@ -24,12 +23,12 @@ use walkdir::WalkDir;
 
 use crate::error::FreightError;
 use crate::fetch::git;
-use crate::fetch::http;
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::validate::{validate, validate_dep_compat};
 use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
-use crate::toolchain::{CompilerTemplate, DetectedCompiler, detect_all_cached, load_templates, templates_dir};
+use crate::toolchain::{CompilerTemplate, DetectedCompiler, GlobalConfig, detect_all_cached, load_templates, templates_dir};
+use crate::manifest::types::Backend;
 
 // ── Public results ────────────────────────────────────────────────────────────
 
@@ -188,7 +187,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
-    let (foreign_built, pkg_configs) = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+    let (foreign_built, pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -249,7 +248,9 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
 
     // If a PCH header is configured, compile it and inject the use flag into
     // every source file. Failures are non-fatal.
-    let pch_extra: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
+    let mut pch_compile_flags: Vec<String> = vec![];
+    let mut pch_clangd_flags: Vec<String> = vec![];
+    if let Some(ref pch_header) = manifest.compiler.pch.clone() {
         let primary = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None)
             .or_else(|| compile::select_compiler("c", &manifest.compiler.backend, detected, None));
         if let Some(compiler) = primary {
@@ -257,18 +258,18 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
                 project_dir, pch_header, profile, compiler,
                 &include_dirs, &compile_defines, &[],
             ) {
-                Ok(Some(compiled)) => compiled.use_flag
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect(),
-                Ok(None) => vec![],
-                Err(e) => { eprintln!("warning: PCH skipped: {e}"); vec![] }
+                Ok(Some(compiled)) => {
+                    pch_compile_flags = compiled.use_flag.split_whitespace().map(str::to_owned).collect();
+                    pch_clangd_flags  = compiled.clangd_flag.split_whitespace().map(str::to_owned).collect();
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("warning: PCH skipped: {e}"),
             }
-        } else { vec![] }
-    } else { vec![] };
+        }
+    }
 
     let mut extra_flags = hu_flags.clone();
-    extra_flags.extend(pch_extra);
+    extra_flags.extend(pch_compile_flags);
     let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &extra_flags)?;
 
     let link_result = link_targets(
@@ -288,7 +289,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     // in sync. Non-fatal — a write failure must not abort a successful build.
     let cc = compile_commands::generate(
         project_dir, manifest, detected, profile,
-        &all_sources, &include_dirs, &feature_defines,
+        &all_sources, &include_dirs, &feature_defines, &pch_clangd_flags,
     );
     if let Err(e) = compile_commands::write(project_dir, &cc) {
         eprintln!("warning: could not write compile_commands.json: {e}");
@@ -327,7 +328,7 @@ pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result
 
     let commands = compile_commands::generate(
         project_dir, manifest, detected, profile,
-        &found.sources, &include_dirs, &feature_defines,
+        &found.sources, &include_dirs, &feature_defines, &[],
     );
     let count = commands.len();
     compile_commands::write(project_dir, &commands)?;
@@ -410,7 +411,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
-    let (foreign_built, pkg_configs) = foreign::build_foreign_deps(project_dir, manifest, profile)?;
+    let (foreign_built, pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -760,7 +761,13 @@ fn apply_sanitize_override(manifest: &mut crate::manifest::types::Manifest, prof
 // ── Shared project loading ────────────────────────────────────────────────────
 
 fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, FreightError> {
-    let manifest = load_manifest(project_dir)?;
+    let mut manifest = load_manifest(project_dir)?;
+    // Apply the global default backend when the project leaves it as "auto".
+    if manifest.compiler.backend.is_auto() {
+        if let Some(name) = GlobalConfig::load().default_backend {
+            manifest.compiler.backend = Backend(name);
+        }
+    }
 
     let tdir = templates_dir()
         .ok_or_else(|| FreightError::CompilerNotFound(

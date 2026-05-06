@@ -54,6 +54,9 @@ pub fn link_targets(
 
         print_linking(&bin.name);
         link_executable(&bin_objects, &out, linker, manifest, profile, dep_libs, extra_link_flags)?;
+        if link_settings(manifest, profile).strip {
+            strip_output(&out, linker)?;
+        }
         outputs.push(out);
     }
 
@@ -75,6 +78,9 @@ pub fn link_targets(
                     .ok_or_else(|| FreightError::CompilerNotFound("no suitable linker found".into()))?;
                 print_linking(out.file_name().unwrap_or_default().to_str().unwrap_or("lib"));
                 link_shared(objects, &out, linker, manifest, profile, dep_libs, extra_link_flags)?;
+                if link_settings(manifest, profile).strip {
+                    strip_output(&out, linker)?;
+                }
                 outputs.push(out);
             }
             LibType::HeaderOnly => {}
@@ -201,6 +207,22 @@ fn link_shared(
     cmd.args(extra_link_flags);
     cmd.args(linker.template.output_bin_flag(out));
     run_cmd(cmd, out)
+}
+
+fn strip_output(out: &Path, linker: &DetectedCompiler) -> Result<(), FreightError> {
+    let Some(strip_bin) = linker.template.strip_binary() else { return Ok(()) };
+    let status = Command::new(strip_bin)
+        .arg(out)
+        .status()
+        .map_err(|e| FreightError::CompilerNotFound(format!("{strip_bin} not found: {e}")))?;
+    if !status.success() {
+        eprintln!(
+            "warning: strip of '{}' failed (exit {})",
+            out.display(),
+            status.code().unwrap_or(-1)
+        );
+    }
+    Ok(())
 }
 
 fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), FreightError> {

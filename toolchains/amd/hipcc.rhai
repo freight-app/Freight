@@ -38,8 +38,6 @@ flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
 flags["lto"]["true"]  = "";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "-s";
-flags["strip"]["false"] = "";
 
 standards["c++14"] = "-std=c++14";
 standards["c++17"] = "-std=c++17";

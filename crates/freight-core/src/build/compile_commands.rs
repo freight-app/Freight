@@ -62,6 +62,7 @@ pub fn generate(
     sources: &[SourceFile],
     include_dirs: &[PathBuf],
     feature_defines: &[String],
+    extra_flags: &[String],
 ) -> Vec<CompileCommand> {
     let abs_dir = project_dir.canonicalize().unwrap_or_else(|_| project_dir.to_path_buf());
     let prefix = format!("{}/", abs_dir.to_string_lossy());
@@ -100,6 +101,7 @@ pub fn generate(
 
         let mut args = vec![compile_bin.to_string_lossy().into_owned()];
         args.extend(compiler.template.assemble_flags(&settings));
+        args.extend(extra_flags.iter().cloned());
         args.extend(compiler.template.compile_only_flag());
         // Source and output use paths relative to `directory` so the entry is
         // portable when the project is moved or shared across machines.

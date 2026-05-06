@@ -36,8 +36,6 @@ flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
 flags["lto"]["true"]  = "";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "";
-flags["strip"]["false"] = "";
 
 standards["CL1.0"] = "-cl-std=CL1.0";
 standards["CL1.1"] = "-cl-std=CL1.1";

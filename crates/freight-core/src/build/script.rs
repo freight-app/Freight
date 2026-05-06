@@ -110,7 +110,7 @@ use crate::error::FreightError;
 use crate::manifest::types::Manifest;
 use crate::toolchain::DetectedCompiler;
 use super::compile::select_compiler;
-use super::foreign::ResolvedPkgConfig;
+use crate::meta::ResolvedPkgConfig;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

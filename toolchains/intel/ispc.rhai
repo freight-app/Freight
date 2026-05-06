@@ -36,8 +36,6 @@ flags["warnings"]["error"]   = "--werror";
 flags["lto"]["true"]  = "";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "";
-flags["strip"]["false"] = "";
 
 include_dir  = "-I{path}";
 define       = "-D{name}";

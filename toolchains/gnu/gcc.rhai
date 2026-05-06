@@ -23,9 +23,6 @@ version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";
 extensions    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
 passthrough        = false;
 passthrough_prefix = "";
-stdlibs = ["libstdc++", "none"];
-runtimes = ["gnu", "musl", "none"];
-
 toolset["cc"]    = _gcc;
 toolset["cxx"]   = _gxx;
 toolset["ld"]    = _gxx;
@@ -50,8 +47,18 @@ flags["warnings"]["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 flags["lto"]["true"]  = "-flto";
 flags["lto"]["false"] = "";
 
-flags["strip"]["true"]  = "-s";
-flags["strip"]["false"] = "";
+
+// GCC always uses libstdc++; no flag to select it. "-nostdlib" disables all libs.
+flags["stdlib"]["libstdc++"] = "";
+flags["stdlib"]["none"]      = "-nostdlib";
+
+// GCC runtime selection: glibc is the default (no flag). musl requires a
+// musl-targeted toolchain (e.g. x86_64-linux-musl-gcc); "-static" is added as a
+// hint for fully-static musl builds, but the real switch is the cross toolchain.
+flags["runtime"]["glibc"]   = "";
+flags["runtime"]["musl"]    = "-static";
+flags["runtime"]["bionic"]  = "";
+flags["runtime"]["none"]    = "-nostdlib -nodefaultlibs";
 
 flags["sanitize"]["template"] = "-fsanitize={values}";
 flags["cpu_ext"]["template"]  = "-m{name}";

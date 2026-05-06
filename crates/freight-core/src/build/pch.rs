@@ -4,10 +4,13 @@ use std::process::Command;
 use crate::error::FreightError;
 use crate::toolchain::DetectedCompiler;
 
-/// Result of compiling a PCH. Contains the fully-expanded flag to inject
-/// into consumer compilations.
+/// Result of compiling a PCH.
 pub struct CompiledPch {
+    /// Flag(s) to inject into real compiler invocations (e.g. `-include-pch /path/to/pch`).
     pub use_flag: String,
+    /// Flag for `compile_commands.json` — always `-include {original_header}` so clangd
+    /// reads the source header directly rather than an opaque binary PCH it can't use.
+    pub clangd_flag: String,
 }
 
 /// Compile `header_rel` to a PCH and return the flag string to inject.
@@ -52,9 +55,9 @@ pub fn compile_pch(
             .ok();
         if let (Some(hm), Some(pm)) = (header_mtime, pch_mtime) {
             if pm >= hm {
-                let use_flag =
-                    expand_pch_use_flag(&pch_cfg.use_flag, &header_path, &pch_out);
-                return Ok(Some(CompiledPch { use_flag }));
+                let use_flag = expand_pch_use_flag(&pch_cfg.use_flag, &header_path, &pch_out);
+                let clangd_flag = format!("-include {}", header_path.display());
+                return Ok(Some(CompiledPch { use_flag, clangd_flag }));
             }
         }
     }
@@ -87,7 +90,8 @@ pub fn compile_pch(
     }
 
     let use_flag = expand_pch_use_flag(&pch_cfg.use_flag, &header_path, &pch_out);
-    Ok(Some(CompiledPch { use_flag }))
+    let clangd_flag = format!("-include {}", header_path.display());
+    Ok(Some(CompiledPch { use_flag, clangd_flag }))
 }
 
 fn expand_pch_use_flag(template: &str, header_path: &Path, pch_path: &Path) -> String {
