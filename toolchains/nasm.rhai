@@ -3,6 +3,7 @@
 
 name          = "nasm";
 family        = "";
+requires_toolchain = ["c"];
 sanitizers = [];
 homepage      = "https://www.nasm.us/";
 binary        = "nasm";

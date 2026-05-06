@@ -110,7 +110,9 @@ pub fn compile_sources(
 ///   When `preferred_family` is `Some(f)` and non-empty, prefer a compiler in that
 ///   family; fall back to any compiler that handles `lang_key` when no family match
 ///   is found.
-/// Any other name → the detected compiler whose template name matches exactly.
+/// Any other name → treated as a family name first: find the compiler in that family
+///   that handles `lang_key`. Falls back to an exact template-name match for standalone
+///   compilers (e.g. `"nasm"`, `"msvc"`) that have no family.
 pub fn select_compiler<'a>(
     lang_key: &str,
     backend: &Backend,
@@ -128,6 +130,34 @@ pub fn select_compiler<'a>(
         detected.iter().find(|d| d.template.linking.contains_key(lang_key))
     } else {
         let name = backend.name();
+        // 1. Family member that directly handles this lang_key.
+        if let Some(c) = detected.iter().find(|d| {
+            !d.template.family.is_empty()
+                && d.template.family == name
+                && d.template.linking.contains_key(lang_key)
+        }) {
+            return Some(c);
+        }
+
+        // 2. Guest compiler (requires_toolchain non-empty) that handles lang_key
+        //    and whose host requirements are all provided by the named family.
+        let family_langs: std::collections::HashSet<&str> = detected
+            .iter()
+            .filter(|d| !d.template.family.is_empty() && d.template.family == name)
+            .flat_map(|d| d.template.linking.keys().map(String::as_str))
+            .collect();
+
+        if !family_langs.is_empty() {
+            if let Some(c) = detected.iter().find(|d| {
+                !d.template.requires_toolchain.is_empty()
+                    && d.template.linking.contains_key(lang_key)
+                    && d.template.requires_toolchain.iter().all(|r| family_langs.contains(r.as_str()))
+            }) {
+                return Some(c);
+            }
+        }
+
+        // 3. Exact template-name match (standalone compilers with no family).
         detected.iter().find(|d| d.template.name == name)
     }
 }
@@ -415,6 +445,68 @@ mod tests {
         let found = select_compiler("cpp", &backend, &detected, None);
         assert!(found.is_some());
         assert_eq!(found.unwrap().template.name, "gcc");
+    }
+
+    #[test]
+    fn named_backend_family_picks_right_compiler_per_lang() {
+        let ts = templates();
+        let detected = fake_detected(&ts);
+        // "gnu" family → gcc for cpp, gfortran for fortran
+        let cpp = select_compiler("cpp", &Backend("gnu".into()), &detected, None);
+        assert!(cpp.is_some(), "gnu backend should find a C++ compiler");
+        assert_eq!(cpp.unwrap().template.name, "gcc");
+
+        let fortran = select_compiler("fortran", &Backend("gnu".into()), &detected, None);
+        assert!(fortran.is_some(), "gnu backend should find a Fortran compiler");
+        assert_eq!(fortran.unwrap().template.name, "gfortran");
+
+        // "llvm" family → clang for cpp
+        let cpp_llvm = select_compiler("cpp", &Backend("llvm".into()), &detected, None);
+        assert!(cpp_llvm.is_some(), "llvm backend should find a C++ compiler");
+        assert_eq!(cpp_llvm.unwrap().template.name, "clang");
+    }
+
+    #[test]
+    fn named_backend_family_picks_guest_for_extension_lang() {
+        let ts = templates();
+        let detected = fake_detected(&ts);
+        // "gnu" family has no direct cuda member, but nvcc is a guest that requires cpp.
+        // gnu provides cpp, so nvcc should be returned for cuda files.
+        let cuda = select_compiler("cuda", &Backend("gnu".into()), &detected, None);
+        assert!(cuda.is_some(), "gnu backend should pick nvcc for cuda files");
+        assert_eq!(cuda.unwrap().template.name, "nvcc");
+
+        // Same for llvm
+        let cuda_llvm = select_compiler("cuda", &Backend("llvm".into()), &detected, None);
+        assert!(cuda_llvm.is_some(), "llvm backend should also pick nvcc for cuda files");
+        assert_eq!(cuda_llvm.unwrap().template.name, "nvcc");
+    }
+
+    #[test]
+    fn named_backend_asm_guest_selected_for_any_family() {
+        let ts = templates();
+        let detected = fake_detected(&ts);
+        // nasm (requires_toolchain = ["c"]) should be picked as a guest for "asm"
+        // whenever the active family satisfies the "c" requirement.
+        for backend_name in &["gnu", "llvm"] {
+            let found = select_compiler("asm", &Backend(backend_name.to_string()), &detected, None);
+            assert!(
+                found.is_some(),
+                "{backend_name} backend should find nasm for 'asm' files"
+            );
+            let compiler = found.unwrap();
+            assert_eq!(compiler.template.name, "nasm");
+            assert!(compiler.template.requires_toolchain.contains(&"c".to_string()));
+        }
+    }
+
+    #[test]
+    fn named_backend_family_no_match_for_unsupported_lang() {
+        let ts = templates();
+        let detected = fake_detected(&ts);
+        // No family handles an entirely unknown language key.
+        let found = select_compiler("haskell", &Backend("gnu".into()), &detected, None);
+        assert!(found.is_none(), "gnu backend should not find a compiler for 'haskell'");
     }
 
     #[test]

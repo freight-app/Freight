@@ -15,6 +15,81 @@ pub struct DetectedCompiler {
     pub path: PathBuf,
 }
 
+/// A toolchain family: one or more detected compilers that share a `family` label
+/// (e.g., `"gnu"` groups gcc + gfortran; `"llvm"` groups clang + flang).
+/// Standalone compilers with `family = ""` and no host requirements each appear as
+/// their own entry (e.g. `"nasm"`, `"msvc"`).
+#[derive(Debug, Clone)]
+pub struct DetectedToolchain {
+    /// The family name (e.g., `"gnu"`) or the compiler name for standalone tools.
+    pub name: String,
+    /// All detected compilers belonging to this toolchain, sorted by template name.
+    pub compilers: Vec<DetectedCompiler>,
+    /// Sorted union of all language keys handled by any compiler in this toolchain.
+    pub languages: Vec<String>,
+}
+
+/// Result of grouping detected compilers.
+#[derive(Debug, Clone)]
+pub struct ToolchainGroups {
+    /// Primary toolchains: family groups (gnu, llvm, …) and standalone compilers
+    /// that need no host toolchain (tcc, msvc, …).
+    /// These are the names accepted by `freight toolchain use`.
+    pub toolchains: Vec<DetectedToolchain>,
+    /// Extension compilers that require a host toolchain to link
+    /// (nvcc, hipcc, ispc, opencl, nasm, yasm…). They extend whichever primary
+    /// toolchain is active — they are not selectable directly via `toolchain use`.
+    pub guests: Vec<DetectedCompiler>,
+}
+
+/// Group a flat list of detected compilers into primary toolchains and extensions.
+///
+/// Compilers with `requires_toolchain` non-empty are **extensions** — they extend
+/// the active toolchain and are collected in `guests`. Everything else is grouped
+/// by `family` into `toolchains`, or kept as individual entries when `family` is `""`.
+/// Both groups are sorted by name.
+pub fn group_into_toolchains(detected: Vec<DetectedCompiler>) -> ToolchainGroups {
+    let mut primaries: Vec<DetectedCompiler> = Vec::new();
+    let mut guests: Vec<DetectedCompiler> = Vec::new();
+
+    for compiler in detected {
+        if !compiler.template.requires_toolchain.is_empty() {
+            guests.push(compiler);
+        } else {
+            primaries.push(compiler);
+        }
+    }
+
+    let mut map: std::collections::BTreeMap<String, Vec<DetectedCompiler>> =
+        std::collections::BTreeMap::new();
+    for compiler in primaries {
+        let key = if compiler.template.family.is_empty() {
+            compiler.template.name.clone()
+        } else {
+            compiler.template.family.clone()
+        };
+        map.entry(key).or_default().push(compiler);
+    }
+
+    let toolchains = map
+        .into_iter()
+        .map(|(name, mut compilers)| {
+            compilers.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+            let mut languages: Vec<String> = compilers
+                .iter()
+                .flat_map(|c| c.template.linking.keys().cloned())
+                .collect();
+            languages.sort_unstable();
+            languages.dedup();
+            DetectedToolchain { name, compilers, languages }
+        })
+        .collect();
+
+    guests.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+
+    ToolchainGroups { toolchains, guests }
+}
+
 /// Load every `.rhai` file from `templates_dir` and return parsed templates.
 pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
     let mut templates = Vec::new();
@@ -362,6 +437,177 @@ mod tests {
             assert!(d.path.exists(), "{} path does not exist: {:?}", d.template.name, d.path);
         }
     }
+
+    // ── group_into_toolchains ─────────────────────────────────────────────────
+
+    fn fake_detected_from_templates(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {
+        templates.iter().map(|t| DetectedCompiler {
+            template: t.clone(),
+            version: "0.0.0".into(),
+            path: std::path::PathBuf::from(format!("/usr/bin/{}", t.name)),
+        }).collect()
+    }
+
+    #[test]
+    fn group_into_toolchains_merges_gnu_family() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = fake_detected_from_templates(&templates);
+        let groups = group_into_toolchains(detected);
+
+        let gnu = groups.toolchains.iter().find(|tc| tc.name == "gnu")
+            .expect("gnu toolchain should exist");
+        let names: Vec<&str> = gnu.compilers.iter().map(|c| c.template.name.as_str()).collect();
+        assert!(names.contains(&"gcc"), "gnu should contain gcc");
+        assert!(names.contains(&"gfortran"), "gnu should contain gfortran");
+        assert!(gnu.languages.contains(&"cpp".to_string()), "gnu covers cpp");
+        assert!(gnu.languages.contains(&"c".to_string()), "gnu covers c");
+        assert!(gnu.languages.contains(&"fortran".to_string()), "gnu covers fortran");
+    }
+
+    #[test]
+    fn group_into_toolchains_merges_llvm_family() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = fake_detected_from_templates(&templates);
+        let groups = group_into_toolchains(detected);
+
+        let llvm = groups.toolchains.iter().find(|tc| tc.name == "llvm")
+            .expect("llvm toolchain should exist");
+        let names: Vec<&str> = llvm.compilers.iter().map(|c| c.template.name.as_str()).collect();
+        assert!(names.contains(&"clang"), "llvm should contain clang");
+        assert!(names.contains(&"flang"), "llvm should contain flang");
+    }
+
+    #[test]
+    fn group_into_toolchains_guests_are_separated() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = fake_detected_from_templates(&templates);
+        let groups = group_into_toolchains(detected);
+
+        // Guest compilers (requires_toolchain non-empty) must not appear in toolchains.
+        for name in &["nvcc", "hipcc", "opencl", "ispc"] {
+            assert!(
+                !groups.toolchains.iter().any(|tc| {
+                    tc.compilers.iter().any(|c| c.template.name == *name)
+                }),
+                "{name} (guest) should not appear in a primary toolchain"
+            );
+            assert!(
+                groups.guests.iter().any(|g| g.template.name == *name),
+                "{name} should appear in guests list"
+            );
+        }
+    }
+
+    #[test]
+    fn group_into_toolchains_standalone_primaries_own_entry() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = fake_detected_from_templates(&templates);
+        let groups = group_into_toolchains(detected);
+
+        // Standalone primaries (family = "", requires_toolchain = []) get their own entry.
+        for name in &["msvc", "tcc"] {
+            assert!(
+                groups.toolchains.iter().any(|tc| tc.name == *name),
+                "standalone primary {name} should have its own toolchain entry"
+            );
+        }
+        // Extensions (requires_toolchain non-empty) must not appear as toolchains.
+        for name in &["opencl", "nasm", "yasm", "nvcc", "hipcc", "ispc"] {
+            assert!(
+                !groups.toolchains.iter().any(|tc| tc.name == *name),
+                "{name} (extension) must not appear as a primary toolchain"
+            );
+        }
+    }
+
+    #[test]
+    fn group_into_toolchains_assemblers_are_extensions() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = fake_detected_from_templates(&templates);
+        let groups = group_into_toolchains(detected);
+
+        for name in &["nasm", "yasm"] {
+            assert!(
+                groups.guests.iter().any(|g| g.template.name == *name),
+                "{name} should appear in the extensions list"
+            );
+            let t = templates.iter().find(|t| t.name == *name).unwrap();
+            assert!(
+                !t.requires_toolchain.is_empty(),
+                "{name} should declare requires_toolchain"
+            );
+        }
+    }
+
+    #[test]
+    fn group_into_toolchains_sorted_by_name() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let detected = fake_detected_from_templates(&templates);
+        let groups = group_into_toolchains(detected);
+        let names: Vec<&str> = groups.toolchains.iter().map(|tc| tc.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "toolchains should be sorted by name");
+    }
+
+    // ── toolchain_use ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn toolchain_use_accepts_family_names() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        // Family names should be accepted (they reference a group, not a binary).
+        // We can't actually persist without a real home dir, but we can check validation.
+        // toolchain_use returns Ok only if name is valid, then tries to save — the save
+        // may fail without a home dir, but validation alone is what we're testing here.
+        // Just confirm no TemplateError is returned for a known family.
+        let err = super::super::super::toolchain::toolchain_use("gnu", &templates);
+        // Either Ok or a non-TemplateError (e.g. Io error saving config) is acceptable.
+        if let Err(e) = err {
+            assert!(
+                !format!("{e}").contains("unknown toolchain"),
+                "family name 'gnu' should be accepted, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn toolchain_use_rejects_individual_compiler_with_family() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        // "gcc" has family "gnu", so it should be rejected — use "gnu" instead.
+        let result = super::super::super::toolchain::toolchain_use("gcc", &templates);
+        assert!(result.is_err(), "'gcc' (has family 'gnu') should not be a valid toolchain name");
+    }
+
+    #[test]
+    fn toolchain_use_accepts_standalone_primary() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        // "tcc" has family = "", requires_toolchain = [], role = Toolchain → valid.
+        let err = super::super::super::toolchain::toolchain_use("tcc", &templates);
+        if let Err(e) = err {
+            assert!(
+                !format!("{e}").contains("unknown toolchain"),
+                "standalone 'tcc' should be accepted, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn toolchain_use_rejects_assembler() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        // Assemblers are auto-selected, not user-selectable.
+        let result = super::super::super::toolchain::toolchain_use("nasm", &templates);
+        assert!(result.is_err(), "'nasm' (assembler) should not be a valid toolchain use target");
+        let result2 = super::super::super::toolchain::toolchain_use("yasm", &templates);
+        assert!(result2.is_err(), "'yasm' (assembler) should not be a valid toolchain use target");
+    }
+
+    #[test]
+    fn toolchain_use_rejects_unknown_name() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let result = super::super::super::toolchain::toolchain_use("badname", &templates);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("unknown toolchain"));
+    }
 }
 
 /// Resolve the compiler templates directory.
@@ -424,14 +670,33 @@ pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, FreightError> {
 
 /// Set the global default compiler backend, stored in `~/.freight/config.toml`.
 ///
-/// `name` must match a template name from the loaded templates (e.g. `"gcc"`, `"clang"`).
-/// Prints a warning if the named compiler is not currently detected on PATH, but still
-/// saves the preference (the compiler may not be installed yet).
+/// `name` must be a family name (e.g. `"gnu"`, `"llvm"`) or the name of a standalone
+/// compiler with no family (e.g. `"nasm"`, `"msvc"`). Prints a warning if no compiler
+/// in that toolchain is currently on PATH, but still saves the preference.
 pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), FreightError> {
-    let known: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
-    if !known.contains(&name) {
+    // Build the set of valid toolchain names: distinct non-empty family names +
+    // individual names for templates that have no family.
+    // Only primary compilers (requires_toolchain empty) are selectable.
+    let mut families: Vec<&str> = templates
+        .iter()
+        .filter(|t| t.requires_toolchain.is_empty() && !t.family.is_empty())
+        .map(|t| t.family.as_str())
+        .collect();
+    families.sort_unstable();
+    families.dedup();
+
+    let standalone: Vec<&str> = templates
+        .iter()
+        .filter(|t| t.requires_toolchain.is_empty() && t.family.is_empty())
+        .map(|t| t.name.as_str())
+        .collect();
+
+    if !families.contains(&name) && !standalone.contains(&name) {
+        let mut known = families.clone();
+        known.extend_from_slice(&standalone);
+        known.sort_unstable();
         return Err(FreightError::TemplateError(format!(
-            "unknown toolchain {:?}; known templates: {}",
+            "unknown toolchain {:?}; known toolchains: {}",
             name,
             known.join(", "),
         )));
