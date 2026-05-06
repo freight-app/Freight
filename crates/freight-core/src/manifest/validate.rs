@@ -309,23 +309,6 @@ fn validate_compiler(m: &Manifest, errors: &mut Vec<ValidationError>) {
         ));
     }
 
-    if let Some(target) = &cc.target {
-        if target.trim().is_empty() {
-            errors.push(ValidationError::new(
-                "[compiler]",
-                "target must not be empty; use a target triple such as \"aarch64-linux-gnu\"",
-            ));
-        }
-    }
-
-    if let Some(sysroot) = &cc.sysroot {
-        if sysroot.trim().is_empty() {
-            errors.push(ValidationError::new(
-                "[compiler]",
-                "sysroot must not be empty; use an absolute path such as \"/opt/sysroot\"",
-            ));
-        }
-    }
 }
 
 fn validate_profiles(m: &Manifest, errors: &mut Vec<ValidationError>) {
@@ -522,7 +505,6 @@ name = "myproject"
 src  = "src/main.cpp"
 
 [compiler]
-backend   = "auto"
 opt-level = 2
 debug     = false
 warnings  = "all"

@@ -9,6 +9,7 @@ use crate::build::build_project_at;
 use crate::error::FreightError;
 use crate::manifest::load_manifest;
 use crate::manifest::types::LibType;
+use crate::toolchain::GlobalConfig;
 use crate::vendor::parse_triple;
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -82,10 +83,10 @@ pub fn install_project(project_dir: &Path, opts: &InstallOptions) -> Result<Inst
         build_project_at(project_dir, profile, &[], true, opts.target.as_deref(), &[])?;
     }
 
-    // Derive target OS/arch: prefer the explicit override, then the manifest's
-    // [compiler] target, then fall back to the host.
+    // Derive target OS/arch: prefer the explicit override, then ~/.freight/config.toml, then host.
+    let global_target = GlobalConfig::load().target;
     let target_str = opts.target.as_deref()
-        .or_else(|| manifest.compiler.target.as_deref());
+        .or_else(|| global_target.as_deref());
     let (target_arch, target_os) = target_str
         .map(parse_triple)
         .unwrap_or_else(|| (std::env::consts::ARCH.to_string(), std::env::consts::OS.to_string()));
@@ -176,8 +177,9 @@ pub fn package_project(project_dir: &Path, release: bool, target: Option<&str>) 
 
     build_project_at(project_dir, profile, &[], true, target, &[])?;
 
+    let global_target = GlobalConfig::load().target;
     let (pkg_arch, pkg_os) = target
-        .or_else(|| manifest.compiler.target.as_deref())
+        .or_else(|| global_target.as_deref())
         .map(parse_triple)
         .unwrap_or_else(|| (std::env::consts::ARCH.to_string(), std::env::consts::OS.to_string()));
 

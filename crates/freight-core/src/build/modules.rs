@@ -15,7 +15,7 @@ use std::process::Command;
 use rayon::prelude::*;
 
 use crate::error::FreightError;
-use crate::manifest::types::Manifest;
+use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::template::{BuildSettings, ModuleStyle};
 use crate::toolchain::DetectedCompiler;
 
@@ -241,6 +241,7 @@ pub fn bmi_path(project_dir: &Path, profile: &str, module_name: &str) -> PathBuf
 pub fn compile_module_sources(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     profile: &str,
     plan: &mut ModuleBuildPlan,
     include_dirs: &[PathBuf],
@@ -259,7 +260,7 @@ pub fn compile_module_sources(
         let results: Result<Vec<(PathBuf, bool)>, FreightError> = batch
             .par_iter()
             .map(|scanned| {
-                compile_miu(project_dir, manifest, profile, scanned, include_dirs, detected, &bmi_snapshot, feature_defines, header_unit_flags)
+                compile_miu(project_dir, manifest, backend, profile, scanned, include_dirs, detected, &bmi_snapshot, feature_defines, header_unit_flags)
             })
             .collect();
 
@@ -275,7 +276,7 @@ pub fn compile_module_sources(
         .par_iter()
         .map(|scanned| {
             let mflags = import_flags(&scanned.imports, bmi_map);
-            compile_non_miu(project_dir, manifest, profile, scanned, include_dirs, detected, &mflags, feature_defines, header_unit_flags)
+            compile_non_miu(project_dir, manifest, backend, profile, scanned, include_dirs, detected, &mflags, feature_defines, header_unit_flags)
         })
         .collect();
 
@@ -292,6 +293,7 @@ pub fn compile_module_sources(
 fn compile_miu(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     profile: &str,
     scanned: &ScannedSource,
     include_dirs: &[PathBuf],
@@ -314,7 +316,7 @@ fn compile_miu(
         return Ok((obj, false));
     }
 
-    let compiler = select_compiler(&scanned.source.lang_key, &manifest.compiler.backend, detected, None)
+    let compiler = select_compiler(&scanned.source.lang_key, backend, detected, None)
         .ok_or_else(|| FreightError::NoCompilerForLang(scanned.source.lang_key.clone()))?;
     let settings = settings_for_lang(manifest, profile, &scanned.source.lang_key, include_dirs, project_dir, feature_defines);
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
@@ -394,6 +396,7 @@ fn precompile_clang(
 fn compile_non_miu(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     profile: &str,
     scanned: &ScannedSource,
     include_dirs: &[PathBuf],
@@ -411,7 +414,7 @@ fn compile_non_miu(
         return Ok((obj, false));
     }
 
-    let compiler = select_compiler(&scanned.source.lang_key, &manifest.compiler.backend, detected, None)
+    let compiler = select_compiler(&scanned.source.lang_key, backend, detected, None)
         .ok_or_else(|| FreightError::NoCompilerForLang(scanned.source.lang_key.clone()))?;
     let settings = settings_for_lang(manifest, profile, &scanned.source.lang_key, include_dirs, project_dir, feature_defines);
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
