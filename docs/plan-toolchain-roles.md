@@ -1,4 +1,10 @@
-# Plan: Rhai-based toolchain scripts
+# Plan: Rhai-based toolchain scripts [SUPERSEDED]
+
+> **This document describes a `set_*()`-based API that was planned but not implemented.**
+> The actual implementation uses direct assignment syntax (`name = "gcc"`, `flags["opt"]["0"] = "-O0"`, etc.).
+> See `docs/compiler-templates.md` for the current, accurate API reference.
+
+---
 
 ## Core idea
 
