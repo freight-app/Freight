@@ -4,8 +4,9 @@ This document lists compilers, assemblers, debuggers, and language extensions wo
 templates for. Each entry includes what makes it interesting, what a template would require,
 and any known technical challenges.
 
-Freight's TOML-driven template system means most of these require zero Rust changes — just a new
-`.toml` file in `toolchains/`. Items marked **[needs Rust]** require changes to `freight-core`.
+Freight's Rhai-driven template system means most of these require zero Rust changes — just a new
+`.rhai` file in `toolchains/`. Items marked **[needs Rust]** require changes to `freight-core`.
+See `docs/compiler-templates.md` for the full script API including `family` and `requires_toolchain`.
 
 ---
 
@@ -36,19 +37,15 @@ Freight's TOML-driven template system means most of these require zero Rust chan
   conventions throughout. Windows support would be the largest cross-cutting change.
 
 ### Intel oneAPI C++ (`icpx`) ✓ template exists
-- Already present in `toolchains/icpx.toml`. May need updates as oneAPI releases progress.
+- Already present in `toolchains/intel/icpx.rhai`. May need updates as oneAPI releases progress.
 
-### PGI / NVHPC (`nvc++`)
-- **What**: NVIDIA HPC compilers (formerly Portland Group). Strong auto-vectorisation, OpenACC,
-  CUDA Fortran. Used heavily in scientific computing.
-- **Template**: flags follow GCC conventions mostly (`-O2`, `-g`, `-I`). OpenACC via `-acc`.
-  `-Minfo=accel` for offloading diagnostics.
-- **Challenge**: Version detection may differ (`nvc++ --version` format).
+### PGI / NVHPC (`nvc++`) ✓ template exists
+- Already present in `toolchains/nvidia/nvhpc.rhai`. Family `"nvidia"`, handles C, C++, Fortran, CUDA.
 
 ### Circle (`circle`)
 - **What**: An experimental C++20+ compiler with metaprogramming extensions (compile-time
   Python-like introspection). Drop-in Clang-compatible.
-- **Template**: Clang-compatible flags; reuse most of `clang.toml` with `binary = "circle"`.
+- **Template**: Clang-compatible flags; reuse most of `clang.rhai` with `binary = "circle"`.
 
 ### Emscripten (`emcc`)
 - **What**: LLVM/Clang-based C/C++ to WebAssembly/JavaScript compiler. Required for building
@@ -89,11 +86,8 @@ Freight's TOML-driven template system means most of these require zero Rust chan
 
 ## Assembly
 
-### YASM
-- **What**: Drop-in NASM-compatible assembler with additional syntax support (GAS AT&T, x86/x86-64,
-  MASM-style). Output formats mirror NASM.
-- **Template**: Nearly identical to `nasm.toml`; `binary = "yasm"`, same `-f` output format flags,
-  same `[arch_flags]` table.
+### YASM ✓ template exists
+- Already present in `toolchains/yasm.rhai`. `requires_toolchain = ["c"]` makes it a guest extension.
 
 ### FASM (Flat Assembler)
 - **What**: Self-hosted assembler with its own syntax. Used in OS development and low-level work.
@@ -109,29 +103,30 @@ Freight's TOML-driven template system means most of these require zero Rust chan
 
 ### GNU ARM Assembler (via `arm-none-eabi-gcc`)
 - **What**: GAS targeting bare-metal ARM Cortex-M / Cortex-A. Used in embedded development.
-- **Template**: Extend the GAS entries in `gcc.toml` to add `[arch_flags]` for `"arm"`,
+- **Template**: Extend the GAS entries in `gcc.rhai` to add `[arch_flags]` for `"arm"`,
   `"armv7"`, `"cortex-m4"` etc.
 
 ### RISC-V GAS (via `riscv64-linux-gnu-gcc`)
 - **What**: GNU assembler for RISC-V targets.
-- **Template**: Extend `gcc.toml` or create a dedicated cross-gcc template with RISC-V arch flags.
+- **Template**: Extend `gcc.rhai` or create a dedicated cross-gcc template with RISC-V arch flags.
 
 ---
 
 ## GPU / Parallel / Special
 
 ### CUDA via HIP (`hipcc`) ✓ template exists
-- Already present. `hipcc` compiles CUDA and HIP code for AMD GPUs.
+- Already present in `toolchains/amd/hipcc.rhai`. `family = ""`, `requires_toolchain = ["cpp"]` — guest extension.
 
 ### NVCC (`nvcc`) ✓ template exists
-- Already present. May benefit from `[arch_flags]` for `-gencode` per SM architecture.
+- Already present in `toolchains/nvidia/nvcc.rhai`. `family = ""`, `requires_toolchain = ["cpp"]` — guest extension.
+  May benefit from `arch_flags` for `-gencode` per SM architecture.
 
 ### Intel DPC++ (`dpcpp` / `icpx -fsycl`)
 - **What**: Intel's SYCL compiler for heterogeneous CPU/GPU/FPGA programming. Part of oneAPI.
-- **Template**: Extend `icpx.toml` with a `sycl` language key and `-fsycl` flag.
+- **Template**: Extend `icpx.rhai` with a `sycl` language key and `-fsycl` flag.
 
 ### OpenCL kernel compiler (`clang -x cl`) ✓ template exists
-- Already present via `opencl.toml`. May need flags for `-cl-std=CL3.0` and target selection.
+- Already present in `toolchains/opencl.rhai`. `requires_toolchain = ["cpp"]` — guest extension.
 
 ### Metal shader compiler (`xcrun metal`)
 - **What**: Apple's GPU shading language compiler for iOS/macOS. Compiles `.metal` files to
@@ -146,24 +141,24 @@ Freight's TOML-driven template system means most of these require zero Rust chan
   native object files. Shader "linking" means bundling into a binary or embedding in a C header.
 
 ### ISPC (`ispc`) ✓ template exists
-- Already present in `toolchains/ispc.toml`.
+- Already present in `toolchains/intel/ispc.rhai`. `requires_toolchain = ["cpp"]` — guest extension.
 
 ---
 
 ## Other Languages
 
-### D (`dmd` / `ldc2` / `gdc`) — `dmd.toml` exists
-- `dmd.toml` exists for DMD. LDC (LLVM-based) and GDC (GCC-based) are worth adding.
+### D (`dmd` / `ldc2` / `gdc`) — `dmd.rhai` exists
+- `toolchains/dmd.rhai` exists for DMD. LDC (LLVM-based) and GDC (GCC-based) are worth adding.
 - `ldc2` uses mostly DMD-compatible flags for simple cases.
 - **ABI compatibility**: D's ABI is compatible with C (`extern(C)`) but not C++ by default.
-  The `[linking.d]` ABI key handles this.
+  The `linking["d"]` ABI key handles this.
 
 ### Ada (`gnat`) ✓ template exists
-- `gnat.toml` present. May need improvements for `gprbuild`-style multi-unit compilation.
+- `toolchains/gnat.rhai` present. May need improvements for `gprbuild`-style multi-unit compilation.
 
 ### Objective-C / Objective-C++ (via Clang)
 - **What**: Clang compiles `.m` and `.mm` files natively with `-x objective-c` / `-x objective-c++`.
-- **Template**: Extend `clang.toml` with `[linking.objc]` and `[linking.objcpp]` entries claiming
+- **Template**: Extend `clang.rhai` with `[linking.objc]` and `[linking.objcpp]` entries claiming
   `.m` and `.mm` extensions. Flag set is the same as C/C++ plus `-framework Foundation` for macOS.
 
 ### Swift (`swiftc`)
@@ -191,26 +186,26 @@ Freight's TOML-driven template system means most of these require zero Rust chan
 ### `rr` (Mozilla Record & Replay)
 - **What**: Records a program's execution and allows deterministic replay. Invaluable for
   hard-to-reproduce bugs. Linux only, x86-64.
-- **Template addition**: `toolchains/debuggers/rr.toml` with `binary = "rr"`,
+- **Template addition**: `toolchains/debuggers/rr.rhai` with `binary = "rr"`,
   `separator = ""` (rr takes the program as first arg), no DAP support yet.
 - **CLI**: `freight debug --debugger rr` would record; a separate `freight debug --replay` command
   could re-attach.
 
 ### WinDbg / CDB (Windows)
 - **What**: Microsoft's debuggers for Windows user and kernel debugging.
-- **Template addition**: `toolchains/debuggers/cdb.toml` or `windbg.toml`.
+- **Template addition**: `toolchains/debuggers/cdb.rhai` or `windbg.rhai`.
 - **Challenge**: No standard DAP support; WinDbg Preview has some DAP support in preview.
 
 ### OpenOCD + GDB (Embedded)
 - **What**: Open On-Chip Debugger connects to embedded targets (JTAG/SWD). Works with GDB as
   the front-end.
-- **Template addition**: A `toolchains/debuggers/openocd-gdb.toml` that launches `openocd` as
+- **Template addition**: A `toolchains/debuggers/openocd-gdb.rhai` that launches `openocd` as
   a background process then connects `gdb` to its GDB server port.
 - **Challenge [needs Rust]**: Two-process launch doesn't fit the current single-binary
   `launch_command()` model.
 
 ### LLDB-DAP standalone
-- Already detected via `dap.binaries = ["lldb-dap", "lldb-vscode"]` in `lldb.toml`.
+- Already detected via `dap.binaries = ["lldb-dap", "lldb-vscode"]` in `lldb.rhai`.
   No additional template needed; it surfaces automatically when installed.
 
 ---

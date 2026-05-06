@@ -3,11 +3,12 @@
 
 name          = "nasm";
 family        = "";
+requires_toolchain = ["c"];
 sanitizers = [];
 homepage      = "https://www.nasm.us/";
 binary        = "nasm";
 version_arg   = "--version";
-version_regex = "NASM version (\\d+\\.\\d+\\.\\d+)";
+version_regex = "NASM version (\\d+\\.\\d+(?:\\.\\d+)?)";
 extensions    = [".asm", ".nasm"];
 passthrough        = false;
 passthrough_prefix = "";

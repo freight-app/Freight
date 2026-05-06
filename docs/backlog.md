@@ -119,10 +119,6 @@ The env var is already planned for Phase 13; this item tracks the UX polish
 
 ## Tooling integration
 
-### `freight toolchain use <name>`
-Set the default compiler backend globally, persisted in `~/.freight/config.toml`.
-Low demand so far — `backend = "..."` in `freight.toml` covers most cases.
-
 ### VS Code extension
 Activates on `freight.toml`, delegates to `freight lsp` for diagnostics,
 completions, and go-to-definition. Publish to the VS Code Marketplace.

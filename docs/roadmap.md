@@ -25,7 +25,10 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Probe `$PATH` for known compiler binaries
 - [x] Load + evaluate compiler template `.rhai` scripts at runtime
 - [x] `CompilerTemplate` struct + `assemble_flags()` method (pure, unit-tested)
-- [x] `freight toolchain list`
+- [x] `freight toolchain list` — grouped by family (gnu, llvm, intel, nvidia); guest extensions shown separately
+- [x] `freight toolchain use <name>` — accepts family names and standalone primaries; rejects individual compilers that belong to a family and guest extensions
+- [x] `family` field in rhai scripts groups compilers into named suites
+- [x] `requires_toolchain` field marks guest/extension compilers (nvcc, hipcc, nasm, yasm, …); auto-dropped when no host toolchain is detected
 - [x] Toolchain version cache (`~/.freight/toolchain-cache.json`, mtime-validated)
 - [x] 19 bundled toolchain scripts: gcc, clang, nasm, gfortran, gnat, nvcc, dmd, hipcc, icpx, opencl, ispc, tcc, nvhpc, ifx, flang, ldc2, yasm, circle, msvc
 - [x] gcc and clang scripts probe versioned binaries (`g++-14`, `clang++-17`, …) as fallbacks

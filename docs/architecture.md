@@ -146,44 +146,7 @@ freight build
 
 ---
 
-## Architecture rules
-
-1. **`freight` crate owns the CLI** — clap parsing, `commands/` shells, and `output.rs` colour
-   helpers. Each `cmd_*` reads cwd, calls a pure function in `freight-core`, prints the outcome.
-
-2. **`freight-core` is a library, no CLI knowledge** — pure functions return `Result<T, FreightError>`
-   (e.g. `build_project`, `scaffold_project → ScaffoldOutcome`). It must not depend on `output.rs`
-   or call `print_*`. Inline `println!` for build-engine progress (`Compiling foo.cpp`, `Linking …`)
-   is the one exception, pending a future progress-callback abstraction.
-
-2a. **`freight-migrator` is a separate library** — depends on `freight-core` for `FreightError`, exposes
-   `run_migrate → MigrateOutcome`. Keeping it separate lets external tools use the migrator without
-   pulling in the build engine.
-
-2b. **`freight-doc` is a standalone binary** — depends only on `freight-core` (for `doc::*`). Can be
-   used independently of the main `freight` CLI to generate docs from any source tree. `freight doc`
-   in the main CLI calls the same `freight-core` functions.
-
-3. **Compiler templates are runtime data** — evaluated from `.rhai` scripts in `toolchains/`, not
-   hardcoded.
-
-4. **One script per toolchain, not per language** — `gcc.rhai` handles both C and C++; the
-   `compile_binary` override in `set_linking("c", ...)` selects which binary compiles that language.
-
-5. **DAG cycles = hard error** — report the full cycle path (both dep cycles and module cycles).
-
-6. **`CompilerTemplate::assemble_flags()` is pure** — no side effects, unit-tested.
-
-7. **Never shell out to Make / Ninja / CMake for freight's own sources** — freight owns the build graph
-   entirely. Foreign build systems are only invoked when compiling external dependencies that don't
-   have a `freight.toml`.
-
-8. **Errors use `thiserror` in freight-core, surface at the CLI boundary.**
-
-9. **Feature branches** — each new feature gets its own `feature/<name>` branch off `master`.
-
-10. **Module detection is transparent** — `build_sources()` scans automatically; projects without
-    `export module` take the unchanged fast path.
+> Architecture rules are maintained in **`CLAUDE.md`** under the "Architecture rules" section.
 
 ---
 

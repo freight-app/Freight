@@ -3,6 +3,7 @@
 
 name          = "yasm";
 family        = "";
+requires_toolchain = ["c"];
 sanitizers = [];
 homepage      = "https://yasm.tortall.net/";
 binary        = "yasm";

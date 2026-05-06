@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use freight_core::toolchain::{
-    detect_all_cached, detect_debuggers, load_all_templates, load_debugger_templates,
-    toolchain_add, toolchain_use, user_templates_dir,
+    detect_all_cached, detect_debuggers, group_into_toolchains, load_all_templates,
+    load_debugger_templates, toolchain_add, toolchain_use, user_templates_dir,
 };
 
 use crate::output::{print_error, print_success, print_warning};
@@ -18,10 +18,36 @@ pub fn cmd_toolchain_list() {
     if detected.is_empty() {
         println!("No supported compilers found on PATH.");
     } else {
-        println!("{:<12} {:<12} {}", "Compiler", "Version", "Path");
-        println!("{}", "-".repeat(60));
-        for d in &detected {
-            println!("{:<12} {:<12} {}", d.template.name, d.version, d.path.display());
+        let groups = group_into_toolchains(detected);
+
+        println!("{:<12} {:<28} {}", "Toolchain", "Languages", "Compilers");
+        println!("{}", "-".repeat(72));
+        for tc in &groups.toolchains {
+            let langs = tc.languages.join(", ");
+            let compilers: Vec<String> = tc.compilers
+                .iter()
+                .map(|c| format!("{} {}", c.template.name, c.version))
+                .collect();
+            println!("{:<12} {:<28} {}", tc.name, langs, compilers.join(", "));
+        }
+
+        if !groups.guests.is_empty() {
+            println!();
+            println!("Guest extensions (extend the active toolchain):");
+            println!("{:<12} {:<16} {:<12} {}", "Compiler", "Languages", "Version", "Requires");
+            println!("{}", "-".repeat(60));
+            for g in &groups.guests {
+                let mut langs: Vec<&str> =
+                    g.template.linking.keys().map(String::as_str).collect();
+                langs.sort_unstable();
+                println!(
+                    "{:<12} {:<16} {:<12} host: {}",
+                    g.template.name,
+                    langs.join(", "),
+                    g.version,
+                    g.template.requires_toolchain.join(", "),
+                );
+            }
         }
     }
 
@@ -57,15 +83,15 @@ pub fn cmd_toolchain_use(name: &str) {
     let templates = load_all_templates();
     match toolchain_use(name, &templates) {
         Ok(()) => {
-            // Warn if the named compiler isn't currently on PATH.
             let detected = detect_all_cached(&templates);
-            if !detected.iter().any(|d| d.template.name == name) {
+            let groups = group_into_toolchains(detected);
+            if !groups.toolchains.iter().any(|tc| tc.name == name) {
                 print_warning(&format!(
                     "{name} is not currently detected on PATH; \
                      preference saved and will apply once it is installed"
                 ));
             } else {
-                print_success(&format!("{name} set as default compiler backend"));
+                print_success(&format!("{name} set as default toolchain"));
             }
         }
         Err(e) => print_error(&format!("failed to set default toolchain: {e}")),
