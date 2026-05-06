@@ -510,8 +510,6 @@ pub struct TargetConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CompilerConfig {
-    #[serde(default)]
-    pub backend: Backend,
     #[serde(rename = "opt-level", default = "default_opt_level")]
     pub opt_level: u8,
     #[serde(default)]
@@ -526,12 +524,13 @@ pub struct CompilerConfig {
     pub includes: CompilerIncludes,
     #[serde(default)]
     pub overrides: HashMap<String, String>,
-    /// Cross-compilation target triple (e.g. `"aarch64-linux-gnu"`).
-    /// `None` means native/host build. Reserved for the cross-compilation phase.
-    #[serde(default)]
+    /// Cross-compilation target triple — set via `freight --target` or `~/.freight/config.toml`,
+    /// not in `freight.toml` (machine-local).
+    #[serde(skip)]
     pub target: Option<String>,
-    /// Path to the target sysroot. Reserved for the cross-compilation phase.
-    #[serde(default)]
+    /// Path to the target sysroot — set via `~/.freight/config.toml`, not in `freight.toml`
+    /// (machine-local absolute path).
+    #[serde(skip)]
     pub sysroot: Option<String>,
     /// Path to a header to precompile (relative to the project root).
     /// E.g. `pch = "include/stdafx.h"`. The PCH is compiled once and
@@ -543,7 +542,6 @@ pub struct CompilerConfig {
 impl Default for CompilerConfig {
     fn default() -> Self {
         Self {
-            backend: Backend::default(),
             opt_level: default_opt_level(),
             debug: false,
             warnings: default_warnings(),
@@ -852,8 +850,7 @@ mylib = {{ system = "mylib", os = ["{host}", "linux"] }}
 
     // ── cross-compilation: dep targets filtering ──────────────────────────────
 
-    fn cross_manifest(target: Option<&str>, dep_targets: Option<&[&str]>) -> String {
-        let target_line = target.map(|t| format!("target = \"{t}\"")).unwrap_or_default();
+    fn cross_manifest(dep_targets: Option<&[&str]>) -> String {
         let dep_targets_line = dep_targets
             .map(|ts| {
                 let joined = ts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ");
@@ -870,9 +867,6 @@ version = "0.1.0"
 name = "p"
 src  = "src/main.c"
 
-[compiler]
-{target_line}
-
 [dependencies]
 mylib = {{ path = "../mylib"{dep_targets_line} }}
 "#
@@ -881,17 +875,16 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
 
     #[test]
     fn dep_without_targets_always_included() {
-        let m = load_manifest_str(&cross_manifest(None, None)).unwrap();
+        let m = load_manifest_str(&cross_manifest(None)).unwrap();
         assert!(m.effective_dependencies().contains_key("mylib"));
-        let m2 = load_manifest_str(&cross_manifest(Some("aarch64-linux-gnu"), None)).unwrap();
+        let mut m2 = load_manifest_str(&cross_manifest(None)).unwrap();
+        m2.compiler.target = Some("aarch64-linux-gnu".into());
         assert!(m2.effective_dependencies().contains_key("mylib"));
     }
 
     #[test]
     fn dep_with_targets_excluded_on_native_build() {
-        let m = load_manifest_str(
-            &cross_manifest(None, Some(&["aarch64-linux-gnu"]))
-        ).unwrap();
+        let m = load_manifest_str(&cross_manifest(Some(&["aarch64-linux-gnu"]))).unwrap();
         assert!(
             !m.effective_dependencies().contains_key("mylib"),
             "target-specific dep should be excluded on native build"
@@ -900,9 +893,10 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
 
     #[test]
     fn dep_with_matching_target_is_included() {
-        let m = load_manifest_str(
-            &cross_manifest(Some("aarch64-linux-gnu"), Some(&["aarch64-linux-gnu", "armv7-linux-gnu"]))
+        let mut m = load_manifest_str(
+            &cross_manifest(Some(&["aarch64-linux-gnu", "armv7-linux-gnu"]))
         ).unwrap();
+        m.compiler.target = Some("aarch64-linux-gnu".into());
         assert!(
             m.effective_dependencies().contains_key("mylib"),
             "dep matching build target should be included"
@@ -911,9 +905,10 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
 
     #[test]
     fn dep_with_non_matching_target_is_excluded() {
-        let m = load_manifest_str(
-            &cross_manifest(Some("x86_64-linux-gnu"), Some(&["aarch64-linux-gnu"]))
+        let mut m = load_manifest_str(
+            &cross_manifest(Some(&["aarch64-linux-gnu"]))
         ).unwrap();
+        m.compiler.target = Some("x86_64-linux-gnu".into());
         assert!(
             !m.effective_dependencies().contains_key("mylib"),
             "dep for different target should be excluded"
@@ -922,6 +917,7 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
 
     #[test]
     fn build_settings_propagates_target_triple_and_sysroot() {
+        // target/sysroot are machine-local; set directly on the struct (not via TOML).
         let manifest_src = r#"
 [package]
 name = "p"
@@ -930,11 +926,10 @@ version = "0.1.0"
 [[bin]]
 name = "p"
 src  = "src/main.cpp"
-[compiler]
-target  = "aarch64-linux-gnu"
-sysroot = "/opt/sysroot"
 "#;
-        let m = load_manifest_str(manifest_src).unwrap();
+        let mut m = load_manifest_str(manifest_src).unwrap();
+        m.compiler.target  = Some("aarch64-linux-gnu".into());
+        m.compiler.sysroot = Some("/opt/sysroot".into());
         let s = m.build_settings_for("dev");
         assert_eq!(s.target_triple.as_deref(), Some("aarch64-linux-gnu"));
         assert_eq!(s.sysroot.as_deref(), Some(std::path::Path::new("/opt/sysroot")));

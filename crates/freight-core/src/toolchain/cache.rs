@@ -78,9 +78,12 @@ fn cache_path() -> Option<PathBuf> {
 /// is the default compiler backend (set by `freight toolchain use <name>`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GlobalConfig {
-    /// Default compiler backend: overrides `backend = "auto"` in project manifests.
-    /// `None` means fall back to the first detected compiler for each language.
+    /// Default compiler backend. `None` = first detected compiler for each language.
     pub default_backend: Option<String>,
+    /// Cross-compilation target triple (e.g. `"aarch64-linux-gnu"`). Machine-local.
+    pub target: Option<String>,
+    /// Path to the cross-compilation sysroot. Machine-local absolute path.
+    pub sysroot: Option<String>,
 }
 
 impl GlobalConfig {

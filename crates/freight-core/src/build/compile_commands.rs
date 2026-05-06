@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::FreightError;
-use crate::manifest::types::Manifest;
+use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::DetectedCompiler;
 use super::compile::{resolve_compile_binary, select_compiler, settings_for_lang, object_path};
 use super::discover::SourceFile;
@@ -57,6 +57,7 @@ pub fn merge(existing: Vec<CompileCommand>, new_entries: Vec<CompileCommand>) ->
 pub fn generate(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     detected: &[DetectedCompiler],
     profile: &str,
     sources: &[SourceFile],
@@ -88,7 +89,7 @@ pub fn generate(
 
     for source in sources {
         let Some(compiler) =
-            select_compiler(&source.lang_key, &manifest.compiler.backend, detected, None)
+            select_compiler(&source.lang_key, backend, detected, None)
         else {
             continue;
         };

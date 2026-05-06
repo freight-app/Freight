@@ -25,8 +25,7 @@ pub fn complete(
             .unwrap_or_else(|| package_fields()),
 
         // [compiler]
-        Some("compiler") => field_values(&ctx, "backend", &backend_names(templates))
-            .or_else(|| field_values(&ctx, "warnings", &WARNINGS))
+        Some("compiler") => field_values(&ctx, "warnings", &WARNINGS)
             .or_else(|| field_values(&ctx, "opt-level", &OPT_LEVELS))
             .unwrap_or_else(|| compiler_fields()),
 
@@ -146,7 +145,6 @@ fn package_fields() -> Vec<CompletionItem> {
 
 fn compiler_fields() -> Vec<CompletionItem> {
     snippet_fields(&[
-        ("backend", "backend = \"${1:auto}\""),
         ("opt-level", "opt-level = ${1:2}"),
         ("debug", "debug = ${1:false}"),
         ("warnings", "warnings = \"${1:all}\""),
@@ -208,13 +206,6 @@ const LIB_TYPES: &[&str] = &["static", "shared", "header-only"];
 const OPT_LEVELS: &[&str] = &["0", "1", "2", "3"];
 const LICENSES: &[&str] = &["MIT", "Apache-2.0", "BSD-3-Clause", "GPL-3.0-or-later", "MPL-2.0"];
 
-fn backend_names(templates: &[CompilerTemplate]) -> Vec<&str> {
-    let mut out = vec!["auto"];
-    for t in templates {
-        out.push(t.name.as_str());
-    }
-    out
-}
 
 fn std_values(templates: &[CompilerTemplate]) -> Vec<&str> {
     // Collect every standard string the loaded templates know about.

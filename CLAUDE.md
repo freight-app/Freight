@@ -198,14 +198,15 @@ openblas = ["dep:openblas"]    # activates the optional openblas dep
 mkl      = ["dep:mkl"]         # activates the optional mkl dep
 
 [compiler]
-backend   = "auto"   # auto | gcc | clang | gfortran | nasm | …
+# backend, target triple, and sysroot are machine-local — set via:
+#   freight toolchain use <name>     (backend)
+#   ~/.freight/config.toml           (target, sysroot)
+#   freight --target <triple>        (target override per invocation)
 opt-level = 2
 debug     = false
 warnings  = "all"    # none | default | all | error
 defines   = ["USE_BLAS"]
 flags     = []
-target    = "aarch64-linux-gnu"   # optional cross-compilation target triple
-sysroot   = "/opt/sysroot"        # optional sysroot path
 
 [compiler.includes]
 paths = ["include/", "third_party/include/"]
@@ -333,7 +334,7 @@ freight publish                            upload package to registry          �
 freight yank <version>                     yank a published version            ✗ Phase 12 (registry server)
 freight toolchain list                     show detected compilers             ✓ implemented
 freight toolchain add <path>               install a compiler template         ✓ implemented
-freight toolchain use <name>               set default compiler backend        ✗ deferred
+freight toolchain use <name>               set default compiler backend        ✓ implemented
 freight lsp                                run language server on stdio        ✓ implemented
 ```
 
@@ -429,8 +430,11 @@ freight lsp                                run language server on stdio        �
 - [ ] `freight add` — resolve + lock exact version from freight.dev (needs Phase 12)
 
 ### Phase 10 — Cross-compilation ✓ COMPLETE
-- [x] `[compiler] target` → `--target={triple}` via template; empty field = unsupported
-- [x] `[compiler] sysroot` → `--sysroot={path}`
+- [x] `target` / `sysroot` are machine-local — set in `~/.freight/config.toml`, NOT in `freight.toml`
+- [x] `target` → `--target={triple}` via template; empty template field = unsupported (GCC uses dedicated cross binary)
+- [x] `sysroot` → `--sysroot={path}` via template
+- [x] `freight --target <triple>` CLI override takes precedence over `~/.freight/config.toml`
+- [x] `freight toolchain use <name>` — persist default backend to `~/.freight/config.toml`
 - [x] `targets = [...]` on any dep — filtered by active cross-compilation triple
 - [x] `os = ...` / `arch = ...` dep filters — host OS and CPU architecture
 - [x] `freight toolchain add <path>` — install custom compiler template
@@ -492,7 +496,6 @@ LSP for `freight.toml`, built on `tower-lsp` + `tokio`. Invokable as `freight ls
 
 ## Backburner (deferred, not forgotten)
 
-- **`freight toolchain use <name>`** — set default compiler backend globally; deferred, low demand
 - **Slot-based substitution** — `provides` currently only detects conflicts; auto-routing a dep request to a compatible provider (e.g. root has `mkl`, sub-dep requests `openblas`, both provide `blas`) is complex and deferred to Phase 13+
 - **Progress callbacks** — build output currently goes to stdout via `println!`; routing through a callback for GUI/TUI frontends is future work
 - **Per-language `[platform]` overlays** — `[platform.linux.language.cpp]` deliberately excluded from v1

@@ -57,6 +57,7 @@ pub struct CompileResult {
 pub fn compile_sources(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     profile: &str,
     sources: &[SourceFile],
     include_dirs: &[PathBuf],
@@ -64,7 +65,7 @@ pub fn compile_sources(
     feature_defines: &[String],
     header_unit_flags: &[String],
 ) -> Result<CompileResult, FreightError> {
-    let pf = primary_family(&manifest.compiler.backend, detected);
+    let pf = primary_family(backend, detected);
 
     let results: Result<Vec<(PathBuf, bool)>, FreightError> = sources
         .par_iter()
@@ -78,7 +79,7 @@ pub fn compile_sources(
                 return Ok((obj, false));
             }
 
-            let compiler = select_compiler(&src.lang_key, &manifest.compiler.backend, detected, pf)
+            let compiler = select_compiler(&src.lang_key, backend, detected, pf)
                 .ok_or_else(|| FreightError::NoCompilerForLang(src.lang_key.clone()))?;
 
             let settings = settings_for_lang(manifest, profile, &src.lang_key, include_dirs, project_dir, feature_defines);

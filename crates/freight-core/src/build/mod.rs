@@ -48,6 +48,7 @@ pub struct TestSummary {
 struct ProjectContext {
     project_dir: PathBuf,
     manifest: Manifest,
+    effective_backend: Backend,
     templates: Vec<CompilerTemplate>,
     detected: Vec<DetectedCompiler>,
     found: DiscoveredSources,
@@ -147,7 +148,7 @@ pub fn build_project(profile: &str, features: &[String], use_defaults: bool, san
 
 /// Build the project at a specific `project_dir`.
 ///
-/// `target_override` replaces `[compiler] target` from the manifest — useful
+/// `target_override` overrides the target triple from `~/.freight/config.toml` — useful
 /// for `freight install --target <triple>` and `freight package --target <triple>`.
 /// `sanitize_override` replaces the profile's `sanitize` list when non-empty.
 pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], use_defaults: bool, target_override: Option<&str>, sanitize_override: &[String]) -> Result<BuildOutput, FreightError> {
@@ -158,7 +159,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     if !sanitize_override.is_empty() {
         apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
-    let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
+    let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
     println!("  {} {} ({profile})", "Building".bold(), manifest.package.name);
@@ -186,7 +187,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     let resolved_deps: Vec<ResolvedDep> = resolved_deps.into_iter()
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
-    let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
+    let built = build_resolved_deps(manifest, project_dir, effective_backend, profile, templates, detected, &resolved_deps)?;
     let (foreign_built, pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
@@ -203,7 +204,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     include_dirs.extend(all_dep_includes.iter().cloned());
 
     // Run build.freight (if present) and collect extra settings.
-    let script_out = script::run_build_script(project_dir, manifest, profile, detected, &pkg_configs)?;
+    let script_out = script::run_build_script(project_dir, manifest, effective_backend, profile, detected, &pkg_configs)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
     compile_defines.extend(script_out.to_defines());
@@ -239,9 +240,9 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     {
         let units = header_units::precompile_dep_headers(
             project_dir, &all_dep_includes, cpp_std,
-            &manifest.compiler.backend, detected, profile,
+            effective_backend, detected, profile,
         );
-        if let Some(compiler) = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None) {
+        if let Some(compiler) = compile::select_compiler("cpp", effective_backend, detected, None) {
             header_units::import_flags(&units, compiler)
         } else { vec![] }
     } else { vec![] };
@@ -251,8 +252,8 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     let mut pch_compile_flags: Vec<String> = vec![];
     let mut pch_clangd_flags: Vec<String> = vec![];
     if let Some(ref pch_header) = manifest.compiler.pch.clone() {
-        let primary = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None)
-            .or_else(|| compile::select_compiler("c", &manifest.compiler.backend, detected, None));
+        let primary = compile::select_compiler("cpp", effective_backend, detected, None)
+            .or_else(|| compile::select_compiler("c", effective_backend, detected, None));
         if let Some(compiler) = primary {
             match pch::compile_pch(
                 project_dir, pch_header, profile, compiler,
@@ -270,7 +271,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
 
     let mut extra_flags = hu_flags.clone();
     extra_flags.extend(pch_compile_flags);
-    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &extra_flags)?;
+    let compile_result = build_sources(project_dir, manifest, effective_backend, profile, &all_sources, &include_dirs, detected, &compile_defines, &extra_flags)?;
 
     let link_result = link_targets(
         project_dir, manifest, profile,
@@ -288,7 +289,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     // Regenerate compile_commands.json so IDEs (clangd, fortls, serve-d…) stay
     // in sync. Non-fatal — a write failure must not abort a successful build.
     let cc = compile_commands::generate(
-        project_dir, manifest, detected, profile,
+        project_dir, manifest, effective_backend, detected, profile,
         &all_sources, &include_dirs, &feature_defines, &pch_clangd_flags,
     );
     if let Err(e) = compile_commands::write(project_dir, &cc) {
@@ -315,7 +316,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
 /// the number of entries written.
 pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result<usize, FreightError> {
     let ctx = load_project_at(project_dir, profile)?;
-    let ProjectContext { project_dir, manifest, templates: _, detected, found } = &ctx;
+    let ProjectContext { project_dir, manifest, effective_backend, templates: _, detected, found } = &ctx;
 
     let resolution = features::resolve_features(&manifest.features, &[], true)?;
     let feature_defines = features::to_defines(&resolution.active);
@@ -327,7 +328,7 @@ pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result
     include_dirs.extend(dep_includes);
 
     let commands = compile_commands::generate(
-        project_dir, manifest, detected, profile,
+        project_dir, manifest, effective_backend, detected, profile,
         &found.sources, &include_dirs, &feature_defines, &[],
     );
     let count = commands.len();
@@ -382,7 +383,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     if !sanitize_override.is_empty() {
         apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
-    let ProjectContext { project_dir, manifest, templates, detected, found } = &ctx;
+    let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
     println!("  {} {} ({profile})", "Testing".bold(), manifest.package.name);
@@ -410,7 +411,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     let resolved_deps: Vec<ResolvedDep> = resolved_deps.into_iter()
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
-    let built = build_resolved_deps(manifest, project_dir, profile, templates, detected, &resolved_deps)?;
+    let built = build_resolved_deps(manifest, project_dir, effective_backend, profile, templates, detected, &resolved_deps)?;
     let (foreign_built, pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile)?;
 
     let mut all_libs = built.libs.clone();
@@ -425,7 +426,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let script_out = script::run_build_script(project_dir, manifest, profile, detected, &pkg_configs)?;
+    let script_out = script::run_build_script(project_dir, manifest, effective_backend, profile, detected, &pkg_configs)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
     compile_defines.extend(script_out.to_defines());
@@ -452,8 +453,8 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
 
     // PCH injection for test builds (same logic as build_project_at).
     let pch_extra_test: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
-        let primary = compile::select_compiler("cpp", &manifest.compiler.backend, detected, None)
-            .or_else(|| compile::select_compiler("c", &manifest.compiler.backend, detected, None));
+        let primary = compile::select_compiler("cpp", effective_backend, detected, None)
+            .or_else(|| compile::select_compiler("c", effective_backend, detected, None));
         if let Some(compiler) = primary {
             match pch::compile_pch(
                 project_dir, pch_header, profile, compiler,
@@ -469,7 +470,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
         } else { vec![] }
     } else { vec![] };
 
-    let compile_result = build_sources(project_dir, manifest, profile, &all_sources, &include_dirs, detected, &compile_defines, &pch_extra_test)?;
+    let compile_result = build_sources(project_dir, manifest, effective_backend, profile, &all_sources, &include_dirs, detected, &compile_defines, &pch_extra_test)?;
 
     // Objects from [[bin]] sources contain a main() — exclude from test linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
@@ -514,7 +515,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     }
 
     let test_compile = compile_sources(
-        project_dir, manifest, profile, &test_srcs, &include_dirs, detected, &feature_defines, &[],
+        project_dir, manifest, effective_backend, profile, &test_srcs, &include_dirs, detected, &feature_defines, &[],
     )?;
 
     let out_dir = project_dir.join("target").join(profile).join("tests");
@@ -638,6 +639,7 @@ fn verify_git_dep_shas(project_dir: &Path, manifest: &Manifest, lock: &LockFile)
 fn build_sources(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     profile: &str,
     sources: &[SourceFile],
     include_dirs: &[PathBuf],
@@ -648,9 +650,9 @@ fn build_sources(
     let scanned = scan_sources(project_dir, sources);
     if has_modules(&scanned) {
         let mut plan = plan_module_build(project_dir, profile, scanned)?;
-        compile_module_sources(project_dir, manifest, profile, &mut plan, include_dirs, detected, feature_defines, header_unit_flags)
+        compile_module_sources(project_dir, manifest, backend, profile, &mut plan, include_dirs, detected, feature_defines, header_unit_flags)
     } else {
-        compile_sources(project_dir, manifest, profile, sources, include_dirs, detected, feature_defines, header_unit_flags)
+        compile_sources(project_dir, manifest, backend, profile, sources, include_dirs, detected, feature_defines, header_unit_flags)
     }
 }
 
@@ -664,6 +666,7 @@ fn build_sources(
 fn build_resolved_deps(
     root_manifest: &Manifest,
     _project_dir: &Path,
+    backend: &Backend,
     profile: &str,
     templates: &[CompilerTemplate],
     detected: &[DetectedCompiler],
@@ -712,7 +715,7 @@ fn build_resolved_deps(
         println!("  {} {} ({profile})", "Building".dimmed(), dep.name);
 
         let compile_result = compile_sources(
-            &dep.dir, &dep.manifest, profile,
+            &dep.dir, &dep.manifest, backend, profile,
             &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines, &[],
         )?;
 
@@ -762,12 +765,10 @@ fn apply_sanitize_override(manifest: &mut crate::manifest::types::Manifest, prof
 
 fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, FreightError> {
     let mut manifest = load_manifest(project_dir)?;
-    // Apply the global default backend when the project leaves it as "auto".
-    if manifest.compiler.backend.is_auto() {
-        if let Some(name) = GlobalConfig::load().default_backend {
-            manifest.compiler.backend = Backend(name);
-        }
-    }
+    let global = GlobalConfig::load();
+    let effective_backend = global.default_backend.clone().map(Backend).unwrap_or_default();
+    manifest.compiler.target = global.target.clone();
+    manifest.compiler.sysroot = global.sysroot.clone();
 
     let tdir = templates_dir()
         .ok_or_else(|| FreightError::CompilerNotFound(
@@ -791,7 +792,7 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
         ));
     }
 
-    Ok(ProjectContext { project_dir: project_dir.to_path_buf(), manifest, templates, detected, found })
+    Ok(ProjectContext { project_dir: project_dir.to_path_buf(), manifest, effective_backend, templates, detected, found })
 }
 
 fn validate_or_fail(

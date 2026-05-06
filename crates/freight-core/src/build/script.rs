@@ -107,7 +107,7 @@ use rhai::{Array, Dynamic, Engine, ImmutableString, Map, Scope};
 use serde::{Deserialize, Serialize};
 
 use crate::error::FreightError;
-use crate::manifest::types::Manifest;
+use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::DetectedCompiler;
 use super::compile::select_compiler;
 use crate::meta::ResolvedPkgConfig;
@@ -274,6 +274,7 @@ fn save_stamp(project_dir: &Path, profile: &str, script_path: &Path, deps: &[Pat
 pub fn run_build_script(
     project_dir: &Path,
     manifest: &Manifest,
+    backend: &Backend,
     profile: &str,
     detected: &[DetectedCompiler],
     pkg_configs: &[ResolvedPkgConfig],
@@ -312,7 +313,7 @@ pub fn run_build_script(
     // Pick the first detected compiler that matches the configured backend to
     // expose its version string.
     let primary_lang = manifest.language.keys().next().map(|s| s.as_str()).unwrap_or("cpp");
-    let compiler_version = select_compiler(primary_lang, &manifest.compiler.backend, detected, None)
+    let compiler_version = select_compiler(primary_lang, backend, detected, None)
         .map(|c| c.version.clone())
         .unwrap_or_default();
     let compiler_target = manifest.compiler.target.as_deref().unwrap_or("").to_string();
@@ -563,7 +564,7 @@ pub fn run_build_script(
     let mut scope = Scope::new();
     scope.push("env", RhaiEnv);
     scope.push("toolchain", RhaiToolchain {
-        backend: manifest.compiler.backend.0.clone(),
+        backend: backend.0.clone(),
         version: compiler_version,
         target:  compiler_target,
     });

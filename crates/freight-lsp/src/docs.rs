@@ -41,10 +41,6 @@ pub fn lookup(path: &str) -> Option<&'static str> {
 
         // Compiler
         "compiler" => Some("Toolchain selection + default flags."),
-        "compiler.backend" => Some(
-            "Compiler backend: `auto` (default) picks the first available template per language. \
-             Otherwise a template name like `gcc`, `clang`, `gfortran`, `nvcc`.",
-        ),
         "compiler.opt-level" => Some("Optimization level `0`–`3`. Mapped via the template's `flags.opt.N`."),
         "compiler.debug" => Some("Emit debug info. Mapped via the template's `flags.debug.true`."),
         "compiler.warnings" => Some("One of `none`, `default`, `all`, `error`. Mapped via `flags.warnings.<value>`."),
@@ -52,8 +48,6 @@ pub fn lookup(path: &str) -> Option<&'static str> {
         "compiler.flags" => Some("Extra flags passed through verbatim."),
         "compiler.includes" => Some("Extra include directories beyond `src/` and `include/`."),
         "compiler.includes.paths" => Some("List of include directories. Relative to the project root."),
-        "compiler.target" => Some("Cross-compilation target triple (e.g. `aarch64-linux-gnu`). Reserved for the cross-compile phase."),
-        "compiler.sysroot" => Some("Path to target sysroot. Reserved for the cross-compile phase."),
 
         // Profiles
         "profile" => Some("Build profile overrides. `freight build` uses `dev`, `--release` uses `release`."),
