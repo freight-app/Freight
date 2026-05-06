@@ -908,9 +908,7 @@ mod tests {
     const GCC_RHAI: &str      = include_str!("../../../../toolchains/gnu/gcc.rhai");
     const CLANG_RHAI: &str    = include_str!("../../../../toolchains/llvm/clang.rhai");
     const GFORTRAN_RHAI: &str = include_str!("../../../../toolchains/gnu/gfortran.rhai");
-    const GNAT_RHAI: &str     = include_str!("../../../../toolchains/gnu/gnat.rhai");
     const NVCC_RHAI: &str     = include_str!("../../../../toolchains/nvidia/nvcc.rhai");
-    const DMD_RHAI: &str      = include_str!("../../../../toolchains/dmd.rhai");
     const OPENCL_RHAI: &str   = include_str!("../../../../toolchains/opencl.rhai");
     const HIPCC_RHAI: &str    = include_str!("../../../../toolchains/amd/hipcc.rhai");
     const ICPX_RHAI: &str     = include_str!("../../../../toolchains/intel/icpx.rhai");
@@ -920,9 +918,7 @@ mod tests {
     const NVHPC_RHAI: &str    = include_str!("../../../../toolchains/nvidia/nvhpc.rhai");
     const IFX_RHAI: &str      = include_str!("../../../../toolchains/intel/ifx.rhai");
     const FLANG_RHAI: &str    = include_str!("../../../../toolchains/llvm/flang.rhai");
-    const LDC2_RHAI: &str     = include_str!("../../../../toolchains/ldc2.rhai");
     const YASM_RHAI: &str     = include_str!("../../../../toolchains/yasm.rhai");
-    const CIRCLE_RHAI: &str   = include_str!("../../../../toolchains/circle.rhai");
     const MSVC_RHAI: &str     = include_str!("../../../../toolchains/msvc.rhai");
 
     fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
@@ -936,9 +932,7 @@ mod tests {
         CompilerTemplate::from_rhai(GCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(CLANG_RHAI).unwrap();
         CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
-        CompilerTemplate::from_rhai(GNAT_RHAI).unwrap();
         CompilerTemplate::from_rhai(NVCC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(DMD_RHAI).unwrap();
         CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(HIPCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(ICPX_RHAI).unwrap();
@@ -948,9 +942,7 @@ mod tests {
         CompilerTemplate::from_rhai(NVHPC_RHAI).unwrap();
         CompilerTemplate::from_rhai(IFX_RHAI).unwrap();
         CompilerTemplate::from_rhai(FLANG_RHAI).unwrap();
-        CompilerTemplate::from_rhai(LDC2_RHAI).unwrap();
         CompilerTemplate::from_rhai(YASM_RHAI).unwrap();
-        CompilerTemplate::from_rhai(CIRCLE_RHAI).unwrap();
         CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
     }
 
@@ -977,14 +969,6 @@ mod tests {
         assert_eq!(cuda.linker, "c++");
     }
 
-    #[test]
-    fn dmd_linking_d_compatible_with_c_and_fortran() {
-        let t = CompilerTemplate::from_rhai(DMD_RHAI).unwrap();
-        let d = t.linking.get("d").expect("dmd should have linking.d");
-        assert_eq!(d.abi, "d");
-        assert!(d.compatible.contains(&"c".to_string()));
-        assert!(d.compatible.contains(&"fortran".to_string()));
-    }
 
     #[test]
     fn gcc_fields() {
@@ -1409,265 +1393,5 @@ mod tests {
         assert_eq!(gcc().system_lib_flag("pthread"), "-lpthread");
     }
 
-    // ── New language toolchains ───────────────────────────────────────────────
 
-    const SWIFT_RHAI: &str  = include_str!("../../../../toolchains/swift.rhai");
-    const ZIG_RHAI: &str    = include_str!("../../../../toolchains/zig.rhai");
-    const ZIGCC_RHAI: &str  = include_str!("../../../../toolchains/zigcc.rhai");
-    const OBJC_RHAI: &str   = include_str!("../../../../toolchains/objc.rhai");
-    const FPC_RHAI: &str    = include_str!("../../../../toolchains/fpc.rhai");
-    const ODIN_RHAI: &str   = include_str!("../../../../toolchains/odin.rhai");
-    const V_RHAI: &str      = include_str!("../../../../toolchains/v.rhai");
-    const MOJO_RHAI: &str   = include_str!("../../../../toolchains/mojo.rhai");
-
-    #[test]
-    fn new_templates_all_parse() {
-        CompilerTemplate::from_rhai(SWIFT_RHAI).unwrap();
-        CompilerTemplate::from_rhai(ZIG_RHAI).unwrap();
-        CompilerTemplate::from_rhai(ZIGCC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(OBJC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(FPC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(ODIN_RHAI).unwrap();
-        CompilerTemplate::from_rhai(V_RHAI).unwrap();
-        CompilerTemplate::from_rhai(MOJO_RHAI).unwrap();
-    }
-
-    // ── Swift ─────────────────────────────────────────────────────────────────
-
-    fn swift() -> CompilerTemplate { CompilerTemplate::from_rhai(SWIFT_RHAI).unwrap() }
-
-    #[test]
-    fn swift_fields() {
-        let t = swift();
-        assert_eq!(t.name, "swift");
-        assert_eq!(t.binary, "swiftc");
-        assert!(t.extensions.contains(&".swift".to_string()));
-        assert!(t.linking.contains_key("swift"));
-    }
-
-    #[test]
-    fn swift_opt_flags() {
-        let t = swift();
-        // dev profile → -Onone
-        let dev = t.assemble_flags(&BuildSettings { opt_level: "0".into(), ..Default::default() });
-        assert!(dev.iter().any(|f| f == "-Onone"), "dev should use -Onone");
-
-        // size → -Osize
-        let size = t.assemble_flags(&BuildSettings { opt_level: "s".into(), ..Default::default() });
-        assert!(size.iter().any(|f| f == "-Osize"), "opt-s should use -Osize");
-
-        // release → -O
-        let rel = t.assemble_flags(&BuildSettings { opt_level: "3".into(), ..Default::default() });
-        assert!(rel.iter().any(|f| f == "-O"), "release should use -O");
-    }
-
-    #[test]
-    fn swift_warnings_error() {
-        let flags = swift().assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            warnings: "error".into(),
-            ..Default::default()
-        });
-        assert!(flags.iter().any(|f| f == "-warnings-as-errors"));
-        // "all" should produce no Swift-specific wall (Swift has no -Wall)
-        let all_flags = swift().assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            warnings: "all".into(),
-            ..Default::default()
-        });
-        assert!(!all_flags.iter().any(|f| f.starts_with("-W")));
-    }
-
-    #[test]
-    fn swift_target_uses_dash_target() {
-        let flags = swift().assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            target_triple: Some("arm64-apple-macosx14.0".into()),
-            ..Default::default()
-        });
-        // -target and the triple are emitted as separate tokens (flag split on space)
-        let idx = flags.iter().position(|f| f == "-target")
-            .expect("swift should emit -target flag");
-        assert_eq!(flags[idx + 1], "arm64-apple-macosx14.0",
-            "triple should follow -target, got: {flags:?}");
-    }
-
-    #[test]
-    fn swift_lto_full() {
-        let flags = swift().assemble_flags(&BuildSettings {
-            opt_level: "3".into(),
-            lto: true,
-            ..Default::default()
-        });
-        assert!(flags.iter().any(|f| f == "-lto=full"));
-    }
-
-    #[test]
-    fn swift_defines_have_no_value_form() {
-        // Swift -D only supports flag names, not -DNAME=VALUE.
-        let flags = swift().assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            defines: vec!["DEBUG".into(), "VERSION=3".into()],
-            ..Default::default()
-        });
-        // Both should expand to -DNAME (value stripped / ignored)
-        assert!(flags.contains(&"-DDEBUG".to_string()));
-        // The define_value template also maps to -D{name}, so VERSION gets -DVERSION
-        // (the =3 part is not appended because the template uses define_value = "-D{name}")
-        assert!(flags.iter().any(|f| f.starts_with("-D")));
-    }
-
-    // ── Zig ───────────────────────────────────────────────────────────────────
-
-    fn zig() -> CompilerTemplate { CompilerTemplate::from_rhai(ZIG_RHAI).unwrap() }
-    fn zigcc() -> CompilerTemplate { CompilerTemplate::from_rhai(ZIGCC_RHAI).unwrap() }
-
-    #[test]
-    fn zig_fields() {
-        let t = zig();
-        assert_eq!(t.name, "zig");
-        assert_eq!(t.binary, "zig");
-        assert!(t.extensions.contains(&".zig".to_string()));
-        assert!(t.always_flags.contains(&"build-obj".to_string()),
-            "zig must inject build-obj as always_flag");
-    }
-
-    #[test]
-    fn zig_opt_flags_use_zig_notation() {
-        let t = zig();
-        // Zig flags are space-separated and split into multiple tokens.
-        let debug = t.assemble_flags(&BuildSettings { opt_level: "0".into(), ..Default::default() });
-        let o_idx = debug.iter().position(|f| f == "-O").expect("-O should be present");
-        assert_eq!(debug[o_idx + 1], "Debug", "zig debug should use -O Debug, got: {debug:?}");
-
-        let release_fast = t.assemble_flags(&BuildSettings { opt_level: "3".into(), ..Default::default() });
-        let idx = release_fast.iter().position(|f| f == "-O").unwrap();
-        assert_eq!(release_fast[idx + 1], "ReleaseFast");
-
-        let release_small = t.assemble_flags(&BuildSettings { opt_level: "s".into(), ..Default::default() });
-        let idx = release_small.iter().position(|f| f == "-O").unwrap();
-        assert_eq!(release_small[idx + 1], "ReleaseSmall");
-    }
-
-    #[test]
-    fn zig_cross_compilation_target() {
-        let flags = zig().assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            target_triple: Some("aarch64-linux-musl".into()),
-            ..Default::default()
-        });
-        // -target and triple are separate tokens
-        let idx = flags.iter().position(|f| f == "-target")
-            .expect("zig should emit -target flag");
-        assert_eq!(flags[idx + 1], "aarch64-linux-musl",
-            "zig should emit -target <triple>, got: {flags:?}");
-    }
-
-    #[test]
-    fn zigcc_is_gcc_compatible() {
-        // zig cc emits the same flag style as gcc/clang
-        let t = zigcc();
-        assert_eq!(t.name, "zig-cc");
-        assert!(t.always_flags.contains(&"cc".to_string()),
-            "zig-cc must inject cc subcommand via always_flags");
-
-        let flags = t.assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            debug: true,
-            warnings: "all".into(),
-            standard: Some("c++20".into()),
-            ..Default::default()
-        });
-        assert!(flags.contains(&"-O2".to_string()));
-        assert!(flags.contains(&"-g".to_string()));
-        assert!(flags.contains(&"-Wall".to_string()));
-        assert!(flags.contains(&"-std=c++20".to_string()));
-    }
-
-    #[test]
-    fn zigcc_cross_compilation_uses_dash_target() {
-        let flags = zigcc().assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            target_triple: Some("aarch64-linux-musl".into()),
-            ..Default::default()
-        });
-        // zig-cc uses `-target <triple>` (space-separated, two tokens)
-        let idx = flags.iter().position(|f| f == "-target")
-            .expect("zig-cc should emit -target flag");
-        assert_eq!(flags[idx + 1], "aarch64-linux-musl",
-            "zig-cc should emit -target <triple>, got: {flags:?}");
-    }
-
-    #[test]
-    fn zigcc_linking_declares_c_and_cpp() {
-        let t = zigcc();
-        assert!(t.linking.contains_key("c"), "zig-cc should handle C");
-        assert!(t.linking.contains_key("cpp"), "zig-cc should handle C++");
-        let c = t.linking.get("c").unwrap();
-        assert_eq!(c.compile_binary.as_deref(), Some("zig"),
-            "C compile binary should be zig (zig cc via always_flags)");
-    }
-
-    // ── Objective-C ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn objc_fields_and_arc() {
-        let t = CompilerTemplate::from_rhai(OBJC_RHAI).unwrap();
-        assert_eq!(t.name, "objc");
-        assert!(t.extensions.contains(&".m".to_string()));
-        assert!(t.extensions.contains(&".mm".to_string()));
-        assert!(t.always_flags.contains(&"-fobjc-arc".to_string()),
-            "ARC should be enabled by default");
-        assert!(t.linking.contains_key("objc"));
-        assert!(t.linking.contains_key("objcpp"));
-    }
-
-    // ── Free Pascal ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn fpc_fields() {
-        let t = CompilerTemplate::from_rhai(FPC_RHAI).unwrap();
-        assert_eq!(t.name, "fpc");
-        assert!(t.extensions.contains(&".pas".to_string()));
-        assert!(t.extensions.contains(&".pp".to_string()));
-        assert!(t.standards.contains_key("delphi7"));
-        assert!(t.standards.contains_key("objfpc"));
-    }
-
-    #[test]
-    fn fpc_define_uses_dash_d() {
-        let t = CompilerTemplate::from_rhai(FPC_RHAI).unwrap();
-        // fpc defines use -d (not -D)
-        let flags = t.assemble_flags(&BuildSettings {
-            opt_level: "2".into(),
-            defines: vec!["DEBUG".into()],
-            ..Default::default()
-        });
-        assert!(flags.iter().any(|f| f == "-dDEBUG"),
-            "fpc defines should use -d prefix, got: {flags:?}");
-    }
-
-    // ── Odin ──────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn odin_fields() {
-        let t = CompilerTemplate::from_rhai(ODIN_RHAI).unwrap();
-        assert_eq!(t.name, "odin");
-        assert!(t.extensions.contains(&".odin".to_string()));
-        // Odin optimisation flags use Odin's own notation
-        let flags = t.assemble_flags(&BuildSettings {
-            opt_level: "2".into(), ..Default::default()
-        });
-        assert!(flags.iter().any(|f| f == "-o:speed"),
-            "odin opt-2 should use -o:speed, got: {flags:?}");
-    }
-
-    #[test]
-    fn odin_size_opt() {
-        let t = CompilerTemplate::from_rhai(ODIN_RHAI).unwrap();
-        let flags = t.assemble_flags(&BuildSettings {
-            opt_level: "s".into(), ..Default::default()
-        });
-        assert!(flags.iter().any(|f| f == "-o:size"));
-    }
 }

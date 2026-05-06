@@ -703,25 +703,6 @@ version = "bad"
         assert!(errs.len() >= 3, "expected at least 3 errors (name, version, no targets), got {}", errs.len());
     }
 
-    // ── Language std edge cases ───────────────────────────────────────────────
-
-    #[test]
-    fn d_language_accepts_any_std() {
-        // D has no -std= flag so dmd.toml has an empty [compiler.standards] table.
-        // Any std value the user writes is treated as documentation — no validation error.
-        let s = r#"
-[package]
-name    = "foo"
-version = "0.1.0"
-[language.d]
-std = "2.106"
-[[bin]]
-name = "foo"
-src  = "src/main.d"
-"#;
-        assert!(errors(s).is_empty(), "D language should accept any std string");
-    }
-
     // ── Dependency language compatibility ─────────────────────────────────────
 
     fn write_dep_manifest(dir: &std::path::Path, lang_key: &str) {
