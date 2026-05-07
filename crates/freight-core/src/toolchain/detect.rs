@@ -182,14 +182,19 @@ fn probe_cached(
     if !min_version_met(template, &version) {
         return None;
     }
-    // Query CPU extensions if not already cached for this binary.
-    let cpu_extensions = if let Some(exts) = cache.get_extensions(&path) {
-        exts.to_vec()
+    // Only query CPU extensions for primary compilers — guest compilers
+    // (nvcc, nasm, hipcc, …) delegate machine code to the host toolchain.
+    let cpu_extensions = if template.requires_toolchain.is_empty() {
+        if let Some(exts) = cache.get_extensions(&path) {
+            exts.to_vec()
+        } else {
+            let exts = query_cpu_extensions(&path);
+            cache.set_extensions(&path, exts.clone());
+            *dirty = true;
+            exts
+        }
     } else {
-        let exts = query_cpu_extensions(&path);
-        cache.set_extensions(&path, exts.clone());
-        *dirty = true;
-        exts
+        vec![]
     };
     Some(DetectedCompiler { template: template.clone(), version, path, cpu_extensions })
 }
@@ -312,7 +317,11 @@ fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
     if !min_version_met(template, &version) {
         return None;
     }
-    let cpu_extensions = query_cpu_extensions(&path);
+    let cpu_extensions = if template.requires_toolchain.is_empty() {
+        query_cpu_extensions(&path)
+    } else {
+        vec![]
+    };
     Some(DetectedCompiler { template: template.clone(), version, path, cpu_extensions })
 }
 
