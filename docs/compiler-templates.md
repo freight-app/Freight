@@ -36,7 +36,8 @@ toolchains/
 ├── intel/
 │   ├── _intel-base.rhai
 │   ├── icpx.rhai
-│   └── ifx.rhai
+│   ├── ifx.rhai
+│   └── ispc.rhai            # requires_toolchain = ["cpp"]
 ├── amd/
 │   └── hipcc.rhai           # requires_toolchain = ["cpp"]
 ├── asm/
@@ -61,8 +62,7 @@ toolchains/
 │   └── flawfinder.rhai      # kind = "linter"
 ├── msvc.rhai
 ├── tcc.rhai
-├── opencl.rhai              # requires_toolchain = ["cpp"]
-└── intel/ispc.rhai          # requires_toolchain = ["cpp"]
+└── opencl.rhai              # requires_toolchain = ["cpp"]
 ```
 
 ---
@@ -398,6 +398,145 @@ if arch == "x86_64" {
 | `os` | string | Host OS (`"linux"`, `"windows"`, `"macos"`, …) |
 | `env[key]` | `string \| ()` | Read environment variable; `()` if not set |
 | `load_flags["role"]` | `Array` | Append runtime flags: `load_flags["cxx"] += ["-m64"]` |
+
+---
+
+## Per-option callbacks
+
+`compiler_option` and `language_option` let a template register handlers for
+**compiler-specific keys** that have no universal equivalent — things like GPU
+architecture, minimum version requirements, or assembler arch validation.
+Standard options (`opt-level`, `warnings`, `lto`, `std`, etc.) are handled by
+the existing flag maps and are not part of this system.
+
+### Registration
+
+```rhai
+// Reads from [compiler.<name>] in freight.toml.
+// Runs on every detected instance of this compiler, even when it is not the
+// active backend — the active backend applies the flags; others validate only.
+compiler_option("key", |ctx| {
+    // validate, add flags, or both
+    // return "" on success, or a non-empty error string to abort the build
+    ""
+});
+
+// Reads from [language.<key>] in freight.toml.
+// Runs only when the compiler is the active backend for that language.
+language_option("key", |ctx| {
+    ""
+});
+```
+
+Unknown keys (no registered callback) are silently ignored — templates are
+forwards-compatible by default.
+
+### `ctx` fields
+
+| Field | Type | Description |
+|---|---|---|
+| `ctx.value` | string | Value from the manifest for this option |
+| `ctx.version` | string | Detected compiler version string |
+| `ctx.arch` | string | Effective target architecture (e.g. `"x86_64"`) |
+| `ctx.os` | string | Effective target OS (e.g. `"linux"`) |
+| `ctx.name` | string | Template name (e.g. `"clang++"`) |
+
+### Injecting flags
+
+Call the global `add_flag(s)` inside any callback to append compiler flags:
+
+```rhai
+compiler_option("sm_arch", |ctx| {
+    add_flag("--gpu-architecture=" + ctx.value);
+    ""
+});
+```
+
+Flags from `compiler_option` apply globally (all languages the compiler
+handles). Flags from `language_option` apply only to sources of that language.
+
+### Version comparison helpers
+
+The following functions are available in all option callbacks:
+
+| Function | Returns |
+|---|---|
+| `version_gte(a, b)` | `true` if `a >= b` |
+| `version_lte(a, b)` | `true` if `a <= b` |
+| `version_gt(a, b)` | `true` if `a > b` |
+| `version_lt(a, b)` | `true` if `a < b` |
+
+Versions are compared component-by-component after splitting on `.`, ignoring
+any `-suffix`. Malformed strings fall back to lexicographic comparison.
+
+### Examples from bundled templates
+
+**`nvcc.rhai`** — GPU target architecture and minimum version:
+
+```rhai
+compiler_option("sm_arch", |ctx| {
+    add_flag("--gpu-architecture=" + ctx.value);
+    ""
+});
+
+compiler_option("min_version", |ctx| {
+    if !version_gte(ctx.version, ctx.value) {
+        return "nvcc " + ctx.version + " is below required minimum " + ctx.value;
+    }
+    ""
+});
+```
+
+**`clang++.rhai` / `g++.rhai`** — version constraints:
+
+```rhai
+compiler_option("min_version", |ctx| {
+    if !version_gte(ctx.version, ctx.value) {
+        return ctx.name + " " + ctx.version + " is below required minimum " + ctx.value;
+    }
+    ""
+});
+
+compiler_option("max_version", |ctx| {
+    if !version_lte(ctx.version, ctx.value) {
+        return ctx.name + " " + ctx.version + " exceeds required maximum " + ctx.value;
+    }
+    ""
+});
+```
+
+**`nasm.rhai` / `yasm.rhai`** — arch validation via `language_option`:
+
+```rhai
+language_option("arch", |ctx| {
+    if ctx.arch != ctx.value {
+        return "assembler requires arch '" + ctx.value +
+               "' but the effective target is '" + ctx.arch + "'";
+    }
+    ""
+});
+```
+
+### Manifest syntax
+
+```toml
+# Compiler-specific options — dispatched to compiler_option() callbacks.
+[compiler.clang++]
+min_version = "14.0"
+
+[compiler.nvcc]
+min_version = "11.8"
+sm_arch     = "sm_89"
+
+[compiler.g++]
+min_version = "12.0"
+max_version = "14.0"
+
+# Language-specific options — dispatched to language_option() callbacks.
+# Only applied when that language's source files are actually present.
+[language.asm]
+arch = "x86_64"
+```
 
 ---
 

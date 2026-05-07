@@ -2,13 +2,13 @@
 
 A Cargo-inspired build tool and package manager for compiled languages that target GCC or Clang.
 
-Freight handles C, C++, Fortran, assembly, CUDA, HIP, OpenCL, and more — with a single declarative `freight.toml`, no Makefile or CMake required.
+Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with a single declarative `freight.toml`, no Makefile or CMake required.
 
 ## Features
 
 - **One file, one command** — describe your project in `freight.toml`, run `freight build`
 - **No external build system** — freight owns the entire build graph; no Ninja or Make underneath
-- **Multi-language** — C, C++, Fortran, Swift, Zig, Objective-C, Pascal, CUDA, HIP, OpenCL, Ada, D, ISPC, Odin, V, Mojo, and assembly in one project
+- **Multi-language** — C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly (NASM/YASM) in one project
 - **C++20 modules** — scans sources for `export module` / `import`, builds a parallel-aware DAG automatically
 - **Incremental builds** — mtime dirty checking via `.d` dep files tracks source + headers
 - **Parallel compilation** — sources compiled in parallel with rayon
@@ -171,30 +171,17 @@ the template authoring guide.
 
 | Language | Key | Compiler | Extensions |
 |---|---|---|---|
-| C | `c` | gcc / clang / zig-cc | `.c` |
-| C++ | `cpp` | g++ / clang++ / zig-cc | `.cpp` `.cc` `.cxx` `.c++` `.cppm` |
-| Fortran | `fortran` | gfortran / flang / ifx / nvhpc | `.f90` `.f95` `.f03` `.f08` `.f` |
-| Swift | `swift` | swiftc | `.swift` |
-| Zig | `zig` | zig | `.zig` |
-| Objective-C | `objc` | clang | `.m` |
-| Objective-C++ | `objcpp` | clang++ | `.mm` |
-| Pascal | `pascal` | fpc | `.pas` `.pp` `.lpr` |
-| CUDA | `cuda` | nvcc / nvhpc | `.cu` |
+| C | `c` | gcc / clang / tcc / msvc / icpx | `.c` |
+| C++ | `cpp` | g++ / clang++ / msvc / icpx | `.cpp` `.cc` `.cxx` `.c++` `.cppm` |
+| Fortran | `fortran` | gfortran / flang / ifx / nvfortran | `.f90` `.f95` `.f03` `.f08` `.f` |
+| CUDA | `cuda` | nvcc | `.cu` `.cuh` |
 | HIP | `hip` | hipcc | `.hip` |
 | OpenCL | `opencl` | clang | `.cl` |
-| Ada | `ada` | gnat | `.adb` `.ads` |
-| D | `d` | dmd / ldc2 | `.d` |
-| Odin | `odin` | odin | `.odin` |
-| V | `v` | v | `.v` |
-| Mojo | `mojo` | mojo | `.mojo` |
 | Intel SPMD | `ispc` | ispc | `.ispc` |
 | Assembly (NASM) | `nasm` | nasm | `.asm` `.nasm` |
-| Assembly (GAS) | `gas` | as | `.s` `.S` |
 | Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
 
 Mix any combination in a single project — freight routes each file extension to the right compiler automatically.
-
-> **zig-cc** (`backend = "zig-cc"`) is a drop-in GCC-compatible C/C++ compiler that enables zero-setup cross-compilation — `zig cc -target aarch64-linux-musl` just works without installing a sysroot.
 
 ## Migrating an existing project
 
@@ -304,7 +291,6 @@ freight-doc src/ --dry-run       # list extracted items without writing
 |---|---|
 | [docs/manifest-reference.md](docs/manifest-reference.md) | Complete `freight.toml` field reference |
 | [docs/compiler-templates.md](docs/compiler-templates.md) | Writing Rhai compiler scripts; debugger template schema |
-| [docs/requirements_handling.md](docs/requirements_handling.md) | `compiler_option` / `language_option` callback system |
 | [docs/platform-sources.md](docs/platform-sources.md) | `[os.*]` / `[arch.*]` platform-conditional sources |
 | [docs/architecture.md](docs/architecture.md) | Repository layout, build pipeline, architecture rules |
 | [docs/roadmap.md](docs/roadmap.md) | Development roadmap and phase status |
