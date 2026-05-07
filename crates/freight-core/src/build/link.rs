@@ -299,8 +299,6 @@ mod tests {
 
     const TEMPLATES_DIR: &str =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
-    const GCC_RHAI: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains/gnu/gcc.rhai"));
     const MSVC_RHAI: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains/msvc.rhai"));
 
@@ -308,7 +306,11 @@ mod tests {
         crate::toolchain::load_templates(std::path::Path::new(TEMPLATES_DIR))
     }
 
-    fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
+    fn gcc() -> CompilerTemplate {
+        CompilerTemplate::from_rhai_file(
+            &std::path::Path::new(TEMPLATES_DIR).join("gnu/gcc-cpp.rhai")
+        ).unwrap()
+    }
     fn msvc() -> CompilerTemplate { CompilerTemplate::from_rhai(MSVC_RHAI).unwrap() }
 
     fn fake_detected(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {

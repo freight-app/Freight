@@ -441,20 +441,21 @@ mod tests {
     fn named_backend_matches_template_name() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let backend = Backend("gcc".into());
+        // "gnu" family → gcc-cpp for cpp language
+        let backend = Backend("gnu".into());
         let found = select_compiler("cpp", &backend, &detected, None);
         assert!(found.is_some());
-        assert_eq!(found.unwrap().template.name, "gcc");
+        assert_eq!(found.unwrap().template.name, "gcc-cpp");
     }
 
     #[test]
     fn named_backend_family_picks_right_compiler_per_lang() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        // "gnu" family → gcc for cpp, gfortran for fortran
+        // "gnu" family → gcc-cpp for cpp, gcc-c for c, gfortran for fortran
         let cpp = select_compiler("cpp", &Backend("gnu".into()), &detected, None);
         assert!(cpp.is_some(), "gnu backend should find a C++ compiler");
-        assert_eq!(cpp.unwrap().template.name, "gcc");
+        assert_eq!(cpp.unwrap().template.name, "gcc-cpp");
 
         let fortran = select_compiler("fortran", &Backend("gnu".into()), &detected, None);
         assert!(fortran.is_some(), "gnu backend should find a Fortran compiler");
@@ -638,8 +639,8 @@ src  = "src/main.cpp"
     fn gcc_c_uses_different_binary_than_linker() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        // gcc specifically uses gcc (not g++) as the C compile binary.
-        let backend = Backend("gcc".into());
+        // gcc-c uses gcc as the C compile binary but g++ as the linker binary.
+        let backend = Backend("gnu".into());
         let compiler = select_compiler("c", &backend, &detected, None).unwrap();
         let c_info = compiler.template.linking.get("c").unwrap();
         assert_ne!(

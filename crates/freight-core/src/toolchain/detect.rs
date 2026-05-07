@@ -102,10 +102,13 @@ pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
         if path.extension().and_then(|e| e.to_str()) != Some("rhai") {
             continue;
         }
-        let Ok(src) = std::fs::read_to_string(path) else {
+        // Files starting with '_' are shared includes, not standalone templates.
+        if path.file_name().and_then(|n| n.to_str())
+            .map(|n| n.starts_with('_')).unwrap_or(false)
+        {
             continue;
-        };
-        match CompilerTemplate::from_rhai(&src) {
+        }
+        match CompilerTemplate::from_rhai_file(path) {
             Ok(t) => templates.push(t),
             Err(e) => eprintln!("warn: skipping {:?}: {e}", path.file_name().unwrap_or_default()),
         }
@@ -382,9 +385,9 @@ mod tests {
     #[test]
     fn load_templates_finds_all() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        assert_eq!(templates.len(), 15,
-            "expected gcc, clang, gfortran, nvcc, opencl, hipcc, icpx, ispc, nasm, \
-             tcc, nvhpc, ifx, flang, yasm, msvc");
+        assert_eq!(templates.len(), 16,
+            "expected gcc-cpp, gcc-c, clang, gfortran, nvcc, opencl, hipcc, icpx, ispc, \
+             nasm, tcc, nvhpc, ifx, flang, yasm, msvc");
     }
 
     #[test]
@@ -457,7 +460,8 @@ mod tests {
         let gnu = groups.toolchains.iter().find(|tc| tc.name == "gnu")
             .expect("gnu toolchain should exist");
         let names: Vec<&str> = gnu.compilers.iter().map(|c| c.template.name.as_str()).collect();
-        assert!(names.contains(&"gcc"), "gnu should contain gcc");
+        assert!(names.contains(&"gcc-cpp"), "gnu should contain gcc-cpp");
+        assert!(names.contains(&"gcc-c"),   "gnu should contain gcc-c");
         assert!(names.contains(&"gfortran"), "gnu should contain gfortran");
         assert!(gnu.languages.contains(&"cpp".to_string()), "gnu covers cpp");
         assert!(gnu.languages.contains(&"c".to_string()), "gnu covers c");
@@ -655,7 +659,7 @@ pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, FreightError> {
     }
 
     let src = std::fs::read_to_string(rhai_path).map_err(FreightError::Io)?;
-    let template = CompilerTemplate::from_rhai(&src)?;
+    let template = CompilerTemplate::from_rhai_file(rhai_path)?;
 
     let user_dir = user_templates_dir()
         .ok_or_else(|| FreightError::TemplateError("cannot determine ~/.freight directory".into()))?;

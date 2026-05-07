@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -421,9 +421,18 @@ impl CompilerTemplate {
         })
     }
 
-    /// Parse a compiler template from a Rhai script.
+    /// Parse a compiler template from a Rhai script (no include resolution).
     pub fn from_rhai(src: &str) -> Result<Self, FreightError> {
-        let def = script::eval_script(src)?;
+        let def = script::eval_script(src, None)?;
+        Self::from_def(def)
+    }
+
+    /// Read a `.rhai` file from disk and parse it, resolving any `include()`
+    /// directives relative to the file's directory.
+    pub fn from_rhai_file(path: &Path) -> Result<Self, FreightError> {
+        let src = std::fs::read_to_string(path).map_err(FreightError::Io)?;
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let def = script::eval_script(&src, Some(dir))?;
         Self::from_def(def)
     }
 
@@ -911,9 +920,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const GCC_RHAI: &str      = include_str!("../../../../toolchains/gnu/gcc.rhai");
     const CLANG_RHAI: &str    = include_str!("../../../../toolchains/llvm/clang.rhai");
-    const GFORTRAN_RHAI: &str = include_str!("../../../../toolchains/gnu/gfortran.rhai");
     const NVCC_RHAI: &str     = include_str!("../../../../toolchains/nvidia/nvcc.rhai");
     const OPENCL_RHAI: &str   = include_str!("../../../../toolchains/opencl.rhai");
     const HIPCC_RHAI: &str    = include_str!("../../../../toolchains/amd/hipcc.rhai");
@@ -927,17 +934,23 @@ mod tests {
     const YASM_RHAI: &str     = include_str!("../../../../toolchains/yasm.rhai");
     const MSVC_RHAI: &str     = include_str!("../../../../toolchains/msvc.rhai");
 
-    fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
+    const TOOLCHAINS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
+    fn rhai(rel: &str) -> CompilerTemplate {
+        CompilerTemplate::from_rhai_file(&std::path::Path::new(TOOLCHAINS).join(rel)).unwrap()
+    }
+    fn gcc()   -> CompilerTemplate { rhai("gnu/gcc-cpp.rhai") }
+    fn gcc_c() -> CompilerTemplate { rhai("gnu/gcc-c.rhai") }
     fn clang() -> CompilerTemplate { CompilerTemplate::from_rhai(CLANG_RHAI).unwrap() }
-    fn nvcc() -> CompilerTemplate { CompilerTemplate::from_rhai(NVCC_RHAI).unwrap() }
+    fn nvcc()  -> CompilerTemplate { CompilerTemplate::from_rhai(NVCC_RHAI).unwrap() }
 
     // ── Parsing ───────────────────────────────────────────────────────────────
 
     #[test]
     fn all_templates_parse() {
-        CompilerTemplate::from_rhai(GCC_RHAI).unwrap();
+        rhai("gnu/gcc-cpp.rhai");
+        rhai("gnu/gcc-c.rhai");
+        rhai("gnu/gfortran.rhai");
         CompilerTemplate::from_rhai(CLANG_RHAI).unwrap();
-        CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
         CompilerTemplate::from_rhai(NVCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(HIPCC_RHAI).unwrap();
@@ -953,15 +966,19 @@ mod tests {
     }
 
     #[test]
-    fn gcc_linking_declares_cpp_and_c() {
+    fn gcc_cpp_linking() {
         let t = gcc();
-        let cpp = t.linking.get("cpp").expect("gcc should have linking.cpp");
+        let cpp = t.linking.get("cpp").expect("gcc-cpp should have linking.cpp");
         assert_eq!(cpp.abi, "c++");
         assert!(cpp.compatible.contains(&"c".to_string()));
         assert!(cpp.compatible.contains(&"fortran".to_string()));
         assert_eq!(cpp.compile_binary, None, "C++ uses the template's main binary (g++)");
+    }
 
-        let c = t.linking.get("c").expect("gcc should have linking.c");
+    #[test]
+    fn gcc_c_linking() {
+        let t = gcc_c();
+        let c = t.linking.get("c").expect("gcc-c should have linking.c");
         assert_eq!(c.abi, "c");
         assert_eq!(c.compile_binary.as_deref(), Some("gcc"),
             "C files must be compiled with gcc, not g++");
@@ -979,12 +996,15 @@ mod tests {
     #[test]
     fn gcc_fields() {
         let t = gcc();
-        assert_eq!(t.name, "gcc");
+        assert_eq!(t.name, "gcc-cpp");
         assert_eq!(t.binary, "g++");
         assert!(t.extensions.contains(&".cpp".to_string()));
-        assert!(t.extensions.contains(&".c".to_string()));
         assert!(t.standards.contains_key("c++20"));
-        assert!(t.standards.contains_key("c17"), "gcc handles C standards too");
+
+        let tc = gcc_c();
+        assert_eq!(tc.name, "gcc-c");
+        assert!(tc.extensions.contains(&".c".to_string()));
+        assert!(tc.standards.contains_key("c17"));
     }
 
     #[test]
@@ -1066,7 +1086,7 @@ mod tests {
 
     #[test]
     fn gfortran_has_no_modules() {
-        let t = CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
+        let t = rhai("gnu/gfortran.rhai");
         assert_eq!(t.modules, ModuleStyle::Unsupported);
         assert!(t.extensions.contains(&".f90".to_string()));
     }
