@@ -3,7 +3,7 @@
 
 name          = "ifx";
 family        = "intel";
-sanitizers = ["address", "undefined"];
+sanitizer_options = ["address", "undefined"];
 homepage      = "https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html";
 binary        = "ifx";
 version_arg   = "--version";

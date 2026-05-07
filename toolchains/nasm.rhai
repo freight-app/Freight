@@ -4,7 +4,7 @@
 name          = "nasm";
 family        = "";
 requires_toolchain = ["c"];
-sanitizers = [];
+sanitizer_options = [];
 homepage      = "https://www.nasm.us/";
 binary        = "nasm";
 version_arg   = "--version";

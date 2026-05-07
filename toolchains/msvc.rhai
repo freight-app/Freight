@@ -9,7 +9,7 @@
 
 name          = "msvc";
 family        = "";
-sanitizers    = ["address"];
+sanitizer_options    = ["address"];
 homepage      = "https://visualstudio.microsoft.com/";
 binary        = "link.exe";
 version_arg   = "";           // cl.exe prints version on stderr with no args

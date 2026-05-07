@@ -279,7 +279,7 @@ pub struct CompilerTemplate {
     pub family: String,
     /// Sanitizer names this compiler supports (e.g. `"address"`, `"undefined"`).
     /// Empty = no declaration (don't validate — assume all pass through).
-    pub sanitizers: Vec<String>,
+    pub sanitizer_options: Vec<String>,
     pub binary: String,
     pub version_arg: String,
     pub version_regex: String,
@@ -366,7 +366,7 @@ impl CompilerTemplate {
         Ok(Self {
             name: raw.name,
             family: String::new(),
-            sanitizers: vec![],
+            sanitizer_options: vec![],
             binary: raw.binary,
             version_arg: raw.version_arg,
             version_regex: raw.version_regex,
@@ -524,7 +524,7 @@ impl CompilerTemplate {
         Ok(Self {
             name:                  def.name,
             family:                def.family,
-            sanitizers:            def.sanitizers,
+            sanitizer_options:            def.sanitizer_options,
             binary,
             version_arg:           def.version_arg,
             version_regex:         def.version_regex,
@@ -588,12 +588,12 @@ impl CompilerTemplate {
 
         // Sanitizers
         if !settings.sanitize.is_empty() && !self.flags_sanitize.is_empty() {
-            let active: Vec<&str> = if self.sanitizers.is_empty() {
+            let active: Vec<&str> = if self.sanitizer_options.is_empty() {
                 settings.sanitize.iter().map(|s| s.as_str()).collect()
             } else {
                 let mut active = Vec::new();
                 for s in &settings.sanitize {
-                    if self.sanitizers.contains(s) {
+                    if self.sanitizer_options.contains(s) {
                         active.push(s.as_str());
                     } else {
                         eprintln!(

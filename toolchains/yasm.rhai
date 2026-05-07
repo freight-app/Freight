@@ -4,7 +4,7 @@
 name          = "yasm";
 family        = "";
 requires_toolchain = ["c"];
-sanitizers = [];
+sanitizer_options = [];
 homepage      = "https://yasm.tortall.net/";
 binary        = "yasm";
 version_arg   = "--version";

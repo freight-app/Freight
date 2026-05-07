@@ -47,7 +47,7 @@ pub(super) struct ToolchainDef {
     pub min_version: Option<String>,
     pub requires_toolchain: Vec<String>,
     pub family: String,
-    pub sanitizers: Vec<String>,
+    pub sanitizer_options: Vec<String>,
     /// PCH params: "compile" flag, "use" template, "extension" (e.g. ".pch" / ".gch")
     pub pch: HashMap<String, String>,
 }
@@ -144,7 +144,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
         "extensions", "always_flags",
         "supported_archs", "supported_os",
         "required_tools", "required_env", "requires_toolchain",
-        "sanitizers"
+        "sanitizer_options"
     ] {
         scope.push(*key, Array::new());
     }
@@ -218,7 +218,7 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     def.required_tools      = arr!("required_tools");
     def.required_env        = arr!("required_env");
     def.requires_toolchain  = arr!("requires_toolchain");
-    def.sanitizers          = arr!("sanitizers");
+    def.sanitizer_options   = arr!("sanitizer_options");
     def.sanitize            = str!("sanitize");
     def.cpu_ext             = str!("cpu_ext");
 

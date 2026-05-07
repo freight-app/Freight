@@ -1,6 +1,6 @@
 name          = "nvcc";
 family        = "";
-sanitizers = [];
+sanitizer_options = [];
 homepage      = "https://developer.nvidia.com/cuda-toolkit";
 binary        = "nvcc";
 version_arg   = "--version";

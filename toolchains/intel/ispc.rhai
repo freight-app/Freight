@@ -3,7 +3,7 @@
 
 name          = "ispc";
 family        = "";
-sanitizers = [];
+sanitizer_options = [];
 homepage      = "https://ispc.github.io/";
 binary        = "ispc";
 version_arg   = "--version";

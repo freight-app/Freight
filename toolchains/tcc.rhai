@@ -1,10 +1,10 @@
 // TCC — Tiny C Compiler. Extremely fast single-pass C compiler.
-// No optimisation levels, no LTO, no sanitizers, and no dependency file generation
+// No optimisation levels, no LTO, no sanitizer_options, and no dependency file generation
 // (dep_file is empty — freight falls back to mtime-only dirty checking for TCC projects).
 
 name          = "tcc";
 family        = "";
-sanitizers    = [];
+sanitizer_options    = [];
 homepage      = "https://bellard.org/tcc/";
 binary        = "tcc";
 version_arg   = "-v";
