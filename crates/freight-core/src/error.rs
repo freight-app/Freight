@@ -26,6 +26,9 @@ pub enum FreightError {
     #[error("compiler not found: {0}")]
     CompilerNotFound(String),
 
+    #[error("{0}")]
+    OptionError(String),
+
     #[error("compilation failed: {0}\n{1}")]
     CompileFailed(String, String),
 

@@ -117,6 +117,44 @@ defines = ["POSIX_BUILD"]
 defines = ["WIN32_LEAN_AND_MEAN"]
 ```
 
+## Compiler-specific options
+
+Beyond the standard settings (`opt-level`, `warnings`, `lto`, `std`, etc.),
+individual compiler templates can expose their own options via
+`compiler_option` and `language_option` callbacks registered in `.rhai` files.
+
+**`[compiler.<name>]`** — options dispatched to the named compiler regardless
+of which language is being compiled. If the compiler is detected but not the
+active backend, the callbacks still run for validation (e.g. version checks)
+but any injected flags are discarded.
+
+**`[language.<key>]`** — options dispatched to the compiler handling that
+language. Unknown keys (not registered by the template) are silently ignored,
+so these sections are forwards-compatible.
+
+```toml
+# Enforce a minimum clang++ version across the project.
+[compiler.clang++]
+min_version = "14.0"
+
+# Set the GPU compute architecture for CUDA sources.
+[compiler.nvcc]
+sm_arch     = "sm_89"
+min_version = "11.8"
+
+# Validate that assembly sources are only built for x86_64.
+[language.asm]
+arch = "x86_64"
+```
+
+Callbacks in the template receive a `ctx` object with `ctx.value`,
+`ctx.version`, `ctx.arch`, `ctx.os`, and `ctx.name`. They return `""` on
+success or a non-empty error string to abort the build. Extra flags are
+injected by calling the global `add_flag(s)` function. See
+[docs/requirements_handling.md](docs/requirements_handling.md) for the full
+reference and [docs/compiler-templates.md](docs/compiler-templates.md) for
+the template authoring guide.
+
 ## Supported languages
 
 | Language | Key | Compiler | Extensions |

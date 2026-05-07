@@ -310,24 +310,61 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
 
 // ── Handler invocation ────────────────────────────────────────────────────────
 
-/// Call each handler whose name matches a key in `options`, collecting any flags
-/// emitted via `add_flag()`. `version` is passed as the second argument to the handler.
+/// Call each handler whose name matches a key in `options`.
+///
+/// Handlers receive a single `ctx` map object with fields:
+/// - `ctx.value`   — the value from the manifest
+/// - `ctx.version` — detected compiler version string
+/// - `ctx.arch`    — effective target architecture
+/// - `ctx.os`      — effective target OS
+/// - `ctx.name`    — template name (e.g. `"clang++"`)
+///
+/// A handler returns `""` on success or a non-empty string as an error message.
+/// Flags injected via the global `add_flag()` function are collected and returned.
+///
+/// Returns `Err(FreightError::OptionError)` if any handler returns a non-empty string.
 pub(super) fn run_handlers(
     engine: &Engine,
     ast: &AST,
     handlers: &HashMap<String, FnPtr>,
     options: &HashMap<String, String>,
     version: &str,
-) -> Vec<String> {
+    arch: &str,
+    os: &str,
+    name: &str,
+) -> Result<Vec<String>, crate::error::FreightError> {
     let mut all_flags = Vec::new();
-    for (name, value) in options {
-        let Some(handler) = handlers.get(name) else { continue };
+    for (opt_name, value) in options {
+        let Some(handler) = handlers.get(opt_name) else { continue };
+
+        let mut ctx = rhai::Map::new();
+        ctx.insert("value".into(),   rhai::Dynamic::from(value.clone()));
+        ctx.insert("version".into(), rhai::Dynamic::from(version.to_string()));
+        ctx.insert("arch".into(),    rhai::Dynamic::from(arch.to_string()));
+        ctx.insert("os".into(),      rhai::Dynamic::from(os.to_string()));
+        ctx.insert("name".into(),    rhai::Dynamic::from(name.to_string()));
+
         PENDING_FLAGS.with(|f| f.borrow_mut().clear());
-        let _ = handler.call::<()>(engine, ast, (value.clone(), version.to_string()));
+        let result = handler.call::<rhai::Dynamic>(engine, ast, (rhai::Dynamic::from(ctx),));
         let collected: Vec<String> = PENDING_FLAGS.with(|f| f.borrow().clone());
         all_flags.extend(collected);
+
+        match result {
+            Ok(v) => {
+                if let Some(msg) = v.try_cast::<String>() {
+                    if !msg.is_empty() {
+                        return Err(crate::error::FreightError::OptionError(msg));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(crate::error::FreightError::TemplateError(
+                    format!("option handler '{opt_name}': {e}")
+                ));
+            }
+        }
     }
-    all_flags
+    Ok(all_flags)
 }
 
 // ── Engine factory ────────────────────────────────────────────────────────────

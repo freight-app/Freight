@@ -61,12 +61,33 @@ linking["cuda"] = #{
     extensions: [".cu", ".cuh"],
 };
 
+// ── compiler_option handlers ──────────────────────────────────────────────────
+// Declare options users can set under [compiler.nvcc] in freight.toml.
+
+// [compiler.nvcc] sm_arch = "sm_89"  →  --gpu-architecture=sm_89
+compiler_option("sm_arch", |ctx| {
+    add_flag("--gpu-architecture=" + ctx.value);
+    ""
+});
+
+// [compiler.nvcc] min_version = "11.8"  →  error if nvcc < 11.8
+compiler_option("min_version", |ctx| {
+    if !version_gte(ctx.version, ctx.value) {
+        return "nvcc " + ctx.version + " is below required minimum " + ctx.value;
+    }
+    ""
+});
+
 // ── language_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [language.cuda] in freight.toml.
 
-// [language.cuda] arch = "sm_89"  →  -arch=sm_89  (GPU compute capability target)
-language_option("arch", |val, _ver| {
-    add_flag(`-arch=${val}`);
+// [language.cuda] arch = "x86_64"  →  error if effective target arch differs
+language_option("arch", |ctx| {
+    if ctx.arch != ctx.value {
+        return "nvcc requires arch '" + ctx.value +
+               "' but the effective target is '" + ctx.arch + "'";
+    }
+    ""
 });
 
 fn check() {

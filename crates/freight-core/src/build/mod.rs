@@ -159,7 +159,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     if !sanitize_override.is_empty() {
         apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
-    inject_option_handler_flags(&mut ctx);
+    inject_option_handler_flags(&mut ctx)?;
     let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
@@ -384,7 +384,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     if !sanitize_override.is_empty() {
         apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
-    inject_option_handler_flags(&mut ctx);
+    inject_option_handler_flags(&mut ctx)?;
     let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
@@ -815,37 +815,62 @@ fn validate_or_fail(
 /// injecting any resulting flags into the manifest before compilation starts.
 ///
 /// - `language_option` handlers: injected per-language into `manifest.language[key].injected_flags`
-/// - `compiler_option` handlers: injected globally into `manifest.compiler.flags`
-fn inject_option_handler_flags(ctx: &mut ProjectContext) {
-    let manifest = &mut ctx.manifest;
-    let detected = &ctx.detected;
-    let backend = &ctx.effective_backend;
+/// - `compiler_option` handlers: injected into `manifest.compiler.flags` (active compiler only)
+///
+/// For `[compiler.<name>]` sections: if the named compiler is detected but not the active
+/// backend for any discovered language, handlers still run for validation but flags are discarded.
+/// If the compiler is not detected at all, the section is skipped silently.
+fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightError> {
+    let arch = ctx.manifest.target.arch.as_deref().unwrap_or(std::env::consts::ARCH);
+    let os = std::env::consts::OS;
 
-    // Language-option handlers: look up the compiler for each language with extra options.
-    let lang_keys: Vec<String> = manifest.language.keys().cloned().collect();
+    // Language-option handlers: look up the active compiler for each language with extra options.
+    let lang_keys: Vec<String> = ctx.manifest.language.keys().cloned().collect();
     for lang_key in lang_keys {
-        let extra = manifest.language[&lang_key].extra.clone();
+        let extra = ctx.manifest.language[&lang_key].extra.clone();
         if extra.is_empty() { continue; }
-        let Some(compiler) = compile::select_compiler(&lang_key, backend, detected, None) else {
+        let Some(compiler) = compile::select_compiler(&lang_key, &ctx.effective_backend, &ctx.detected, None) else {
             continue;
         };
-        let flags = compiler.template.run_language_option_handlers(&extra, &compiler.version);
-        if !flags.is_empty() {
-            manifest.language.get_mut(&lang_key).unwrap().injected_flags.extend(flags);
-        }
+        let version = compiler.version.clone();
+        let template_name = compiler.template.name.clone();
+        let flags = ctx.detected.iter()
+            .find(|d| d.template.name == template_name)
+            .map(|d| d.template.run_language_option_handlers(&extra, &version, arch, os))
+            .transpose()?
+            .unwrap_or_default();
+        ctx.manifest.language.get_mut(&lang_key).unwrap().injected_flags.extend(flags);
     }
 
-    // Compiler-option handlers: find per-tool entries that match a detected compiler.
-    let per_tool: Vec<(String, std::collections::HashMap<String, String>)> = manifest.compiler.per_tool
+    // Compiler-option handlers: dispatched per [compiler.<name>] section.
+    // Collect the set of language keys actually present in discovered sources.
+    let discovered_lang_keys: std::collections::HashSet<String> =
+        ctx.found.sources.iter().map(|s| s.lang_key.clone()).collect();
+
+    let per_tool: Vec<(String, std::collections::HashMap<String, String>)> = ctx.manifest.compiler.per_tool
         .iter()
         .map(|(k, v)| (k.clone(), v.options.clone()))
         .collect();
+
     for (tool_name, options) in per_tool {
         if options.is_empty() { continue; }
-        let Some(compiler) = detected.iter().find(|d| d.template.name == tool_name) else {
-            continue;
+        let Some(compiler) = ctx.detected.iter().find(|d| d.template.name == tool_name) else {
+            continue; // not detected — skip silently
         };
-        let flags = compiler.template.run_compiler_option_handlers(&options, &compiler.version);
-        manifest.compiler.flags.extend(flags);
+        let version = compiler.version.clone();
+        let flags = compiler.template.run_compiler_option_handlers(&options, &version, arch, os)?;
+
+        // Only propagate flags if this compiler is the active backend for at least one
+        // discovered language. If detected but not active, handlers ran for validation only.
+        let is_active = discovered_lang_keys.iter().any(|lang_key| {
+            compile::select_compiler(lang_key, &ctx.effective_backend, &ctx.detected, None)
+                .map(|d| d.template.name == tool_name)
+                .unwrap_or(false)
+        });
+        if is_active {
+            ctx.manifest.compiler.flags.extend(flags);
+        }
     }
+
+    Ok(())
 }

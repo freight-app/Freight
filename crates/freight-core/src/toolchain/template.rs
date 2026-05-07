@@ -826,29 +826,36 @@ impl CompilerTemplate {
     /// Run `language_option` handlers for the given freeform options map.
     /// `version` is the detected compiler version string passed to each handler.
     /// Returns all flags injected by the handlers via `add_flag()`.
+    /// Run `language_option` handlers for the given freeform options map.
+    /// Handlers receive a `ctx` object with `value`, `version`, `arch`, `os`, `name`.
+    /// Returns injected flags, or `Err` if a handler returns a non-empty error string.
     pub fn run_language_option_handlers(
         &self,
         options: &HashMap<String, String>,
         version: &str,
-    ) -> Vec<String> {
+        arch: &str,
+        os: &str,
+    ) -> Result<Vec<String>, crate::error::FreightError> {
         let (Some(engine), Some(ast)) = (&self.handler_engine, &self.handler_ast) else {
-            return vec![];
+            return Ok(vec![]);
         };
-        script::run_handlers(engine, ast, &self.language_option_handlers, options, version)
+        script::run_handlers(engine, ast, &self.language_option_handlers, options, version, arch, os, &self.name)
     }
 
     /// Run `compiler_option` handlers for the given freeform options map.
-    /// `version` is the detected compiler version string passed to each handler.
-    /// Returns all flags injected by the handlers via `add_flag()`.
+    /// Handlers receive a `ctx` object with `value`, `version`, `arch`, `os`, `name`.
+    /// Returns injected flags, or `Err` if a handler returns a non-empty error string.
     pub fn run_compiler_option_handlers(
         &self,
         options: &HashMap<String, String>,
         version: &str,
-    ) -> Vec<String> {
+        arch: &str,
+        os: &str,
+    ) -> Result<Vec<String>, crate::error::FreightError> {
         let (Some(engine), Some(ast)) = (&self.handler_engine, &self.handler_ast) else {
-            return vec![];
+            return Ok(vec![]);
         };
-        script::run_handlers(engine, ast, &self.compiler_option_handlers, options, version)
+        script::run_handlers(engine, ast, &self.compiler_option_handlers, options, version, arch, os, &self.name)
     }
 
     /// Assemble flags for the **link step**.
