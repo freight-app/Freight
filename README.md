@@ -13,7 +13,8 @@ Freight handles C, C++, Fortran, assembly, CUDA, HIP, OpenCL, and more — with 
 - **Incremental builds** — mtime dirty checking via `.d` dep files tracks source + headers
 - **Parallel compilation** — sources compiled in parallel with rayon
 - **Profiles** — `dev` (debug, `-O0`) and `release` (`-O3`, LTO, strip) out of the box
-- **Platform overlays** — `[platform.linux]`, `[platform.windows]` for OS-specific deps and flags
+- **Platform-conditional sources** — `[os.linux]`, `[arch.x86_64]` sections include source files and defines only on matching platforms; non-matching files are excluded from the build entirely
+- **Platform overlays** — `[platform.linux]`, `[platform.windows]` for OS-specific deps and compiler flags
 - **Dependency filters** — `os`, `arch`, and `targets` fields gate deps by host OS, CPU architecture, or cross-compilation triple
 - **Cross-compilation** — `[compiler] target` and `sysroot` for toolchain-native cross builds
 - **`freight watch`** — rebuild automatically on file changes (200 ms debounce)
@@ -109,12 +110,23 @@ ws2_32  = { system = "ws2_32",  os = "windows" }
 # Architecture-filtered dependency
 sse-opt = { path = "../sse-opt", arch = "x86_64" }
 
-# Per-platform compiler settings
-[platform.linux.compiler]
+# OS-conditional sources and defines
+[os.linux]
+sources = ["src/os/linux/**"]
 defines = ["POSIX_BUILD"]
 
-[platform.windows.compiler]
+[os.windows]
+sources = ["src/os/windows/**"]
 defines = ["WIN32_LEAN_AND_MEAN"]
+
+# Arch-conditional sources and defines
+[arch.x86_64]
+sources = ["src/arch/x86_64/**"]
+defines = ["HAVE_SSE2"]
+
+[arch.aarch64]
+sources = ["src/arch/aarch64/**"]
+defines = ["HAVE_NEON"]
 ```
 
 ## Compiler-specific options
@@ -217,7 +229,7 @@ freight test  [<filter>]              build and run tests
 freight watch [--release]             watch for changes and rebuild
 freight clean                         wipe target/
 freight check                         validate freight.toml
-freight toolchain list                show detected compilers
+freight toolchain list                show detected compilers and their supported CPU extensions
 freight add <name> [--path P] [--git URL [--branch B] [--rev R]] [--system] [--dev]
 freight remove <package>
 freight update [<package>]
@@ -292,6 +304,8 @@ freight-doc src/ --dry-run       # list extracted items without writing
 |---|---|
 | [docs/manifest-reference.md](docs/manifest-reference.md) | Complete `freight.toml` field reference |
 | [docs/compiler-templates.md](docs/compiler-templates.md) | Writing Rhai compiler scripts; debugger template schema |
+| [docs/requirements_handling.md](docs/requirements_handling.md) | `compiler_option` / `language_option` callback system |
+| [docs/platform-sources.md](docs/platform-sources.md) | `[os.*]` / `[arch.*]` platform-conditional sources |
 | [docs/architecture.md](docs/architecture.md) | Repository layout, build pipeline, architecture rules |
 | [docs/roadmap.md](docs/roadmap.md) | Development roadmap and phase status |
 | [docs/future-toolchains.md](docs/future-toolchains.md) | Planned compiler, assembler, and debugger additions |
