@@ -20,6 +20,10 @@ pub struct ToolchainCache {
 pub(crate) struct CacheEntry {
     pub(crate) version: String,
     pub(crate) mtime_secs: u64,
+    /// CPU extension names supported by this compiler (e.g. `"avx2"`, `"sse4.2"`).
+    /// Queried once via `-Q --help=target` and cached alongside the version.
+    #[serde(default)]
+    pub(crate) cpu_extensions: Vec<String>,
 }
 
 impl ToolchainCache {
@@ -58,7 +62,27 @@ impl ToolchainCache {
     pub fn set_version(&mut self, binary_path: &Path, version: &str) {
         let Some(mtime) = mtime_secs(binary_path) else { return };
         let key = binary_path.to_string_lossy().into_owned();
-        self.entries.insert(key, CacheEntry { version: version.to_string(), mtime_secs: mtime });
+        self.entries.insert(key, CacheEntry { version: version.to_string(), mtime_secs: mtime, cpu_extensions: vec![] });
+    }
+
+    /// Return the cached extension list for `binary_path` if the entry is fresh.
+    pub fn get_extensions(&self, binary_path: &Path) -> Option<&[String]> {
+        let key = binary_path.to_string_lossy();
+        let entry = self.entries.get(key.as_ref())?;
+        let current_mtime = mtime_secs(binary_path)?;
+        if entry.mtime_secs == current_mtime {
+            Some(&entry.cpu_extensions)
+        } else {
+            None
+        }
+    }
+
+    /// Record the extension list for `binary_path`. No-ops if mtime can't be read.
+    pub fn set_extensions(&mut self, binary_path: &Path, extensions: Vec<String>) {
+        let key = binary_path.to_string_lossy().into_owned();
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.cpu_extensions = extensions;
+        }
     }
 
     /// Remove all entries whose binary no longer exists on disk.
