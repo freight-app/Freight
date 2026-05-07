@@ -21,23 +21,23 @@ always_flags = ["--expt-relaxed-constexpr", "--extended-lambda"];
 
 toolset["ld"] = "nvcc";
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-O2";
-flags["opt"]["z"] = "-O2";
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-O2";
+opt["z"] = "-O2";
 
-flags["debug"]["true"]  = "-g -G";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g -G";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "-Wall";
-flags["warnings"]["all"]     = "-Wall -Wextra";
-flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
+warnings["none"]    = "";
+warnings["default"] = "-Wall";
+warnings["all"]     = "-Wall -Wextra";
+warnings["error"]   = "-Wall -Wextra -Werror";
 
-flags["lto"]["true"]  = "";
-flags["lto"]["false"] = "";
+lto["true"]  = "";
+lto["false"] = "";
 
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";

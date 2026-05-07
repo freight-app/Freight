@@ -21,24 +21,24 @@ toolset["ld"]    = "ifx";
 toolset["ar"]    = "ar";
 toolset["strip"] = "strip";
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-O2";
-flags["opt"]["z"] = "-O2";
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-O2";
+opt["z"] = "-O2";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "-warn none";
-flags["warnings"]["default"] = "";
-flags["warnings"]["all"]     = "-warn all";
-flags["warnings"]["error"]   = "-warn all -warn errors";
+warnings["none"]    = "-warn none";
+warnings["default"] = "";
+warnings["all"]     = "-warn all";
+warnings["error"]   = "-warn all -warn errors";
 
 // -ipo = inter-procedural optimisation (Intel's LTO).
-flags["lto"]["true"]  = "-ipo";
-flags["lto"]["false"] = "";
+lto["true"]  = "-ipo";
+lto["false"] = "";
 
 
 standards["f95"]   = "-std=f95";

@@ -15,8 +15,15 @@ pub(super) struct ToolchainDef {
     pub version_regex: String,
     pub extensions: Vec<String>,
     pub standards: HashMap<String, String>,
-    /// category → { key → flag }
-    pub flags: HashMap<String, HashMap<String, String>>,
+    pub flags_opt:      HashMap<String, String>,
+    pub flags_debug:    HashMap<String, String>,
+    pub flags_warnings: HashMap<String, String>,
+    pub flags_lto:      HashMap<String, String>,
+    pub flags_lto_link: HashMap<String, String>,
+    pub flags_stdlib:   HashMap<String, String>,
+    pub flags_runtime:  HashMap<String, String>,
+    pub sanitize:       String,
+    pub cpu_ext:        String,
     /// structure key → template string
     pub structure: HashMap<String, String>,
     /// "gcc" | "clang" | "none" / ""
@@ -73,19 +80,12 @@ impl Drop for Guard {
 
 // ── Map types exposed to templates ────────────────────────────────────────────
 //
-// Fixed-schema fields (identity, structure) are plain Rhai scope variables —
-// readable and writeable like any local. Open-ended keyed data (flags, standards,
-// linking, modules, toolset, arch_flags, load_flags) uses custom map types so
-// that indexer_set writes go directly to thread-local state.
+// Per-category flag maps (opt, debug, warnings, lto, lto_link, stdlib, runtime)
+// are plain rhai::Map scope variables — native indexer-set works directly.
+// sanitize and cpu_ext are plain String scope variables.
 //
-// Plain variable fields:
-//   name, homepage, binary, version_arg, version_regex, extensions, always_flags,
-//   passthrough, passthrough_prefix, min_version, supported_archs, supported_os,
-//   required_tools, required_env, requires_toolchain
-//   include_dir, define, define_value, output, compile_only, dep_file, target, sysroot
-//
-// Map fields:
-//   flags       — flags["opt"]["2"] = "-O2"
+// Custom map types (with thread-local write-back) are used for open-ended keyed
+// data that must reach ToolchainDef during script evaluation:
 //   standards   — standards["c++20"] = "-std=c++20"
 //   linking     — linking["cpp"] = #{ abi: "c++", ... }
 //   modules     — modules["style"] = "gcc"; modules["compile_miu"] = "..."
@@ -93,10 +93,6 @@ impl Drop for Guard {
 //   load_flags  — load_flags["cc"] += ["-m64"]   (in fn load())
 //   arch_flags  — arch_flags["x86_64.linux"] = "-f elf64"
 //   env         — env["CC"]  (read-only)
-
-/// `flags` — two-level: `flags["opt"]["2"] = "-O2"` or `flags["opt"] = #{...}`.
-/// Chained write-back: get returns inner Map copy → mutated → set called with result.
-#[derive(Clone)] struct FlagsMap;
 
 /// `standards` — `standards["c++20"] = "-std=c++20"`.
 #[derive(Clone)] struct StandardsMap;
@@ -166,8 +162,15 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
         scope.push(*key, String::new());
     }
 
-    // ── Map objects ────────────────────────────────────────────────────────
-    scope.push("flags",      FlagsMap);
+    // ── Per-category flag maps (plain Rhai Map — native indexer-set works) ─
+    for cat in &["opt", "dbg", "warnings", "lto", "lto_link", "stdlib", "runtime"] {
+        scope.push(*cat, Map::new());
+    }
+    // sanitize and cpu_ext are single template strings, grouped near sanitizers.
+    scope.push("sanitize", String::new());
+    scope.push("cpu_ext",  String::new());
+
+    // ── Other map objects ──────────────────────────────────────────────────
     scope.push("standards",  StandardsMap);
     scope.push("modules",    ModulesMap);
     scope.push("linking",    LinkingMap);
@@ -216,8 +219,24 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
     def.required_env        = arr!("required_env");
     def.requires_toolchain  = arr!("requires_toolchain");
     def.sanitizers          = arr!("sanitizers");
+    def.sanitize            = str!("sanitize");
+    def.cpu_ext             = str!("cpu_ext");
 
-    let mv          = str!("min_version");
+    macro_rules! flag_map { ($k:expr) => {
+        scope.get_value::<Map>($k).unwrap_or_default()
+            .into_iter()
+            .filter_map(|(k, v)| v.try_cast::<String>().map(|s| (k.to_string(), s)))
+            .collect::<HashMap<String, String>>()
+    }; }
+    def.flags_opt      = flag_map!("opt");
+    def.flags_debug    = flag_map!("dbg");
+    def.flags_warnings = flag_map!("warnings");
+    def.flags_lto      = flag_map!("lto");
+    def.flags_lto_link = flag_map!("lto_link");
+    def.flags_stdlib   = flag_map!("stdlib");
+    def.flags_runtime  = flag_map!("runtime");
+
+    let mv = str!("min_version");
     if !mv.is_empty() { def.min_version = Some(mv); }
 
     // Structure: insert every slot (empty string = unsupported/unused).
@@ -245,34 +264,6 @@ pub(super) fn eval_script(src: &str) -> Result<ToolchainDef, FreightError> {
 fn make_engine() -> Engine {
     let mut e = Engine::new();
     e.set_max_operations(100_000);
-
-    // ── flags map ─────────────────────────────────────────────────────────────
-    // get returns an inner Map copy so chained `flags["opt"]["2"] = "-O2"` works:
-    //   1. get("opt")       → Map (current state or empty)
-    //   2. map["2"] = "-O2" → mutates the copy
-    //   3. set("opt", map)  → writes back to CURRENT
-    e.register_type_with_name::<FlagsMap>("FlagsMap");
-    e.register_indexer_get(|_: &mut FlagsMap, cat: ImmutableString| -> Dynamic {
-        CURRENT.with(|c| {
-            c.borrow().as_ref()
-                .and_then(|d| d.flags.get(cat.as_str()))
-                .map(|inner| {
-                    let m: Map = inner.iter()
-                        .map(|(k, v)| (k.as_str().into(), Dynamic::from(v.clone())))
-                        .collect();
-                    Dynamic::from(m)
-                })
-                .unwrap_or_else(|| Dynamic::from(Map::new()))
-        })
-    });
-    e.register_indexer_set(|_: &mut FlagsMap, cat: ImmutableString, val: Dynamic| {
-        if let Some(inner) = val.try_cast::<Map>() {
-            let entries: HashMap<String, String> = inner.into_iter()
-                .filter_map(|(k, v)| v.try_cast::<String>().map(|s| (k.to_string(), s)))
-                .collect();
-            with_def(|d| *d.flags.entry(cat.to_string()).or_default() = entries);
-        }
-    });
 
     // ── standards map ─────────────────────────────────────────────────────────
     e.register_type_with_name::<StandardsMap>("StandardsMap");

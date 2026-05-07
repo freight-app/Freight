@@ -443,7 +443,6 @@ impl CompilerTemplate {
             )));
         }
 
-        let get_flags = |cat: &str| def.flags.get(cat).cloned().unwrap_or_default();
         let get_struct = |key: &str| def.structure.get(key).cloned().unwrap_or_default();
 
         let fallback_output = get_struct("output");
@@ -548,19 +547,15 @@ impl CompilerTemplate {
             toolset:               def.toolset,
             pch,
             linking,
-            flags_opt:             get_flags("opt"),
-            flags_debug:           get_flags("debug"),
-            flags_warnings:        get_flags("warnings"),
-            flags_lto:             get_flags("lto"),
-            flags_lto_link:        get_flags("lto_link"),
-            flags_sanitize:        def.flags.get("sanitize")
-                                     .and_then(|m| m.get("template")).cloned()
-                                     .unwrap_or_default(),
-            flags_cpu_extension:   def.flags.get("cpu_ext")
-                                     .and_then(|m| m.get("template")).cloned()
-                                     .unwrap_or_default(),
-            flags_stdlib:          get_flags("stdlib"),
-            flags_runtime:         get_flags("runtime"),
+            flags_opt:             def.flags_opt,
+            flags_debug:           def.flags_debug,
+            flags_warnings:        def.flags_warnings,
+            flags_lto:             def.flags_lto,
+            flags_lto_link:        def.flags_lto_link,
+            flags_sanitize:        def.sanitize,
+            flags_cpu_extension:   def.cpu_ext,
+            flags_stdlib:          def.flags_stdlib,
+            flags_runtime:         def.flags_runtime,
         })
     }
 

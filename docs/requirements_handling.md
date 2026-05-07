@@ -119,27 +119,42 @@ for &lang_key in ASM_KEYS {
 
 ### 2. Manifest types — `manifest/types.rs`
 
-Add `arch` to `LanguageSettings` (feeds `language_option` callbacks):
+Add `arch` to `LanguageSettings` and capture unknown keys via `#[serde(flatten)]`
+so compiler-specific options (e.g. `output_format` for nasm) aren't rejected by
+serde and are available for `language_option` dispatch:
 
 ```rust
 pub struct LanguageSettings {
     pub std:    Option<String>,
     pub stdlib: Option<String>,
-    pub arch:   Option<String>,   // e.g. "x86_64", "aarch64"
+    pub arch:   Option<String>,
+    /// Compiler-specific options not covered by the typed fields above.
+    /// Captured via flatten so unknown TOML keys are accepted rather than rejected.
+    #[serde(flatten)]
+    pub extra: HashMap<String, String>,
 }
 ```
 
-Add free-form option maps for both sections:
+`LanguageSettings::to_option_map()` merges the typed fields into the `extra` map
+and returns the combined `HashMap<String, String>` for dispatch:
+
+```rust
+pub fn to_option_map(&self) -> HashMap<String, String> {
+    let mut m = self.extra.clone();
+    if let Some(v) = &self.arch   { m.insert("arch".into(),   v.clone()); }
+    if let Some(v) = &self.std    { m.insert("std".into(),    v.clone()); }
+    if let Some(v) = &self.stdlib { m.insert("stdlib".into(), v.clone()); }
+    m
+}
+```
+
+Add free-form options for `[compiler.<name>]` sections:
 
 ```rust
 /// Options under [compiler.<name>] — dispatched to compiler_option() callbacks.
+/// All keys are free-form; meaning is defined by each template.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CompilerOptions(pub HashMap<String, String>);
-
-/// Options under [language.<key>] beyond the typed fields are collected here
-/// and dispatched to language_option() callbacks.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct LanguageOptions(pub HashMap<String, String>);
 ```
 
 Add to `Manifest`:
@@ -148,10 +163,6 @@ Add to `Manifest`:
 #[serde(default)]
 pub compiler: HashMap<String, CompilerOptions>,
 ```
-
-`LanguageSettings::to_option_map()` converts the typed fields (`arch`, `std`,
-`stdlib`) plus any unrecognised keys into a `HashMap<String, String>` for
-dispatch.
 
 ---
 
@@ -179,15 +190,53 @@ engine.register_fn("language_option", |name: String, handler: FnPtr| {
 });
 ```
 
-`run_option_handlers(handlers, options, ctx)` iterates the option map, looks up
-each key in `handlers`, builds the `ctx` dynamic map, calls the `FnPtr`, collects
-`ctx.extra_flags`, and returns the first non-empty error string.
+Version comparison helpers are also registered so templates don't have to parse
+version strings manually. String comparison (`<`, `>`) is lexicographic and gives
+wrong results for versions like `"9.0"` vs `"14.0"`.
+
+```rust
+engine.register_fn("semver_gte", |a: &str, b: &str| -> bool { /* parse + compare */ });
+engine.register_fn("semver_lte", |a: &str, b: &str| -> bool { /* parse + compare */ });
+engine.register_fn("semver_gt",  |a: &str, b: &str| -> bool { /* parse + compare */ });
+engine.register_fn("semver_lt",  |a: &str, b: &str| -> bool { /* parse + compare */ });
+```
+
+These use the `semver` crate already in the workspace. Malformed version strings
+fall back to lexicographic comparison so templates don't crash on unusual outputs.
+
+`run_option_handlers(handlers, options, ctx_base)` iterates the option map, looks
+up each key in `handlers`, builds the `ctx` dynamic map, calls the `FnPtr`,
+collects any flags added via `ctx.add_flag`, and returns the first non-empty error
+string alongside the accumulated extra flags:
+
+```rust
+pub fn run_option_handlers(
+    &self,
+    handlers: &HashMap<String, rhai::FnPtr>,
+    options: &HashMap<String, String>,
+    version: &str,
+    arch: &str,
+    os: &str,
+    lang_key: &str,
+) -> Result<Vec<String>, FreightError> {
+    let mut extra_flags: Vec<String> = Vec::new();
+    for (key, value) in options {
+        let Some(handler) = handlers.get(key) else { continue };
+        // build ctx, call handler, collect flags / surface error ...
+        extra_flags.extend(ctx.drain_flags());
+    }
+    Ok(extra_flags)
+}
+```
+
+The caller merges the returned flags into the per-language compiler invocation.
 
 ---
 
 ### 4. Pre-build validation — `build/mod.rs`
 
-After `detect_all_cached()` and before `discover()`:
+After `detect_all_cached()` and before `discover()`. Returns a map of extra flags
+per language key so the build engine can merge them into compiler invocations:
 
 ```rust
 fn check_compiler_requirements(
@@ -196,7 +245,9 @@ fn check_compiler_requirements(
     detected: &[DetectedCompiler],
     effective_arch: &str,
     effective_os: &str,
-) -> Result<(), FreightError> {
+) -> Result<HashMap<String, Vec<String>>, FreightError> {
+    let mut extra: HashMap<String, Vec<String>> = HashMap::new();
+
     for lang_key in manifest.language.keys() {
         let Some(dc) = select_compiler(lang_key, backend, detected, None) else {
             return Err(FreightError::CompilerNotFound(format!(
@@ -206,25 +257,45 @@ fn check_compiler_requirements(
         };
 
         let options = manifest.effective_language_settings(lang_key).to_option_map();
-        dc.template.run_option_handlers(
+        let flags = dc.template.run_option_handlers(
             &dc.template.language_option_handlers,
-            &options, &dc.version, effective_arch, effective_os,
+            &options, &dc.version, effective_arch, effective_os, lang_key,
         )?;
+        extra.entry(lang_key.clone()).or_default().extend(flags);
     }
 
     for (name, options) in &manifest.compiler {
         let Some(dc) = detected.iter().find(|d| d.template.name == *name) else {
             continue;
         };
-        dc.template.run_option_handlers(
-            &dc.template.compiler_option_handlers,
-            &options.0, &dc.version, effective_arch, effective_os,
-        )?;
+        // Run once per active language this compiler handles; discard flags if
+        // compiler is not the active backend.
+        for lang_key in manifest.language.keys() {
+            if select_compiler(lang_key, backend, detected, None)
+                .map(|d| d.template.name == *name)
+                .unwrap_or(false)
+            {
+                let flags = dc.template.run_option_handlers(
+                    &dc.template.compiler_option_handlers,
+                    &options.0, &dc.version, effective_arch, effective_os, lang_key,
+                )?;
+                extra.entry(lang_key.clone()).or_default().extend(flags);
+            } else {
+                // Detected but not active — run for validation only, discard flags.
+                dc.template.run_option_handlers(
+                    &dc.template.compiler_option_handlers,
+                    &options.0, &dc.version, effective_arch, effective_os, lang_key,
+                )?;
+            }
+        }
     }
 
-    Ok(())
+    Ok(extra)
 }
 ```
+
+The returned map is threaded into `settings_for_lang` so extra flags are appended
+to each language's compiler invocation.
 
 ---
 
@@ -246,25 +317,25 @@ language_option("arch", |ctx| {
 
 ```rhai
 compiler_option("min_version", |ctx| {
-    if ctx.version < ctx.value {
+    if !semver_gte(ctx.version, ctx.value) {
         return "nvcc " + ctx.version + " is below required minimum " + ctx.value;
     }
     ""
 });
 ```
 
-**`clang.rhai` / `gcc.rhai`** — version validation and extra flags:
+**`clang.rhai` / `gcc.rhai`** — version validation:
 
 ```rhai
 compiler_option("min_version", |ctx| {
-    if ctx.version < ctx.value {
+    if !semver_gte(ctx.version, ctx.value) {
         return ctx.name + " " + ctx.version + " is below required minimum " + ctx.value;
     }
     ""
 });
 
 compiler_option("max_version", |ctx| {
-    if ctx.version > ctx.value {
+    if !semver_lte(ctx.version, ctx.value) {
         return ctx.name + " " + ctx.version + " exceeds required maximum " + ctx.value;
     }
     ""

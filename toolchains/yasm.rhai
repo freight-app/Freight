@@ -18,23 +18,23 @@ supported_archs = ["x86", "x86_64"];
 toolset["as"] = "yasm";
 
 // YASM has no optimisation, LTO, sanitize or CPU extension flags.
-flags["opt"]["0"] = "";
-flags["opt"]["1"] = "";
-flags["opt"]["2"] = "";
-flags["opt"]["3"] = "";
-flags["opt"]["s"] = "";
-flags["opt"]["z"] = "";
+opt["0"] = "";
+opt["1"] = "";
+opt["2"] = "";
+opt["3"] = "";
+opt["s"] = "";
+opt["z"] = "";
 
-flags["debug"]["true"]  = "-g dwarf2";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g dwarf2";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "";
-flags["warnings"]["all"]     = "-w+all";
-flags["warnings"]["error"]   = "-w+all -Werror";
+warnings["none"]    = "";
+warnings["default"] = "";
+warnings["all"]     = "-w+all";
+warnings["error"]   = "-w+all -Werror";
 
-flags["lto"]["true"]  = "";
-flags["lto"]["false"] = "";
+lto["true"]  = "";
+lto["false"] = "";
 
 
 include_dir  = "-I{path}";

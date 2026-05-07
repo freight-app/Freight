@@ -21,26 +21,26 @@ always_flags  = ["-fsycl"];
 
 toolset["ld"] = "icpx";
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-Os";
-flags["opt"]["z"] = "-Oz";
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-Os";
+opt["z"] = "-Oz";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "-Wall";
-flags["warnings"]["all"]     = "-Wall -Wextra";
-flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
+warnings["none"]    = "";
+warnings["default"] = "-Wall";
+warnings["all"]     = "-Wall -Wextra";
+warnings["error"]   = "-Wall -Wextra -Werror";
 
-flags["lto"]["true"]  = "-flto";
-flags["lto"]["false"] = "";
+lto["true"]  = "-flto";
+lto["false"] = "";
 
 
-flags["sanitize"]["template"] = "-fsanitize={values}";
+sanitize = "-fsanitize={values}";
 
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";

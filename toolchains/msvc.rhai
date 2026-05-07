@@ -25,32 +25,32 @@ toolset["ld"]    = "link.exe";
 toolset["ar"]    = "lib.exe";
 toolset["strip"] = "";
 
-flags["opt"]["0"] = "/Od";
-flags["opt"]["1"] = "/O1";
-flags["opt"]["2"] = "/O2";
-flags["opt"]["3"] = "/Ox";
-flags["opt"]["s"] = "/O1 /Os";
-flags["opt"]["z"] = "/O1 /Os";
+opt["0"] = "/Od";
+opt["1"] = "/O1";
+opt["2"] = "/O2";
+opt["3"] = "/Ox";
+opt["s"] = "/O1 /Os";
+opt["z"] = "/O1 /Os";
 
-flags["debug"]["true"]  = "/Zi /FS";
-flags["debug"]["false"] = "";
+dbg["true"]  = "/Zi /FS";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "/W0";
-flags["warnings"]["default"] = "/W3";
-flags["warnings"]["all"]     = "/W4";
-flags["warnings"]["error"]   = "/W4 /WX";
+warnings["none"]    = "/W0";
+warnings["default"] = "/W3";
+warnings["all"]     = "/W4";
+warnings["error"]   = "/W4 /WX";
 
 // Compile-step LTO flag — link-step uses lto_link below
-flags["lto"]["true"]  = "/GL";
-flags["lto"]["false"] = "";
+lto["true"]  = "/GL";
+lto["false"] = "";
 
 // Link-step LTO flag (replaces lto at link time)
-flags["lto_link"]["true"]  = "/LTCG";
-flags["lto_link"]["false"] = "";
+lto_link["true"]  = "/LTCG";
+lto_link["false"] = "";
 
 
-flags["sanitize"]["template"] = "/fsanitize={values}";
-flags["cpu_ext"]["template"]  = "";   // /arch:AVX2 etc. set via compiler.flags
+sanitize = "/fsanitize={values}";
+cpu_ext  = "";   // /arch:AVX2 etc. set via compiler.flags
 
 standards["c++17"]   = "/std:c++17";
 standards["c++20"]   = "/std:c++20";

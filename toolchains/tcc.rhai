@@ -18,23 +18,23 @@ toolset["ld"]  = "tcc";
 toolset["ar"]  = "tcc";
 
 // TCC ignores -O flags; all levels map to empty to avoid noise.
-flags["opt"]["0"] = "";
-flags["opt"]["1"] = "";
-flags["opt"]["2"] = "";
-flags["opt"]["3"] = "";
-flags["opt"]["s"] = "";
-flags["opt"]["z"] = "";
+opt["0"] = "";
+opt["1"] = "";
+opt["2"] = "";
+opt["3"] = "";
+opt["s"] = "";
+opt["z"] = "";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "-Wall";
-flags["warnings"]["all"]     = "-Wall";
-flags["warnings"]["error"]   = "-Wall -Werror";
+warnings["none"]    = "";
+warnings["default"] = "-Wall";
+warnings["all"]     = "-Wall";
+warnings["error"]   = "-Wall -Werror";
 
-flags["lto"]["true"]  = "";
-flags["lto"]["false"] = "";
+lto["true"]  = "";
+lto["false"] = "";
 
 
 standards["c99"] = "-std=c99";

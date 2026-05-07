@@ -31,37 +31,37 @@ toolset["ld"]    = _cxx;
 toolset["ar"]    = "ar";
 toolset["strip"] = "strip";
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-Os";
-flags["opt"]["z"] = "-Oz";
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-Os";
+opt["z"] = "-Oz";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "-Wall";
-flags["warnings"]["all"]     = "-Wall -Wextra -Wpedantic";
-flags["warnings"]["error"]   = "-Wall -Wextra -Wpedantic -Werror";
+warnings["none"]    = "";
+warnings["default"] = "-Wall";
+warnings["all"]     = "-Wall -Wextra -Wpedantic";
+warnings["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 
-flags["lto"]["true"]  = "-flto";
-flags["lto"]["false"] = "";
+lto["true"]  = "-flto";
+lto["false"] = "";
 
 
 // Clang supports selecting the C++ standard library at both compile and link time.
-flags["stdlib"]["libc++"]    = "-stdlib=libc++";
-flags["stdlib"]["libstdc++"] = "-stdlib=libstdc++";
-flags["stdlib"]["none"]      = "-nostdlib";
+stdlib["libc++"]    = "-stdlib=libc++";
+stdlib["libstdc++"] = "-stdlib=libstdc++";
+stdlib["none"]      = "-nostdlib";
 
-flags["runtime"]["glibc"]  = "";
-flags["runtime"]["musl"]   = "-static";
-flags["runtime"]["bionic"] = "";
-flags["runtime"]["none"]   = "-nostdlib -nodefaultlibs";
+runtime["glibc"]  = "";
+runtime["musl"]   = "-static";
+runtime["bionic"] = "";
+runtime["none"]   = "-nostdlib -nodefaultlibs";
 
-flags["sanitize"]["template"] = "-fsanitize={values}";
-flags["cpu_ext"]["template"]  = "-m{name}";
+sanitize = "-fsanitize={values}";
+cpu_ext  = "-m{name}";
 
 standards["c11"]   = "-std=c11";
 standards["c17"]   = "-std=c17";

@@ -21,27 +21,27 @@ toolset["cxx"] = "nvc++";
 toolset["ld"]  = "nvc++";
 toolset["ar"]  = "ar";
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-O2";
-flags["opt"]["z"] = "-O2";
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-O2";
+opt["z"] = "-O2";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g";
+dbg["false"] = "";
 
 // NVHPC uses -Minform= for verbosity; -Werror is supported for many diagnostics.
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "";
-flags["warnings"]["all"]     = "-Minform=warn";
-flags["warnings"]["error"]   = "-Minform=warn -Werror";
+warnings["none"]    = "";
+warnings["default"] = "";
+warnings["all"]     = "-Minform=warn";
+warnings["error"]   = "-Minform=warn -Werror";
 
-flags["lto"]["true"]  = "";
-flags["lto"]["false"] = "";
+lto["true"]  = "";
+lto["false"] = "";
 
 
-flags["cpu_ext"]["template"] = "-m{name}";
+cpu_ext = "-m{name}";
 
 standards["c11"]   = "-std=c11";
 standards["c17"]   = "-std=c17";
