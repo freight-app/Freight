@@ -3,7 +3,7 @@
 
 name          = "ispc";
 kind          = "compiler";
-family        = "";
+family        = "intel";
 sanitizer_options = [];
 homepage      = "https://ispc.github.io/";
 binary        = "ispc";
@@ -34,9 +34,8 @@ warnings["default"] = "";
 warnings["all"]     = "";
 warnings["error"]   = "--werror";
 
-lto["true"]  = "";
+lto["true"]  = "";   // ISPC performs whole-program optimisation internally; no separate LTO pass.
 lto["false"] = "";
-
 
 include_dir  = "-I{path}";
 define       = "-D{name}";

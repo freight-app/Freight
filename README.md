@@ -178,6 +178,7 @@ the template authoring guide.
 | HIP | `hip` | hipcc | `.hip` |
 | OpenCL | `opencl` | clang | `.cl` |
 | Intel SPMD | `ispc` | ispc | `.ispc` |
+| Assembly (GAS) | `gas` | as (binutils) | `.s` `.S` |
 | Assembly (NASM) | `nasm` | nasm | `.asm` `.nasm` |
 | Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
 

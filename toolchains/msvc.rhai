@@ -12,7 +12,7 @@ kind          = "compiler";
 family        = "";
 sanitizer_options    = ["address"];
 homepage      = "https://visualstudio.microsoft.com/";
-binary        = "link.exe";
+binary        = "cl.exe";
 version_arg   = "";           // cl.exe prints version on stderr with no args
 version_regex = "Version (\\d+\\.\\d+\\.\\d+\\.\\d+)";
 extensions    = [".cpp", ".cc", ".cxx", ".c++", ".c"];
@@ -51,7 +51,9 @@ lto_link["false"] = "";
 
 
 sanitize = "/fsanitize={values}";
-cpu_ext  = "";   // /arch:AVX2 etc. set via compiler.flags
+cpu_ext  = "";   // MSVC uses /arch:AVX2 syntax but freight queries gcc-style lowercase names
+                 // (avx2, sse2, …); the casing mismatch can't be bridged by a simple template.
+                 // Use [compiler.msvc] compiler_option or always_flags for explicit /arch: flags.
 
 standards["c++17"]   = "/std:c++17";
 standards["c++20"]   = "/std:c++20";

@@ -440,10 +440,10 @@ mod tests {
     #[test]
     fn load_templates_finds_all() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        assert_eq!(templates.len(), 19,
+        assert_eq!(templates.len(), 20,
             "expected g++, gcc, gfortran, clang++, clang, flang, \
              icpx, ifx, ispc, hipcc, nvcc, nvc++, nvc, nvfortran, \
-             nasm, yasm, msvc, opencl, tcc");
+             gas, nasm, yasm, msvc, opencl, tcc");
     }
 
     #[test]

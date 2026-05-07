@@ -24,7 +24,7 @@ dbg["false"] = "";
 warnings["none"]    = "";
 warnings["default"] = "";
 warnings["all"]     = "-w+all";
-warnings["error"]   = "-w+all -Werror";
+// warnings["error"] is assembler-specific: set in nasm.rhai / yasm.rhai.
 
 lto["true"]  = "";
 lto["false"] = "";

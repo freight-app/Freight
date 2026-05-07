@@ -4,7 +4,7 @@ include "../languages/_c";
 name       = "clang";
 homepage   = "https://clang.llvm.org/";
 binary     = _cc;
-extensions = [".c"];
+extensions = [".c", ".s", ".S"];
 sanitizer_options = ["address", "undefined", "thread", "memory", "leak", "hwaddress", "dataflow", "cfi", "safestack"];
 
 toolset["cc"]  = _cc;

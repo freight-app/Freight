@@ -8,7 +8,7 @@ homepage      = "https://rocm.docs.amd.com/";
 binary        = "hipcc";
 version_arg   = "--version";
 version_regex = "HIP version: (\\d+\\.\\d+\\.\\d+)";
-extensions    = [".hip", ".cpp", ".cc", ".cxx"];
+extensions    = [".hip"];
 passthrough        = false;
 passthrough_prefix = "";
 // AMD ROCm supports x86_64 Linux only.
@@ -36,9 +36,8 @@ warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra";
 warnings["error"]   = "-Wall -Wextra -Werror";
 
-lto["true"]  = "";
+lto["true"]  = "-flto";   // hipcc wraps clang; -flto is supported.
 lto["false"] = "";
-
 
 standards["c++14"] = "-std=c++14";
 standards["c++17"] = "-std=c++17";

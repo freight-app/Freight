@@ -12,6 +12,8 @@ toolset["as"] = "yasm";
 
 dbg["true"] = "-g dwarf2";
 
+warnings["error"] = "-w+all -Werror";
+
 // ── language_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [language.asm] in freight.toml.
 

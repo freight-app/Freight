@@ -34,9 +34,8 @@ warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra";
 warnings["error"]   = "-Wall -Wextra -Werror";
 
-lto["true"]  = "";
+lto["true"]  = "";   // OpenCL kernel compilation has no host-side LTO equivalent.
 lto["false"] = "";
-
 
 standards["CL1.0"] = "-cl-std=CL1.0";
 standards["CL1.1"] = "-cl-std=CL1.1";
@@ -49,7 +48,7 @@ define       = "-D{name}";
 define_value = "-D{name}={value}";
 output       = "-o {path}";
 compile_only = "-c";
-dep_file     = "-MF {path}";
+dep_file     = "-MMD -MF {path}";
 target       = "";
 sysroot      = "";
 

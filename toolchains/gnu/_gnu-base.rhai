@@ -1,7 +1,6 @@
-// Shared GNU compiler defaults — loaded via eval(read_file("_gnu-base")) in per-language files.
-// Top-level code here runs in the calling file's scope via Rhai's eval(); variables declared
-// with `let` (e.g. _gxx, _gcc) are visible in the calling script after the eval returns.
-// Any field can be overridden by an assignment after the eval(read_file(...)) call.
+// Shared GNU compiler defaults — included into per-language files via `include "_gnu-base"`.
+// Top-level code runs in the calling file's scope; `let` variables (e.g. _gxx, _gcc)
+// are visible after the include returns. Any field can be overridden after the include.
 
 // ── Binary detection ──────────────────────────────────────────────────────────
 // _gxx / _gcc are available to the language file after eval returns.

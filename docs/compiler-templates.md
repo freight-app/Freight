@@ -42,6 +42,7 @@ toolchains/
 │   └── hipcc.rhai           # requires_toolchain = ["cpp"]
 ├── asm/
 │   ├── _asm-base.rhai
+│   ├── gas.rhai             # requires_toolchain = ["c"]
 │   ├── nasm.rhai
 │   └── yasm.rhai
 ├── languages/

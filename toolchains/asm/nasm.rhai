@@ -11,6 +11,8 @@ toolset["as"] = "nasm";
 
 dbg["true"] = "-g -F dwarf";
 
+warnings["error"] = "-w+all -w+error";   // NASM: -w+error, not -Werror
+
 // ── language_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [language.asm] in freight.toml.
 
