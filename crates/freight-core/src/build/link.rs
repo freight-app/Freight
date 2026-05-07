@@ -318,6 +318,7 @@ mod tests {
             template: t.clone(),
             version: "0.0.0".into(),
             path: PathBuf::from(format!("/usr/bin/{}", t.binary)),
+            cpu_extensions: vec![],
         }).collect()
     }
 
