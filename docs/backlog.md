@@ -7,16 +7,6 @@ Each entry notes the rough scope and why it matters.
 
 ## Developer experience
 
-### `freight fmt`
-Run `clang-format` (or a configured formatter) over all sources in `src/`.
-Auto-detect the formatter binary; fall back to a built-in style when none is
-installed. Reads a `[fmt]` section in `freight.toml` for style overrides.
-
-### `freight lint`
-Invoke `clang-tidy` (C/C++), `flint++`, or other static analysers.
-Configurable via `[lint]` in `freight.toml`. Integrate check results with
-`freight check` in CI mode (`--ci` flag → non-zero exit on any warning).
-
 ### `freight bench`
 Build with profile `bench` (release + debug symbols, no strip) and run
 binaries whose names match `bench_*` or live in `benches/`. Time each run,
@@ -124,6 +114,14 @@ Activates on `freight.toml`, delegates to `freight lsp` for diagnostics,
 completions, and go-to-definition. Publish to the VS Code Marketplace.
 Tracked in Phase 14 of the roadmap; this entry is for the marketplace publishing
 and extension store maintenance side.
+
+### Template evaluation cache
+Cache the result of `.rhai` template evaluation to `~/.freight/template-cache.json` so
+freight doesn't re-run the Rhai engine on every invocation. Cache key = per-file content
+hash + a "base hash" of all `_*.rhai` shared includes (changing any base file drops the
+full cache; changing one template drops only that entry). Requires adding
+`Serialize`/`Deserialize` to `CompilerTemplate`, `DebuggerTemplate`, `ToolTemplate`, and
+all nested types. Payoff grows with template count; not urgent at current scale.
 
 ### `compile_commands.json` incremental update
 Currently regenerated from scratch on every run. Cache the previous output and

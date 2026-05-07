@@ -2,8 +2,9 @@
 // Outputs a .o + a C header. The host links the .o from C or C++.
 
 name          = "ispc";
+kind          = "compiler";
 family        = "";
-sanitizers = [];
+sanitizer_options = [];
 homepage      = "https://ispc.github.io/";
 binary        = "ispc";
 version_arg   = "--version";
@@ -18,23 +19,23 @@ requires_toolchain = ["cpp"];
 
 toolset["ld"] = "ispc";
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-O2";
-flags["opt"]["z"] = "-O2";
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-O2";
+opt["z"] = "-O2";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
+dbg["true"]  = "-g";
+dbg["false"] = "";
 
-flags["warnings"]["none"]    = "--woff";
-flags["warnings"]["default"] = "";
-flags["warnings"]["all"]     = "";
-flags["warnings"]["error"]   = "--werror";
+warnings["none"]    = "--woff";
+warnings["default"] = "";
+warnings["all"]     = "";
+warnings["error"]   = "--werror";
 
-flags["lto"]["true"]  = "";
-flags["lto"]["false"] = "";
+lto["true"]  = "";
+lto["false"] = "";
 
 
 include_dir  = "-I{path}";

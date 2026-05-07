@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use freight_core::build::{build_project, BuildOutput};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::toolchain::{detect_debuggers, load_debugger_templates};
+use freight_core::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
 
 use crate::output::{print_error, print_success, print_warning};
 
@@ -41,6 +41,11 @@ pub fn cmd_debug(
         Ok(m) => m,
         Err(e) => { print_error(&e.to_string()); return; }
     };
+
+    let mut global_cfg = GlobalConfig::load();
+    if let Some(local) = GlobalConfig::load_local(&project_dir) {
+        global_cfg.apply_local(local);
+    }
 
     // ── Detect debuggers ───────────────────────────────────────────────────────
     let templates = load_debugger_templates();
@@ -98,7 +103,8 @@ pub fn cmd_debug(
     );
 
     // ── Exec the debugger (replace the freight process on Unix) ──────────────────
-    let mut cmd = debugger.launch_command(&binary, args);
+    let extra_flags = debugger.assemble_flags(&global_cfg.debugger);
+    let mut cmd = debugger.launch_command(&binary, &extra_flags, args);
     exec_or_run(&mut cmd);
 }
 

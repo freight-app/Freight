@@ -18,13 +18,18 @@ freight/
 │   │       ├── output.rs       # coloured print helpers (CLI-only)
 │   │       └── commands/       # one cmd_* shell per command, calls into freight-core
 │   │           ├── mod.rs
-│   │           ├── build.rs    # cmd_build, cmd_run, cmd_test, cmd_clean
+│   │           ├── build.rs    # cmd_build, cmd_run, cmd_test, cmd_clean, cmd_watch
 │   │           ├── check.rs    # cmd_check + manifest summary printer
+│   │           ├── compile_commands.rs  # cmd_compile_commands
+│   │           ├── debug.rs    # cmd_debug
 │   │           ├── deps.rs     # cmd_add, remove, update, fetch, tree, search, info, login, publish, yank
 │   │           ├── doc.rs      # cmd_doc, cmd_man
+│   │           ├── fmt.rs      # cmd_fmt
+│   │           ├── install.rs  # cmd_install, cmd_package
+│   │           ├── lint.rs     # cmd_lint
 │   │           ├── migrate.rs  # cmd_migrate
 │   │           ├── new.rs      # cmd_new, cmd_init
-│   │           └── toolchain.rs # cmd_toolchain_list, cmd_toolchain_add
+│   │           └── toolchain.rs # cmd_toolchain_list, cmd_toolchain_add, cmd_toolchain_use
 │   ├── freight-core/             # library crate — all build logic, no CLI / no printing of results
 │   │   └── src/
 │   │       ├── lib.rs
@@ -41,9 +46,10 @@ freight/
 │   │       │   ├── mod.rs
 │   │       │   ├── template.rs
 │   │       │   ├── detect.rs
-│   │       │   ├── cache.rs
-│   │       │   ├── engine.rs   # Rhai engine + registered API
-│   │       │   └── debugger.rs # DebuggerTemplate + detect_debuggers()
+│   │       │   ├── cache.rs    # GlobalConfig — ~/.freight/config.toml + local override
+│   │       │   ├── script.rs   # quick_kind pre-check, shared Rhai helpers
+│   │       │   ├── debugger.rs # DebuggerTemplate + detect_debuggers()
+│   │       │   └── tool.rs     # ToolTemplate + DetectedTool (formatters + linters)
 │   │       ├── doc/            # documentation extraction and rendering
 │   │       │   ├── mod.rs      # OutputFormat enum + render() dispatch
 │   │       │   ├── extract.rs  # multi-language doc comment extractor
@@ -77,28 +83,57 @@ freight/
 │           ├── position.rs     # text-based position mapping for diagnostics
 │           ├── completion.rs   # section-aware completions
 │           └── docs.rs         # hover docs keyed by dotted path
-├── toolchains/                 # compiler scripts (.rhai) + debugger templates (.toml)
-│   ├── gcc.rhai
-│   ├── clang.rhai
-│   ├── nasm.rhai
-│   ├── gfortran.rhai
-│   ├── gnat.rhai
-│   ├── dmd.rhai
-│   ├── nvcc.rhai
-│   ├── hipcc.rhai
-│   ├── icpx.rhai
-│   ├── opencl.rhai
-│   ├── ispc.rhai
+├── toolchains/                 # compiler, debugger, formatter, and linter templates (.rhai)
+│   ├── gnu/
+│   │   ├── _gnu-base.rhai   # shared flags/toolset included by gnu compiler files
+│   │   ├── g++.rhai
+│   │   ├── gcc.rhai
+│   │   ├── gfortran.rhai
+│   │   └── gdb.rhai         # kind = "debugger"
+│   ├── llvm/
+│   │   ├── _llvm-base.rhai
+│   │   ├── clang++.rhai
+│   │   ├── clang.rhai
+│   │   ├── flang.rhai
+│   │   ├── lldb.rhai        # kind = "debugger"
+│   │   ├── clang-format.rhai # kind = "formatter"
+│   │   └── clang-tidy.rhai  # kind = "linter"
+│   ├── nvidia/
+│   │   ├── _nvhpc-base.rhai
+│   │   ├── nvc++.rhai
+│   │   ├── nvc.rhai
+│   │   ├── nvfortran.rhai
+│   │   └── nvcc.rhai        # requires_toolchain = ["cpp"]
+│   ├── intel/
+│   │   ├── _intel-base.rhai
+│   │   ├── icpx.rhai
+│   │   ├── ifx.rhai
+│   │   └── ispc.rhai        # requires_toolchain = ["cpp"]
+│   ├── amd/
+│   │   └── hipcc.rhai       # requires_toolchain = ["cpp"]
+│   ├── asm/
+│   │   ├── _asm-base.rhai
+│   │   ├── nasm.rhai
+│   │   └── yasm.rhai
+│   ├── languages/
+│   │   ├── _cpp.rhai        # extensions, defaults, standards, linking for C++
+│   │   ├── _c.rhai          # extensions, defaults, standards for C
+│   │   └── _fortran.rhai    # extensions, defaults, standards, linking for Fortran
+│   ├── astyle/
+│   │   └── astyle.rhai      # kind = "formatter"
+│   ├── uncrustify/
+│   │   └── uncrustify.rhai  # kind = "formatter"
+│   ├── fprettify/
+│   │   └── fprettify.rhai   # kind = "formatter"  (Fortran)
+│   ├── cppcheck/
+│   │   └── cppcheck.rhai    # kind = "linter"
+│   ├── cpplint/
+│   │   └── cpplint.rhai     # kind = "linter"
+│   ├── flawfinder/
+│   │   └── flawfinder.rhai  # kind = "linter"
+│   ├── msvc.rhai
 │   ├── tcc.rhai
-│   ├── nvhpc.rhai
-│   ├── ifx.rhai
-│   ├── flang.rhai
-│   ├── ldc2.rhai
-│   ├── yasm.rhai
-│   ├── circle.rhai
-│   └── debuggers/
-│       ├── lldb.toml
-│       └── gdb.toml
+│   └── opencl.rhai          # requires_toolchain = ["cpp"]
 └── examples/                   # every example is buildable via `freight build`
     ├── hello-cpp/
     ├── multi-lang/

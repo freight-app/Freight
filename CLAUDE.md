@@ -299,6 +299,6 @@ See **`docs/roadmap.md`** for full per-phase checklists. Status summary:
 9. **`CompilerTemplate::assemble_flags()` is pure** — no side effects, unit-tested.
 10. **Never shell out to Make / Ninja / CMake during a build** — freight owns the build graph entirely (foreign deps are the explicit exception).
 11. **Errors use `thiserror` in freight-core, surface at the CLI boundary.**
-12. **Feature branches** — each new feature gets its own `feature/<name>` branch off `master`.
+12. **Feature branches** — each new feature gets its own `feature/<name>` branch off `master`. Commit work incrementally on that branch as the feature progresses. Once the feature is complete and the build is clean, merge into `master` and delete the feature branch. Never accumulate multiple unrelated features on one branch.
 13. **Module detection is transparent** — `build_sources()` scans automatically; projects without `export module` take the unchanged fast path.
 

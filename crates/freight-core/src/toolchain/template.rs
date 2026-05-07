@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use rhai::{AST, Engine, FnPtr};
 use serde::Deserialize;
 
 use crate::error::FreightError;
@@ -279,12 +281,18 @@ pub struct CompilerTemplate {
     pub family: String,
     /// Sanitizer names this compiler supports (e.g. `"address"`, `"undefined"`).
     /// Empty = no declaration (don't validate — assume all pass through).
-    pub sanitizers: Vec<String>,
+    pub sanitizer_options: Vec<String>,
     pub binary: String,
     pub version_arg: String,
     pub version_regex: String,
     pub extensions: Vec<String>,
     pub standards: HashMap<String, String>,
+    /// Fallback option values used when the manifest doesn't specify them.
+    /// Keyed by option name (e.g. `"std"`, `"stdlib"`). Set in language files.
+    pub defaults: HashMap<String, String>,
+    /// `"debugger"` if this template describes a debugger; `""` for compiler templates.
+    /// Used by `load_templates` to skip non-compiler files.
+    pub kind: String,
     pub structure: StructureFlags,
     pub modules: ModuleStyle,
     pub passthrough: PassthroughConfig,
@@ -318,6 +326,19 @@ pub struct CompilerTemplate {
     pub toolset: HashMap<String, String>,
     /// Precompiled header support configuration.
     pub pch: PchConfig,
+
+    // ── Option handler fields ──────────────────────────────────────────────────
+    // Present only when the Rhai script registered `compiler_option` or
+    // `language_option` callbacks. `None` when loaded from a TOML template.
+    /// Rhai engine used to call stored FnPtrs (kept alive so closures remain valid).
+    pub(super) handler_engine: Option<Arc<Engine>>,
+    /// AST of the script that declared the handlers (needed by Rhai closure calls).
+    pub(super) handler_ast: Option<AST>,
+    /// Handlers registered via `compiler_option(name, fn)` in the Rhai script.
+    pub compiler_option_handlers: HashMap<String, FnPtr>,
+    /// Handlers registered via `language_option(name, fn)` in the Rhai script.
+    pub language_option_handlers: HashMap<String, FnPtr>,
+
     flags_opt: HashMap<String, String>,
     flags_debug: HashMap<String, String>,
     flags_warnings: HashMap<String, String>,
@@ -366,12 +387,14 @@ impl CompilerTemplate {
         Ok(Self {
             name: raw.name,
             family: String::new(),
-            sanitizers: vec![],
+            sanitizer_options: vec![],
             binary: raw.binary,
             version_arg: raw.version_arg,
             version_regex: raw.version_regex,
             extensions: raw.extensions.handles,
             standards: raw.standards,
+            defaults: HashMap::new(),
+            kind: String::new(),
             structure: StructureFlags {
                 include_dir: raw.structure.include_dir,
                 define: raw.structure.define,
@@ -409,6 +432,10 @@ impl CompilerTemplate {
             toolset: HashMap::new(),
             pch: PchConfig::default(),
             linking,
+            handler_engine: None,
+            handler_ast: None,
+            compiler_option_handlers: HashMap::new(),
+            language_option_handlers: HashMap::new(),
             flags_opt: raw.flags.opt,
             flags_debug: raw.flags.debug,
             flags_warnings: raw.flags.warnings,
@@ -421,13 +448,40 @@ impl CompilerTemplate {
         })
     }
 
-    /// Parse a compiler template from a Rhai script.
+    /// Parse a compiler template from a Rhai script (no include resolution).
     pub fn from_rhai(src: &str) -> Result<Self, FreightError> {
-        let def = script::eval_script(src)?;
-        Self::from_def(def)
+        let r = script::eval_script(src, None)?;
+        Self::from_eval_result(r)
     }
 
-    fn from_def(def: script::ToolchainDef) -> Result<Self, FreightError> {
+    /// Read a `.rhai` file from disk and parse it, resolving any `include()`
+    /// directives relative to the file's directory.
+    pub fn from_rhai_file(path: &Path) -> Result<Self, FreightError> {
+        let src = std::fs::read_to_string(path).map_err(FreightError::Io)?;
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let r = script::eval_script(&src, Some(dir))?;
+        Self::from_eval_result(r)
+    }
+
+    fn from_eval_result(r: script::EvalResult) -> Result<Self, FreightError> {
+        let script::EvalResult { def, engine, ast, compiler_option_handlers, language_option_handlers } = r;
+        let has_handlers = !compiler_option_handlers.is_empty() || !language_option_handlers.is_empty();
+        let (handler_engine, handler_ast) = if has_handlers {
+            (Some(Arc::new(engine)), Some(ast))
+        } else {
+            (None, None)
+        };
+        Self::from_def_inner(def, handler_engine, handler_ast, compiler_option_handlers, language_option_handlers)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_def_inner(
+        def: script::ToolchainDef,
+        handler_engine: Option<Arc<Engine>>,
+        handler_ast: Option<AST>,
+        compiler_option_handlers: HashMap<String, FnPtr>,
+        language_option_handlers: HashMap<String, FnPtr>,
+    ) -> Result<Self, FreightError> {
         // Primary binary: prefer explicit toolset roles, fall back to set_binary()
         let binary = ["ld", "cxx", "cc"]
             .iter()
@@ -443,7 +497,6 @@ impl CompilerTemplate {
             )));
         }
 
-        let get_flags = |cat: &str| def.flags.get(cat).cloned().unwrap_or_default();
         let get_struct = |key: &str| def.structure.get(key).cloned().unwrap_or_default();
 
         let fallback_output = get_struct("output");
@@ -525,7 +578,7 @@ impl CompilerTemplate {
         Ok(Self {
             name:                  def.name,
             family:                def.family,
-            sanitizers:            def.sanitizers,
+            sanitizer_options:            def.sanitizer_options,
             binary,
             version_arg:           def.version_arg,
             version_regex:         def.version_regex,
@@ -548,19 +601,21 @@ impl CompilerTemplate {
             toolset:               def.toolset,
             pch,
             linking,
-            flags_opt:             get_flags("opt"),
-            flags_debug:           get_flags("debug"),
-            flags_warnings:        get_flags("warnings"),
-            flags_lto:             get_flags("lto"),
-            flags_lto_link:        get_flags("lto_link"),
-            flags_sanitize:        def.flags.get("sanitize")
-                                     .and_then(|m| m.get("template")).cloned()
-                                     .unwrap_or_default(),
-            flags_cpu_extension:   def.flags.get("cpu_ext")
-                                     .and_then(|m| m.get("template")).cloned()
-                                     .unwrap_or_default(),
-            flags_stdlib:          get_flags("stdlib"),
-            flags_runtime:         get_flags("runtime"),
+            handler_engine,
+            handler_ast,
+            compiler_option_handlers,
+            language_option_handlers,
+            flags_opt:             def.flags_opt,
+            flags_debug:           def.flags_debug,
+            flags_warnings:        def.flags_warnings,
+            flags_lto:             def.flags_lto,
+            flags_lto_link:        def.flags_lto_link,
+            flags_sanitize:        def.sanitize,
+            flags_cpu_extension:   def.cpu_ext,
+            flags_stdlib:          def.flags_stdlib,
+            flags_runtime:         def.flags_runtime,
+            defaults:              def.defaults,
+            kind:                  def.kind,
         })
     }
 
@@ -593,12 +648,12 @@ impl CompilerTemplate {
 
         // Sanitizers
         if !settings.sanitize.is_empty() && !self.flags_sanitize.is_empty() {
-            let active: Vec<&str> = if self.sanitizers.is_empty() {
+            let active: Vec<&str> = if self.sanitizer_options.is_empty() {
                 settings.sanitize.iter().map(|s| s.as_str()).collect()
             } else {
                 let mut active = Vec::new();
                 for s in &settings.sanitize {
-                    if self.sanitizers.contains(s) {
+                    if self.sanitizer_options.contains(s) {
                         active.push(s.as_str());
                     } else {
                         eprintln!(
@@ -615,9 +670,11 @@ impl CompilerTemplate {
             }
         }
 
-        // Language standard
-        if let Some(std) = &settings.standard {
-            if let Some(f) = self.standards.get(std.as_str()) {
+        // Language standard — manifest setting, then template default, then nothing.
+        let effective_std = settings.standard.as_deref()
+            .or_else(|| self.defaults.get("std").map(String::as_str));
+        if let Some(std) = effective_std {
+            if let Some(f) = self.standards.get(std) {
                 push_flag_str(&mut flags, f);
             }
         }
@@ -689,9 +746,14 @@ impl CompilerTemplate {
             push_flag_str(&mut flags, arch_flag);
         }
 
-        // C++ stdlib flag (e.g. `-stdlib=libc++`).
-        if !settings.stdlib.is_empty() {
-            if let Some(f) = self.flags_stdlib.get(&settings.stdlib) {
+        // C++ stdlib flag — manifest setting, then template default, then nothing.
+        let effective_stdlib = if !settings.stdlib.is_empty() {
+            Some(settings.stdlib.as_str())
+        } else {
+            self.defaults.get("stdlib").map(String::as_str)
+        };
+        if let Some(stdlib) = effective_stdlib {
+            if let Some(f) = self.flags_stdlib.get(stdlib) {
                 push_flag_str(&mut flags, f);
             }
         }
@@ -759,6 +821,34 @@ impl CompilerTemplate {
     /// GCC/Clang: `"-lssl"`, MSVC: `"ssl.lib"`.
     pub fn system_lib_flag(&self, name: &str) -> String {
         self.structure.system_lib.replace("{name}", name)
+    }
+
+    /// Run `language_option` handlers for the given freeform options map.
+    /// `version` is the detected compiler version string passed to each handler.
+    /// Returns all flags injected by the handlers via `add_flag()`.
+    pub fn run_language_option_handlers(
+        &self,
+        options: &HashMap<String, String>,
+        version: &str,
+    ) -> Vec<String> {
+        let (Some(engine), Some(ast)) = (&self.handler_engine, &self.handler_ast) else {
+            return vec![];
+        };
+        script::run_handlers(engine, ast, &self.language_option_handlers, options, version)
+    }
+
+    /// Run `compiler_option` handlers for the given freeform options map.
+    /// `version` is the detected compiler version string passed to each handler.
+    /// Returns all flags injected by the handlers via `add_flag()`.
+    pub fn run_compiler_option_handlers(
+        &self,
+        options: &HashMap<String, String>,
+        version: &str,
+    ) -> Vec<String> {
+        let (Some(engine), Some(ast)) = (&self.handler_engine, &self.handler_ast) else {
+            return vec![];
+        };
+        script::run_handlers(engine, ast, &self.compiler_option_handlers, options, version)
     }
 
     /// Assemble flags for the **link step**.
@@ -916,56 +1006,68 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const GCC_RHAI: &str      = include_str!("../../../../toolchains/gnu/gcc.rhai");
-    const CLANG_RHAI: &str    = include_str!("../../../../toolchains/llvm/clang.rhai");
-    const GFORTRAN_RHAI: &str = include_str!("../../../../toolchains/gnu/gfortran.rhai");
-    const NVCC_RHAI: &str     = include_str!("../../../../toolchains/nvidia/nvcc.rhai");
-    const OPENCL_RHAI: &str   = include_str!("../../../../toolchains/opencl.rhai");
-    const HIPCC_RHAI: &str    = include_str!("../../../../toolchains/amd/hipcc.rhai");
-    const ICPX_RHAI: &str     = include_str!("../../../../toolchains/intel/icpx.rhai");
-    const ISPC_RHAI: &str     = include_str!("../../../../toolchains/intel/ispc.rhai");
-    const NASM_RHAI: &str     = include_str!("../../../../toolchains/nasm.rhai");
-    const TCC_RHAI: &str      = include_str!("../../../../toolchains/tcc.rhai");
-    const NVHPC_RHAI: &str    = include_str!("../../../../toolchains/nvidia/nvhpc.rhai");
-    const IFX_RHAI: &str      = include_str!("../../../../toolchains/intel/ifx.rhai");
-    const FLANG_RHAI: &str    = include_str!("../../../../toolchains/llvm/flang.rhai");
-    const YASM_RHAI: &str     = include_str!("../../../../toolchains/yasm.rhai");
-    const MSVC_RHAI: &str     = include_str!("../../../../toolchains/msvc.rhai");
+    // Standalone templates (no include) — from_rhai is fine without a directory.
+    const NVCC_RHAI: &str   = include_str!("../../../../toolchains/nvidia/nvcc.rhai");
+    const OPENCL_RHAI: &str = include_str!("../../../../toolchains/opencl.rhai");
+    const HIPCC_RHAI: &str  = include_str!("../../../../toolchains/amd/hipcc.rhai");
+    const ISPC_RHAI: &str   = include_str!("../../../../toolchains/intel/ispc.rhai");
+    const TCC_RHAI: &str    = include_str!("../../../../toolchains/tcc.rhai");
+    const MSVC_RHAI: &str   = include_str!("../../../../toolchains/msvc.rhai");
 
-    fn gcc() -> CompilerTemplate { CompilerTemplate::from_rhai(GCC_RHAI).unwrap() }
-    fn clang() -> CompilerTemplate { CompilerTemplate::from_rhai(CLANG_RHAI).unwrap() }
-    fn nvcc() -> CompilerTemplate { CompilerTemplate::from_rhai(NVCC_RHAI).unwrap() }
+    const TOOLCHAINS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
+    fn rhai(rel: &str) -> CompilerTemplate {
+        CompilerTemplate::from_rhai_file(&std::path::Path::new(TOOLCHAINS).join(rel)).unwrap()
+    }
+    fn gcc()   -> CompilerTemplate { rhai("gnu/g++.rhai") }
+    fn gcc_c() -> CompilerTemplate { rhai("gnu/gcc.rhai") }
+    fn clang() -> CompilerTemplate { rhai("llvm/clang++.rhai") }
+    fn nvcc()  -> CompilerTemplate { CompilerTemplate::from_rhai(NVCC_RHAI).unwrap() }
 
     // ── Parsing ───────────────────────────────────────────────────────────────
 
     #[test]
     fn all_templates_parse() {
-        CompilerTemplate::from_rhai(GCC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(CLANG_RHAI).unwrap();
-        CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
-        CompilerTemplate::from_rhai(NVCC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
-        CompilerTemplate::from_rhai(HIPCC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(ICPX_RHAI).unwrap();
+        // GNU family
+        rhai("gnu/g++.rhai");
+        rhai("gnu/gcc.rhai");
+        rhai("gnu/gfortran.rhai");
+        // LLVM family
+        rhai("llvm/clang++.rhai");
+        rhai("llvm/clang.rhai");
+        rhai("llvm/flang.rhai");
+        // Intel
+        rhai("intel/icpx.rhai");
+        rhai("intel/ifx.rhai");
         CompilerTemplate::from_rhai(ISPC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(NASM_RHAI).unwrap();
+        // AMD
+        CompilerTemplate::from_rhai(HIPCC_RHAI).unwrap();
+        // NVIDIA
+        CompilerTemplate::from_rhai(NVCC_RHAI).unwrap();
+        rhai("nvidia/nvc++.rhai");
+        rhai("nvidia/nvc.rhai");
+        rhai("nvidia/nvfortran.rhai");
+        // Assemblers
+        rhai("asm/nasm.rhai");
+        rhai("asm/yasm.rhai");
+        // Standalone
         CompilerTemplate::from_rhai(TCC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(NVHPC_RHAI).unwrap();
-        CompilerTemplate::from_rhai(IFX_RHAI).unwrap();
-        CompilerTemplate::from_rhai(FLANG_RHAI).unwrap();
-        CompilerTemplate::from_rhai(YASM_RHAI).unwrap();
+        CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
     }
 
     #[test]
-    fn gcc_linking_declares_cpp_and_c() {
+    fn gcc_cpp_linking() {
         let t = gcc();
-        let cpp = t.linking.get("cpp").expect("gcc should have linking.cpp");
+        let cpp = t.linking.get("cpp").expect("g++ should have linking.cpp");
         assert_eq!(cpp.abi, "c++");
         assert!(cpp.compatible.contains(&"c".to_string()));
         assert!(cpp.compatible.contains(&"fortran".to_string()));
         assert_eq!(cpp.compile_binary, None, "C++ uses the template's main binary (g++)");
+    }
 
+    #[test]
+    fn gcc_c_linking() {
+        let t = gcc_c();
         let c = t.linking.get("c").expect("gcc should have linking.c");
         assert_eq!(c.abi, "c");
         assert_eq!(c.compile_binary.as_deref(), Some("gcc"),
@@ -984,12 +1086,15 @@ mod tests {
     #[test]
     fn gcc_fields() {
         let t = gcc();
-        assert_eq!(t.name, "gcc");
+        assert_eq!(t.name, "g++");
         assert_eq!(t.binary, "g++");
         assert!(t.extensions.contains(&".cpp".to_string()));
-        assert!(t.extensions.contains(&".c".to_string()));
         assert!(t.standards.contains_key("c++20"));
-        assert!(t.standards.contains_key("c17"), "gcc handles C standards too");
+
+        let tc = gcc_c();
+        assert_eq!(tc.name, "gcc");
+        assert!(tc.extensions.contains(&".c".to_string()));
+        assert!(tc.standards.contains_key("c17"));
     }
 
     #[test]
@@ -1071,7 +1176,7 @@ mod tests {
 
     #[test]
     fn gfortran_has_no_modules() {
-        let t = CompilerTemplate::from_rhai(GFORTRAN_RHAI).unwrap();
+        let t = rhai("gnu/gfortran.rhai");
         assert_eq!(t.modules, ModuleStyle::Unsupported);
         assert!(t.extensions.contains(&".f90".to_string()));
     }
@@ -1118,6 +1223,29 @@ mod tests {
         // Strip is a post-link step, not a compiler flag — -s must not appear here.
         assert!(!flags.contains(&"-s".to_string()), "strip is post-link, not a compile flag");
         assert!(!flags.contains(&"-g".to_string()), "no debug");
+        // Default standard from _cpp.rhai must be applied even when manifest omits it.
+        assert!(flags.contains(&"-std=c++17".to_string()), "default c++17 standard");
+    }
+
+    #[test]
+    fn default_standard_applied_when_not_set() {
+        // C++ template defaults to c++17.
+        let cpp_flags = gcc().assemble_flags(&BuildSettings { standard: None, ..Default::default() });
+        assert!(cpp_flags.contains(&"-std=c++17".to_string()), "g++ default std is c++17");
+
+        // C template defaults to c11.
+        let c_flags = gcc_c().assemble_flags(&BuildSettings { standard: None, ..Default::default() });
+        assert!(c_flags.contains(&"-std=c11".to_string()), "gcc default std is c11");
+    }
+
+    #[test]
+    fn manifest_standard_overrides_default() {
+        let flags = gcc().assemble_flags(&BuildSettings {
+            standard: Some("c++23".into()),
+            ..Default::default()
+        });
+        assert!(flags.contains(&"-std=c++23".to_string()), "explicit standard used");
+        assert!(!flags.contains(&"-std=c++17".to_string()), "default not emitted when overridden");
     }
 
     #[test]

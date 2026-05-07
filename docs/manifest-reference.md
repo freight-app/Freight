@@ -22,27 +22,33 @@ license     = "MIT"                # optional — SPDX identifier
 
 ## `[language.<key>]`
 
-Per-language compiler settings. The key must match a `[linking.<key>]` name in a loaded compiler
-template (e.g. `cpp`, `c`, `fortran`, `asm`).
+Languages are **detected automatically** from source file extensions — no manifest declaration
+needed. A `.cu` file activates the `cuda` language key; a `.asm` file activates `asm`; and so on.
+
+`[language.<key>]` sections are **optional configuration** applied only when source files of that
+language are actually present. A declared section for an absent language is silently ignored.
+
+Each compiler template supplies a default standard (e.g. `c++17` for C++). Use `[language.*]` to
+override it or to set language-specific options.
 
 ```toml
 [language.cpp]
-std = "c++20"   # compiler standard passed as -std=... ; values come from [standards] in the template
+std = "c++20"   # override the template default; values come from [standards] in the template
 
 [language.c]
 std = "c17"
 
 [language.fortran]
-# std is optional for Fortran
+std = "f2018"   # optional; template default applies if omitted
 ```
 
 Available standard strings depend on the loaded template. Common values:
 
-| Key | Typical values |
-|---|---|
-| `cpp` | `c++11`, `c++14`, `c++17`, `c++20`, `c++23` |
-| `c` | `c11`, `c17`, `c23` |
-| `fortran` | `f2003`, `f2008`, `f2018` |
+| Key | Default | Typical overrides |
+|---|---|---|
+| `cpp` | `c++17` | `c++20`, `c++23` |
+| `c` | `c11` | `c17`, `c23` |
+| `fortran` | `f2018` | `f2003`, `f2008` |
 
 ---
 
@@ -331,3 +337,92 @@ paths = ["/usr/local/include"]
 
 Overlayable fields: `dependencies`, `compiler.defines`, `compiler.flags`, `compiler.includes.paths`.
 `[[bin]]`, `[language]`, `[lib]`, profiles, and sanitizers are not overlayable in v1.
+
+---
+
+## `[formatter]`
+
+Optional. Declares the project's preferred formatter and its settings. When absent, `freight fmt`
+auto-selects the first formatter found on PATH.
+
+```toml
+[formatter]
+name   = "clang-format"   # optional — pin a specific formatter; auto-detected when absent
+style  = "Google"         # tool setting → --style=Google
+# config = ".clang-format" # alternative: point to a config file → --style=file:.clang-format
+```
+
+The setting keys (`style`, `config`, …) come from the selected formatter's template. Unknown keys
+are silently ignored. On first run without any config, `freight fmt` prints a hint listing the
+available settings and valid values for the detected tool.
+
+```sh
+freight fmt           # format all source files in-place
+freight fmt --check   # exit non-zero if any file needs reformatting (CI use)
+```
+
+| Formatter | Settings |
+|---|---|
+| `clang-format` | `style` (Google \| LLVM \| Mozilla \| WebKit \| Chromium \| Microsoft \| GNU \| file), `config` |
+| `astyle` | `style` (allman \| java \| kr \| stroustrup \| google \| mozilla \| otbs \| vtk \| ratliff \| lisp), `indent` |
+| `uncrustify` | `config` |
+| `fprettify` | `indent`, `config` |
+
+---
+
+## `[linter]`
+
+Optional. Declares the project's preferred linter and its settings. When absent, `freight lint`
+auto-selects the first linter found on PATH.
+
+```toml
+[linter]
+name   = "clang-tidy"              # optional — pin a specific linter; auto-detected when absent
+checks = "-*,modernize-*,bugprone-*"  # tool setting → --checks=...
+# config = ".clang-tidy"            # alternative: point to a config file
+```
+
+```sh
+freight lint          # run static analysis, report issues
+freight lint --fix    # apply safe auto-fixes where the tool supports them
+```
+
+| Linter | Settings |
+|---|---|
+| `clang-tidy` | `checks`, `config` |
+| `cppcheck` | `enable` (all \| warning \| style \| performance \| portability \| information), `std`, `suppress`, `jobs` |
+| `cpplint` | `filter`, `linelength`, `root` |
+| `flawfinder` | `minlevel` (0–5) |
+
+Tools without a native auto-fix mode (`cppcheck`, `cpplint`, `flawfinder`) treat `freight lint --fix`
+identically to `freight lint`.
+
+---
+
+## Developer config — outside `freight.toml`
+
+Toolchain selection, debugger preferences, and cross-compilation settings are **developer
+concerns**, not project concerns. They live outside `freight.toml` and are not committed as
+part of the project:
+
+| File | Scope | Description |
+|---|---|---|
+| `~/.freight/config.toml` | global | Machine-wide developer defaults (toolchain, debugger, sysroot) |
+| `<project>/.freight/config.toml` | local | Project-specific developer overrides; can be committed or gitignored |
+
+Local config overrides global. Both share the same format:
+
+```toml
+# ~/.freight/config.toml  or  <project>/.freight/config.toml
+default_backend = "clang"       # preferred compiler family
+target          = "aarch64-linux-gnu"  # cross-compilation target triple
+sysroot         = "/opt/sysroot"
+
+[debugger.gdb]
+args  = ["--tui"]   # raw extra flags before the program separator
+tui   = true        # resolved via gdb.rhai's settings map → --tui
+quiet = true
+
+[debugger.lldb]
+no_use_colors = true
+```

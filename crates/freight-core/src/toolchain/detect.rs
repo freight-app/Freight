@@ -4,6 +4,7 @@ use std::process::Command;
 use regex::Regex;
 
 use super::cache::{freight_home, ToolchainCache};
+use super::script::quick_kind;
 use super::template::CompilerTemplate;
 use crate::error::FreightError;
 
@@ -102,10 +103,15 @@ pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
         if path.extension().and_then(|e| e.to_str()) != Some("rhai") {
             continue;
         }
-        let Ok(src) = std::fs::read_to_string(path) else {
+        // Files starting with '_' are shared includes, not standalone templates.
+        if path.file_name().and_then(|n| n.to_str())
+            .map(|n| n.starts_with('_')).unwrap_or(false)
+        {
             continue;
-        };
-        match CompilerTemplate::from_rhai(&src) {
+        }
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        if quick_kind(&src) != "compiler" { continue; }
+        match CompilerTemplate::from_rhai_file(path) {
             Ok(t) => templates.push(t),
             Err(e) => eprintln!("warn: skipping {:?}: {e}", path.file_name().unwrap_or_default()),
         }
@@ -382,9 +388,10 @@ mod tests {
     #[test]
     fn load_templates_finds_all() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        assert_eq!(templates.len(), 15,
-            "expected gcc, clang, gfortran, nvcc, opencl, hipcc, icpx, ispc, nasm, \
-             tcc, nvhpc, ifx, flang, yasm, msvc");
+        assert_eq!(templates.len(), 19,
+            "expected g++, gcc, gfortran, clang++, clang, flang, \
+             icpx, ifx, ispc, hipcc, nvcc, nvc++, nvc, nvfortran, \
+             nasm, yasm, msvc, opencl, tcc");
     }
 
     #[test]
@@ -457,7 +464,8 @@ mod tests {
         let gnu = groups.toolchains.iter().find(|tc| tc.name == "gnu")
             .expect("gnu toolchain should exist");
         let names: Vec<&str> = gnu.compilers.iter().map(|c| c.template.name.as_str()).collect();
-        assert!(names.contains(&"gcc"), "gnu should contain gcc");
+        assert!(names.contains(&"g++"),  "gnu should contain g++");
+        assert!(names.contains(&"gcc"),  "gnu should contain gcc");
         assert!(names.contains(&"gfortran"), "gnu should contain gfortran");
         assert!(gnu.languages.contains(&"cpp".to_string()), "gnu covers cpp");
         assert!(gnu.languages.contains(&"c".to_string()), "gnu covers c");
@@ -473,8 +481,12 @@ mod tests {
         let llvm = groups.toolchains.iter().find(|tc| tc.name == "llvm")
             .expect("llvm toolchain should exist");
         let names: Vec<&str> = llvm.compilers.iter().map(|c| c.template.name.as_str()).collect();
-        assert!(names.contains(&"clang"), "llvm should contain clang");
-        assert!(names.contains(&"flang"), "llvm should contain flang");
+        assert!(names.contains(&"clang++"), "llvm should contain clang++");
+        assert!(names.contains(&"clang"),   "llvm should contain clang");
+        assert!(names.contains(&"flang"),     "llvm should contain flang");
+        assert!(llvm.languages.contains(&"cpp".to_string()),     "llvm covers cpp");
+        assert!(llvm.languages.contains(&"c".to_string()),       "llvm covers c");
+        assert!(llvm.languages.contains(&"fortran".to_string()), "llvm covers fortran");
     }
 
     #[test]
@@ -573,9 +585,9 @@ mod tests {
     #[test]
     fn toolchain_use_rejects_individual_compiler_with_family() {
         let templates = load_templates(Path::new(TEMPLATES_DIR));
-        // "gcc" has family "gnu", so it should be rejected — use "gnu" instead.
-        let result = super::super::super::toolchain::toolchain_use("gcc", &templates);
-        assert!(result.is_err(), "'gcc' (has family 'gnu') should not be a valid toolchain name");
+        // "g++" has family "gnu", so it should be rejected — use "gnu" instead.
+        let result = super::super::super::toolchain::toolchain_use("g++", &templates);
+        assert!(result.is_err(), "'g++' (has family 'gnu') should not be a valid toolchain name");
     }
 
     #[test]
@@ -655,7 +667,7 @@ pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, FreightError> {
     }
 
     let src = std::fs::read_to_string(rhai_path).map_err(FreightError::Io)?;
-    let template = CompilerTemplate::from_rhai(&src)?;
+    let template = CompilerTemplate::from_rhai_file(rhai_path)?;
 
     let user_dir = user_templates_dir()
         .ok_or_else(|| FreightError::TemplateError("cannot determine ~/.freight directory".into()))?;

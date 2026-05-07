@@ -137,12 +137,27 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `msvc.rhai` — full MSVC (cl.exe / link.exe) toolchain script
 
 ### Debugger Integration ✓ COMPLETE
-- [x] `DebuggerTemplate` struct — `name`, `binary`, `[launch]` separator, `[dap]` config
+- [x] `DebuggerTemplate` struct — `name`, `binary`, `[launch]` separator, `[dap]` config, `settings`, `default_args`
 - [x] `detect_debuggers()` — probes `$PATH`, extracts version, finds DAP adapter binary
-- [x] `toolchains/debuggers/lldb.toml` and `toolchains/debuggers/gdb.toml`
+- [x] `toolchains/gnu/gdb.rhai` and `toolchains/llvm/lldb.rhai` — `kind = "debugger"`
 - [x] `freight toolchain list` — second table section for debuggers
 - [x] `freight debug [<binary>] [--debugger <name>] [-- <args>]` — builds with debug profile, execs debugger
 - [x] `freight debug --launch-json` — writes/merges `.vscode/launch.json`
+- [x] Debugger config is a developer concern — lives in `~/.freight/config.toml` and `<project>/.freight/config.toml`, not in `freight.toml`
+- [x] `GlobalConfig::load()` + `apply_local()` — global config with per-project override
+
+### Formatter & Linter Integration ✓ COMPLETE
+- [x] `ToolTemplate` struct — `kind`, `name`, `extensions`, `run["fix"|"check"]`, `settings`, `values`
+- [x] `load_formatter_templates()` / `load_linter_templates()` — `kind` pre-check routes to correct loader
+- [x] `detect_tools()` — probes `$PATH`, extracts version
+- [x] `select_formatter()` / `select_linter()` — picks by `[formatter] name` or first detected
+- [x] `collect_sources()` — walks `src/` for files matching the template's extensions
+- [x] `values["key"] = [...]` in templates — valid choices exposed to the LSP and printed as hints
+- [x] `freight fmt [--check]` — format in-place or report-only
+- [x] `freight lint [--fix]` — static analysis with optional auto-fix
+- [x] Formatter/linter config is a **project concern** — lives in `[formatter]` / `[linter]` in `freight.toml`
+- [x] 4 bundled formatter templates: `clang-format`, `astyle`, `uncrustify`, `fprettify`
+- [x] 4 bundled linter templates: `clang-tidy`, `cppcheck`, `cpplint`, `flawfinder`
 
 ### Registry (in progress — `feature/registry-lockfile`, `feature/registry-server`)
 The registry spans two concerns that depend on each other: the client-side

@@ -1,8 +1,69 @@
 # Compiler Templates
 
-Freight's compiler system is fully data-driven. Every supported compiler or assembler is described
-by a `.rhai` script in `toolchains/` — no Rust changes required to add a new compiler. Adding a
-new compiler means writing a script and installing it with `freight toolchain add`.
+Freight's compiler system is fully data-driven. Every supported compiler, assembler, or debugger
+is described by a `.rhai` script in `toolchains/` — no Rust changes required to add a new one.
+Adding a new compiler means writing a script and installing it with `freight toolchain add`.
+
+---
+
+## Directory layout
+
+Templates are organised into family subdirectories. Files prefixed with `_` are shared includes,
+not standalone templates.
+
+```
+toolchains/
+├── gnu/
+│   ├── _gnu-base.rhai       # shared flags/toolset for all GNU compilers
+│   ├── g++.rhai
+│   ├── gcc.rhai
+│   ├── gfortran.rhai
+│   └── gdb.rhai             # kind = "debugger"
+├── llvm/
+│   ├── _llvm-base.rhai
+│   ├── clang++.rhai
+│   ├── clang.rhai
+│   ├── flang.rhai
+│   ├── lldb.rhai            # kind = "debugger"
+│   ├── clang-format.rhai    # kind = "formatter"
+│   └── clang-tidy.rhai      # kind = "linter"
+├── nvidia/
+│   ├── _nvhpc-base.rhai
+│   ├── nvc++.rhai
+│   ├── nvc.rhai
+│   ├── nvfortran.rhai
+│   └── nvcc.rhai            # requires_toolchain = ["cpp"]
+├── intel/
+│   ├── _intel-base.rhai
+│   ├── icpx.rhai
+│   └── ifx.rhai
+├── amd/
+│   └── hipcc.rhai           # requires_toolchain = ["cpp"]
+├── asm/
+│   ├── _asm-base.rhai
+│   ├── nasm.rhai
+│   └── yasm.rhai
+├── languages/
+│   ├── _cpp.rhai            # extensions, defaults, standards, linking for C++
+│   ├── _c.rhai              # extensions, defaults, standards for C
+│   └── _fortran.rhai        # extensions, defaults, standards, linking for Fortran
+├── astyle/
+│   └── astyle.rhai          # kind = "formatter"
+├── uncrustify/
+│   └── uncrustify.rhai      # kind = "formatter"
+├── fprettify/
+│   └── fprettify.rhai       # kind = "formatter"  (Fortran)
+├── cppcheck/
+│   └── cppcheck.rhai        # kind = "linter"
+├── cpplint/
+│   └── cpplint.rhai         # kind = "linter"
+├── flawfinder/
+│   └── flawfinder.rhai      # kind = "linter"
+├── msvc.rhai
+├── tcc.rhai
+├── opencl.rhai              # requires_toolchain = ["cpp"]
+└── intel/ispc.rhai          # requires_toolchain = ["cpp"]
+```
 
 ---
 
@@ -13,130 +74,51 @@ Freight merges templates from two locations at startup:
 1. **Bundled scripts** — shipped with the freight binary in `toolchains/`
 2. **User scripts** — installed in `~/.freight/templates/` via `freight toolchain add <path>`
 
-User scripts with the same `name` as a bundled script take precedence (override).
+User scripts with the same `name` as a bundled script take precedence. Files starting with `_`
+are shared includes — they are never loaded as standalone templates.
+
+A fast `kind` pre-check reads the first `kind = "..."` line of each file before doing a full
+Rhai evaluation, routing each template to the correct loader:
+
+| `kind` | Loaded by | Used by |
+|---|---|---|
+| `"compiler"` (default) | `load_templates()` | `freight build`, `freight toolchain list` |
+| `"debugger"` | `load_debugger_templates()` | `freight debug` |
+| `"formatter"` | `load_formatter_templates()` | `freight fmt` |
+| `"linter"` | `load_linter_templates()` | `freight lint` |
 
 ---
 
-## Script structure
+## Shared base files and `include`
 
-Templates use direct assignment for scalar fields, map subscript syntax for flag tables, and
-standard Rhai `fn` blocks for the detection and load hooks. Here is a fully annotated example:
+Common code is factored into `_base` files and included with the `include` keyword:
 
 ```rhai
-// toolchains/gnu/gcc.rhai
+// gnu/g++.rhai
+include "_gnu-base";           // resolves relative to this file's directory
+include "../languages/_cpp";   // language-shared extensions, standards, linking
+```
 
-// Optional: Rhai code to compute binary names at load time.
-let _gxx = "g++";
-for _b in ["g++", "g++-14", "g++-13", "g++-12"] {
-    if find_tool(_b) != () { _gxx = _b; break; }
-}
-let _gcc = if _gxx == "g++" { "gcc" } else { "gcc" + _gxx.sub_string(3) };
+`include` is evaluated inline — variables and assignments in the included file take effect in
+the calling file's scope. Any field can be overridden after an include.
 
-// ── Identity ──────────────────────────────────────────────────────────────────
+---
 
-name          = "gcc";          // template identifier; used in `backend = "gcc"` for standalones
-family        = "gnu";          // family group; `freight toolchain use gnu` selects all "gnu" compilers
-                                // leave empty ("") for standalone compilers (tcc, msvc)
-homepage      = "https://gcc.gnu.org/";
-binary        = _gxx;           // primary binary; probed with version_arg for detection
-version_arg   = "--version";
-version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";   // capture group 1 is the version string
+## Language shared files
 
-// ── Guest / extension ─────────────────────────────────────────────────────────
+`toolchains/languages/` holds files that are identical across all compilers of the same language:
+extensions, default standards, and linking metadata. Both `gnu/g++.rhai` and `llvm/clang++.rhai`
+include `../languages/_cpp`, so C++ parameters only need to be maintained in one place.
 
-// requires_toolchain = ["cpp"];   // uncomment for wrappers like nvcc, hipcc
-                                   // requires_toolchain = ["c"] for assemblers like nasm, yasm
-                                   // when non-empty: compiler is a guest — it extends the active
-                                   // toolchain and cannot be selected via `freight toolchain use`
+```rhai
+// languages/_cpp.rhai
+extensions = [".cpp", ".cppm", ".cc", ".cxx", ".c++"];
 
-// ── Discovery ─────────────────────────────────────────────────────────────────
+defaults["std"] = "c++17";   // applied when [language.cpp] std is not set in freight.toml
 
-extensions    = [".cpp", ".cppm", ".cc", ".cxx", ".c++", ".c"];
-sanitizers    = ["address", "undefined", "thread", "leak"];   // sanitize values this compiler supports
-passthrough        = false;    // true for nvcc-style -Xcompiler wrappers
-passthrough_prefix = "";       // e.g. "-Xcompiler" for nvcc
-
-// ── Toolset roles ─────────────────────────────────────────────────────────────
-
-toolset["cc"]    = _gcc;       // C compilation binary
-toolset["cxx"]   = _gxx;       // C++ compilation binary
-toolset["ld"]    = _gxx;       // linker binary
-toolset["ar"]    = "ar";       // static archive creator
-toolset["strip"] = "strip";    // strip binary
-// toolset["as"] = "nasm";     // assembler override (usually not needed)
-
-// ── Compiler flags ────────────────────────────────────────────────────────────
-
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-Os";
-flags["opt"]["z"] = "-Oz";
-
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
-
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "-Wall";
-flags["warnings"]["all"]     = "-Wall -Wextra -Wpedantic";
-flags["warnings"]["error"]   = "-Wall -Wextra -Wpedantic -Werror";
-
-flags["lto"]["true"]  = "-flto";
-flags["lto"]["false"] = "";
-
-flags["sanitize"]["template"] = "-fsanitize={values}";  // {values} = comma-joined list
-flags["cpu_ext"]["template"]  = "-m{name}";              // e.g. avx2 → -mavx2
-
-// ── Language standards ────────────────────────────────────────────────────────
-
-standards["c11"]   = "-std=c11";
-standards["c17"]   = "-std=c17";
-standards["c23"]   = "-std=c23";
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";
 standards["c++23"] = "-std=c++23";
-
-// ── Structure templates ───────────────────────────────────────────────────────
-// {path}, {name}, {value}, {triple} are substituted at build time.
-
-include_dir  = "-I{path}";
-define       = "-D{name}";
-define_value = "-D{name}={value}";
-output       = "-o {path}";      // used when output_obj / output_bin are not set
-compile_only = "-c";
-dep_file     = "-MMD -MF {path}";  // empty string = no dep file (mtime-only dirty check)
-target       = "";               // empty = GCC cross-compiles via dedicated binary (e.g. aarch64-linux-gnu-g++)
-sysroot      = "--sysroot={path}";
-
-// ── Arch-specific flags ───────────────────────────────────────────────────────
-// "arch.os" key is checked first; "arch" is the fallback.
-
-// arch_flags["x86_64.linux"]   = "-f elf64";   // NASM-style output format selection
-// arch_flags["x86_64.macos"]   = "-f macho64";
-
-// ── C++20 module support ──────────────────────────────────────────────────────
-
-modules["style"]         = "gcc";                         // "gcc", "clang", or "none"
-modules["compile_miu"]   = "-fmodule-output={pcm_path}"; // GCC one-step: .o + .pcm together
-modules["import_module"] = "-fmodule-file={name}={pcm_path}";
-modules["header_unit"]   = "-fmodule-header";
-
-// Clang two-step alternative:
-// modules["style"]         = "clang";
-// modules["precompile"]    = "--precompile";   // step 1: src → .pcm (no object)
-// modules["import_module"] = "-fmodule-file={name}={pcm_path}";
-
-// ── Linking metadata ──────────────────────────────────────────────────────────
-// One entry per language key this template handles.
-
-linking["c"] = #{
-    abi:            "c",              // ABI family for compatibility checks
-    compatible:     ["fortran", "asm"],  // can link objects with these ABIs
-    compile_binary: _gcc,             // use gcc not g++ for C files
-    linker:         "",               // empty = use toolset["ld"]
-    extensions:     [".c", ".s", ".S"],
-};
 
 linking["cpp"] = #{
     abi:        "c++",
@@ -144,32 +126,145 @@ linking["cpp"] = #{
     linker:     "",
     extensions: [".cpp", ".cppm", ".cc", ".cxx", ".c++"],
 };
+```
+
+---
+
+## Compiler script structure
+
+Here is a fully annotated compiler template based on the GNU family:
+
+```rhai
+// gnu/g++.rhai
+
+include "_gnu-base";         // shared flags, toolset defaults, arch flags
+include "../languages/_cpp"; // extensions, standards, defaults, linking
+
+// ── Identity ──────────────────────────────────────────────────────────────────
+
+name     = "g++";
+kind     = "compiler";   // "compiler" (default) or "debugger"
+family   = "gnu";        // family group; leave "" for standalone compilers (tcc, msvc)
+homepage = "https://gcc.gnu.org/";
+binary   = _gxx;         // primary binary; probed with version_arg during detection
+                         // (_gxx is resolved in _gnu-base via find_tool())
+
+// ── Guest / extension ─────────────────────────────────────────────────────────
+// Uncomment when this compiler wraps another toolchain (nvcc, hipcc, nasm…).
+
+// requires_toolchain = ["cpp"];  // marks this as a guest — cannot be selected via
+                                  // `freight toolchain use`; auto-active when a
+                                  // C++ toolchain is detected
+
+// ── Detection ─────────────────────────────────────────────────────────────────
+
+version_arg   = "--version";
+version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";  // capture group 1 = version string
+sanitizer_options = ["address", "undefined", "thread", "leak"];
+passthrough        = false;   // true for nvcc-style -Xcompiler wrappers
+passthrough_prefix = "";      // e.g. "-Xcompiler" for nvcc
+
+// supported_archs = ["x86_64", "aarch64"];  // hide on unlisted host architectures
+// supported_os    = ["linux", "windows"];   // hide on unlisted host OSes
+// required_tools  = ["ptxas", "fatbinary"]; // extra binaries that must be on PATH
+
+// ── Toolset roles ─────────────────────────────────────────────────────────────
+
+toolset["cc"]    = _gcc;    // C compilation binary
+toolset["cxx"]   = _gxx;   // C++ compilation binary
+toolset["ld"]    = _gxx;   // linker binary
+toolset["ar"]    = "ar";   // static archive creator
+toolset["strip"] = "strip";
+
+// ── Flag maps ─────────────────────────────────────────────────────────────────
+
+opt["0"] = "-O0";
+opt["1"] = "-O1";
+opt["2"] = "-O2";
+opt["3"] = "-O3";
+opt["s"] = "-Os";
+opt["z"] = "-Oz";
+
+dbg["true"]  = "-g";
+dbg["false"] = "";
+
+warnings["none"]    = "";
+warnings["default"] = "-Wall";
+warnings["all"]     = "-Wall -Wextra -Wpedantic";
+warnings["error"]   = "-Wall -Wextra -Wpedantic -Werror";
+
+lto["true"]  = "-flto";
+lto["false"] = "";
+
+sanitize = "-fsanitize={values}";  // {values} = comma-joined sanitizer list
+cpu_ext  = "-m{name}";             // e.g. avx2 → -mavx2
+
+// ── Runtime / stdlib ──────────────────────────────────────────────────────────
+
+stdlib["libstdc++"] = "";
+stdlib["none"]      = "-nostdlib";
+
+runtime["glibc"]  = "";
+runtime["musl"]   = "-static";
+runtime["none"]   = "-nostdlib -nodefaultlibs";
+
+// ── Defaults ──────────────────────────────────────────────────────────────────
+// Applied when the corresponding [language.*] key is absent in freight.toml.
+// Usually declared in the language shared file (languages/_cpp.rhai).
+
+// defaults["std"] = "c++17";  // already set by ../languages/_cpp
+
+// ── Structure templates ───────────────────────────────────────────────────────
+
+include_dir  = "-I{path}";
+define       = "-D{name}";
+define_value = "-D{name}={value}";
+output       = "-o {path}";
+compile_only = "-c";
+dep_file     = "-MMD -MF {path}";  // empty = no dep files (mtime-only dirty check)
+target       = "";                  // empty = GCC cross-compiles via dedicated binary
+sysroot      = "--sysroot={path}";
+
+// ── Arch-specific flags ───────────────────────────────────────────────────────
+// "arch.os" is checked first; "arch" is the fallback.
+
+// arch_flags["x86_64.linux"]   = "-f elf64";   // NASM-style output format selection
+// arch_flags["x86_64.macos"]   = "-f macho64";
+
+// ── C++20 module support ──────────────────────────────────────────────────────
+
+modules["style"]         = "gcc";                          // "gcc", "clang", or "none"
+modules["compile_miu"]   = "-fmodule-output={pcm_path}";  // GCC one-step: .o + .pcm
+modules["import_module"] = "-fmodule-file={name}={pcm_path}";
+modules["header_unit"]   = "-fmodule-header";
+
+// Clang two-step alternative:
+// modules["style"]      = "clang";
+// modules["precompile"] = "--precompile";  // step 1: src → .pcm
+// modules["import_module"] = "-fmodule-file={name}={pcm_path}";
+
+// ── PCH support ───────────────────────────────────────────────────────────────
+
+pch["compile"]   = "-x c++-header";
+pch["use"]       = "-include {header_path}";
+pch["extension"] = ".gch";
 
 // ── Detection hook ────────────────────────────────────────────────────────────
 
 fn check() {
-    // Return false to hide this toolchain when unavailable.
-    let bins = ["g++", "g++-14", "g++-13", "g++-12", "g++-11", "g++-10"];
-    for b in bins {
+    for b in ["g++", "g++-14", "g++-13", "g++-12"] {
         if find_tool(b) != () { return true; }
     }
     false
 }
 
-// ── Load hook ─────────────────────────────────────────────────────────────────
+// ── Arch-conditional flags ────────────────────────────────────────────────────
+// load_flags are applied at detection time. Use top-level code (not fn load()).
 
-fn load() {
-    // Called at detection time. `arch` and `os` are in scope.
-    // Append flags using load_flags["role"] += ["flag"].
-    if arch == "x86_64" {
-        load_flags["cc"]  += ["-m64"];
-        load_flags["cxx"] += ["-m64"];
-        load_flags["ld"]  += ["-m64"];
-    } else if arch == "x86" {
-        load_flags["cc"]  += ["-m32"];
-        load_flags["cxx"] += ["-m32"];
-        load_flags["ld"]  += ["-m32"];
-    }
+if arch == "x86_64" {
+    load_flags["cc"]  += ["-m64"];
+    load_flags["cxx"] += ["-m64"];
+    load_flags["ld"]  += ["-m64"];
 }
 ```
 
@@ -181,41 +276,62 @@ fn load() {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Template identifier. Used in `backend = "..."` for standalone compilers. |
-| `family` | string | Family group (`"gnu"`, `"llvm"`, `"intel"`, `"nvidia"`, …). Compilers that share a family are shown together in `freight toolchain list` and selected as a unit by `freight toolchain use <family>`. Leave empty for standalone compilers (`"tcc"`, `"msvc"`). |
-| `requires_toolchain` | `[string]` | Language keys that must be provided by another detected compiler. Non-empty marks a **guest/extension**: it extends the active toolchain but cannot be chosen via `freight toolchain use`. Use `["cpp"]` for wrappers (nvcc, hipcc, ispc), `["c"]` for assemblers (nasm, yasm). Guests are silently dropped when no host compiler satisfying the requirement is detected. |
+| `name` | string | Template identifier. Used in `backend = "..."` for standalone compilers. Named after the actual binary (e.g. `"g++"`, `"clang++"`). |
+| `kind` | string | `"compiler"` (default), `"debugger"`, `"formatter"`, or `"linter"`. Determines which loader handles this file. |
+| `family` | string | Family group (`"gnu"`, `"llvm"`, `"intel"`, `"nvidia"`, …). Compilers sharing a family are shown together in `freight toolchain list` and selected as a unit by `freight toolchain use <family>`. Leave empty for standalone compilers (`"tcc"`, `"msvc"`). |
+| `requires_toolchain` | `[string]` | Language keys that must be provided by another detected compiler. Non-empty marks a **guest**: it extends the active toolchain but cannot be chosen via `freight toolchain use`. Use `["cpp"]` for wrappers (nvcc, hipcc, ispc), `["c"]` for assemblers (nasm, yasm). Guests are silently dropped when no host satisfying the requirement is detected. |
 | `homepage` | string | Informational URL shown in docs. |
 | `binary` | string | Binary probed to detect this toolchain. |
 | `version_arg` | string | Argument passed to `binary` to print its version. Empty string = invoke with no arguments (MSVC). |
 | `version_regex` | string | Regex with one capture group extracting the version string from the output. |
-| `extensions` | `[string]` | File extensions this template claims during source discovery. |
-| `sanitizers` | `[string]` | Sanitize values this compiler supports (for validation). |
+| `extensions` | `[string]` | File extensions this template claims during source discovery. Usually declared in the shared language file. |
+| `sanitizer_options` | `[string]` | Sanitize values this compiler supports (for validation). |
 | `passthrough` | bool | `true` for nvcc-style `-Xcompiler` wrappers. |
 | `passthrough_prefix` | string | The wrapper prefix, e.g. `"-Xcompiler"`. |
 | `supported_archs` | `[string]` | If non-empty, hide this toolchain on unlisted host architectures. |
 | `supported_os` | `[string]` | If non-empty, hide this toolchain on unlisted host OSes. |
+| `required_tools` | `[string]` | Extra binaries that must be on PATH for this toolchain to be considered available. |
+| `always_flags` | `[string]` | Flags always prepended to every compiler invocation. |
 
 ### Toolset roles
 
 ```rhai
 toolset["cc"]    = "gcc";      // C compilation
-toolset["cxx"]   = "g++";      // C++ compilation
-toolset["ld"]    = "g++";      // final link
-toolset["ar"]    = "ar";       // static archive
-toolset["strip"] = "strip";    // strip debug symbols
-toolset["as"]    = "nasm";     // assembler override
+toolset["cxx"]   = "g++";     // C++ compilation
+toolset["ld"]    = "g++";     // final link
+toolset["ar"]    = "ar";      // static archive
+toolset["strip"] = "strip";   // strip debug symbols
 ```
 
 ### Flag maps
 
 ```rhai
-flags["opt"]["0"] = "-O0";          // optimization levels 0-3, s, z
-flags["debug"]["true"] = "-g";      // debug on/off
-flags["warnings"]["all"] = "...";   // none | default | all | error
-flags["lto"]["true"] = "-flto";     // link-time optimization
-flags["lto_link"]["true"] = "/LTCG"; // link-step LTO override (MSVC)
-flags["sanitize"]["template"] = "-fsanitize={values}";  // {values} = comma-joined list
-flags["cpu_ext"]["template"] = "-m{name}";              // e.g. avx2 → -mavx2
+opt["0"] = "-O0";           // optimization levels: 0 1 2 3 s z
+opt["s"] = "-Os";
+
+dbg["true"]  = "-g";       // debug on/off
+dbg["false"] = "";
+
+warnings["none"]    = "";
+warnings["default"] = "-Wall";
+warnings["all"]     = "-Wall -Wextra -Wpedantic";
+warnings["error"]   = "-Wall -Wextra -Wpedantic -Werror";
+
+lto["true"]  = "-flto";    // LTO on/off
+lto["false"] = "";
+
+sanitize = "-fsanitize={values}";   // {values} = comma-joined sanitizer list
+cpu_ext  = "-m{name}";              // e.g. avx2 → -mavx2
+```
+
+### Defaults map
+
+`defaults["key"] = "value"` provides fallback values applied when the corresponding
+`[language.*]` setting is absent from `freight.toml`. Typically declared in the shared
+language file so it applies consistently across all compilers of that language:
+
+```rhai
+defaults["std"] = "c++17";   // used when [language.cpp] omits std =
 ```
 
 ### Structure templates
@@ -225,12 +341,9 @@ flags["cpu_ext"]["template"] = "-m{name}";              // e.g. avx2 → -mavx2
 | `include_dir` | Include path flag. `{path}` is substituted. |
 | `define` | Define flag. `{name}` is substituted. |
 | `define_value` | Define-with-value flag. `{name}` and `{value}` are substituted. |
-| `output` | Output path flag. `{path}` is substituted. Fallback when `output_obj`/`output_bin` are absent. |
-| `output_obj` | Output flag for object files (`-o {path}` for GCC, `/Fo{path}` for MSVC). |
-| `output_bin` | Output flag for binaries (`-o {path}` for GCC, `/Fe{path}` for MSVC). |
+| `output` | Output path flag. `{path}` is substituted. |
 | `compile_only` | Flag to compile without linking (usually `-c`). |
 | `dep_file` | Dep file generation flag. `{path}` substituted. Empty = no dep files (mtime-only). |
-| `dep_file_mode` | `"file"` (default) or `"stdout"` (MSVC `/showIncludes`) or `"none"`. |
 | `target` | Cross-compilation target flag. `{triple}` substituted. Empty = unsupported or uses dedicated binary. |
 | `sysroot` | Sysroot flag. `{path}` substituted. |
 | `system_lib` | System library flag. `{name}` substituted. Default: `"-l{name}"`. MSVC uses `"{name}.lib"`. |
@@ -246,20 +359,21 @@ modules["header_unit"]   = "-fmodule-header";
 // Clang two-step (.pcm first, then .o):
 modules["precompile"]    = "--precompile";
 modules["import_module"] = "-fmodule-file={name}={pcm_path}";
-modules["header_unit"]   = "-x c++-header";
 ```
 
 ### Linking metadata
 
 ```rhai
 linking["cpp"] = #{
-    abi:            "c++",          // ABI family (used in compatibility checks)
-    compatible:     ["c", "fortran"],  // can link objects with these ABIs
-    compile_binary: "gcc",          // override which binary compiles files with this key (optional)
-    linker:         "",             // linker binary override; empty = use toolset["ld"]
-    extensions:     [".cpp", ".cc"],   // file extensions routed to this language key
+    abi:        "c++",            // ABI family (used in compatibility checks)
+    compatible: ["c", "fortran"], // can link objects with these ABIs
+    linker:     "",               // linker binary override; empty = use toolset["ld"]
+    extensions: [".cpp", ".cc"],  // file extensions routed to this language key
 };
 ```
+
+An optional `compile_binary` key overrides which binary compiles files for that language key
+(e.g. `gcc` for C files when the template is `g++`).
 
 ### Hooks
 
@@ -269,46 +383,162 @@ fn check() {
     find_tool("g++") != ()
 }
 
-fn load() {
-    // Called at detection time. Variables in scope: arch, os.
-    // Append runtime flags via load_flags["role"] += ["flag"].
-    if arch == "x86_64" { load_flags["cxx"] += ["-m64"]; }
+// Arch-conditional load-time flags — use top-level code, not a fn load().
+if arch == "x86_64" {
+    load_flags["cxx"] += ["-m64"];
 }
 ```
 
-### Utility functions
+### Utility functions available in scripts
 
-| Function | Returns | Description |
-|----------|---------|-------------|
+| Function / variable | Returns | Description |
+|---|---------|---|
 | `find_tool(name)` | `string \| ()` | Search `$PATH`; return full path or `()` |
-| `arch` | string | Host CPU arch (`"x86_64"`, `"aarch64"`, …) — `std::env::consts::ARCH` |
-| `os` | string | Host OS (`"linux"`, `"windows"`, `"macos"`, …) — `std::env::consts::OS` |
-| `env(key)` | `string \| ()` | Read environment variable; `()` if not set |
+| `arch` | string | Host CPU arch (`"x86_64"`, `"aarch64"`, …) |
+| `os` | string | Host OS (`"linux"`, `"windows"`, `"macos"`, …) |
+| `env[key]` | `string \| ()` | Read environment variable; `()` if not set |
+| `load_flags["role"]` | `Array` | Append runtime flags: `load_flags["cxx"] += ["-m64"]` |
 
 ---
 
 ## Debugger templates
 
-Debugger templates live in `toolchains/debuggers/` as TOML files (separate from compiler scripts).
+Debugger templates live alongside their compiler family and use `kind = "debugger"` to identify
+themselves to the loader. The same `include` mechanism works for sharing base code.
+
+```rhai
+// gnu/gdb.rhai
+
+kind          = "debugger";
+name          = "gdb";
+binary        = "gdb";
+version_arg   = "--version";
+version_regex = "GNU gdb[^\\d]+(\\d+\\.\\d+)";
+
+// gdb --args <binary> [args]
+launch["separator"] = "--args";  // separator between debugger flags and the debuggee
+
+// DAP adapter configuration for IDE integration.
+dap["binaries"]    = [];          // adapter binaries probed in order (empty = none)
+dap["vscode_type"] = "cppdbg";
+dap["mi_mode"]     = "gdb";
+
+// Named settings resolved through ~/.freight/config.toml [debugger.gdb].
+settings["tui"]   = "--tui";    // full-screen TUI mode
+settings["quiet"] = "-q";       // suppress banner
+settings["batch"] = "--batch";  // non-interactive batch mode
+
+// default_args = ["--quiet"];  // unconditional extra flags
+
+fn check() {
+    find_tool("gdb") != ()
+}
+```
+
+Debugger configuration is a **developer concern**, not a project concern. It lives in
+`~/.freight/config.toml` (global) or `<project>/.freight/config.toml` (local override).
+Neither file is part of `freight.toml`.
 
 ```toml
-# toolchains/debuggers/lldb.toml
-
-name          = "lldb"
-binary        = "lldb"
-version_arg   = "--version"
-version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b"
-
-[launch]
-separator = "--"    # arguments after this separator are passed to the debuggee
-                    # gdb uses "--args" instead
-
-[dap]
-# Binaries searched in order; first found becomes the DAP adapter path
-binaries     = ["lldb-dap", "lldb-vscode"]
-vscode_type  = "lldb"
-mi_mode      = "lldb"
+# ~/.freight/config.toml
+[debugger.gdb]
+args  = ["--tui"]   # raw extra flags
+tui   = true        # resolved via gdb.rhai's settings map → --tui
+quiet = true
 ```
+
+---
+
+## Formatter and linter templates
+
+Formatter and linter templates use `kind = "formatter"` or `kind = "linter"`. They support
+the same `include` mechanism and `fn check()` hook as other template types. They live in their
+own subdirectory when standalone, or alongside their family (e.g. `llvm/clang-format.rhai`).
+
+```rhai
+// llvm/clang-format.rhai
+
+kind          = "formatter";
+name          = "clang-format";
+family        = "llvm";
+binary        = "clang-format";
+version_arg   = "--version";
+version_regex = "clang-format version (\\d+\\.\\d+\\.\\d+)";
+extensions    = [".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".cu"];
+
+// fix:   reformat files in-place
+// check: exit non-zero if any file would change (CI use)
+run["fix"]   = "-i";
+run["check"] = "--dry-run --Werror";
+
+// Named settings resolved from [formatter] in freight.toml.
+// Pattern {value} is substituted with the manifest value.
+settings["style"]  = "--style={value}";
+settings["config"] = "--style=file:{value}";
+
+// Valid values exposed to the LSP for completions and printed as hints.
+// Omit keys whose values are freeform (paths, numbers, regex strings).
+values["style"] = ["Google", "LLVM", "Mozilla", "WebKit", "Chromium", "Microsoft", "GNU", "file"];
+
+fn check() {
+    find_tool("clang-format") != ()
+}
+```
+
+### Formatter / linter fields
+
+| Field | Description |
+|---|---|
+| `kind` | `"formatter"` or `"linter"` — required |
+| `name` | Tool name; matched against `[formatter] name` / `[linter] name` in `freight.toml` |
+| `family` | Family group (cosmetic; used for display) |
+| `binary` | Binary probed on PATH |
+| `version_arg` | Argument to print version (e.g. `"--version"`) |
+| `version_regex` | Regex with one capture group extracting the version string |
+| `extensions` | File extensions this tool acts on |
+| `run["fix"]` | Flags for in-place modification mode (`freight fmt` / `freight lint --fix`) |
+| `run["check"]` | Flags for report-only mode (`freight fmt --check` / `freight lint`) |
+| `settings["key"]` | Flag pattern with `{value}` substituted from `freight.toml` |
+| `values["key"]` | Array of valid choices for a setting (used by LSP completions) |
+
+### Formatter/linter config in `freight.toml`
+
+```toml
+[formatter]
+# name is optional — freight picks the first detected formatter when absent
+name   = "clang-format"
+style  = "Google"          # → --style=Google   (from settings["style"])
+# config = ".clang-format" # → --style=file:.clang-format
+
+[linter]
+name   = "cppcheck"
+enable = "warning,style"   # → --enable=warning,style
+std    = "c++17"           # → --std=c++17
+```
+
+Settings keys come directly from the template's `settings` map — unknown keys are silently
+ignored, so switching tools doesn't require removing old settings.
+
+On first run without any `[formatter]`/`[linter]` config, freight prints a hint listing the
+available settings and their valid values for the detected tool.
+
+### Bundled formatter templates
+
+| Template | Tool | Languages | Check mode |
+|---|---|---|---|
+| `llvm/clang-format.rhai` | `clang-format` | C, C++, CUDA | `--dry-run --Werror` |
+| `astyle/astyle.rhai` | `astyle` | C, C++, Java, C# | `--dry-run` (exits 0) |
+| `uncrustify/uncrustify.rhai` | `uncrustify` | C, C++, Java, C# | `--check` |
+| `fprettify/fprettify.rhai` | `fprettify` | Fortran | `--check` |
+
+### Bundled linter templates
+
+| Template | Tool | Focus |
+|---|---|---|
+| `llvm/clang-tidy.rhai` | `clang-tidy` | Modernization, bugprone, readability |
+| `cppcheck/cppcheck.rhai` | `cppcheck` | Static analysis, undefined behaviour |
+| `cpplint/cpplint.rhai` | `cpplint` | Google style guide enforcement |
+| `flawfinder/flawfinder.rhai` | `flawfinder` | Security / CWE scanning |
 
 ---
 
@@ -316,18 +546,38 @@ mi_mode      = "lldb"
 
 ### Checklist
 
-1. Create `toolchains/<name>.rhai` (or `toolchains/<family>/<name>.rhai`)
-2. Set `name`, `binary`, `version_arg`, `version_regex`
-3. Set `family` if the compiler belongs to a suite (`"gnu"`, `"llvm"`, …); leave empty for standalone tools
-4. Set `requires_toolchain` if the compiler wraps or extends another toolchain (e.g. `["cpp"]` for nvcc, `["c"]` for nasm); leave empty for self-contained compilers
-5. Set `extensions` with the file extensions this compiler claims
-6. Add `flags` entries for `opt`, `debug`, `warnings` at minimum
-7. Add `standards` for every standard string users might write
-8. Set structure fields — at minimum `include_dir`, `define`, `output`, `compile_only`
-9. Add `dep_file` if the compiler supports Makefile dep files (`-MMD -MF`)
-10. Add `linking[...]` entries for every language key the template handles
+1. Create `toolchains/<family>/<name>.rhai` (or `toolchains/<name>.rhai` for standalones)
+2. Set `kind = "compiler"` and `name` matching the actual binary (e.g. `"clang++"`)
+3. Set `family` if the compiler belongs to a suite; leave empty for standalone tools
+4. Set `requires_toolchain` if the compiler wraps another toolchain; leave empty for self-contained compilers
+5. Use `include` to pull in a `_base` file for shared flags and a `languages/_<lang>` file for extensions/standards/linking
+6. Set `binary`, `version_arg`, `version_regex`
+7. Add flag maps: at minimum `opt`, `dbg`, `warnings`, `lto`
+8. Add `defaults["std"]` in the language shared file if a default standard applies
+9. Set structure fields — at minimum `include_dir`, `define`, `output`, `compile_only`
+10. Add `dep_file` if the compiler supports Makefile dep files
 11. Add `fn check()` to hide the toolchain when the binary is absent
 12. Test with `freight toolchain list` to verify detection, then `freight build` on a real project
+
+### Writing a new debugger script
+
+1. Create `toolchains/<family>/<name>.rhai`
+2. Set `kind = "debugger"` — this is mandatory
+3. Set `name`, `binary`, `version_arg`, `version_regex`
+4. Set `launch["separator"]` — the token between debugger flags and the debuggee binary
+5. Set `dap[...]` entries for IDE integration
+6. Add a `settings` map for named options the developer can enable in their config
+7. Add `fn check()` to hide the tool when the binary is absent
+
+### Writing a new formatter or linter script
+
+1. Create `toolchains/<family>/<name>.rhai` (or `toolchains/<name>/<name>.rhai` for standalone tools)
+2. Set `kind = "formatter"` or `kind = "linter"` — this is mandatory
+3. Set `name`, `family`, `binary`, `version_arg`, `version_regex`, `extensions`
+4. Set `run["fix"]` and `run["check"]` — flags for each mode
+5. Add `settings["key"] = "--flag={value}"` for every configurable option
+6. Add `values["key"] = [...]` for settings with a fixed set of valid choices
+7. Add `fn check()` to hide the tool when the binary is absent
 
 ### Installing
 
@@ -345,8 +595,7 @@ The new template is loaded on the next freight invocation.
 ### Family grouping
 
 `freight toolchain list` groups compilers by `family`. Set the same `family` value in
-`gcc.rhai` and `gfortran.rhai` and they appear together as the `gnu` toolchain. The
-`family` value is what the user passes to `freight toolchain use`:
+`g++.rhai` and `gfortran.rhai` and they appear together as the `gnu` toolchain:
 
 ```sh
 freight toolchain use gnu    # selects all compilers with family = "gnu"
@@ -361,40 +610,53 @@ toolchain and are auto-selected when the active family satisfies their requireme
 
 - `nvcc` (`requires_toolchain = ["cpp"]`) — CUDA extension for any C++ toolchain
 - `hipcc` (`requires_toolchain = ["cpp"]`) — HIP/ROCm extension
-- `nasm`, `yasm` (`requires_toolchain = ["c"]`) — assembly; active whenever any C toolchain is present
+- `nasm`, `yasm` (`requires_toolchain = ["c"]`) — active whenever any C toolchain is present
 
 Guests appear in the "Extensions" section of `freight toolchain list`. If a required
-language key is not provided by any detected compiler, the guest is silently dropped with
-a warning.
+language key is not provided by any detected compiler, the guest is silently dropped.
 
 ### One script per toolchain, not per language
 
-`gcc.rhai` handles both C and C++. The `compile_binary` field in `linking["c"]` selects
-`gcc` for C files while `g++` is used for linking (required for mixed C/C++ projects).
+`g++.rhai` handles both C and C++ by including both `_gnu-base` and `../languages/_cpp`.
+The `linking["c"]` entry's optional `compile_binary` field selects `gcc` for C files while
+`g++` handles C++ and linking.
+
+### Language shared files
+
+`toolchains/languages/_cpp.rhai`, `_c.rhai`, and `_fortran.rhai` centralise parameters that
+are identical across all compilers of that language (extensions, default standard, standards
+map, linking metadata). Compiler files `include` the relevant language file so there is one
+place to update when a new standard is ratified.
+
+### `defaults` map
+
+`defaults["std"] = "c++17"` in a language file provides a fallback applied when `freight.toml`
+omits `[language.cpp] std = ...`. It is resolved inside `assemble_flags` before the manifest
+value, so the manifest always wins when present.
 
 ### Arch-specific flags
 
 `arch_flags["x86_64.linux"] = "-f elf64"` is how NASM selects its output format. Freight
 looks up `"arch.os"` first, then `"arch"` as a fallback.
 
-### `fn load()` for arch-conditional flags
+### Load-time arch-conditional flags
 
-`fn load()` runs at detection time with `arch` and `os` in scope. Append flags via
-`load_flags["role"] += ["flag"]`:
+Arch-conditional flags are set via top-level code (not a `fn load()`) using `load_flags`:
 
 ```rhai
-fn load() {
-    if arch == "x86_64" { load_flags["cxx"] += ["-m64"]; }
+if arch == "x86_64" {
+    load_flags["cxx"] += ["-m64"];
 }
 ```
 
 ### `fn check()` for availability detection
 
 Return `false` to hide the toolchain when its binary isn't present or the platform is
-unsupported:
+unsupported. This is the only hook function; load-time side effects use top-level code.
 
 ```rhai
 fn check() {
-    find_tool("nvc++") != ()
+    if arch != "x86_64" && arch != "aarch64" { return false; }
+    find_tool("nvcc") != () && find_tool("ptxas") != ()
 }
 ```

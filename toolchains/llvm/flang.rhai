@@ -1,65 +1,28 @@
 // Flang — LLVM Fortran compiler. The binary is named `flang` in recent releases
 // but `flang-new` on distributions that package older transitional builds.
-// This script probes both names and uses whichever is found.
+
+include "_llvm-base";
+include "../languages/_fortran";
 
 let _flang = if find_tool("flang") != () { "flang" } else { "flang-new" };
 
 name          = "flang";
-family        = "llvm";
-sanitizers = ["address", "undefined"];
 homepage      = "https://flang.llvm.org/";
 binary        = _flang;
-version_arg   = "--version";
 version_regex = "flang(?:-new)? version (\\d+\\.\\d+\\.\\d+)";
-extensions    = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
-passthrough        = false;
-passthrough_prefix = "";
+sanitizer_options = ["address", "undefined"];
 
-toolset["ld"]    = _flang;
-toolset["ar"]    = "ar";
-toolset["strip"] = "strip";
+toolset["ld"] = _flang;
 
-flags["opt"]["0"] = "-O0";
-flags["opt"]["1"] = "-O1";
-flags["opt"]["2"] = "-O2";
-flags["opt"]["3"] = "-O3";
-flags["opt"]["s"] = "-O2";
-flags["opt"]["z"] = "-O2";
+// Flang maps size/speed to -O2; no dedicated -Os/-Oz support yet.
+opt["s"] = "-O2";
+opt["z"] = "-O2";
 
-flags["debug"]["true"]  = "-g";
-flags["debug"]["false"] = "";
-
-flags["warnings"]["none"]    = "";
-flags["warnings"]["default"] = "-Wall";
-flags["warnings"]["all"]     = "-Wall -Wextra";
-flags["warnings"]["error"]   = "-Wall -Wextra -Werror";
-
-flags["lto"]["true"]  = "-flto";
-flags["lto"]["false"] = "";
-
-
-standards["f95"]   = "-std=f95";
-standards["f2003"] = "-std=f2003";
-standards["f2008"] = "-std=f2008";
-standards["f2018"] = "-std=f2018";
-
-include_dir  = "-I{path}";
-define       = "-D{name}";
-define_value = "-D{name}={value}";
-output       = "-o {path}";
-compile_only = "-c";
-dep_file     = "-MMD -MF {path}";
-target       = "--target={triple}";
-sysroot      = "--sysroot={path}";
+// Fortran compiler warnings are less granular than C/C++.
+warnings["all"]   = "-Wall -Wextra";
+warnings["error"] = "-Wall -Wextra -Werror";
 
 modules["style"] = "none";
-
-linking["fortran"] = #{
-    abi:        "fortran",
-    compatible: ["c"],
-    linker:     "",
-    extensions: [".f90", ".f95", ".f03", ".f08", ".f", ".F90"],
-};
 
 fn check() {
     find_tool("flang") != () || find_tool("flang-new") != ()

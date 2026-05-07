@@ -159,6 +159,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     if !sanitize_override.is_empty() {
         apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
+    inject_option_handler_flags(&mut ctx);
     let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
@@ -383,6 +384,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     if !sanitize_override.is_empty() {
         apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
     }
+    inject_option_handler_flags(&mut ctx);
     let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
 
     use owo_colors::OwoColorize;
@@ -807,4 +809,43 @@ fn validate_or_fail(
         .map(|e| format!("{}: {}", e.context, e.message))
         .collect();
     Err(FreightError::ManifestParse(msgs.join("\n")))
+}
+
+/// Run `compiler_option` and `language_option` handlers declared in Rhai templates,
+/// injecting any resulting flags into the manifest before compilation starts.
+///
+/// - `language_option` handlers: injected per-language into `manifest.language[key].injected_flags`
+/// - `compiler_option` handlers: injected globally into `manifest.compiler.flags`
+fn inject_option_handler_flags(ctx: &mut ProjectContext) {
+    let manifest = &mut ctx.manifest;
+    let detected = &ctx.detected;
+    let backend = &ctx.effective_backend;
+
+    // Language-option handlers: look up the compiler for each language with extra options.
+    let lang_keys: Vec<String> = manifest.language.keys().cloned().collect();
+    for lang_key in lang_keys {
+        let extra = manifest.language[&lang_key].extra.clone();
+        if extra.is_empty() { continue; }
+        let Some(compiler) = compile::select_compiler(&lang_key, backend, detected, None) else {
+            continue;
+        };
+        let flags = compiler.template.run_language_option_handlers(&extra, &compiler.version);
+        if !flags.is_empty() {
+            manifest.language.get_mut(&lang_key).unwrap().injected_flags.extend(flags);
+        }
+    }
+
+    // Compiler-option handlers: find per-tool entries that match a detected compiler.
+    let per_tool: Vec<(String, std::collections::HashMap<String, String>)> = manifest.compiler.per_tool
+        .iter()
+        .map(|(k, v)| (k.clone(), v.options.clone()))
+        .collect();
+    for (tool_name, options) in per_tool {
+        if options.is_empty() { continue; }
+        let Some(compiler) = detected.iter().find(|d| d.template.name == tool_name) else {
+            continue;
+        };
+        let flags = compiler.template.run_compiler_option_handlers(&options, &compiler.version);
+        manifest.compiler.flags.extend(flags);
+    }
 }

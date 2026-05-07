@@ -4,6 +4,8 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use crate::manifest::types::DebuggerConfig;
+
 /// Persistent cache of detected compiler versions, stored at `~/.freight/toolchain-cache.json`.
 ///
 /// Each entry is keyed by the compiler's absolute path and validated against
@@ -73,9 +75,9 @@ fn cache_path() -> Option<PathBuf> {
 
 /// Persistent global config stored at `~/.freight/config.toml`.
 ///
-/// Settings here apply to every project on the machine and can be overridden
-/// by per-project `freight.toml` entries. Currently the only persisted setting
-/// is the default compiler backend (set by `freight toolchain use <name>`).
+/// Developer settings that apply across all projects on the machine.
+/// Loaded from `~/.freight/config.toml`; overridden per-project by
+/// `.freight/config.toml` in the project root (same format, local wins).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GlobalConfig {
     /// Default compiler backend. `None` = first detected compiler for each language.
@@ -84,14 +86,39 @@ pub struct GlobalConfig {
     pub target: Option<String>,
     /// Path to the cross-compilation sysroot. Machine-local absolute path.
     pub sysroot: Option<String>,
+    /// Developer debugger preferences, keyed by debugger name under `[debugger.<name>]`.
+    #[serde(default)]
+    pub debugger: DebuggerConfig,
 }
 
 impl GlobalConfig {
-    /// Load the config from disk. Returns a default (all `None`) config on any error.
+    /// Load the global config from `~/.freight/config.toml`.
+    /// Returns defaults on any error.
     pub fn load() -> Self {
         let Some(path) = Self::path() else { return Self::default() };
         let Ok(data) = std::fs::read_to_string(&path) else { return Self::default() };
         toml_edit::de::from_str(&data).unwrap_or_default()
+    }
+
+    /// Load the project-local config from `<project_dir>/.freight/config.toml`.
+    /// Returns `None` when the file doesn't exist.
+    pub fn load_local(project_dir: &Path) -> Option<Self> {
+        let path = project_dir.join(".freight").join("config.toml");
+        let data = std::fs::read_to_string(path).ok()?;
+        toml_edit::de::from_str(&data).ok()
+    }
+
+    /// Apply `local` on top of `self`. Local scalar fields override global ones
+    /// when set; debugger args are extended, boolean settings are overridden.
+    pub fn apply_local(&mut self, local: Self) {
+        if local.default_backend.is_some() { self.default_backend = local.default_backend; }
+        if local.target.is_some()          { self.target          = local.target; }
+        if local.sysroot.is_some()         { self.sysroot         = local.sysroot; }
+        for (name, local_inst) in local.debugger.debuggers {
+            let inst = self.debugger.debuggers.entry(name).or_default();
+            inst.args.extend(local_inst.args);
+            inst.settings.extend(local_inst.settings);
+        }
     }
 
     /// Persist the config to disk.

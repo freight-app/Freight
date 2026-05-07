@@ -199,6 +199,8 @@ pub fn settings_for_lang(
         s.include_paths.push(project_dir.join(dir));
     }
     s.defines.extend_from_slice(feature_defines);
+    // Flags injected by language_option handlers at build startup.
+    s.extra_flags.extend_from_slice(&lang.injected_flags);
     s
 }
 
@@ -441,29 +443,30 @@ mod tests {
     fn named_backend_matches_template_name() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        let backend = Backend("gcc".into());
+        // "gnu" family → g++ for cpp language
+        let backend = Backend("gnu".into());
         let found = select_compiler("cpp", &backend, &detected, None);
         assert!(found.is_some());
-        assert_eq!(found.unwrap().template.name, "gcc");
+        assert_eq!(found.unwrap().template.name, "g++");
     }
 
     #[test]
     fn named_backend_family_picks_right_compiler_per_lang() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        // "gnu" family → gcc for cpp, gfortran for fortran
+        // "gnu" family → g++ for cpp, gcc for c, gfortran for fortran
         let cpp = select_compiler("cpp", &Backend("gnu".into()), &detected, None);
         assert!(cpp.is_some(), "gnu backend should find a C++ compiler");
-        assert_eq!(cpp.unwrap().template.name, "gcc");
+        assert_eq!(cpp.unwrap().template.name, "g++");
 
         let fortran = select_compiler("fortran", &Backend("gnu".into()), &detected, None);
         assert!(fortran.is_some(), "gnu backend should find a Fortran compiler");
         assert_eq!(fortran.unwrap().template.name, "gfortran");
 
-        // "llvm" family → clang for cpp
+        // "llvm" family → clang++ for cpp
         let cpp_llvm = select_compiler("cpp", &Backend("llvm".into()), &detected, None);
         assert!(cpp_llvm.is_some(), "llvm backend should find a C++ compiler");
-        assert_eq!(cpp_llvm.unwrap().template.name, "clang");
+        assert_eq!(cpp_llvm.unwrap().template.name, "clang++");
     }
 
     #[test]
@@ -486,17 +489,23 @@ mod tests {
     fn named_backend_asm_guest_selected_for_any_family() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        // nasm (requires_toolchain = ["c"]) should be picked as a guest for "asm"
+        // An asm guest (e.g. nasm, yasm — requires_toolchain = ["c"]) should be picked
         // whenever the active family satisfies the "c" requirement.
         for backend_name in &["gnu", "llvm"] {
             let found = select_compiler("asm", &Backend(backend_name.to_string()), &detected, None);
             assert!(
                 found.is_some(),
-                "{backend_name} backend should find nasm for 'asm' files"
+                "{backend_name} backend should find an asm guest compiler"
             );
             let compiler = found.unwrap();
-            assert_eq!(compiler.template.name, "nasm");
-            assert!(compiler.template.requires_toolchain.contains(&"c".to_string()));
+            assert!(
+                compiler.template.linking.contains_key("asm"),
+                "selected compiler must handle 'asm'"
+            );
+            assert!(
+                compiler.template.requires_toolchain.contains(&"c".to_string()),
+                "selected compiler must require 'c' toolchain"
+            );
         }
     }
 
@@ -632,8 +641,8 @@ src  = "src/main.cpp"
     fn gcc_c_uses_different_binary_than_linker() {
         let ts = templates();
         let detected = fake_detected(&ts);
-        // gcc specifically uses gcc (not g++) as the C compile binary.
-        let backend = Backend("gcc".into());
+        // gcc uses gcc as the C compile binary but g++ as the linker binary.
+        let backend = Backend("gnu".into());
         let compiler = select_compiler("c", &backend, &detected, None).unwrap();
         let c_info = compiler.template.linking.get("c").unwrap();
         assert_ne!(
