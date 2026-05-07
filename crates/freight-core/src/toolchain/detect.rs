@@ -14,6 +14,10 @@ pub struct DetectedCompiler {
     pub template: CompilerTemplate,
     pub version: String,
     pub path: PathBuf,
+    /// CPU extension names this compiler supports on the current target,
+    /// e.g. `["avx2", "sse4.2", "bmi2"]`. Empty when the compiler does not
+    /// support `-Q --help=target` (nvcc, nasm, msvc, …).
+    pub cpu_extensions: Vec<String>,
 }
 
 /// A toolchain family: one or more detected compilers that share a `family` label
@@ -178,7 +182,16 @@ fn probe_cached(
     if !min_version_met(template, &version) {
         return None;
     }
-    Some(DetectedCompiler { template: template.clone(), version, path })
+    // Query CPU extensions if not already cached for this binary.
+    let cpu_extensions = if let Some(exts) = cache.get_extensions(&path) {
+        exts.to_vec()
+    } else {
+        let exts = query_cpu_extensions(&path);
+        cache.set_extensions(&path, exts.clone());
+        *dirty = true;
+        exts
+    };
+    Some(DetectedCompiler { template: template.clone(), version, path, cpu_extensions })
 }
 
 fn host_supported(template: &CompilerTemplate) -> bool {
@@ -299,7 +312,37 @@ fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
     if !min_version_met(template, &version) {
         return None;
     }
-    Some(DetectedCompiler { template: template.clone(), version, path })
+    let cpu_extensions = query_cpu_extensions(&path);
+    Some(DetectedCompiler { template: template.clone(), version, path, cpu_extensions })
+}
+
+/// Query the compiler for supported CPU extensions via `-Q --help=target`.
+///
+/// Parses `-m<name>` flag lines from the output, stripping the `-m` prefix.
+/// Value-taking flags (`-march=`, `-mtune=`) are skipped. Returns an empty
+/// vec for compilers that don't support this flag (nvcc, nasm, msvc, …).
+fn query_cpu_extensions(path: &Path) -> Vec<String> {
+    let Ok(output) = Command::new(path)
+        .args(["-Q", "--help=target"])
+        .output()
+    else { return vec![] };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut exts = Vec::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("-m") else { continue };
+        // First token is the flag name; anything after is the [enabled]/[disabled] annotation.
+        let name = rest.split_whitespace().next().unwrap_or("");
+        // Skip empty, value-taking (-march=, -mtune=), and non-extension flags.
+        if name.is_empty() || name.ends_with('=') { continue; }
+        exts.push(name.to_string());
+    }
+
+    exts.sort_unstable();
+    exts.dedup();
+    exts
 }
 
 /// Resolve a binary name to its full path by searching PATH.
@@ -452,6 +495,7 @@ mod tests {
             template: t.clone(),
             version: "0.0.0".into(),
             path: std::path::PathBuf::from(format!("/usr/bin/{}", t.name)),
+            cpu_extensions: vec![],
         }).collect()
     }
 
