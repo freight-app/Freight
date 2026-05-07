@@ -285,6 +285,12 @@ pub struct CompilerTemplate {
     pub version_regex: String,
     pub extensions: Vec<String>,
     pub standards: HashMap<String, String>,
+    /// Fallback option values used when the manifest doesn't specify them.
+    /// Keyed by option name (e.g. `"std"`, `"stdlib"`). Set in language files.
+    pub defaults: HashMap<String, String>,
+    /// `"debugger"` if this template describes a debugger; `""` for compiler templates.
+    /// Used by `load_templates` to skip non-compiler files.
+    pub kind: String,
     pub structure: StructureFlags,
     pub modules: ModuleStyle,
     pub passthrough: PassthroughConfig,
@@ -372,6 +378,8 @@ impl CompilerTemplate {
             version_regex: raw.version_regex,
             extensions: raw.extensions.handles,
             standards: raw.standards,
+            defaults: HashMap::new(),
+            kind: String::new(),
             structure: StructureFlags {
                 include_dir: raw.structure.include_dir,
                 define: raw.structure.define,
@@ -565,6 +573,8 @@ impl CompilerTemplate {
             flags_cpu_extension:   def.cpu_ext,
             flags_stdlib:          def.flags_stdlib,
             flags_runtime:         def.flags_runtime,
+            defaults:              def.defaults,
+            kind:                  def.kind,
         })
     }
 
@@ -619,9 +629,11 @@ impl CompilerTemplate {
             }
         }
 
-        // Language standard
-        if let Some(std) = &settings.standard {
-            if let Some(f) = self.standards.get(std.as_str()) {
+        // Language standard — manifest setting, then template default, then nothing.
+        let effective_std = settings.standard.as_deref()
+            .or_else(|| self.defaults.get("std").map(String::as_str));
+        if let Some(std) = effective_std {
+            if let Some(f) = self.standards.get(std) {
                 push_flag_str(&mut flags, f);
             }
         }
@@ -693,9 +705,14 @@ impl CompilerTemplate {
             push_flag_str(&mut flags, arch_flag);
         }
 
-        // C++ stdlib flag (e.g. `-stdlib=libc++`).
-        if !settings.stdlib.is_empty() {
-            if let Some(f) = self.flags_stdlib.get(&settings.stdlib) {
+        // C++ stdlib flag — manifest setting, then template default, then nothing.
+        let effective_stdlib = if !settings.stdlib.is_empty() {
+            Some(settings.stdlib.as_str())
+        } else {
+            self.defaults.get("stdlib").map(String::as_str)
+        };
+        if let Some(stdlib) = effective_stdlib {
+            if let Some(f) = self.flags_stdlib.get(stdlib) {
                 push_flag_str(&mut flags, f);
             }
         }
@@ -1137,6 +1154,29 @@ mod tests {
         // Strip is a post-link step, not a compiler flag — -s must not appear here.
         assert!(!flags.contains(&"-s".to_string()), "strip is post-link, not a compile flag");
         assert!(!flags.contains(&"-g".to_string()), "no debug");
+        // Default standard from _cpp.rhai must be applied even when manifest omits it.
+        assert!(flags.contains(&"-std=c++17".to_string()), "default c++17 standard");
+    }
+
+    #[test]
+    fn default_standard_applied_when_not_set() {
+        // C++ template defaults to c++17.
+        let cpp_flags = gcc().assemble_flags(&BuildSettings { standard: None, ..Default::default() });
+        assert!(cpp_flags.contains(&"-std=c++17".to_string()), "g++ default std is c++17");
+
+        // C template defaults to c11.
+        let c_flags = gcc_c().assemble_flags(&BuildSettings { standard: None, ..Default::default() });
+        assert!(c_flags.contains(&"-std=c11".to_string()), "gcc default std is c11");
+    }
+
+    #[test]
+    fn manifest_standard_overrides_default() {
+        let flags = gcc().assemble_flags(&BuildSettings {
+            standard: Some("c++23".into()),
+            ..Default::default()
+        });
+        assert!(flags.contains(&"-std=c++23".to_string()), "explicit standard used");
+        assert!(!flags.contains(&"-std=c++17".to_string()), "default not emitted when overridden");
     }
 
     #[test]

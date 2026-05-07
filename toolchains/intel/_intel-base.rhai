@@ -2,6 +2,7 @@
 // opt["s"], opt["z"], warnings, lto, dep_file, target, sysroot, and version_regex
 // differ between compilers and must be set in the individual files.
 
+kind               = "compiler";
 family             = "intel";
 version_arg        = "--version";
 passthrough        = false;

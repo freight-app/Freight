@@ -3,6 +3,8 @@
 
 extensions = [".f90", ".f95", ".f03", ".f08", ".f", ".F90"];
 
+defaults["std"] = "f2018";
+
 standards["f95"]   = "-std=f95";
 standards["f2003"] = "-std=f2003";
 standards["f2008"] = "-std=f2008";

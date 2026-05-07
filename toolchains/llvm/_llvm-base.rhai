@@ -12,6 +12,7 @@ let _cc = if _cxx == "clang++" { "clang" } else { "clang" + _cxx.sub_string(7) }
 
 // ── Identity defaults ─────────────────────────────────────────────────────────
 
+kind          = "compiler";
 family        = "llvm";
 version_arg   = "--version";
 version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";

@@ -1,4 +1,5 @@
 name          = "nvcc";
+kind          = "compiler";
 family        = "";
 sanitizer_options = [];
 homepage      = "https://developer.nvidia.com/cuda-toolkit";

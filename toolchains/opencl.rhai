@@ -2,6 +2,7 @@
 // Host code (C or C++) is compiled separately by the gcc/clang template.
 
 name          = "opencl";
+kind          = "compiler";
 family        = "";
 sanitizer_options    = [];
 homepage      = "https://www.khronos.org/opencl/";

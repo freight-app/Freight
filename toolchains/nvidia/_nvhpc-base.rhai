@@ -1,6 +1,7 @@
 // Shared NVIDIA HPC SDK base — nvc (C), nvc++ (C++), nvfortran (Fortran).
 // Successor to the Portland Group (PGI) compilers. Supports OpenACC, OpenMP offloading.
 
+kind          = "compiler";
 family        = "nvidia";
 version_arg   = "--version";
 // Generic X.Y match works for nvc, nvc++, and nvfortran version output alike.

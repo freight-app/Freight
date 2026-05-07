@@ -51,6 +51,11 @@ pub(super) struct ToolchainDef {
     pub sanitizer_options: Vec<String>,
     /// PCH params: "compile" flag, "use" template, "extension" (e.g. ".pch" / ".gch")
     pub pch: HashMap<String, String>,
+    /// Default option values used when the manifest doesn't specify them.
+    /// Keys match manifest language/compiler option names (e.g. `"std"`, `"stdlib"`).
+    pub defaults: HashMap<String, String>,
+    /// `"debugger"` marks the file as a debugger template; `""` = compiler template.
+    pub kind: String,
 }
 
 #[derive(Debug, Default)]
@@ -122,6 +127,21 @@ impl Drop for Guard {
 
 // ── Script evaluation ─────────────────────────────────────────────────────────
 
+/// Fast text scan that returns the value of the top-level `kind = "..."` assignment
+/// without a full Rhai eval. Returns `"compiler"` when no explicit kind is set.
+pub(super) fn quick_kind(src: &str) -> String {
+    for line in src.lines() {
+        let t = line.trim();
+        if t.starts_with("//") { continue; }
+        let Some(rest) = t.strip_prefix("kind") else { continue };
+        let rest = rest.trim();
+        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let v = rest.trim().trim_end_matches(';').trim().trim_matches('"');
+        if !v.is_empty() { return v.to_string(); }
+    }
+    "compiler".to_string()
+}
+
 /// Evaluate a Rhai toolchain script. When `dir` is provided, `read_file("path")`
 /// calls inside the script resolve relative to that directory.
 pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<ToolchainDef, FreightError> {
@@ -139,7 +159,7 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<ToolchainDef,
     // ── Plain variables — identity & constraints ───────────────────────────
     for key in &[
         "name", "homepage", "binary", "version_arg", "version_regex",
-        "passthrough_prefix", "min_version", "family",
+        "passthrough_prefix", "min_version", "family", "kind",
     ] {
         scope.push(*key, String::new());
     }
@@ -166,7 +186,7 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<ToolchainDef,
     }
 
     // ── Per-category flag maps (plain Rhai Map — native indexer-set works) ─
-    for cat in &["opt", "dbg", "warnings", "lto", "lto_link", "stdlib", "runtime"] {
+    for cat in &["opt", "dbg", "warnings", "lto", "lto_link", "stdlib", "runtime", "defaults"] {
         scope.push(*cat, Map::new());
     }
     // sanitize and cpu_ext are single template strings, grouped near sanitizers.
@@ -238,6 +258,8 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<ToolchainDef,
     def.flags_lto_link = flag_map!("lto_link");
     def.flags_stdlib   = flag_map!("stdlib");
     def.flags_runtime  = flag_map!("runtime");
+    def.defaults       = flag_map!("defaults");
+    def.kind           = str!("kind");
 
     let mv = str!("min_version");
     if !mv.is_empty() { def.min_version = Some(mv); }

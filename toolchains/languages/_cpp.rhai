@@ -3,6 +3,8 @@
 
 extensions = [".cpp", ".cppm", ".cc", ".cxx", ".c++"];
 
+defaults["std"] = "c++17";
+
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";
 standards["c++23"] = "-std=c++23";

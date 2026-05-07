@@ -4,6 +4,7 @@ use std::process::Command;
 use regex::Regex;
 
 use super::cache::{freight_home, ToolchainCache};
+use super::script::quick_kind;
 use super::template::CompilerTemplate;
 use crate::error::FreightError;
 
@@ -108,6 +109,8 @@ pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
         {
             continue;
         }
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        if quick_kind(&src) != "compiler" { continue; }
         match CompilerTemplate::from_rhai_file(path) {
             Ok(t) => templates.push(t),
             Err(e) => eprintln!("warn: skipping {:?}: {e}", path.file_name().unwrap_or_default()),

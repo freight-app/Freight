@@ -8,6 +8,7 @@
 // LTO uses two separate flags: /GL at compile time and /LTCG at link time.
 
 name          = "msvc";
+kind          = "compiler";
 family        = "";
 sanitizer_options    = ["address"];
 homepage      = "https://visualstudio.microsoft.com/";

@@ -3,6 +3,7 @@
 // (dep_file is empty — freight falls back to mtime-only dirty checking for TCC projects).
 
 name          = "tcc";
+kind          = "compiler";
 family        = "";
 sanitizer_options    = [];
 homepage      = "https://bellard.org/tcc/";

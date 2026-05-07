@@ -2,6 +2,7 @@
 // Outputs a .o + a C header. The host links the .o from C or C++.
 
 name          = "ispc";
+kind          = "compiler";
 family        = "";
 sanitizer_options = [];
 homepage      = "https://ispc.github.io/";

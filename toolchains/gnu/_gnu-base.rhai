@@ -14,6 +14,7 @@ let _gcc = if _gxx == "g++" { "gcc" } else { "gcc" + _gxx.sub_string(3) };
 
 // ── Identity defaults ─────────────────────────────────────────────────────────
 
+kind          = "compiler";
 family        = "gnu";
 version_arg   = "--version";
 version_regex = "\\b(\\d+\\.\\d+\\.\\d+)\\b";

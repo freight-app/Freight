@@ -11,7 +11,7 @@ use crate::toolchain::template::BuildSettings;
 ///
 /// A workspace root has **only** this section — no `[package]`. Members are
 /// ordinary freight projects whose own `freight.toml` files contain `[package]`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct WorkspaceSection {
     /// Relative paths to member directories (e.g. `["app/", "libfoo/"]`).
     pub members: Vec<String>,
@@ -49,6 +49,12 @@ pub struct Manifest {
     /// Assembly / CPU target configuration: arch override and CPU extensions.
     #[serde(default)]
     pub target: TargetConfig,
+    /// Formatter requirements for this project (`[formatter]`).
+    #[serde(default)]
+    pub formatter: FormatterConfig,
+    /// Linter requirements for this project (`[linter]`).
+    #[serde(default)]
+    pub linter: LinterConfig,
     /// Per-platform overlays keyed by OS name (`linux`, `windows`, `macos`,
     /// `freebsd`, …) or family alias (`unix`, `bsd`). Matching overlays are
     /// merged into the base config in a defined order (see [`host_platforms`])
@@ -488,6 +494,81 @@ where
         OneOrMany::One(s) => vec![s],
         OneOrMany::Many(v) => v,
     }))
+}
+
+// ── Formatter / linter config ─────────────────────────────────────────────────
+
+/// `[formatter]` — project code-style requirements.
+///
+/// ```toml
+/// [formatter]
+/// name  = "clang-format"   # which formatter (auto-detected when absent)
+/// style = "Google"         # resolved through the template's settings map
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct FormatterConfig {
+    /// Preferred formatter name (e.g. `"clang-format"`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Named settings resolved through the template's `settings` map.
+    /// Written flat — `style = "Google"`, not `settings.style = "Google"`.
+    #[serde(flatten)]
+    pub settings: HashMap<String, String>,
+}
+
+/// `[linter]` — project code-quality requirements.
+///
+/// ```toml
+/// [linter]
+/// name   = "clang-tidy"
+/// checks = "-*,modernize-*,bugprone-*"
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LinterConfig {
+    /// Preferred linter name (e.g. `"clang-tidy"`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Named settings resolved through the template's `settings` map.
+    #[serde(flatten)]
+    pub settings: HashMap<String, String>,
+}
+
+// ── Debugger config ───────────────────────────────────────────────────────────
+
+/// `[debugger]` — per-project debugger configuration.
+///
+/// General settings here apply to every debugger. Debugger-specific settings
+/// go under `[debugger.<name>]`. Which debugger to use is a user/machine
+/// concern (CLI flag or toolchain selection), not a project setting.
+///
+/// ```toml
+/// [debugger.gdb]        # GDB-specific settings
+/// args  = ["--tui"]     # raw extra flags before the program separator
+/// tui   = true          # resolved through gdb.rhai's settings map
+/// quiet = true
+///
+/// [debugger.lldb]       # LLDB-specific settings
+/// no_use_colors = true
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct DebuggerConfig {
+    /// Per-debugger configuration, keyed by debugger name.
+    /// `[debugger.gdb]`, `[debugger.lldb]`, etc.
+    #[serde(flatten)]
+    pub debuggers: HashMap<String, DebuggerInstanceConfig>,
+}
+
+/// Configuration for a specific debugger, declared under `[debugger.<name>]`
+/// in `~/.freight/config.toml`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct DebuggerInstanceConfig {
+    /// Raw extra flags inserted before the program separator.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Named settings resolved through the template's `settings` map.
+    /// Written flat — `tui = true`, not `settings.tui = true`.
+    #[serde(flatten)]
+    pub settings: HashMap<String, bool>,
 }
 
 // ── Target / assembly config ──────────────────────────────────────────────────

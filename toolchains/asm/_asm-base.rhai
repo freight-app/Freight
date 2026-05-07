@@ -1,6 +1,7 @@
 // Shared base for x86/x86_64 assemblers (NASM, YASM).
 // Both assemblers produce object files linked by the host C toolchain.
 
+kind               = "compiler";
 family             = "";
 sanitizer_options  = [];
 version_arg        = "--version";

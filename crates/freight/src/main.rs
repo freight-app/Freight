@@ -13,6 +13,8 @@ use crate::commands::deps::{
     cmd_update, cmd_yank,
 };
 use crate::commands::doc::{cmd_doc, cmd_man};
+use crate::commands::fmt::cmd_fmt;
+use crate::commands::lint::cmd_lint;
 use crate::commands::install::{cmd_install, cmd_package};
 use crate::commands::new::{cmd_init, cmd_new};
 use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list, cmd_toolchain_use};
@@ -213,6 +215,18 @@ enum Commands {
     Publish,
     /// Yank a published version
     Yank { version: String },
+    /// Format source files
+    Fmt {
+        /// Check formatting without modifying files
+        #[arg(long)]
+        check: bool,
+    },
+    /// Lint source files
+    Lint {
+        /// Apply auto-fixes where possible
+        #[arg(long)]
+        fix: bool,
+    },
     /// Manage compiler toolchains
     Toolchain {
         #[command(subcommand)]
@@ -278,6 +292,8 @@ fn main() -> Result<()> {
         Commands::Login => cmd_login(),
         Commands::Publish => cmd_publish(),
         Commands::Yank { version } => cmd_yank(&version),
+        Commands::Fmt { check } => cmd_fmt(check),
+        Commands::Lint { fix } => cmd_lint(fix),
         Commands::Toolchain { command } => match command {
             ToolchainCommands::List => cmd_toolchain_list(),
             ToolchainCommands::Add { name } => cmd_toolchain_add(&name),
