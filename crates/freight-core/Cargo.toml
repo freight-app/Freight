@@ -9,6 +9,7 @@ serde      = { workspace = true }
 serde_json = { workspace = true }
 rayon      = { workspace = true }
 walkdir    = { workspace = true }
+glob       = { workspace = true }
 regex      = { workspace = true }
 sha2       = { workspace = true }
 curl       = { workspace = true }

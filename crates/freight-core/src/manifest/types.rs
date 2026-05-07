@@ -62,6 +62,15 @@ pub struct Manifest {
     /// linked on Windows builds.
     #[serde(default)]
     pub platform: HashMap<String, PlatformOverlay>,
+    /// OS-conditional sources and defines — `[os.linux]`, `[os.windows]`, etc.
+    /// Files listed here are excluded from the unconditional `src/` walk on
+    /// non-matching platforms and only compiled on the named OS.
+    #[serde(default)]
+    pub os: HashMap<String, ConditionalSources>,
+    /// Arch-conditional sources and defines — `[arch.x86_64]`, `[arch.aarch64]`, etc.
+    /// Same exclusion semantics as `[os.*]` but matched against the target CPU arch.
+    #[serde(default)]
+    pub arch: HashMap<String, ConditionalSources>,
 }
 
 impl Manifest {
@@ -725,6 +734,22 @@ pub struct Profile {
     /// Merged with any features requested at the command line before resolution.
     #[serde(default)]
     pub features: Vec<String>,
+}
+
+// ── Conditional sources (os / arch) ──────────────────────────────────────────
+
+/// Sources and defines that are only active on a specific OS or CPU arch.
+/// Used by `[os.<name>]` and `[arch.<name>]` manifest sections.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ConditionalSources {
+    /// Glob patterns (relative to project root) of source files to include
+    /// only on this platform. Files matching any pattern across *any* os/arch
+    /// section are excluded from the unconditional `src/` walk.
+    #[serde(default)]
+    pub sources: Vec<String>,
+    /// Preprocessor defines injected when this platform is active.
+    #[serde(default)]
+    pub defines: Vec<String>,
 }
 
 // ── Platform overlays ─────────────────────────────────────────────────────────

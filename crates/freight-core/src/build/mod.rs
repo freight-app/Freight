@@ -208,6 +208,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     let script_out = script::run_build_script(project_dir, manifest, effective_backend, profile, detected, &pkg_configs)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
+    compile_defines.extend(platform_defines(manifest));
     compile_defines.extend(script_out.to_defines());
     compile_defines.extend(script_out.extra_flags.iter().cloned());
     for lib in &script_out.link_libs {
@@ -431,6 +432,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     let script_out = script::run_build_script(project_dir, manifest, effective_backend, profile, detected, &pkg_configs)?;
     include_dirs.extend(script_out.include_dirs.iter().cloned());
     let mut compile_defines = feature_defines.clone();
+    compile_defines.extend(platform_defines(manifest));
     compile_defines.extend(script_out.to_defines());
     compile_defines.extend(script_out.extra_flags.iter().cloned());
     for lib in &script_out.link_libs {
@@ -873,4 +875,24 @@ fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightEr
     }
 
     Ok(())
+}
+
+/// Collect preprocessor defines from `[os.<current_os>]` and
+/// `[arch.<current_arch>]` sections. Called before each build/test.
+fn platform_defines(manifest: &Manifest) -> Vec<String> {
+    let current_os   = std::env::consts::OS;
+    let current_arch = manifest.target.arch.as_deref().unwrap_or(std::env::consts::ARCH);
+    let mut defines  = Vec::new();
+
+    for (key, entry) in &manifest.os {
+        if key.eq_ignore_ascii_case(current_os) {
+            defines.extend(entry.defines.iter().cloned());
+        }
+    }
+    for (key, entry) in &manifest.arch {
+        if key.eq_ignore_ascii_case(current_arch) {
+            defines.extend(entry.defines.iter().cloned());
+        }
+    }
+    defines
 }

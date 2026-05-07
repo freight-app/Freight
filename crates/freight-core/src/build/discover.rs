@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
@@ -38,6 +38,11 @@ pub fn discover(
 ) -> DiscoveredSources {
     let ext_map = build_ext_map(manifest, templates);
 
+    // Build the exclusion set: every file matched by any [os.*] or [arch.*]
+    // sources glob. These files are opt-in to a specific platform — the
+    // unconditional walk must never include them.
+    let exclusion_set = build_exclusion_set(project_dir, manifest);
+
     let src_dir = project_dir.join("src");
     let mut sources: Vec<SourceFile> = Vec::new();
 
@@ -49,22 +54,42 @@ pub fn discover(
             .filter(|e| e.file_type().is_file())
         {
             let path = entry.path();
+            let rel = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
+
+            // Skip files claimed by a conditional section.
+            if exclusion_set.contains(&rel) {
+                continue;
+            }
+
             let ext = match path.extension().and_then(|e| e.to_str()) {
                 Some(e) => format!(".{e}"),
                 None => continue,
             };
 
             if let Some(lang_key) = ext_map.get(ext.as_str()) {
-                let rel = path.strip_prefix(project_dir)
-                    .unwrap_or(path)
-                    .to_path_buf();
                 sources.push(SourceFile { path: rel, lang_key: lang_key.clone() });
             }
         }
     }
 
-    // Sort for deterministic build order within each language group.
+    // Append sources from the matching [os.*] and [arch.*] sections.
+    let current_os   = std::env::consts::OS;
+    let current_arch = manifest.target.arch.as_deref().unwrap_or(std::env::consts::ARCH);
+
+    for (key, entry) in &manifest.os {
+        if key.eq_ignore_ascii_case(current_os) {
+            sources.extend(expand_conditional_sources(project_dir, &entry.sources, &ext_map));
+        }
+    }
+    for (key, entry) in &manifest.arch {
+        if key.eq_ignore_ascii_case(current_arch) {
+            sources.extend(expand_conditional_sources(project_dir, &entry.sources, &ext_map));
+        }
+    }
+
+    // Stable sort + dedup in case globs from different sections overlap.
     sources.sort_by(|a, b| a.path.cmp(&b.path));
+    sources.dedup_by(|a, b| a.path == b.path);
 
     let mut include_dirs: Vec<PathBuf> = Vec::new();
     let inc_dir = project_dir.join("inc");
@@ -73,6 +98,57 @@ pub fn discover(
     }
 
     DiscoveredSources { sources, include_dirs }
+}
+
+/// Expand all globs from every `[os.*]` and `[arch.*]` sources list into a
+/// set of relative paths. Used to exclude these files from the normal walk.
+fn build_exclusion_set(project_dir: &Path, manifest: &Manifest) -> HashSet<PathBuf> {
+    let mut set = HashSet::new();
+    let all_globs = manifest.os.values().chain(manifest.arch.values())
+        .flat_map(|e| e.sources.iter());
+    for pattern in all_globs {
+        for path in glob_sources(project_dir, pattern) {
+            set.insert(path);
+        }
+    }
+    set
+}
+
+/// Expand a single glob pattern and return matching files as paths relative
+/// to `project_dir`, classified by extension via `ext_map`.
+fn expand_conditional_sources(
+    project_dir: &Path,
+    patterns: &[String],
+    ext_map: &HashMap<String, String>,
+) -> Vec<SourceFile> {
+    let mut out = Vec::new();
+    for pattern in patterns {
+        for rel in glob_sources(project_dir, pattern) {
+            let ext = rel.extension().and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+            if let Some(lang_key) = ext_map.get(ext.as_str()) {
+                out.push(SourceFile { path: rel, lang_key: lang_key.clone() });
+            }
+        }
+    }
+    out
+}
+
+/// Expand a glob pattern rooted at `project_dir` and return matching paths
+/// relative to `project_dir`. Non-matching or invalid patterns yield nothing.
+fn glob_sources(project_dir: &Path, pattern: &str) -> Vec<PathBuf> {
+    let abs_pattern = project_dir.join(pattern);
+    let pattern_str = match abs_pattern.to_str() {
+        Some(s) => s.to_owned(),
+        None => return vec![],
+    };
+    let Ok(paths) = glob::glob(&pattern_str) else { return vec![] };
+    paths
+        .filter_map(|r| r.ok())
+        .filter(|p| p.is_file())
+        .filter_map(|p| p.strip_prefix(project_dir).ok().map(PathBuf::from))
+        .collect()
 }
 
 /// Build a map from file extension (e.g. `".cpp"`) to language key (e.g. `"cpp"`).
