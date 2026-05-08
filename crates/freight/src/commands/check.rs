@@ -7,7 +7,7 @@ use freight_core::manifest::{
 };
 use freight_core::toolchain::{load_templates, templates_dir};
 
-use crate::output::{print_error, print_status, print_success, print_warning};
+use crate::output::{print_error, print_status, print_success};
 
 pub fn cmd_check() {
     let cwd = match std::env::current_dir() {
@@ -115,11 +115,9 @@ fn print_manifest_summary(m: &Manifest) {
         print_status("features", &names.join(", "));
     }
 
-    if !m.compiler.overrides.is_empty() {
-        print_warning(&format!(
-            "{} extension override(s) active",
-            m.compiler.overrides.len()
-        ));
+    if !m.compiler.per_tool.is_empty() {
+        let tools: Vec<&str> = m.compiler.per_tool.keys().map(String::as_str).collect();
+        print_status("tool overrides", &tools.join(", "));
     }
 }
 

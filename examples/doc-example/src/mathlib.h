@@ -13,6 +13,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Compute the factorial of n.
  *
@@ -61,5 +65,9 @@ double vec2_length(Vec2 v);
 /// @param b  Right operand.
 /// @return   a + b
 Vec2 vec2_add(Vec2 a, Vec2 b);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MATHLIB_H */

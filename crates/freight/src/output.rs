@@ -16,10 +16,6 @@ pub fn print_error(msg: &str) {
     eprintln!("{} {}", "✗".red().bold(), msg);
 }
 
-pub fn print_unimplemented(cmd: &str) {
-    println!("{} `freight {}` is not yet implemented", "⚠".yellow().bold(), cmd);
-}
-
 pub fn print_status(verb: &str, detail: &str) {
     println!("{:>12} {}", verb.cyan().bold(), detail);
 }

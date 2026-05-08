@@ -18,7 +18,6 @@ use crate::commands::lint::cmd_lint;
 use crate::commands::install::{cmd_install, cmd_package};
 use crate::commands::new::{cmd_init, cmd_new};
 use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list, cmd_toolchain_use};
-use crate::output::print_unimplemented;
 
 /// Returns the top-level [`clap::Command`] for this binary.
 /// Used by `freight man` to generate man pages without re-parsing argv.

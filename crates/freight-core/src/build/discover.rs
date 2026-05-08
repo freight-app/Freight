@@ -153,27 +153,53 @@ fn glob_sources(project_dir: &Path, pattern: &str) -> Vec<PathBuf> {
 
 /// Build a map from file extension (e.g. `".cpp"`) to language key (e.g. `"cpp"`).
 ///
-/// Only extensions claimed by languages declared in the manifest are included.
-/// When multiple active languages claim the same extension, `LANG_PRIORITY` decides
-/// which one wins — more specialised languages (GPU, domain-specific) beat generic ones.
+/// Build a map from file extension → language key from all loaded templates.
+///
+/// Language detection is automatic — `[language.<key>]` sections provide optional
+/// configuration but do not gate source discovery. Extensions that are unique to a
+/// language (`.asm`, `.cu`, `.hip`, `.f90`, …) are always included so those files
+/// are compiled without requiring a manifest declaration.
+///
+/// Specialised lang_keys that share extensions with generic C/C++ (e.g. `sycl`
+/// and `cpp` both handle `.cpp`) require an explicit `[language.<key>]` declaration
+/// in the manifest to activate, preventing accidental misclassification.
 pub(crate) fn build_ext_map(manifest: &Manifest, templates: &[CompilerTemplate]) -> HashMap<String, String> {
-    // Specialised languages take priority over generic C/C++ so that e.g. a SYCL
-    // project that only declares [language.sycl] gets its .cpp files compiled by icpx.
+    // Specialised lang_keys that share extensions with generic C/C++.
+    // These only override the default mapping when explicitly declared in the manifest.
+    const REQUIRES_DECLARATION: &[&str] = &["sycl", "hip", "cuda", "opencl", "ispc"];
+
+    // Priority order for resolving conflicts among always-active languages.
+    // Higher index = higher priority (last write wins).
     const LANG_PRIORITY: &[&str] = &[
-        "cuda", "hip", "sycl", "opencl", "ispc", "d", "ada", "fortran", "cpp", "c",
+        "c", "asm", "fortran", "ada", "d", "cpp",
     ];
 
-    let active: std::collections::HashSet<&str> =
-        manifest.language.keys().map(String::as_str).collect();
+    let declared: HashSet<&str> = manifest.language.keys().map(String::as_str).collect();
 
     let mut ext_map: HashMap<String, String> = HashMap::new();
 
-    // Insert in reverse priority order so higher-priority entries overwrite lower ones.
-    let ordered: Vec<&&str> = LANG_PRIORITY.iter().rev()
-        .filter(|&&k| active.contains(k))
+    // Phase 1: insert all always-active languages in priority order.
+    // Non-LANG_PRIORITY keys first (low priority, first-write wins).
+    let all_always_active: Vec<&str> = templates
+        .iter()
+        .flat_map(|t| t.linking.keys().map(String::as_str))
+        .filter(|k| !REQUIRES_DECLARATION.contains(k))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
         .collect();
 
-    for &&lang_key in &ordered {
+    for &lang_key in all_always_active.iter().filter(|k| !LANG_PRIORITY.contains(k)) {
+        for template in templates {
+            if let Some(linking) = template.linking.get(lang_key) {
+                for ext in &linking.extensions {
+                    ext_map.entry(ext.clone()).or_insert_with(|| lang_key.to_string());
+                }
+            }
+        }
+    }
+
+    // LANG_PRIORITY languages in ascending order (higher priority overwrites).
+    for &lang_key in LANG_PRIORITY {
         for template in templates {
             if let Some(linking) = template.linking.get(lang_key) {
                 for ext in &linking.extensions {
@@ -183,12 +209,13 @@ pub(crate) fn build_ext_map(manifest: &Manifest, templates: &[CompilerTemplate])
         }
     }
 
-    // Also handle any active language keys not in LANG_PRIORITY (user-added via custom template).
-    for lang_key in active.iter().filter(|k| !LANG_PRIORITY.contains(k)) {
+    // Phase 2: apply declared specialised languages on top (they override cpp/c defaults).
+    for &lang_key in REQUIRES_DECLARATION {
+        if !declared.contains(lang_key) { continue; }
         for template in templates {
-            if let Some(linking) = template.linking.get(*lang_key) {
+            if let Some(linking) = template.linking.get(lang_key) {
                 for ext in &linking.extensions {
-                    ext_map.entry(ext.clone()).or_insert_with(|| lang_key.to_string());
+                    ext_map.insert(ext.clone(), lang_key.to_string());
                 }
             }
         }
@@ -325,5 +352,24 @@ src  = "src/main.cpp"
         let m = minimal_manifest("cpp");
         let found = discover(dir.path(), &m, &templates());
         assert!(found.sources.iter().any(|s| s.path.ends_with("core/engine.cpp")));
+    }
+
+    #[test]
+    fn cpp_maps_to_cpp_not_sycl_without_declaration() {
+        let manifest = crate::manifest::load_manifest_str(r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.cpp]
+[language.c]
+[[bin]]
+name = "p"
+src = "src/main.cpp"
+"#).unwrap();
+        let ext_map = build_ext_map(&manifest, &templates());
+        assert_eq!(ext_map.get(".cpp").map(String::as_str), Some("cpp"),
+            ".cpp should map to cpp, got {:?}", ext_map.get(".cpp"));
+        assert!(!ext_map.values().any(|v| v == "sycl"),
+            "sycl should not appear without [language.sycl]; ext_map: {:?}", ext_map);
     }
 }

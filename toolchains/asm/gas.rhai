@@ -50,7 +50,7 @@ arch_flags["x86"] = "--32";
 
 modules["style"] = "none";
 
-linking["asm"] = #{
+linking["gas"] = #{
     abi:        "c",
     compatible: ["c", "cpp"],
     linker:     "",

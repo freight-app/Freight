@@ -768,7 +768,12 @@ fn apply_sanitize_override(manifest: &mut crate::manifest::types::Manifest, prof
 fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, FreightError> {
     let mut manifest = load_manifest(project_dir)?;
     let global = GlobalConfig::load();
-    let effective_backend = global.default_backend.clone().map(Backend).unwrap_or_default();
+    // Project manifest backend wins over global config; "auto" defers to the next level.
+    let configured_backend = if !manifest.compiler.backend.is_auto() {
+        manifest.compiler.backend.clone()
+    } else {
+        global.default_backend.clone().map(Backend).unwrap_or_default()
+    };
     manifest.compiler.target = global.target.clone();
     manifest.compiler.sysroot = global.sysroot.clone();
 
@@ -786,6 +791,20 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
             "no compilers found on PATH — run `freight toolchain list`".into(),
         ));
     }
+
+    // If the configured backend isn't actually detected, fall back to auto so
+    // the build doesn't fail for compilers that aren't installed (e.g. a global
+    // `default_backend = "tcc"` set on a machine that doesn't have TCC).
+    let effective_backend = if configured_backend.is_auto()
+        || detected.iter().any(|d| {
+            d.template.name == configured_backend.name()
+                || d.template.family == configured_backend.name()
+        })
+    {
+        configured_backend
+    } else {
+        Backend::default()
+    };
 
     let found = discover(project_dir, &manifest, &templates);
     if found.sources.is_empty() {

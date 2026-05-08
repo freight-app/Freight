@@ -500,7 +500,7 @@ pub struct DetailedDep {
     /// pkg-config query string, e.g. `"libfoo >= 2.0"`. Freight runs
     /// `pkg-config --cflags --libs <query>` and injects the result into
     /// compilation and linking. No source build is performed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "pkg-config")]
     pub pkg_config: Option<String>,
 }
 
@@ -628,6 +628,8 @@ pub struct CompilerToolOptions {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CompilerConfig {
+    #[serde(default)]
+    pub backend: Backend,
     #[serde(rename = "opt-level", default = "default_opt_level")]
     pub opt_level: u8,
     #[serde(default)]
@@ -640,8 +642,6 @@ pub struct CompilerConfig {
     pub flags: Vec<String>,
     #[serde(default)]
     pub includes: CompilerIncludes,
-    #[serde(default)]
-    pub overrides: HashMap<String, String>,
     /// Cross-compilation target triple — set via `freight --target` or `~/.freight/config.toml`,
     /// not in `freight.toml` (machine-local).
     #[serde(skip)]
@@ -664,13 +664,13 @@ pub struct CompilerConfig {
 impl Default for CompilerConfig {
     fn default() -> Self {
         Self {
+            backend: Backend::default(),
             opt_level: default_opt_level(),
             debug: false,
             warnings: default_warnings(),
             defines: vec![],
             flags: vec![],
             includes: CompilerIncludes::default(),
-            overrides: HashMap::default(),
             target: None,
             sysroot: None,
             pch: None,

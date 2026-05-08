@@ -1,9 +1,10 @@
 [
   {
-    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
+    "directory": "/home/max/Freight/examples/hello-cpp",
     "file": "src/main.cpp",
+    "command": "/usr/bin/clang++ -O0 -g -Wall -Wextra -Wpedantic -std=c++20 -Iinc -c src/main.cpp -o target/dev/objs/src/main.o",
     "arguments": [
-      "/usr/sbin/clang++",
+      "/usr/bin/clang++",
       "-O0",
       "-g",
       "-Wall",
@@ -19,10 +20,11 @@
     "output": "target/dev/objs/src/main.o"
   },
   {
-    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/hello-cpp",
+    "directory": "/home/max/Freight/examples/hello-cpp",
     "file": "src/stats.cpp",
+    "command": "/usr/bin/clang++ -O0 -g -Wall -Wextra -Wpedantic -std=c++20 -Iinc -c src/stats.cpp -o target/dev/objs/src/stats.o",
     "arguments": [
-      "/usr/sbin/clang++",
+      "/usr/bin/clang++",
       "-O0",
       "-g",
       "-Wall",

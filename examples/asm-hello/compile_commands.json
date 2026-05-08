@@ -1,33 +1,35 @@
 [
   {
-    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello",
-    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/main.c",
+    "directory": "/home/max/Freight/examples/asm-hello",
+    "file": "src/main.c",
+    "command": "/usr/bin/clang -O2 -Wall -Wextra -Wpedantic -std=c17 -c src/main.c -o target/dev/objs/src/main.o",
     "arguments": [
-      "/usr/sbin/clang",
+      "/usr/bin/clang",
       "-O2",
       "-Wall",
       "-Wextra",
       "-Wpedantic",
       "-std=c17",
       "-c",
-      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/main.c",
+      "src/main.c",
       "-o",
-      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/main.o"
+      "target/dev/objs/src/main.o"
     ],
-    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/main.o"
+    "output": "target/dev/objs/src/main.o"
   },
   {
-    "directory": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello",
-    "file": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/math.asm",
+    "directory": "/home/max/Freight/examples/asm-hello",
+    "file": "src/math.asm",
+    "command": "/usr/bin/nasm -w+all -f elf64 src/math.asm -o target/dev/objs/src/math.o",
     "arguments": [
-      "/usr/sbin/nasm",
+      "/usr/bin/nasm",
       "-w+all",
       "-f",
       "elf64",
-      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/src/math.asm",
+      "src/math.asm",
       "-o",
-      "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/math.o"
+      "target/dev/objs/src/math.o"
     ],
-    "output": "/home/max/freight/.claude/worktrees/bold-owl-vxoq/examples/asm-hello/target/dev/objs/src/math.o"
+    "output": "target/dev/objs/src/math.o"
   }
 ]
