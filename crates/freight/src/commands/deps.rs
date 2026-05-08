@@ -296,7 +296,7 @@ pub fn cmd_fetch() {
             Dependency::Detailed(d) if d.system.is_some() => {
                 print_status("skip", &format!("{name} (system)"));
             }
-            Dependency::Detailed(d) if d.path.is_some() && d.build_system.is_none() => {
+            Dependency::Detailed(d) if d.path.is_some() && d.backend.is_none() => {
                 any_work = true;
                 let rel = d.path.as_deref().unwrap();
                 let dep_dir = project_dir.join(rel);
@@ -307,7 +307,7 @@ pub fn cmd_fetch() {
                     all_ok = false;
                 }
             }
-            Dependency::Detailed(d) if d.build_system.is_some() => {
+            Dependency::Detailed(d) if d.backend.is_some() => {
                 print_status("skip", &format!("{name} (foreign — built on demand)"));
             }
             Dependency::Simple(_) => {

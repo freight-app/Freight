@@ -65,7 +65,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] GitHub release deps — `{ github = "owner/repo", tag = "v1.0" }` shorthand
 - [x] Download sentinel — `.deps/<name>/.freight-fetched` prevents re-downloading
 - [x] pkg-config deps — standalone or with system fallback
-- [x] `build_system = "none"` explicit header-only override
+- [x] `backend = "none"` explicit header-only override
 - [x] Header-only auto-detection when no build system and no source files found
 
 ### Features System ✓ COMPLETE

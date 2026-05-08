@@ -173,14 +173,18 @@ Any dep with a source (path, git, http, github) supports these additional keys:
 
 ```toml
 dep = {
-    path         = "../dep",
-    build_system = "cmake",              # cmake | make | meson | autotools | scons | none | auto
-    cmake_args   = ["-DBUILD_TESTS=OFF"], # extra args forwarded to cmake configure step
-    include      = ["include/", "src/"], # explicit include dirs (skips auto-detection)
+    path       = "../dep",
+    backend    = "cmake",               # cmake | make | meson | autotools | scons | bazel | none
+    cmake_args = ["-DBUILD_TESTS=OFF"], # extra args forwarded to cmake configure step
+    include    = ["include/", "src/"],  # explicit include dirs (skips auto-detection)
 }
 ```
 
-`build_system = "none"` skips the build entirely — useful when you want to explicitly declare a
+`backend` is optional — freight auto-detects the build system from marker files in the dep directory
+(`CMakeLists.txt` → cmake, `meson.build` → meson, `configure.ac` → autotools, `Makefile` → make, etc.).
+Specifying an explicit `backend` when the required marker file is absent is an error.
+
+`backend = "none"` skips the build entirely — useful when you want to explicitly declare a
 header-only dep. Freight also auto-detects header-only deps: if no compilable source files are found
 after fetching, the build step is skipped and include dirs are collected automatically.
 

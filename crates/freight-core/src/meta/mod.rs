@@ -125,7 +125,7 @@ pub fn build_foreign_deps(
         }
 
         // ── Resolve build system ──────────────────────────────────────────────
-        let bs = match &d.build_system {
+        let bs = match &d.backend {
             Some(bs) if bs == "none" => {
                 let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
                 results.push(ForeignBuilt {
@@ -134,7 +134,10 @@ pub fn build_foreign_deps(
                 });
                 continue;
             }
-            Some(bs) => bs.clone(),
+            Some(bs) => {
+                validate_backend(name, bs, &dep_dir)?;
+                bs.clone()
+            }
             None => {
                 if d.path.is_some() && dep_dir.join("freight.toml").exists() {
                     continue;
@@ -170,6 +173,37 @@ pub fn build_foreign_deps(
     Ok((results, pkg_results))
 }
 
+// ── Validation ────────────────────────────────────────────────────────────────
+
+fn validate_backend(name: &str, backend: &str, dep_dir: &Path) -> Result<(), FreightError> {
+    let (present, marker) = match backend {
+        "cmake"     => (dep_dir.join("CMakeLists.txt").exists(),     "CMakeLists.txt"),
+        "meson"     => (dep_dir.join("meson.build").exists(),        "meson.build"),
+        "autotools" => (dep_dir.join("configure.ac").exists()
+                     || dep_dir.join("configure.in").exists()
+                     || dep_dir.join("autogen.sh").exists()
+                     || dep_dir.join("configure").exists(),          "configure.ac / configure"),
+        "make"      => (dep_dir.join("Makefile").exists()
+                     || dep_dir.join("GNUmakefile").exists(),        "Makefile"),
+        "scons"     => (dep_dir.join("SConstruct").exists(),         "SConstruct"),
+        "bazel"     => (dep_dir.join("WORKSPACE").exists()
+                     || dep_dir.join("WORKSPACE.bazel").exists(),    "WORKSPACE"),
+        "auto" | "none" => return Ok(()),
+        other => return Err(FreightError::ManifestParse(format!(
+            "unknown backend '{other}' for dep '{name}'; \
+             expected: cmake, make, meson, autotools, scons, bazel"
+        ))),
+    };
+    if !present {
+        return Err(FreightError::ManifestParse(format!(
+            "backend '{backend}' specified for dep '{name}' \
+             but '{marker}' not found in '{}'",
+            dep_dir.display()
+        )));
+    }
+    Ok(())
+}
+
 // ── Detection ─────────────────────────────────────────────────────────────────
 
 pub fn detect_build_system(dep_dir: &Path) -> Option<String> {
@@ -203,15 +237,7 @@ fn invoke_build_system(
     profile: &str,
     cmake_args: &[String],
 ) -> Result<Vec<PathBuf>, FreightError> {
-    let resolved = if build_system == "auto" {
-        detect_build_system(dep_dir).ok_or_else(|| {
-            FreightError::ManifestParse(format!(
-                "cannot auto-detect build system for foreign dep '{name}'"
-            ))
-        })?
-    } else {
-        build_system.to_string()
-    };
+    let resolved = build_system.to_string();
 
     std::fs::create_dir_all(build_dir)?;
 
@@ -227,8 +253,8 @@ fn invoke_build_system(
         "bazel"     => { bazel::build_bazel(dep_dir)?; dep_dir.to_path_buf() }
         other => {
             return Err(FreightError::ManifestParse(format!(
-                "unknown build_system '{other}' for '{name}'; \
-                 expected: cmake, make, meson, autotools, scons, bazel, auto, none"
+                "unknown backend '{other}' for dep '{name}'; \
+                 expected: cmake, make, meson, autotools, scons, bazel"
             )));
         }
     };

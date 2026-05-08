@@ -68,8 +68,8 @@ pub fn manifest_add_dep(
             if let Some(v) = &d.version {
                 inline.insert("version", Value::from(v.as_str()));
             }
-            if let Some(bs) = &d.build_system {
-                inline.insert("build_system", Value::from(bs.as_str()));
+            if let Some(bs) = &d.backend {
+                inline.insert("backend", Value::from(bs.as_str()));
             }
             if !d.include.is_empty() {
                 let mut arr = toml_edit::Array::new();
