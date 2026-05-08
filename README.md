@@ -13,13 +13,12 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 - **Incremental builds** — mtime dirty checking via `.d` dep files tracks source + headers
 - **Parallel compilation** — sources compiled in parallel with rayon
 - **Profiles** — `dev` (debug, `-O0`) and `release` (`-O3`, LTO, strip) out of the box
-- **Platform-conditional sources** — `[os.linux]`, `[arch.x86_64]` sections gate sources, defines, flags, includes, and deps to matching platforms; non-matching files are excluded entirely
+- **Platform-conditional sources** — `[os.linux]`, `[arch.x86_64]` sections gate sources, defines, flags, includes, and deps to matching platforms
 - **Dependency filters** — `os`, `arch`, and `targets` fields gate deps by host OS, CPU architecture, or cross-compilation triple
 - **Cross-compilation** — `[compiler] target` and `sysroot` for toolchain-native cross builds
 - **`freight watch`** — rebuild automatically on file changes (200 ms debounce)
 - **ccache / sccache** — compile cache wrappers detected automatically; opt out with `FREIGHT_NO_CACHE=1`
 - **Git dependencies** — `{ git = "url", branch = "main" }` with lock SHA enforcement and auto-fetch
-- **`freight migrate`** — import an existing CMake, Makefile, or Meson project in one command
 - **Language server** — `freight lsp` for `freight.toml` completions, hover docs, and go-to-definition
 - **API docs** — `freight doc` extracts doc comments and renders HTML, Markdown, LaTeX, or PDF with full math support
 
@@ -30,9 +29,9 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 | `freight` | The CLI binary |
 | `freight.toml` | Project manifest (commit this) |
 | `freight.lock` | Auto-generated lockfile (commit this) |
+| `build.freight` | Optional pre-build hook script |
 | `~/.freight/` | Global cache: toolchain cache, user templates, credentials |
 | `freight.dev` | The package registry (not yet live) |
-| `build.freight` | Optional pre-build hook script (planned) |
 
 ## Installation
 
@@ -87,6 +86,7 @@ src  = "src/main.cpp"
 [compiler]
 opt-level = 2
 warnings  = "all"
+includes  = ["third-party/"]      # private -I dirs for this project
 
 [profile.dev]
 opt-level = 0
@@ -103,30 +103,44 @@ debug     = false
 myutils = { path = "../myutils" }
 # System dependency — links against a system-installed library
 openssl = { system = "openssl" }
+# pkg-config dependency — queries pkg-config for cflags + libs
+zlib    = { pkg-config = "zlib" }
 # OS-filtered dependency — only linked on matching host OS
 pthread = { system = "pthread", os = "linux" }
 ws2_32  = { system = "ws2_32",  os = "windows" }
 # Architecture-filtered dependency
 sse-opt = { path = "../sse-opt", arch = "x86_64" }
 
-# OS-conditional sources and defines
+# OS-conditional sources, defines, and includes
 [os.linux]
-sources = ["src/os/linux/**"]
-defines = ["POSIX_BUILD"]
+srcs     = ["src/os/linux/**"]
+defines  = ["POSIX_BUILD"]
+includes = ["platform/linux/"]
 
 [os.windows]
-sources = ["src/os/windows/**"]
+srcs    = ["src/os/windows/**"]
 defines = ["WIN32_LEAN_AND_MEAN"]
 
 # Arch-conditional sources and defines
 [arch.x86_64]
-sources = ["src/arch/x86_64/**"]
+srcs    = ["src/arch/x86_64/**"]
 defines = ["HAVE_SSE2"]
 
 [arch.aarch64]
-sources = ["src/arch/aarch64/**"]
+srcs    = ["src/arch/aarch64/**"]
 defines = ["HAVE_NEON"]
 ```
+
+### Library targets
+
+```toml
+[lib]
+type = "static"
+srcs = ["src/mathlib.cpp", "src/vec2.cpp"]   # list or single string
+hdrs = ["include/mathlib.h", "include/vec2.h"] # public API — exposed to dependents
+```
+
+When a project depends on this library, freight infers the public include directories from the parent paths of `hdrs` and injects them automatically.
 
 ## Compiler-specific options
 
@@ -135,13 +149,10 @@ individual compiler templates can expose their own options via
 `compiler_option` and `language_option` callbacks registered in `.rhai` files.
 
 **`[compiler.<name>]`** — options dispatched to the named compiler regardless
-of which language is being compiled. If the compiler is detected but not the
-active backend, the callbacks still run for validation (e.g. version checks)
-but any injected flags are discarded.
+of which language is being compiled.
 
 **`[language.<key>]`** — options dispatched to the compiler handling that
-language. Unknown keys (not registered by the template) are silently ignored,
-so these sections are forwards-compatible.
+language. Unknown keys are silently ignored, so these sections are forwards-compatible.
 
 ```toml
 # Enforce a minimum clang++ version across the project.
@@ -162,9 +173,7 @@ Callbacks in the template receive a `ctx` object with `ctx.value`,
 `ctx.version`, `ctx.arch`, `ctx.os`, and `ctx.name`. They return `""` on
 success or a non-empty error string to abort the build. Extra flags are
 injected by calling the global `add_flag(s)` function. See
-[docs/requirements_handling.md](docs/requirements_handling.md) for the full
-reference and [docs/compiler-templates.md](docs/compiler-templates.md) for
-the template authoring guide.
+[docs/compiler-templates.md](docs/compiler-templates.md) for the full reference.
 
 ## Supported languages
 
@@ -182,17 +191,6 @@ the template authoring guide.
 | Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
 
 Mix any combination in a single project — freight routes each file extension to the right compiler automatically.
-
-## Migrating an existing project
-
-```sh
-cd my-cmake-project
-freight migrate              # auto-detect CMake / Makefile / Meson
-freight migrate --from cmake # explicit
-freight migrate --dry-run    # preview without writing
-```
-
-Recognized constructs are translated to `freight.toml`. Anything that couldn't be mapped is preserved as a `# FREIGHT:` comment for manual review.
 
 ## Workspaces
 
@@ -221,9 +219,8 @@ freight add <name> [--path P] [--git URL [--branch B] [--rev R]] [--system] [--d
 freight remove <package>
 freight update [<package>]
 freight tree                          print dependency tree
-freight migrate [--from cmake|makefile|meson] [--dry-run] [--force]
 freight lsp                           run language server on stdio
-freight debug [<binary>] [--debugger <name>] [--launch-json] [-- <args>]
+freight debug [<binary>] [--debugger <name>] [-- <args>]
 freight compile-commands [--release]  generate compile_commands.json
 freight doc [--format html|md|latex|pdf|all]
 freight man [--out-dir DIR]           generate man pages
@@ -245,10 +242,12 @@ The `examples/` directory contains fully buildable projects:
 | `asm-hello/` | C + NASM assembly |
 | `platform-deps/` | `[os.*]` / `[arch.*]` conditional sources, defines, and deps |
 | `features-demo/` | `[features]` conditional compilation |
+| `with-cmake-dep/` | Foreign CMake dependency (auto-detected) |
+| `with-make-dep/` | Foreign Make dependency (auto-detected) |
+| `with-git-dep/` | Git dependency cloned and built automatically |
 | `with-external-deps/` | URL archive and pkg-config deps |
 | `prebuilt-demo/` | `build.freight` pre-build script |
 | `doc-example/` | C, C++, Fortran with LaTeX math in comments |
-| `migrated-from-cmake/` | Before/after for `freight migrate` |
 
 ```sh
 cd examples/hello-cpp
@@ -278,9 +277,7 @@ Recognised doc comment styles:
 | D | `/++ +/`, `/**`, `///` — DDoc |
 | Ada | `--!`, `---` |
 
-Doc comment bodies are processed as Markdown (bold, italic, code spans, tables, lists).
-LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim so MathJax
-(HTML/Markdown) and LaTeX itself can render it.
+Doc comment bodies are processed as Markdown. LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim so MathJax (HTML/Markdown) and LaTeX itself can render it.
 
 The `freight-doc` standalone binary works without a `freight.toml`:
 
@@ -309,4 +306,3 @@ Contributions are welcome. Please read the [Code of Conduct](CODE_OF_CONDUCT.md)
 2. Make your changes with tests where applicable
 3. Ensure `cargo test --workspace` passes
 4. Open a pull request with a clear description of the change
-
