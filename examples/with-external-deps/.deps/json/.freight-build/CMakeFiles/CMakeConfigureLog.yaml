@@ -1,0 +1,2014 @@
+
+---
+events:
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:12 (find_program)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_UNAME"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "uname"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/bin/"
+    searched_directories:
+      - "/home/max/.local/bin/uname"
+      - "/usr/local/sbin/uname"
+      - "/usr/local/bin/uname"
+    found: "/usr/bin/uname"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:212 (message)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      The system is: Linux - 6.12.15-production+truenas - x86_64
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeUnixFindMake.cmake:5 (find_program)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_MAKE_PROGRAM"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "gmake"
+      - "make"
+      - "smake"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    searched_directories:
+      - "/home/max/.local/bin/gmake"
+      - "/usr/local/sbin/gmake"
+      - "/usr/local/bin/gmake"
+      - "/usr/bin/gmake"
+      - "/usr/bin/site_perl/gmake"
+      - "/usr/bin/vendor_perl/gmake"
+      - "/usr/bin/core_perl/gmake"
+      - "/usr/lib/rustup/bin/gmake"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gmake"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gmake"
+      - "/home/max/.local/bin/make"
+      - "/usr/local/sbin/make"
+      - "/usr/local/bin/make"
+    found: "/usr/bin/make"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompiler.cmake:73 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:69 (_cmake_find_compiler)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_CXX_COMPILER"
+    description: "CXX compiler"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "c++"
+      - "CC"
+      - "g++"
+      - "aCC"
+      - "cl"
+      - "bcc"
+      - "xlC"
+      - "icpx"
+      - "icx"
+      - "clang++"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    searched_directories:
+      - "/home/max/.local/bin/c++"
+      - "/usr/local/sbin/c++"
+      - "/usr/local/bin/c++"
+    found: "/usr/bin/c++"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:468 (find_file)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:506 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "/usr/share/cmake/Modules/"
+    found: "/usr/share/cmake/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler: /usr/bin/c++ 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "a.out"
+      
+      The CXX compiler identification is GNU, found in:
+        /home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/4.3.2/CompilerIdCXX/a.out
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_AR"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "ar"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/ar"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_RANLIB"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "ranlib"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/ranlib"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_STRIP"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "strip"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/strip"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_LINKER"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "ld"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/ld"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_NM"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "nm"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/nm"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_OBJDUMP"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "objdump"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/objdump"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_OBJCOPY"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "objcopy"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/objcopy"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_READELF"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "readelf"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/readelf"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_DLLTOOL"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "dlltool"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    searched_directories:
+      - "/usr/bin/dlltool"
+      - "/home/max/.local/bin/dlltool"
+      - "/usr/local/sbin/dlltool"
+      - "/usr/local/bin/dlltool"
+      - "/usr/bin/site_perl/dlltool"
+      - "/usr/bin/vendor_perl/dlltool"
+      - "/usr/bin/core_perl/dlltool"
+      - "/usr/lib/rustup/bin/dlltool"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/dlltool"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/dlltool"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_ADDR2LINE"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "addr2line"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    found: "/usr/bin/addr2line"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:243 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:206 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_TAPI"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "tapi"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    searched_directories:
+      - "/usr/bin/tapi"
+      - "/home/max/.local/bin/tapi"
+      - "/usr/local/sbin/tapi"
+      - "/usr/local/bin/tapi"
+      - "/usr/bin/site_perl/tapi"
+      - "/usr/bin/vendor_perl/tapi"
+      - "/usr/bin/core_perl/tapi"
+      - "/usr/lib/rustup/bin/tapi"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/tapi"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/tapi"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/GNU-FindBinUtils.cmake:18 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:207 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_CXX_COMPILER_AR"
+    description: "A wrapper around 'ar' adding the appropriate '--plugin' option for the GCC compiler"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "gcc-ar-16.1"
+      - "gcc-ar-16"
+      - "gcc-ar16"
+      - "gcc-ar"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    searched_directories:
+      - "/usr/bin/gcc-ar-16.1"
+      - "/home/max/.local/bin/gcc-ar-16.1"
+      - "/usr/local/sbin/gcc-ar-16.1"
+      - "/usr/local/bin/gcc-ar-16.1"
+      - "/usr/bin/site_perl/gcc-ar-16.1"
+      - "/usr/bin/vendor_perl/gcc-ar-16.1"
+      - "/usr/bin/core_perl/gcc-ar-16.1"
+      - "/usr/lib/rustup/bin/gcc-ar-16.1"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gcc-ar-16.1"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gcc-ar-16.1"
+      - "/usr/bin/gcc-ar-16"
+      - "/home/max/.local/bin/gcc-ar-16"
+      - "/usr/local/sbin/gcc-ar-16"
+      - "/usr/local/bin/gcc-ar-16"
+      - "/usr/bin/site_perl/gcc-ar-16"
+      - "/usr/bin/vendor_perl/gcc-ar-16"
+      - "/usr/bin/core_perl/gcc-ar-16"
+      - "/usr/lib/rustup/bin/gcc-ar-16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gcc-ar-16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gcc-ar-16"
+      - "/usr/bin/gcc-ar16"
+      - "/home/max/.local/bin/gcc-ar16"
+      - "/usr/local/sbin/gcc-ar16"
+      - "/usr/local/bin/gcc-ar16"
+      - "/usr/bin/site_perl/gcc-ar16"
+      - "/usr/bin/vendor_perl/gcc-ar16"
+      - "/usr/bin/core_perl/gcc-ar16"
+      - "/usr/lib/rustup/bin/gcc-ar16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gcc-ar16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gcc-ar16"
+    found: "/usr/bin/gcc-ar"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/GNU-FindBinUtils.cmake:30 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:207 (include)"
+      - "CMakeLists.txt:7 (project)"
+    mode: "program"
+    variable: "CMAKE_CXX_COMPILER_RANLIB"
+    description: "A wrapper around 'ranlib' adding the appropriate '--plugin' option for the GCC compiler"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "gcc-ranlib-16.1"
+      - "gcc-ranlib-16"
+      - "gcc-ranlib16"
+      - "gcc-ranlib"
+    candidate_directories:
+      - "/usr/bin/"
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+    searched_directories:
+      - "/usr/bin/gcc-ranlib-16.1"
+      - "/home/max/.local/bin/gcc-ranlib-16.1"
+      - "/usr/local/sbin/gcc-ranlib-16.1"
+      - "/usr/local/bin/gcc-ranlib-16.1"
+      - "/usr/bin/site_perl/gcc-ranlib-16.1"
+      - "/usr/bin/vendor_perl/gcc-ranlib-16.1"
+      - "/usr/bin/core_perl/gcc-ranlib-16.1"
+      - "/usr/lib/rustup/bin/gcc-ranlib-16.1"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gcc-ranlib-16.1"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gcc-ranlib-16.1"
+      - "/usr/bin/gcc-ranlib-16"
+      - "/home/max/.local/bin/gcc-ranlib-16"
+      - "/usr/local/sbin/gcc-ranlib-16"
+      - "/usr/local/bin/gcc-ranlib-16"
+      - "/usr/bin/site_perl/gcc-ranlib-16"
+      - "/usr/bin/vendor_perl/gcc-ranlib-16"
+      - "/usr/bin/core_perl/gcc-ranlib-16"
+      - "/usr/lib/rustup/bin/gcc-ranlib-16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gcc-ranlib-16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gcc-ranlib-16"
+      - "/usr/bin/gcc-ranlib16"
+      - "/home/max/.local/bin/gcc-ranlib16"
+      - "/usr/local/sbin/gcc-ranlib16"
+      - "/usr/local/bin/gcc-ranlib16"
+      - "/usr/bin/site_perl/gcc-ranlib16"
+      - "/usr/bin/vendor_perl/gcc-ranlib16"
+      - "/usr/bin/core_perl/gcc-ranlib16"
+      - "/usr/lib/rustup/bin/gcc-ranlib16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/gcc-ranlib16"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/gcc-ranlib16"
+    found: "/usr/bin/gcc-ranlib"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:83 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20"
+      binary: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_CXX_SCAN_FOR_MODULES: "OFF"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_11ff0/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_11ff0.dir/build.make CMakeFiles/cmTC_11ff0.dir/build
+        make[1]: Entering directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20'
+        Building CXX object CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o
+        /usr/bin/c++   -v -o CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Using built-in specs.
+        COLLECT_GCC=/usr/bin/c++
+        Target: x86_64-pc-linux-gnu
+        Configured with: /build/gcc/src/gcc/configure --enable-languages=ada,c,c++,d,fortran,go,lto,m2,objc,obj-c++,rust,cobol --enable-bootstrap --prefix=/usr --libdir=/usr/lib --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info --with-bugurl=https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/issues --with-build-config=bootstrap-lto --with-linker-hash-style=gnu --with-system-zlib --enable-cet=auto --enable-checking=release --enable-clocale=gnu --enable-default-pie --enable-default-ssp --enable-gnu-indirect-function --enable-gnu-unique-object --enable-libstdcxx-backtrace --enable-link-serialization=1 --enable-linker-build-id --enable-lto --enable-multilib --enable-plugin --enable-shared --enable-threads=posix --disable-libssp --disable-libstdcxx-pch --disable-werror --disable-fixincludes
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 16.1.1 20260430 (GCC) 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_11ff0.dir/'
+         /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_11ff0.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=generic -march=x86-64 -version -o /tmp/cc0Sdib0.s
+        GNU C++20 (GCC) version 16.1.1 20260430 (x86_64-pc-linux-gnu)
+        	compiled by GNU C version 16.1.1 20260430, GMP version 6.3.0, MPFR version 4.2.2, MPC version 1.4.1, isl version isl-0.27-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring nonexistent directory "/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include-fixed"
+        ignoring nonexistent directory "/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../x86_64-pc-linux-gnu/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1
+         /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/x86_64-pc-linux-gnu
+         /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/backward
+         /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include
+         /usr/local/include
+         /usr/include
+        End of search list.
+        Compiler executable checksum: d47d0c990a24bc0dbaf3bd00656bd5f3
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_11ff0.dir/'
+         as -v --64 -o CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o /tmp/cc0Sdib0.s
+        GNU assembler version 2.46.0 (x86_64-pc-linux-gnu) using BFD version (GNU Binutils) 2.46.0
+        COMPILER_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/
+        LIBRARY_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/:/lib/../lib/:/usr/lib/../lib/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.'
+        Linking CXX executable cmTC_11ff0
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_11ff0.dir/link.txt --verbose=1
+        Using built-in specs.
+        COLLECT_GCC=/usr/bin/c++
+        COLLECT_LTO_WRAPPER=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper
+        Target: x86_64-pc-linux-gnu
+        Configured with: /build/gcc/src/gcc/configure --enable-languages=ada,c,c++,d,fortran,go,lto,m2,objc,obj-c++,rust,cobol --enable-bootstrap --prefix=/usr --libdir=/usr/lib --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info --with-bugurl=https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/issues --with-build-config=bootstrap-lto --with-linker-hash-style=gnu --with-system-zlib --enable-cet=auto --enable-checking=release --enable-clocale=gnu --enable-default-pie --enable-default-ssp --enable-gnu-indirect-function --enable-gnu-unique-object --enable-libstdcxx-backtrace --enable-link-serialization=1 --enable-linker-build-id --enable-lto --enable-multilib --enable-plugin --enable-shared --enable-threads=posix --disable-libssp --disable-libstdcxx-pch --disable-werror --disable-fixincludes
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 16.1.1 20260430 (GCC) 
+        COMPILER_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/
+        LIBRARY_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/:/lib/../lib/:/usr/lib/../lib/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_11ff0' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_11ff0.'
+         /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/collect2 -plugin /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/liblto_plugin.so -plugin-opt=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper -plugin-opt=-fresolution=/tmp/ccyTDxJz.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-latomic_asneeded -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --build-id --eh-frame-hdr --hash-style=gnu -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -pie -o cmTC_11ff0 /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1 -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib -L/lib/../lib -L/usr/lib/../lib -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../.. -L/lib -L/usr/lib -v CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -latomic_asneeded -lc -lgcc_s -lgcc /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o
+        collect2 version 16.1.1 20260430
+        /usr/bin/ld -plugin /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/liblto_plugin.so -plugin-opt=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper -plugin-opt=-fresolution=/tmp/ccyTDxJz.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-latomic_asneeded -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --build-id --eh-frame-hdr --hash-style=gnu -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -pie -o cmTC_11ff0 /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1 -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib -L/lib/../lib -L/usr/lib/../lib -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../.. -L/lib -L/usr/lib -v CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -latomic_asneeded -lc -lgcc_s -lgcc /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o
+        GNU ld (GNU Binutils) 2.46.0
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_11ff0' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_11ff0.'
+        /usr/bin/c++  -v -Wl,-v CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_11ff0
+        make[1]: Leaving directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:217 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Parsed CXX implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1]
+          add: [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/x86_64-pc-linux-gnu]
+          add: [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/backward]
+          add: [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include]
+          add: [/usr/local/include]
+          add: [/usr/include]
+        end of search list found
+        collapse include dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1] ==> [/usr/include/c++/16.1.1]
+        collapse include dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/x86_64-pc-linux-gnu] ==> [/usr/include/c++/16.1.1/x86_64-pc-linux-gnu]
+        collapse include dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/backward] ==> [/usr/include/c++/16.1.1/backward]
+        collapse include dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include] ==> [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include]
+        collapse include dir [/usr/local/include] ==> [/usr/local/include]
+        collapse include dir [/usr/include] ==> [/usr/include]
+        implicit include dirs: [/usr/include/c++/16.1.1;/usr/include/c++/16.1.1/x86_64-pc-linux-gnu;/usr/include/c++/16.1.1/backward;/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include;/usr/local/include;/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:253 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
+        ignore line: [Change Dir: '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_11ff0/fast]
+        ignore line: [/usr/bin/make  -f CMakeFiles/cmTC_11ff0.dir/build.make CMakeFiles/cmTC_11ff0.dir/build]
+        ignore line: [make[1]: Entering directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-U0UG20']
+        ignore line: [Building CXX object CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o]
+        ignore line: [/usr/bin/c++   -v -o CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/usr/bin/c++]
+        ignore line: [Target: x86_64-pc-linux-gnu]
+        ignore line: [Configured with: /build/gcc/src/gcc/configure --enable-languages=ada c c++ d fortran go lto m2 objc obj-c++ rust cobol --enable-bootstrap --prefix=/usr --libdir=/usr/lib --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info --with-bugurl=https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/issues --with-build-config=bootstrap-lto --with-linker-hash-style=gnu --with-system-zlib --enable-cet=auto --enable-checking=release --enable-clocale=gnu --enable-default-pie --enable-default-ssp --enable-gnu-indirect-function --enable-gnu-unique-object --enable-libstdcxx-backtrace --enable-link-serialization=1 --enable-linker-build-id --enable-lto --enable-multilib --enable-plugin --enable-shared --enable-threads=posix --disable-libssp --disable-libstdcxx-pch --disable-werror --disable-fixincludes]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 16.1.1 20260430 (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_11ff0.dir/']
+        ignore line: [ /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_11ff0.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=generic -march=x86-64 -version -o /tmp/cc0Sdib0.s]
+        ignore line: [GNU C++20 (GCC) version 16.1.1 20260430 (x86_64-pc-linux-gnu)]
+        ignore line: [	compiled by GNU C version 16.1.1 20260430  GMP version 6.3.0  MPFR version 4.2.2  MPC version 1.4.1  isl version isl-0.27-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring nonexistent directory "/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include-fixed"]
+        ignore line: [ignoring nonexistent directory "/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../x86_64-pc-linux-gnu/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1]
+        ignore line: [ /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/x86_64-pc-linux-gnu]
+        ignore line: [ /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../include/c++/16.1.1/backward]
+        ignore line: [ /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [Compiler executable checksum: d47d0c990a24bc0dbaf3bd00656bd5f3]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_11ff0.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o /tmp/cc0Sdib0.s]
+        ignore line: [GNU assembler version 2.46.0 (x86_64-pc-linux-gnu) using BFD version (GNU Binutils) 2.46.0]
+        ignore line: [COMPILER_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/]
+        ignore line: [LIBRARY_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/:/lib/../lib/:/usr/lib/../lib/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.']
+        ignore line: [Linking CXX executable cmTC_11ff0]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_11ff0.dir/link.txt --verbose=1]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/usr/bin/c++]
+        ignore line: [COLLECT_LTO_WRAPPER=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper]
+        ignore line: [Target: x86_64-pc-linux-gnu]
+        ignore line: [Configured with: /build/gcc/src/gcc/configure --enable-languages=ada c c++ d fortran go lto m2 objc obj-c++ rust cobol --enable-bootstrap --prefix=/usr --libdir=/usr/lib --libexecdir=/usr/lib --mandir=/usr/share/man --infodir=/usr/share/info --with-bugurl=https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/issues --with-build-config=bootstrap-lto --with-linker-hash-style=gnu --with-system-zlib --enable-cet=auto --enable-checking=release --enable-clocale=gnu --enable-default-pie --enable-default-ssp --enable-gnu-indirect-function --enable-gnu-unique-object --enable-libstdcxx-backtrace --enable-link-serialization=1 --enable-linker-build-id --enable-lto --enable-multilib --enable-plugin --enable-shared --enable-threads=posix --disable-libssp --disable-libstdcxx-pch --disable-werror --disable-fixincludes]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 16.1.1 20260430 (GCC) ]
+        ignore line: [COMPILER_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/]
+        ignore line: [LIBRARY_PATH=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/:/lib/../lib/:/usr/lib/../lib/:/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_11ff0' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_11ff0.']
+        link line: [ /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/collect2 -plugin /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/liblto_plugin.so -plugin-opt=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper -plugin-opt=-fresolution=/tmp/ccyTDxJz.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-latomic_asneeded -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --build-id --eh-frame-hdr --hash-style=gnu -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -pie -o cmTC_11ff0 /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1 -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib -L/lib/../lib -L/usr/lib/../lib -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../.. -L/lib -L/usr/lib -v CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -latomic_asneeded -lc -lgcc_s -lgcc /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o]
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/ccyTDxJz.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-latomic_asneeded] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [--build-id] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [--hash-style=gnu] ==> ignore
+          arg [-m] ==> ignore
+          arg [elf_x86_64] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
+          arg [-pie] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_11ff0] ==> ignore
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o] ==> obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o]
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o] ==> obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o]
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o] ==> obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o]
+          arg [-L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1] ==> dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1]
+          arg [-L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib] ==> dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib]
+          arg [-L/lib/../lib] ==> dir [/lib/../lib]
+          arg [-L/usr/lib/../lib] ==> dir [/usr/lib/../lib]
+          arg [-L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../..] ==> dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../..]
+          arg [-L/lib] ==> dir [/lib]
+          arg [-L/usr/lib] ==> dir [/usr/lib]
+          arg [-v] ==> ignore
+          arg [CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+          arg [-lstdc++] ==> lib [stdc++]
+          arg [-lm] ==> lib [m]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [-latomic_asneeded] ==> lib [atomic_asneeded]
+          arg [-lc] ==> lib [c]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o] ==> obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o]
+          arg [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o] ==> obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o]
+        ignore line: [collect2 version 16.1.1 20260430]
+        ignore line: [/usr/bin/ld -plugin /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/liblto_plugin.so -plugin-opt=/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/lto-wrapper -plugin-opt=-fresolution=/tmp/ccyTDxJz.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-latomic_asneeded -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --build-id --eh-frame-hdr --hash-style=gnu -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -pie -o cmTC_11ff0 /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1 -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib -L/lib/../lib -L/usr/lib/../lib -L/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../.. -L/lib -L/usr/lib -v CMakeFiles/cmTC_11ff0.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -latomic_asneeded -lc -lgcc_s -lgcc /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o /usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o]
+        linker tool for 'CXX': /usr/bin/ld
+        collapse obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/Scrt1.o] ==> [/usr/lib/Scrt1.o]
+        collapse obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crti.o] ==> [/usr/lib/crti.o]
+        collapse obj [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib/crtn.o] ==> [/usr/lib/crtn.o]
+        collapse library dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1] ==> [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1]
+        collapse library dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../../../lib] ==> [/usr/lib]
+        collapse library dir [/lib/../lib] ==> [/lib]
+        collapse library dir [/usr/lib/../lib] ==> [/usr/lib]
+        collapse library dir [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/../../..] ==> [/usr/lib]
+        collapse library dir [/lib] ==> [/lib]
+        collapse library dir [/usr/lib] ==> [/usr/lib]
+        implicit libs: [stdc++;m;gcc_s;gcc;atomic_asneeded;c;gcc_s;gcc]
+        implicit objs: [/usr/lib/Scrt1.o;/usr/lib/crti.o;/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtbeginS.o;/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1/crtendS.o;/usr/lib/crtn.o]
+        implicit dirs: [/usr/lib/gcc/x86_64-pc-linux-gnu/16.1.1;/usr/lib;/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Internal/CMakeDetermineLinkerId.cmake:38 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:299 (cmake_determine_linker_id)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:7 (project)"
+    message: |
+      Running the CXX compiler's linker: "/usr/bin/ld" "-v"
+      GNU ld (GNU Binutils) 2.46.0
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CTest.cmake:188 (find_program)"
+      - "CMakeLists.txt:151 (include)"
+    mode: "program"
+    variable: "MEMORYCHECK_COMMAND"
+    description: "Path to the memory checking command, used for memory error detection."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "purify"
+      - "valgrind"
+      - "boundscheck"
+      - "drmemory"
+      - "cuda-memcheck"
+      - "compute-sanitizer"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/purify"
+      - "/usr/local/sbin/purify"
+      - "/usr/local/bin/purify"
+      - "/usr/bin/purify"
+      - "/usr/bin/site_perl/purify"
+      - "/usr/bin/vendor_perl/purify"
+      - "/usr/bin/core_perl/purify"
+      - "/usr/lib/rustup/bin/purify"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/purify"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/purify"
+      - "/usr/local/bin/purify"
+      - "/usr/local/sbin/purify"
+      - "/usr/local/purify"
+      - "/usr/bin/purify"
+      - "/usr/sbin/purify"
+      - "/usr/purify"
+      - "/bin/purify"
+      - "/sbin/purify"
+      - "/usr/X11R6/bin/purify"
+      - "/usr/X11R6/sbin/purify"
+      - "/usr/X11R6/purify"
+      - "/usr/pkg/bin/purify"
+      - "/usr/pkg/sbin/purify"
+      - "/usr/pkg/purify"
+      - "/opt/bin/purify"
+      - "/opt/sbin/purify"
+      - "/opt/purify"
+      - "/home/max/.local/bin/valgrind"
+      - "/usr/local/sbin/valgrind"
+      - "/usr/local/bin/valgrind"
+      - "/usr/bin/valgrind"
+      - "/usr/bin/site_perl/valgrind"
+      - "/usr/bin/vendor_perl/valgrind"
+      - "/usr/bin/core_perl/valgrind"
+      - "/usr/lib/rustup/bin/valgrind"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/valgrind"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/valgrind"
+      - "/usr/local/bin/valgrind"
+      - "/usr/local/sbin/valgrind"
+      - "/usr/local/valgrind"
+      - "/usr/bin/valgrind"
+      - "/usr/sbin/valgrind"
+      - "/usr/valgrind"
+      - "/bin/valgrind"
+      - "/sbin/valgrind"
+      - "/usr/X11R6/bin/valgrind"
+      - "/usr/X11R6/sbin/valgrind"
+      - "/usr/X11R6/valgrind"
+      - "/usr/pkg/bin/valgrind"
+      - "/usr/pkg/sbin/valgrind"
+      - "/usr/pkg/valgrind"
+      - "/opt/bin/valgrind"
+      - "/opt/sbin/valgrind"
+      - "/opt/valgrind"
+      - "/home/max/.local/bin/boundscheck"
+      - "/usr/local/sbin/boundscheck"
+      - "/usr/local/bin/boundscheck"
+      - "/usr/bin/boundscheck"
+      - "/usr/bin/site_perl/boundscheck"
+      - "/usr/bin/vendor_perl/boundscheck"
+      - "/usr/bin/core_perl/boundscheck"
+      - "/usr/lib/rustup/bin/boundscheck"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/boundscheck"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/boundscheck"
+      - "/usr/local/bin/boundscheck"
+      - "/usr/local/sbin/boundscheck"
+      - "/usr/local/boundscheck"
+      - "/usr/bin/boundscheck"
+      - "/usr/sbin/boundscheck"
+      - "/usr/boundscheck"
+      - "/bin/boundscheck"
+      - "/sbin/boundscheck"
+      - "/usr/X11R6/bin/boundscheck"
+      - "/usr/X11R6/sbin/boundscheck"
+      - "/usr/X11R6/boundscheck"
+      - "/usr/pkg/bin/boundscheck"
+      - "/usr/pkg/sbin/boundscheck"
+      - "/usr/pkg/boundscheck"
+      - "/opt/bin/boundscheck"
+      - "/opt/sbin/boundscheck"
+      - "/opt/boundscheck"
+      - "/home/max/.local/bin/drmemory"
+      - "/usr/local/sbin/drmemory"
+      - "/usr/local/bin/drmemory"
+      - "/usr/bin/drmemory"
+      - "/usr/bin/site_perl/drmemory"
+      - "/usr/bin/vendor_perl/drmemory"
+      - "/usr/bin/core_perl/drmemory"
+      - "/usr/lib/rustup/bin/drmemory"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/drmemory"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/drmemory"
+      - "/usr/local/bin/drmemory"
+      - "/usr/local/sbin/drmemory"
+      - "/usr/local/drmemory"
+      - "/usr/bin/drmemory"
+      - "/usr/sbin/drmemory"
+      - "/usr/drmemory"
+      - "/bin/drmemory"
+      - "/sbin/drmemory"
+      - "/usr/X11R6/bin/drmemory"
+      - "/usr/X11R6/sbin/drmemory"
+      - "/usr/X11R6/drmemory"
+      - "/usr/pkg/bin/drmemory"
+      - "/usr/pkg/sbin/drmemory"
+      - "/usr/pkg/drmemory"
+      - "/opt/bin/drmemory"
+      - "/opt/sbin/drmemory"
+      - "/opt/drmemory"
+      - "/home/max/.local/bin/cuda-memcheck"
+      - "/usr/local/sbin/cuda-memcheck"
+      - "/usr/local/bin/cuda-memcheck"
+      - "/usr/bin/cuda-memcheck"
+      - "/usr/bin/site_perl/cuda-memcheck"
+      - "/usr/bin/vendor_perl/cuda-memcheck"
+      - "/usr/bin/core_perl/cuda-memcheck"
+      - "/usr/lib/rustup/bin/cuda-memcheck"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/cuda-memcheck"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/cuda-memcheck"
+      - "/usr/local/bin/cuda-memcheck"
+      - "/usr/local/sbin/cuda-memcheck"
+      - "/usr/local/cuda-memcheck"
+      - "/usr/bin/cuda-memcheck"
+      - "/usr/sbin/cuda-memcheck"
+      - "/usr/cuda-memcheck"
+      - "/bin/cuda-memcheck"
+      - "/sbin/cuda-memcheck"
+      - "/usr/X11R6/bin/cuda-memcheck"
+      - "/usr/X11R6/sbin/cuda-memcheck"
+      - "/usr/X11R6/cuda-memcheck"
+      - "/usr/pkg/bin/cuda-memcheck"
+      - "/usr/pkg/sbin/cuda-memcheck"
+      - "/usr/pkg/cuda-memcheck"
+      - "/opt/bin/cuda-memcheck"
+      - "/opt/sbin/cuda-memcheck"
+      - "/opt/cuda-memcheck"
+      - "/home/max/.local/bin/compute-sanitizer"
+      - "/usr/local/sbin/compute-sanitizer"
+      - "/usr/local/bin/compute-sanitizer"
+      - "/usr/bin/compute-sanitizer"
+      - "/usr/bin/site_perl/compute-sanitizer"
+      - "/usr/bin/vendor_perl/compute-sanitizer"
+      - "/usr/bin/core_perl/compute-sanitizer"
+      - "/usr/lib/rustup/bin/compute-sanitizer"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/compute-sanitizer"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/compute-sanitizer"
+      - "/usr/local/bin/compute-sanitizer"
+      - "/usr/local/sbin/compute-sanitizer"
+      - "/usr/local/compute-sanitizer"
+      - "/usr/bin/compute-sanitizer"
+      - "/usr/sbin/compute-sanitizer"
+      - "/usr/compute-sanitizer"
+      - "/bin/compute-sanitizer"
+      - "/sbin/compute-sanitizer"
+      - "/usr/X11R6/bin/compute-sanitizer"
+      - "/usr/X11R6/sbin/compute-sanitizer"
+      - "/usr/X11R6/compute-sanitizer"
+      - "/usr/pkg/bin/compute-sanitizer"
+      - "/usr/pkg/sbin/compute-sanitizer"
+      - "/usr/pkg/compute-sanitizer"
+      - "/opt/bin/compute-sanitizer"
+      - "/opt/sbin/compute-sanitizer"
+      - "/opt/compute-sanitizer"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CTest.cmake:196 (find_program)"
+      - "CMakeLists.txt:151 (include)"
+    mode: "program"
+    variable: "COVERAGE_COMMAND"
+    description: "Path to the coverage program that CTest uses for performing coverage inspection"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "gcov"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/gcov"
+      - "/usr/local/sbin/gcov"
+      - "/usr/local/bin/gcov"
+    found: "/usr/bin/gcov"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/FindGit.cmake:111 (find_program)"
+      - "cmake/download_test_data.cmake:10 (find_package)"
+      - "cmake/test.cmake:7 (include)"
+      - "tests/CMakeLists.txt:18 (include)"
+    mode: "program"
+    variable: "GIT_EXECUTABLE"
+    description: "Git command line client"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "git"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/git"
+      - "/usr/local/sbin/git"
+      - "/usr/local/bin/git"
+    found: "/usr/bin/git"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "cmake/download_test_data.cmake:22 (find_program)"
+      - "cmake/test.cmake:7 (include)"
+      - "tests/CMakeLists.txt:18 (include)"
+    mode: "program"
+    variable: "UNAME_COMMAND"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "uname"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/uname"
+      - "/usr/local/sbin/uname"
+      - "/usr/local/bin/uname"
+    found: "/usr/bin/uname"
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "cmake/download_test_data.cmake:23 (find_program)"
+      - "cmake/test.cmake:7 (include)"
+      - "tests/CMakeLists.txt:18 (include)"
+    mode: "program"
+    variable: "VER_COMMAND"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "ver"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/ver"
+      - "/usr/local/sbin/ver"
+      - "/usr/local/bin/ver"
+      - "/usr/bin/ver"
+      - "/usr/bin/site_perl/ver"
+      - "/usr/bin/vendor_perl/ver"
+      - "/usr/bin/core_perl/ver"
+      - "/usr/lib/rustup/bin/ver"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/ver"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/ver"
+      - "/usr/local/bin/ver"
+      - "/usr/local/sbin/ver"
+      - "/usr/local/ver"
+      - "/usr/bin/ver"
+      - "/usr/sbin/ver"
+      - "/usr/ver"
+      - "/bin/ver"
+      - "/sbin/ver"
+      - "/usr/X11R6/bin/ver"
+      - "/usr/X11R6/sbin/ver"
+      - "/usr/X11R6/ver"
+      - "/usr/pkg/bin/ver"
+      - "/usr/pkg/sbin/ver"
+      - "/usr/pkg/ver"
+      - "/opt/bin/ver"
+      - "/opt/sbin/ver"
+      - "/opt/ver"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "cmake/download_test_data.cmake:24 (find_program)"
+      - "cmake/test.cmake:7 (include)"
+      - "tests/CMakeLists.txt:18 (include)"
+    mode: "program"
+    variable: "LSB_RELEASE_COMMAND"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "lsb_release"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/lsb_release"
+      - "/usr/local/sbin/lsb_release"
+      - "/usr/local/bin/lsb_release"
+      - "/usr/bin/lsb_release"
+      - "/usr/bin/site_perl/lsb_release"
+      - "/usr/bin/vendor_perl/lsb_release"
+      - "/usr/bin/core_perl/lsb_release"
+      - "/usr/lib/rustup/bin/lsb_release"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/lsb_release"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/lsb_release"
+      - "/usr/local/bin/lsb_release"
+      - "/usr/local/sbin/lsb_release"
+      - "/usr/local/lsb_release"
+      - "/usr/bin/lsb_release"
+      - "/usr/sbin/lsb_release"
+      - "/usr/lsb_release"
+      - "/bin/lsb_release"
+      - "/sbin/lsb_release"
+      - "/usr/X11R6/bin/lsb_release"
+      - "/usr/X11R6/sbin/lsb_release"
+      - "/usr/X11R6/lsb_release"
+      - "/usr/pkg/bin/lsb_release"
+      - "/usr/pkg/sbin/lsb_release"
+      - "/usr/pkg/lsb_release"
+      - "/opt/bin/lsb_release"
+      - "/opt/sbin/lsb_release"
+      - "/opt/lsb_release"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "cmake/download_test_data.cmake:25 (find_program)"
+      - "cmake/test.cmake:7 (include)"
+      - "tests/CMakeLists.txt:18 (include)"
+    mode: "program"
+    variable: "SW_VERS_COMMAND"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "sw_vers"
+    candidate_directories:
+      - "/home/max/.local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/usr/bin/site_perl/"
+      - "/usr/bin/vendor_perl/"
+      - "/usr/bin/core_perl/"
+      - "/usr/lib/rustup/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/"
+      - "/usr/local/bin/"
+      - "/usr/local/sbin/"
+      - "/usr/local/"
+      - "/usr/bin/"
+      - "/usr/sbin/"
+      - "/usr/"
+      - "/bin/"
+      - "/sbin/"
+      - "/usr/X11R6/bin/"
+      - "/usr/X11R6/sbin/"
+      - "/usr/X11R6/"
+      - "/usr/pkg/bin/"
+      - "/usr/pkg/sbin/"
+      - "/usr/pkg/"
+      - "/opt/bin/"
+      - "/opt/sbin/"
+      - "/opt/"
+    searched_directories:
+      - "/home/max/.local/bin/sw_vers"
+      - "/usr/local/sbin/sw_vers"
+      - "/usr/local/bin/sw_vers"
+      - "/usr/bin/sw_vers"
+      - "/usr/bin/site_perl/sw_vers"
+      - "/usr/bin/vendor_perl/sw_vers"
+      - "/usr/bin/core_perl/sw_vers"
+      - "/usr/lib/rustup/bin/sw_vers"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin/sw_vers"
+      - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin/sw_vers"
+      - "/usr/local/bin/sw_vers"
+      - "/usr/local/sbin/sw_vers"
+      - "/usr/local/sw_vers"
+      - "/usr/bin/sw_vers"
+      - "/usr/sbin/sw_vers"
+      - "/usr/sw_vers"
+      - "/bin/sw_vers"
+      - "/sbin/sw_vers"
+      - "/usr/X11R6/bin/sw_vers"
+      - "/usr/X11R6/sbin/sw_vers"
+      - "/usr/X11R6/sw_vers"
+      - "/usr/pkg/bin/sw_vers"
+      - "/usr/pkg/sbin/sw_vers"
+      - "/usr/pkg/sw_vers"
+      - "/opt/bin/sw_vers"
+      - "/opt/sbin/sw_vers"
+      - "/opt/sw_vers"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "/home/max/.local/bin"
+        - "/usr/local/sbin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/usr/bin/site_perl"
+        - "/usr/bin/vendor_perl"
+        - "/usr/bin/core_perl"
+        - "/usr/lib/rustup/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin"
+        - "/home/max/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin"
+      CMAKE_INSTALL_PREFIX: "/usr/local"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/local"
+        - "/usr"
+        - "/"
+        - "/usr"
+        - "/usr/local"
+        - "/usr/X11R6"
+        - "/usr/pkg"
+        - "/opt"
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake:143 (try_compile)"
+      - "/usr/share/cmake/Modules/CheckTypeSize.cmake:466 (check_include_file_cxx)"
+      - "cmake/test.cmake:261 (check_type_size)"
+      - "tests/CMakeLists.txt:137 (json_test_should_build_32bit_test)"
+    checks:
+      - "Looking for C++ include sys/types.h"
+    directories:
+      source: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-WnjbLu"
+      binary: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-WnjbLu"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/home/max/Freight/examples/with-external-deps/.deps/json/cmake"
+    buildResult:
+      variable: "HAVE_SYS_TYPES_H"
+      cached: true
+      stdout: |
+        Change Dir: '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-WnjbLu'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_d96fc/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_d96fc.dir/build.make CMakeFiles/cmTC_d96fc.dir/build
+        make[1]: Entering directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-WnjbLu'
+        Building CXX object CMakeFiles/cmTC_d96fc.dir/CheckIncludeFile.cxx.o
+        /usr/bin/c++    -o CMakeFiles/cmTC_d96fc.dir/CheckIncludeFile.cxx.o -c /home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-WnjbLu/CheckIncludeFile.cxx
+        Linking CXX executable cmTC_d96fc
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_d96fc.dir/link.txt --verbose=1
+        /usr/bin/c++ CMakeFiles/cmTC_d96fc.dir/CheckIncludeFile.cxx.o -o cmTC_d96fc
+        make[1]: Leaving directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-WnjbLu'
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake:143 (try_compile)"
+      - "/usr/share/cmake/Modules/CheckTypeSize.cmake:471 (check_include_file_cxx)"
+      - "cmake/test.cmake:261 (check_type_size)"
+      - "tests/CMakeLists.txt:137 (json_test_should_build_32bit_test)"
+    checks:
+      - "Looking for C++ include stdint.h"
+    directories:
+      source: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-tErFkR"
+      binary: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-tErFkR"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/home/max/Freight/examples/with-external-deps/.deps/json/cmake"
+    buildResult:
+      variable: "HAVE_STDINT_H"
+      cached: true
+      stdout: |
+        Change Dir: '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-tErFkR'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_dad61/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_dad61.dir/build.make CMakeFiles/cmTC_dad61.dir/build
+        make[1]: Entering directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-tErFkR'
+        Building CXX object CMakeFiles/cmTC_dad61.dir/CheckIncludeFile.cxx.o
+        /usr/bin/c++    -o CMakeFiles/cmTC_dad61.dir/CheckIncludeFile.cxx.o -c /home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-tErFkR/CheckIncludeFile.cxx
+        Linking CXX executable cmTC_dad61
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_dad61.dir/link.txt --verbose=1
+        /usr/bin/c++ CMakeFiles/cmTC_dad61.dir/CheckIncludeFile.cxx.o -o cmTC_dad61
+        make[1]: Leaving directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-tErFkR'
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake:143 (try_compile)"
+      - "/usr/share/cmake/Modules/CheckTypeSize.cmake:472 (check_include_file_cxx)"
+      - "cmake/test.cmake:261 (check_type_size)"
+      - "tests/CMakeLists.txt:137 (json_test_should_build_32bit_test)"
+    checks:
+      - "Looking for C++ include stddef.h"
+    directories:
+      source: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-iLR3PS"
+      binary: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-iLR3PS"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/home/max/Freight/examples/with-external-deps/.deps/json/cmake"
+    buildResult:
+      variable: "HAVE_STDDEF_H"
+      cached: true
+      stdout: |
+        Change Dir: '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-iLR3PS'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_153eb/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_153eb.dir/build.make CMakeFiles/cmTC_153eb.dir/build
+        make[1]: Entering directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-iLR3PS'
+        Building CXX object CMakeFiles/cmTC_153eb.dir/CheckIncludeFile.cxx.o
+        /usr/bin/c++    -o CMakeFiles/cmTC_153eb.dir/CheckIncludeFile.cxx.o -c /home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-iLR3PS/CheckIncludeFile.cxx
+        Linking CXX executable cmTC_153eb
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_153eb.dir/link.txt --verbose=1
+        /usr/bin/c++ CMakeFiles/cmTC_153eb.dir/CheckIncludeFile.cxx.o -o cmTC_153eb
+        make[1]: Leaving directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-iLR3PS'
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CheckTypeSize.cmake:348 (try_compile)"
+      - "/usr/share/cmake/Modules/CheckTypeSize.cmake:481 (__check_type_size_impl)"
+      - "cmake/test.cmake:261 (check_type_size)"
+      - "tests/CMakeLists.txt:137 (json_test_should_build_32bit_test)"
+    checks:
+      - "Check size of size_t"
+    directories:
+      source: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-clNAAE"
+      binary: "/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-clNAAE"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/home/max/Freight/examples/with-external-deps/.deps/json/cmake"
+    buildResult:
+      variable: "HAVE_sizeof_size_t"
+      cached: true
+      stdout: |
+        Change Dir: '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-clNAAE'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_99677/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_99677.dir/build.make CMakeFiles/cmTC_99677.dir/build
+        make[1]: Entering directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-clNAAE'
+        Building CXX object CMakeFiles/cmTC_99677.dir/sizeof_size_t.cpp.o
+        /usr/bin/c++    -o CMakeFiles/cmTC_99677.dir/sizeof_size_t.cpp.o -c /home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-clNAAE/sizeof_size_t.cpp
+        Linking CXX executable cmTC_99677
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_99677.dir/link.txt --verbose=1
+        /usr/bin/c++ CMakeFiles/cmTC_99677.dir/sizeof_size_t.cpp.o -o cmTC_99677
+        make[1]: Leaving directory '/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/CMakeFiles/CMakeScratch/TryCompile-clNAAE'
+        
+      exitCode: 0
+...

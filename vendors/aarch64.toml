@@ -1,3 +1,0 @@
-name    = "aarch64"
-kind    = "arch"
-aliases = ["arm64"]

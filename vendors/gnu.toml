@@ -1,3 +1,0 @@
-name    = "gnu"
-kind    = "compiler"
-aliases = ["gnueabi", "gnueabihf"]

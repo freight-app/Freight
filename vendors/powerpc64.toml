@@ -1,3 +1,0 @@
-name    = "powerpc64"
-kind    = "arch"
-aliases = ["ppc64", "ppc64le"]

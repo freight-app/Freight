@@ -1,0 +1,56 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/doc-example",
+    "file": "src/main.cpp",
+    "command": "/usr/bin/clang++ -O2 -Wall -Wextra -Wpedantic -std=c++17 -c src/main.cpp -o target/dev/objs/src/main.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++17",
+      "-c",
+      "src/main.cpp",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  },
+  {
+    "directory": "/home/max/Freight/examples/doc-example",
+    "file": "src/mathlib.c",
+    "command": "/usr/bin/clang -O2 -Wall -Wextra -Wpedantic -std=c17 -c src/mathlib.c -o target/dev/objs/src/mathlib.o",
+    "arguments": [
+      "/usr/bin/clang",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c17",
+      "-c",
+      "src/mathlib.c",
+      "-o",
+      "target/dev/objs/src/mathlib.o"
+    ],
+    "output": "target/dev/objs/src/mathlib.o"
+  },
+  {
+    "directory": "/home/max/Freight/examples/doc-example",
+    "file": "src/stats.cpp",
+    "command": "/usr/bin/clang++ -O2 -Wall -Wextra -Wpedantic -std=c++17 -c src/stats.cpp -o target/dev/objs/src/stats.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++17",
+      "-c",
+      "src/stats.cpp",
+      "-o",
+      "target/dev/objs/src/stats.o"
+    ],
+    "output": "target/dev/objs/src/stats.o"
+  }
+]

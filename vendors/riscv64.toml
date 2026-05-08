@@ -1,3 +1,0 @@
-name    = "riscv64"
-kind    = "arch"
-aliases = ["riscv64gc"]

@@ -1,0 +1,22 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/with-deps",
+    "file": "src/main.cpp",
+    "command": "/usr/bin/clang++ -O0 -g -Wall -Wextra -Wpedantic -std=c++20 -I.deps/vecmath/inc -c src/main.cpp -o target/dev/objs/src/main.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++20",
+      "-I.deps/vecmath/inc",
+      "-c",
+      "src/main.cpp",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  }
+]

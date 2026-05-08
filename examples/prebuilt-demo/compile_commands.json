@@ -1,0 +1,42 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/prebuilt-demo",
+    "file": "src/main.c",
+    "command": "/usr/bin/clang -O0 -g -Wall -Wextra -Wpedantic -std=c11 -Itarget/dev/build -c src/main.c -o target/dev/objs/src/main.o",
+    "arguments": [
+      "/usr/bin/clang",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c11",
+      "-Itarget/dev/build",
+      "-c",
+      "src/main.c",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  },
+  {
+    "directory": "/home/max/Freight/examples/prebuilt-demo",
+    "file": "target/dev/build/build_info.c",
+    "command": "/usr/bin/clang -O0 -g -Wall -Wextra -Wpedantic -std=c11 -Itarget/dev/build -c target/dev/build/build_info.c -o target/dev/objs/target/dev/build/build_info.o",
+    "arguments": [
+      "/usr/bin/clang",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c11",
+      "-Itarget/dev/build",
+      "-c",
+      "target/dev/build/build_info.c",
+      "-o",
+      "target/dev/objs/target/dev/build/build_info.o"
+    ],
+    "output": "target/dev/objs/target/dev/build/build_info.o"
+  }
+]

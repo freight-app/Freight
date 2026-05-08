@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test-assert_macro_cpp11.dir/link.d "CMakeFiles/test-assert_macro_cpp11.dir/src/unit-assert_macro.cpp.o" CMakeFiles/test_main.dir/src/unit.cpp.o -o test-assert_macro_cpp11

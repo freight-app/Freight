@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test-alt-string_cpp11.dir/link.d "CMakeFiles/test-alt-string_cpp11.dir/src/unit-alt-string.cpp.o" CMakeFiles/test_main.dir/src/unit.cpp.o -o test-alt-string_cpp11

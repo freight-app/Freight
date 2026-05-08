@@ -1,3 +1,0 @@
-name    = "arm"
-kind    = "arch"
-aliases = ["armv7", "armv6", "armhf", "armel"]

@@ -1,0 +1,21 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/with-make-dep",
+    "file": "src/main.c",
+    "command": "/usr/bin/clang -O2 -Wall -Wextra -Wpedantic -std=c17 -Ivendor/strutil/include -c src/main.c -o target/dev/objs/src/main.o",
+    "arguments": [
+      "/usr/bin/clang",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c17",
+      "-Ivendor/strutil/include",
+      "-c",
+      "src/main.c",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  }
+]

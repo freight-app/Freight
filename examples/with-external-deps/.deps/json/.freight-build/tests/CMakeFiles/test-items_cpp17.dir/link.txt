@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test-items_cpp17.dir/link.d "CMakeFiles/test-items_cpp17.dir/src/unit-items.cpp.o" CMakeFiles/test_main.dir/src/unit.cpp.o -o test-items_cpp17

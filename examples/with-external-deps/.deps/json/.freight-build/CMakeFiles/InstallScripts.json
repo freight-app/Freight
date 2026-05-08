@@ -1,0 +1,18 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/abi/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/abi/config/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/abi/diag/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/abi/inline_ns/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_import/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_import_minver/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_add_subdirectory/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_fetch_content/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_fetch_content2/cmake_install.cmake",
+		"/home/max/Freight/examples/with-external-deps/.deps/json/.freight-build/tests/cmake_target_include_directories/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

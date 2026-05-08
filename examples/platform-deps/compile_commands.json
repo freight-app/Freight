@@ -1,0 +1,23 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/platform-deps",
+    "file": "src/main.c",
+    "command": "/usr/bin/clang -O0 -g -Wall -Wextra -Wpedantic -std=c17 -DPLATFORM_UNIX -DPLATFORM_LINUX -c src/main.c -o target/dev/objs/src/main.o",
+    "arguments": [
+      "/usr/bin/clang",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c17",
+      "-DPLATFORM_UNIX",
+      "-DPLATFORM_LINUX",
+      "-c",
+      "src/main.c",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  }
+]

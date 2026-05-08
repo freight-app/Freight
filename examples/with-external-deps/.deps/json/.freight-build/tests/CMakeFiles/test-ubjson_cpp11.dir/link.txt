@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test-ubjson_cpp11.dir/link.d "CMakeFiles/test-ubjson_cpp11.dir/src/unit-ubjson.cpp.o" CMakeFiles/test_main.dir/src/unit.cpp.o -o test-ubjson_cpp11

@@ -1,0 +1,21 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/with-git-dep",
+    "file": "src/main.cpp",
+    "command": "/usr/bin/clang++ -O2 -Wall -Wextra -Wpedantic -std=c++17 -I.deps/easyloggingpp/src/ -c src/main.cpp -o target/dev/objs/src/main.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++17",
+      "-I.deps/easyloggingpp/src/",
+      "-c",
+      "src/main.cpp",
+      "-o",
+      "target/dev/objs/src/main.o"
+    ],
+    "output": "target/dev/objs/src/main.o"
+  }
+]

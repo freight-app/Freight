@@ -1,3 +1,0 @@
-name    = "mingw"
-kind    = "compiler"
-aliases = ["mingw32", "mingw64"]

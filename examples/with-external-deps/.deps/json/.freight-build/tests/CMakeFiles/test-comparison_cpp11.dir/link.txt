@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test-comparison_cpp11.dir/link.d "CMakeFiles/test-comparison_cpp11.dir/src/unit-comparison.cpp.o" CMakeFiles/test_main.dir/src/unit.cpp.o -o test-comparison_cpp11

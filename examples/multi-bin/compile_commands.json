@@ -1,0 +1,62 @@
+[
+  {
+    "directory": "/home/max/Freight/examples/multi-bin",
+    "file": "src/base64.cpp",
+    "command": "/usr/bin/clang++ -O0 -g -Wall -Wextra -Wpedantic -std=c++20 -Iinc -c src/base64.cpp -o target/dev/objs/src/base64.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++20",
+      "-Iinc",
+      "-c",
+      "src/base64.cpp",
+      "-o",
+      "target/dev/objs/src/base64.o"
+    ],
+    "output": "target/dev/objs/src/base64.o"
+  },
+  {
+    "directory": "/home/max/Freight/examples/multi-bin",
+    "file": "src/decode_main.cpp",
+    "command": "/usr/bin/clang++ -O0 -g -Wall -Wextra -Wpedantic -std=c++20 -Iinc -c src/decode_main.cpp -o target/dev/objs/src/decode_main.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++20",
+      "-Iinc",
+      "-c",
+      "src/decode_main.cpp",
+      "-o",
+      "target/dev/objs/src/decode_main.o"
+    ],
+    "output": "target/dev/objs/src/decode_main.o"
+  },
+  {
+    "directory": "/home/max/Freight/examples/multi-bin",
+    "file": "src/encode_main.cpp",
+    "command": "/usr/bin/clang++ -O0 -g -Wall -Wextra -Wpedantic -std=c++20 -Iinc -c src/encode_main.cpp -o target/dev/objs/src/encode_main.o",
+    "arguments": [
+      "/usr/bin/clang++",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-std=c++20",
+      "-Iinc",
+      "-c",
+      "src/encode_main.cpp",
+      "-o",
+      "target/dev/objs/src/encode_main.o"
+    ],
+    "output": "target/dev/objs/src/encode_main.o"
+  }
+]
