@@ -141,11 +141,16 @@ pub fn install_project(project_dir: &Path, opts: &InstallOptions) -> Result<Inst
         }
 
         // ── Public headers ────────────────────────────────────────────────────
-        if let Some(inc_rel) = &lib.inc {
-            let inc_src = project_dir.join(inc_rel);
-            if inc_src.is_dir() {
-                let inc_dst = root.join("include").join(&manifest.package.name);
-                install_headers(&inc_src, &inc_dst, &mut items)?;
+        if !lib.hdrs.is_empty() {
+            let inc_dst = root.join("include").join(&manifest.package.name);
+            std::fs::create_dir_all(&inc_dst)?;
+            for hdr in &lib.hdrs {
+                let src = project_dir.join(hdr);
+                if src.is_file() {
+                    let dst = inc_dst.join(src.file_name().unwrap());
+                    std::fs::copy(&src, &dst)?;
+                    items.push(InstalledItem { dst, kind: InstalledKind::Header });
+                }
             }
         }
     }
@@ -337,18 +342,6 @@ fn make_symlink(dir: &Path, link_name: &str, target: &str) -> Result<(), Freight
 #[cfg(not(unix))]
 fn make_symlink(_dir: &Path, _link: &str, _target: &str) -> Result<(), FreightError> {
     Ok(()) // Symlinks on Windows require elevated rights; skip silently.
-}
-
-fn install_headers(src_dir: &Path, dst_dir: &Path, items: &mut Vec<InstalledItem>) -> Result<(), FreightError> {
-    for entry in WalkDir::new(src_dir).follow_links(false).into_iter().filter_map(|e| e.ok()) {
-        if !entry.file_type().is_file() { continue; }
-        let rel = entry.path().strip_prefix(src_dir).unwrap_or(entry.path());
-        let dst = dst_dir.join(rel);
-        copy_file(entry.path(), &dst)?;
-        set_mode(&dst, 0o644)?;
-        items.push(InstalledItem { dst, kind: InstalledKind::Header });
-    }
-    Ok(())
 }
 
 fn create_tarball(parent: &Path, stem: &str, archive: &Path) -> Result<(), FreightError> {

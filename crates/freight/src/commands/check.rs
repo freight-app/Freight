@@ -128,7 +128,7 @@ fn format_targets(m: &Manifest) -> String {
         parts.push(format!("bin: {}", names.join(", ")));
     }
     if let Some(lib) = &m.lib {
-        parts.push(format!("lib: {} ({:?})", lib.src, lib.lib_type));
+        parts.push(format!("lib: {} ({:?})", lib.srcs.join(", "), lib.lib_type));
     }
     parts.join("; ")
 }

@@ -76,7 +76,6 @@ impl Manifest {
         let mut include_paths: Vec<PathBuf> = self
             .compiler
             .includes
-            .paths
             .iter()
             .map(PathBuf::from)
             .collect();
@@ -87,7 +86,7 @@ impl Manifest {
             if let Some(ov) = self.os.iter().find(|(k, _)| k.eq_ignore_ascii_case(os_key)).map(|(_, v)| v) {
                 merge_string_vec(&mut defines, &ov.defines);
                 merge_string_vec(&mut flags, &ov.flags);
-                for p in &ov.includes.paths {
+                for p in &ov.includes {
                     let buf = PathBuf::from(p);
                     if !include_paths.contains(&buf) { include_paths.push(buf); }
                 }
@@ -98,7 +97,7 @@ impl Manifest {
         if let Some(ov) = self.arch.iter().find(|(k, _)| k.eq_ignore_ascii_case(current_arch)).map(|(_, v)| v) {
             merge_string_vec(&mut defines, &ov.defines);
             merge_string_vec(&mut flags, &ov.flags);
-            for p in &ov.includes.paths {
+            for p in &ov.includes {
                 let buf = PathBuf::from(p);
                 if !include_paths.contains(&buf) { include_paths.push(buf); }
             }
@@ -393,10 +392,13 @@ impl LanguageSettings {
 pub struct LibTarget {
     #[serde(rename = "type", default)]
     pub lib_type: LibType,
-    pub src: String,
-    /// Public include directory. Accepts `inc` or `include` in TOML.
-    #[serde(default, alias = "include")]
-    pub inc: Option<String>,
+    /// Source files for this library. Accepts a single string or a list.
+    #[serde(deserialize_with = "deserialize_string_or_vec")]
+    pub srcs: Vec<String>,
+    /// Public header files that form the library's API, exposed to dependents.
+    /// Include directories are inferred from the parent directories of listed headers.
+    #[serde(default)]
+    pub hdrs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
@@ -486,7 +488,7 @@ pub struct DetailedDep {
     /// Extra arguments forwarded verbatim to `cmake -S … -B …` during configure.
     /// Useful for silencing policy warnings on older CMakeLists.txt files, e.g.
     /// `cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "cmake-args", alias = "cmake_args")]
     pub cmake_args: Vec<String>,
     /// URL to a source archive (`.tar.gz`, `.tar.bz2`, `.tar.xz`, `.zip`).
     /// Any scheme that `curl` supports works: `https://`, `http://`, `ftp://`, etc.
@@ -502,11 +504,25 @@ pub struct DetailedDep {
     /// pkg-config query string, e.g. `"libfoo >= 2.0"`. Freight runs
     /// `pkg-config --cflags --libs <query>` and injects the result into
     /// compilation and linking. No source build is performed.
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "pkg-config")]
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "pkg-config", alias = "pkg_config")]
     pub pkg_config: Option<String>,
 }
 
 fn default_true() -> bool { true }
+
+/// Deserialize a required field that accepts either a bare string or an array of strings.
+fn deserialize_string_or_vec<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where D: serde::Deserializer<'de>
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany { One(String), Many(Vec<String>) }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    })
+}
 
 /// Deserialize a field that can be either a bare string or an array of strings.
 fn string_or_vec<'de, D>(d: D) -> Result<Option<Vec<String>>, D::Error>
@@ -613,7 +629,7 @@ pub struct TargetConfig {
     /// CPU extensions to enable (e.g. `["avx2", "fma"]`).
     /// Each entry produces a compiler flag via the template's `cpu_extension` pattern,
     /// e.g. `"-mavx2"` from `cpu_extension = "-m{name}"` in gcc.toml.
-    #[serde(default)]
+    #[serde(default, rename = "cpu-extensions", alias = "cpu_extensions")]
     pub cpu_extensions: Vec<String>,
 }
 
@@ -642,8 +658,9 @@ pub struct CompilerConfig {
     pub defines: Vec<String>,
     #[serde(default)]
     pub flags: Vec<String>,
+    /// Extra include directories added to every compilation (`-I` flags).
     #[serde(default)]
-    pub includes: CompilerIncludes,
+    pub includes: Vec<String>,
     /// Cross-compilation target triple — set via `freight --target` or `~/.freight/config.toml`,
     /// not in `freight.toml` (machine-local).
     #[serde(skip)]
@@ -672,19 +689,13 @@ impl Default for CompilerConfig {
             warnings: default_warnings(),
             defines: vec![],
             flags: vec![],
-            includes: CompilerIncludes::default(),
+            includes: vec![],
             target: None,
             sysroot: None,
             pch: None,
             per_tool: HashMap::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct CompilerIncludes {
-    #[serde(default)]
-    pub paths: Vec<String>,
 }
 
 /// The compiler backend name from `[compiler] backend = "..."`.
@@ -752,7 +763,7 @@ pub struct ConditionalSources {
     /// only on this platform. Files matching any pattern across *any* os/arch
     /// section are excluded from the unconditional `src/` walk.
     #[serde(default)]
-    pub sources: Vec<String>,
+    pub srcs: Vec<String>,
     /// Preprocessor defines injected when this platform is active.
     #[serde(default)]
     pub defines: Vec<String>,
@@ -761,7 +772,7 @@ pub struct ConditionalSources {
     pub flags: Vec<String>,
     /// Extra include paths injected when this platform is active.
     #[serde(default)]
-    pub includes: CompilerIncludes,
+    pub includes: Vec<String>,
     /// Dependencies active only on this platform. Shadow base deps with the
     /// same name — useful for linking a different system library per OS.
     #[serde(default)]
@@ -794,9 +805,7 @@ defines = ["BASE"]
 [os.{host}]
 defines  = ["FROM_HOST"]
 flags    = ["-DPLATFORM_FLAG"]
-
-[os.{host}.includes]
-paths = ["platform-include/"]
+includes = ["platform-include/"]
 
 [os.{host}.dependencies]
 hostlib = {{ system = "hostlib" }}

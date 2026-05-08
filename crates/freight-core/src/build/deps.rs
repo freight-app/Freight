@@ -153,21 +153,34 @@ pub fn check_slot_conflicts(resolved: &[ResolvedDep], root_manifest: &Manifest) 
 
 /// Absolute include directories that `dep` exports to its dependants.
 ///
-/// Auto-detects `include/` and `inc/` at the dep root (both common conventions),
-/// then appends any paths from `[compiler].includes`.
+/// If the lib declares `hdrs`, derive include dirs from the parent directories
+/// of those headers. Otherwise auto-detect `include/` and `inc/` at the dep root.
+/// Always appends any paths from `[compiler].includes`.
 pub fn dep_include_dirs(dep_dir: &Path, manifest: &Manifest) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    for candidate in &["include", "inc"] {
-        let d = dep_dir.join(candidate);
-        if d.is_dir() {
-            dirs.push(d);
+
+    let hdrs_declared = manifest.lib.as_ref().map(|l| !l.hdrs.is_empty()).unwrap_or(false);
+    if hdrs_declared {
+        for hdr in &manifest.lib.as_ref().unwrap().hdrs {
+            if let Some(parent) = std::path::Path::new(hdr).parent() {
+                if !parent.as_os_str().is_empty() {
+                    let abs = dep_dir.join(parent);
+                    if abs.is_dir() && !dirs.contains(&abs) {
+                        dirs.push(abs);
+                    }
+                }
+            }
+        }
+    } else {
+        for candidate in &["include", "inc"] {
+            let d = dep_dir.join(candidate);
+            if d.is_dir() { dirs.push(d); }
         }
     }
-    for p in &manifest.compiler.includes.paths {
+
+    for p in &manifest.compiler.includes {
         let abs = dep_dir.join(p);
-        if !dirs.contains(&abs) {
-            dirs.push(abs);
-        }
+        if !dirs.contains(&abs) { dirs.push(abs); }
     }
     dirs
 }

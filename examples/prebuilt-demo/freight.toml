@@ -9,7 +9,7 @@ std = "c11"
 # zlib is probed at build time; build.freight checks packages["zlib"].found.
 # Remove or omit this dep on systems without zlib-dev and it will build cleanly.
 [dependencies]
-zlib = { pkg_config = "zlib", optional = true }
+zlib = { pkg-config = "zlib", optional = true }
 
 [[bin]]
 name = "prebuilt-demo"

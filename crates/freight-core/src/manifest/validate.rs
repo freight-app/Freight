@@ -298,8 +298,8 @@ fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
     }
 
     if let Some(lib) = &m.lib {
-        if lib.src.is_empty() {
-            errors.push(ValidationError::new("[lib]", "src must not be empty"));
+        if lib.srcs.is_empty() {
+            errors.push(ValidationError::new("[lib]", "srcs must not be empty"));
         }
     }
 }

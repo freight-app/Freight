@@ -11,4 +11,4 @@ name = "demo"
 src  = "src/main.cpp"
 
 [dependencies]
-zlib = { pkg_config = "zlib", optional = true }
+zlib = { pkg-config = "zlib", optional = true }

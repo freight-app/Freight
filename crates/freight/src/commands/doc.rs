@@ -18,14 +18,18 @@ pub fn cmd_doc(format: &str) {
 
     match load_manifest(&project_dir) {
         Ok(manifest) => {
-            // Library source + include dirs
+            // Library source + header dirs
             if let Some(lib) = &manifest.lib {
-                let d = project_dir.join(&lib.src);
-                if d.is_dir() { source_dirs.push(d); }
-                if let Some(inc) = &lib.inc {
-                    let inc_dir = project_dir.join(inc);
-                    if inc_dir.is_dir() && !source_dirs.contains(&inc_dir) {
-                        source_dirs.push(inc_dir);
+                for s in &lib.srcs {
+                    let d = project_dir.join(s);
+                    let dir = if d.is_dir() { d } else { d.parent().map(PathBuf::from).unwrap_or_else(|| project_dir.clone()) };
+                    if dir.is_dir() && !source_dirs.contains(&dir) { source_dirs.push(dir); }
+                }
+                for hdr in &lib.hdrs {
+                    if let Some(parent) = project_dir.join(hdr).parent().map(PathBuf::from) {
+                        if parent.is_dir() && !source_dirs.contains(&parent) {
+                            source_dirs.push(parent);
+                        }
                     }
                 }
             }

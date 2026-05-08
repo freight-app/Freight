@@ -15,4 +15,4 @@ src  = "src/main.cpp"
 # The library's public header lives under src/ in the repo, so we declare
 # that explicitly (there is no include/ directory to auto-detect).
 [dependencies]
-easyloggingpp = { git = "https://github.com/amrayn/easyloggingpp", include = ["src/"], cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-Dbuild_static_lib=ON"] }
+easyloggingpp = { git = "https://github.com/amrayn/easyloggingpp", include = ["src/"], cmake-args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-Dbuild_static_lib=ON"] }

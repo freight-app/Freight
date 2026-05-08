@@ -20,9 +20,7 @@ backend   = "auto"
 opt-level = 2
 debug     = false
 warnings  = "all"
-
-[compiler.includes]
-paths = ["include/"]
+includes  = ["include/"]
 
 [profile.dev]
 opt-level = 0

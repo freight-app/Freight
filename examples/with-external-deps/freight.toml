@@ -1,7 +1,7 @@
 [package]
 name        = "with-external-deps"
 version     = "0.1.0"
-description = "Example: url, git, and system+pkg_config dependencies"
+description = "Example: url, git, and system+pkg-config dependencies"
 
 [language.cpp]
 std = "c++17"
@@ -19,9 +19,9 @@ json    = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.ta
 cxxopts = { url = "https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.2.1.tar.gz", include = ["include"] }
 
 # System-installed library with pkg-config — system = "z" is the bare -lfoo fallback
-# if pkg-config is not available; pkg_config = "zlib" runs `pkg-config --cflags --libs zlib`
+# if pkg-config is not available; pkg-config = "zlib" runs `pkg-config --cflags --libs zlib`
 # to discover include dirs and the exact linker flags automatically.
-zlib = { system = "z", pkg_config = "zlib" }
+zlib = { system = "z", pkg-config = "zlib" }
 
 [profile.dev]
 opt-level = 0

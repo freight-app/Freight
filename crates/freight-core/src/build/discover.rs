@@ -78,12 +78,12 @@ pub fn discover(
 
     for (key, entry) in &manifest.os {
         if key.eq_ignore_ascii_case(current_os) {
-            sources.extend(expand_conditional_sources(project_dir, &entry.sources, &ext_map));
+            sources.extend(expand_conditional_sources(project_dir, &entry.srcs, &ext_map));
         }
     }
     for (key, entry) in &manifest.arch {
         if key.eq_ignore_ascii_case(current_arch) {
-            sources.extend(expand_conditional_sources(project_dir, &entry.sources, &ext_map));
+            sources.extend(expand_conditional_sources(project_dir, &entry.srcs, &ext_map));
         }
     }
 
@@ -105,7 +105,7 @@ pub fn discover(
 fn build_exclusion_set(project_dir: &Path, manifest: &Manifest) -> HashSet<PathBuf> {
     let mut set = HashSet::new();
     let all_globs = manifest.os.values().chain(manifest.arch.values())
-        .flat_map(|e| e.sources.iter());
+        .flat_map(|e| e.srcs.iter());
     for pattern in all_globs {
         for path in glob_sources(project_dir, pattern) {
             set.insert(path);

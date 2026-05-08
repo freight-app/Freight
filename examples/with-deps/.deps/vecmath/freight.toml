@@ -7,4 +7,4 @@ std = "c++20"
 
 [lib]
 type = "static"
-src  = "src"
+srcs = "src"
