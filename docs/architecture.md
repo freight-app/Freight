@@ -27,7 +27,6 @@ freight/
 │   │           ├── fmt.rs      # cmd_fmt
 │   │           ├── install.rs  # cmd_install, cmd_package
 │   │           ├── lint.rs     # cmd_lint
-│   │           ├── migrate.rs  # cmd_migrate
 │   │           ├── new.rs      # cmd_new, cmd_init
 │   │           └── toolchain.rs # cmd_toolchain_list, cmd_toolchain_add, cmd_toolchain_use
 │   ├── freight-core/             # library crate — all build logic, no CLI / no printing of results
@@ -69,14 +68,6 @@ freight/
 │   ├── freight-doc/              # standalone doc generator binary (freight-doc CLI)
 │   │   └── src/
 │   │       └── main.rs         # freight-doc --format html|md|latex|pdf|all [DIR...] --out DIR
-│   ├── freight-migrator/         # library crate — freight migrate (CMake/Makefile/Meson → freight.toml)
-│   │   └── src/
-│   │       ├── lib.rs          # run_migrate → MigrateOutcome, ImportedProject IR
-│   │       ├── detect.rs       # pick format from files present
-│   │       ├── emit.rs         # ImportedProject → freight.toml string
-│   │       ├── cmake.rs        # CMakeLists.txt parser
-│   │       ├── makefile.rs     # Makefile parser
-│   │       └── meson.rs        # meson.build parser
 │   └── freight-lsp/              # Language Server for freight.toml
 │       └── src/
 │           ├── lib.rs
@@ -147,8 +138,7 @@ freight/
     ├── with-make-dep/
     ├── with-git-dep/
     ├── with-external-deps/
-    ├── doc-example/
-    └── migrated-from-cmake/
+    └── doc-example/
 ```
 
 ---

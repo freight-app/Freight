@@ -210,26 +210,6 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 
 ---
 
-## Build System Migration (freight migrate)
-
-### Bazel
-- **What**: Google's polyglot build system, widely used in large codebases.
-- **Scope**: Parse `BUILD` / `BUILD.bazel` files to extract `cc_library`, `cc_binary`,
-  `cc_test` targets.
-- **Challenge**: Bazel's package graph can be deeply nested with complex visibility rules.
-  A v1 importer would handle flat single-package projects only.
-
-### XMake
-- **What**: Lua-based build system popular in the Chinese open-source community and game dev.
-- **Scope**: Parse `xmake.lua` for `target`, `add_files`, `add_includedirs`, `add_links`.
-- **Challenge**: Lua execution required for full evaluation; regex-based approach covers common patterns.
-
-### Premake
-- **What**: Lua-based project generator. Many game and graphics projects use it.
-- **Scope**: Similar to XMake importer approach.
-
----
-
 ## Package Manager Integration
 
 ### Conan

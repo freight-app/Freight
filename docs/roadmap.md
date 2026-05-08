@@ -103,15 +103,6 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `arch = ...` dep filter — gated by `std::env::consts::ARCH`
 - [x] `freight toolchain add <path>` — validates and installs a local `.rhai` script
 
-### Migrator ✓ COMPLETE
-- [x] `freight migrate [--from cmake|makefile|meson] [--dry-run] [--force]`
-- [x] Auto-detection of source build system
-- [x] CMake, Makefile, Meson importers — all parse to shared `ImportedProject` IR
-- [x] `emit::to_toml` serializes to `freight.toml` with stable output ordering
-- [x] Platform guards routed to `[os.*]` / `[arch.*]` sections (note: migrator still emits legacy `[platform.*]` — update pending)
-- [x] `find_package()` → `{ system = "..." }` dep with review comment
-- [x] `--dry-run` prints generated `freight.toml` to stdout
-- [x] `examples/migrated-from-cmake/` — before/after worked example
 
 ### Documentation Generator ✓ COMPLETE
 - [x] `doc/extract.rs` — line-scanner extractor for C/C++, Rust, Fortran, D, Ada
@@ -213,5 +204,4 @@ backs them. Server implementation unblocks the remaining client stubs.
 - [x] `with-cmake-dep/` — foreign CMake dep (auto-detected)
 - [x] `with-make-dep/` — foreign Make dep (auto-detected)
 - [x] `with-git-dep/` — git dependency cloned and built automatically
-- [x] `migrated-from-cmake/` — before/after for `freight migrate --from cmake`
 - [x] `doc-example/` — C, C++, Fortran sources with LaTeX math in doc comments
