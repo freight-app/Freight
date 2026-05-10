@@ -26,15 +26,6 @@ against the latest available. Print a coloured table. Analogous to `cargo outdat
 ### Tab completion
 when the user presses tab under certain commands, it automatically loads the options for that command
 
-### vcpkg, fpm, and other register support
-packages from various packages managers can be downloaded as well. A ranking of which package manager is used will have to be implemented as well `(freight > vcpkg > conan > others)`
-```toml
-[dependencies]
-boost-asio = {repo = "vcpkg", version=">1.1"}
-libjpg = ">1.1" # Freight handles which repo it pulls from
-```
-
-
 ---
 
 ## Build system
