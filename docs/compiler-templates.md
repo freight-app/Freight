@@ -226,7 +226,7 @@ define_value = "-D{name}={value}";
 output       = "-o {path}";
 compile_only = "-c";
 dep_file     = "-MMD -MF {path}";  // empty = no dep files (mtime-only dirty check)
-target       = "";                  // empty = GCC cross-compiles via dedicated binary
+target       = "";                  // empty = this template does not emit a target flag
 sysroot      = "--sysroot={path}";
 
 // ── Arch-specific flags ───────────────────────────────────────────────────────
@@ -348,7 +348,7 @@ defaults["std"] = "c++17";   // used when [language.cpp] omits std =
 | `output` | Output path flag. `{path}` is substituted. |
 | `compile_only` | Flag to compile without linking (usually `-c`). |
 | `dep_file` | Dep file generation flag. `{path}` substituted. Empty = no dep files (mtime-only). |
-| `target` | Cross-compilation target flag. `{triple}` substituted. Empty = unsupported or uses dedicated binary. |
+| `target` | Cross-compilation target flag. `{triple}` substituted. Empty = this template does not emit a target flag. |
 | `sysroot` | Sysroot flag. `{path}` substituted. |
 | `system_lib` | System library flag. `{name}` substituted. Default: `"-l{name}"`. MSVC uses `"{name}.lib"`. |
 

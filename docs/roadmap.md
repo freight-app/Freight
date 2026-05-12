@@ -106,11 +106,10 @@ Feature branches follow the convention `feature/<name>` off `master`.
 
 ### Documentation Generator ✓ COMPLETE
 - [x] `doc/extract.rs` — line-scanner extractor for C/C++, Rust, Fortran, D, Ada
-- [x] `doc/markdown.rs` — math protection + MD→HTML + MD→LaTeX via pulldown-cmark
-- [x] `doc/render.rs` — HTML renderer with MathJax 3 CDN
+- [x] `doc/markdown.rs` — math protection + Markdown conversion helpers
 - [x] `doc/render_md.rs` — GFM Markdown renderer with per-file pages and index
-- [x] `doc/render_latex.rs` — LaTeX renderer + PDF via xelatex/pdflatex
-- [x] `freight doc [--format html|md|latex|pdf|all]`
+- [x] `doc/render_json.rs` — JSON + MessagePack renderers for tooling/doc apps
+- [x] `freight doc` dependency TUI plus `freight doc --format md|json|msgpack|all`
 - [x] `freight man [--out-dir DIR]` — man pages via clap_mangen
 - [x] `crates/freight-doc/` — standalone `freight-doc` binary
 - [x] `examples/doc-example/` — C, C++, Fortran sources with LaTeX math in comments

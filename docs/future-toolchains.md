@@ -108,7 +108,7 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 
 ### RISC-V GAS (via `riscv64-linux-gnu-gcc`)
 - **What**: GNU assembler for RISC-V targets.
-- **Template**: Extend `gcc.rhai` or create a dedicated cross-gcc template with RISC-V arch flags.
+- **Template**: Extend the GAS entries in `gcc.rhai` with RISC-V arch flags.
 
 ---
 
