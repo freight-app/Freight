@@ -19,4 +19,12 @@ linking["c"] = #{
     extensions:     [".c", ".s", ".S"],
 };
 
+linking["objc"] = #{
+    abi:            "objc",
+    compatible:     ["c"],
+    compile_binary: _cc,
+    linker:         "",
+    extensions:     [".m"],
+};
+
 fn check() { find_tool("clang") != () }

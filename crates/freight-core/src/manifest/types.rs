@@ -29,7 +29,7 @@ pub(crate) struct WorkspaceToml {
 pub struct Manifest {
     pub package: Package,
     /// Language sections keyed by identifier, e.g. `[language.cpp]`, `[language.fortran]`.
-    /// Valid keys: `c`, `cpp`, `fortran`, `ada`, `d`, `cuda`.
+    /// Common keys: `c`, `cpp`, `fortran`, `ada`, `d`, `cuda`, `objc`, `objcpp`.
     #[serde(default)]
     pub language: HashMap<String, LanguageSettings>,
     #[serde(rename = "lib", default)]

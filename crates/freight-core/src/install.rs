@@ -3,8 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 
-use walkdir::WalkDir;
-
 use crate::build::build_project_at;
 use crate::error::FreightError;
 use crate::manifest::load_manifest;

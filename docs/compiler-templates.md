@@ -18,12 +18,14 @@ toolchains/
 │   ├── g++.rhai
 │   ├── gcc.rhai
 │   ├── gfortran.rhai
+│   ├── gdc.rhai             # D (GCC frontend)
 │   └── gdb.rhai             # kind = "debugger"
 ├── llvm/
 │   ├── _llvm-base.rhai
 │   ├── clang++.rhai
 │   ├── clang.rhai
 │   ├── flang.rhai
+│   ├── ldc2.rhai            # D (LLVM frontend)
 │   ├── lldb.rhai            # kind = "debugger"
 │   ├── clang-format.rhai    # kind = "formatter"
 │   └── clang-tidy.rhai      # kind = "linter"
@@ -61,6 +63,7 @@ toolchains/
 │   └── cpplint.rhai         # kind = "linter"
 ├── flawfinder/
 │   └── flawfinder.rhai      # kind = "linter"
+├── dmd.rhai                 # D reference compiler
 ├── msvc.rhai
 ├── tcc.rhai
 └── opencl.rhai              # requires_toolchain = ["cpp"]

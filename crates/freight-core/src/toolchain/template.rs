@@ -1038,10 +1038,12 @@ mod tests {
         rhai("gnu/g++.rhai");
         rhai("gnu/gcc.rhai");
         rhai("gnu/gfortran.rhai");
+        rhai("gnu/gdc.rhai");
         // LLVM family
         rhai("llvm/clang++.rhai");
         rhai("llvm/clang.rhai");
         rhai("llvm/flang.rhai");
+        rhai("llvm/ldc2.rhai");
         // Intel
         rhai("intel/icpx.rhai");
         rhai("intel/ifx.rhai");
@@ -1057,6 +1059,7 @@ mod tests {
         rhai("asm/nasm.rhai");
         rhai("asm/yasm.rhai");
         // Standalone
+        rhai("dmd.rhai");
         CompilerTemplate::from_rhai(TCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
