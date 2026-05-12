@@ -110,6 +110,9 @@ pub struct GlobalConfig {
     pub target: Option<String>,
     /// Path to the cross-compilation sysroot. Machine-local absolute path.
     pub sysroot: Option<String>,
+    /// Whether freight derives CPU tuning flags from the configured target/sysroot.
+    #[serde(default, rename = "auto-cpu-tuning", alias = "auto_cpu_tuning")]
+    pub auto_cpu_tuning: Option<bool>,
     /// Developer debugger preferences, keyed by debugger name under `[debugger.<name>]`.
     #[serde(default)]
     pub debugger: DebuggerConfig,
@@ -138,6 +141,7 @@ impl GlobalConfig {
         if local.default_backend.is_some() { self.default_backend = local.default_backend; }
         if local.target.is_some()          { self.target          = local.target; }
         if local.sysroot.is_some()         { self.sysroot         = local.sysroot; }
+        if local.auto_cpu_tuning.is_some() { self.auto_cpu_tuning = local.auto_cpu_tuning; }
         for (name, local_inst) in local.debugger.debuggers {
             let inst = self.debugger.debuggers.entry(name).or_default();
             inst.args.extend(local_inst.args);

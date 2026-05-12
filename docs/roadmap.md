@@ -30,7 +30,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `family` field in rhai scripts groups compilers into named suites
 - [x] `requires_toolchain` field marks guest/extension compilers (nvcc, hipcc, nasm, yasm, …); auto-dropped when no host toolchain is detected
 - [x] Toolchain version cache (`~/.freight/toolchain-cache.json`, mtime-validated)
-- [x] 20 bundled compiler templates: gcc, g++, gfortran, clang, clang++, flang, icpx, ifx, ispc, hipcc, nvcc, nvc, nvc++, nvfortran, gas, nasm, yasm, msvc, opencl, tcc
+- [x] 23 bundled compiler templates: gcc, g++, gfortran, gdc, clang, clang++, flang, ldc2, icpx, ifx, ispc, hipcc, nvcc, nvc, nvc++, nvfortran, gas, nasm, yasm, dmd, msvc, opencl, tcc
 - [x] gcc and clang scripts probe versioned binaries (`g++-14`, `clang++-17`, …) as fallbacks
 
 ### Build Engine ✓ COMPLETE

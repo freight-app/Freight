@@ -29,7 +29,7 @@ pub(crate) struct WorkspaceToml {
 pub struct Manifest {
     pub package: Package,
     /// Language sections keyed by identifier, e.g. `[language.cpp]`, `[language.fortran]`.
-    /// Valid keys: `c`, `cpp`, `fortran`, `ada`, `d`, `cuda`.
+    /// Common keys: `c`, `cpp`, `fortran`, `ada`, `d`, `cuda`, `objc`, `objcpp`.
     #[serde(default)]
     pub language: HashMap<String, LanguageSettings>,
     #[serde(rename = "lib", default)]
@@ -117,6 +117,7 @@ impl Manifest {
             extra_flags: flags,
             target_triple: self.compiler.target.clone(),
             sysroot: self.compiler.sysroot.as_deref().map(PathBuf::from),
+            auto_cpu_tuning: self.compiler.auto_cpu_tuning,
             arch: self.target.arch.clone()
                 .unwrap_or_else(|| std::env::consts::ARCH.to_string()),
             cpu_extensions: self.target.cpu_extensions.clone(),
@@ -669,6 +670,9 @@ pub struct CompilerConfig {
     /// (machine-local absolute path).
     #[serde(skip)]
     pub sysroot: Option<String>,
+    /// Whether compiler templates may derive CPU tuning flags from target/sysroot.
+    #[serde(skip)]
+    pub auto_cpu_tuning: bool,
     /// Path to a header to precompile (relative to the project root).
     /// E.g. `pch = "include/stdafx.h"`. The PCH is compiled once and
     /// injected into every source file of the matching language.
@@ -692,6 +696,7 @@ impl Default for CompilerConfig {
             includes: vec![],
             target: None,
             sysroot: None,
+            auto_cpu_tuning: true,
             pch: None,
             per_tool: HashMap::default(),
         }

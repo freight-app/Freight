@@ -189,6 +189,9 @@ injected by calling the global `add_flag(s)` function. See
 | Assembly (GAS) | `gas` | as (binutils) | `.s` `.S` |
 | Assembly (NASM) | `nasm` | nasm | `.asm` `.nasm` |
 | Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
+| D | `d` | dmd / ldc2 / gdc | `.d` |
+| Objective-C | `objc` | clang | `.m` |
+| Objective-C++ | `objcpp` | clang++ | `.mm` |
 
 Mix any combination in a single project — freight routes each file extension to the right compiler automatically.
 

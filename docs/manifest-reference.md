@@ -260,11 +260,11 @@ languages. Override with an explicit name (e.g. `"clang"`) to pin a specific too
 
 ### Cross-compilation
 
-`target` passes `--target={triple}` to compilers that support it (clang, gfortran, hipcc, icpx).
-GCC requires a dedicated cross-compilation binary (e.g. `aarch64-linux-gnu-gcc`) — set
-`backend = "aarch64-linux-gnu-gcc"` and leave `target` empty for GCC.
-
+`target` passes the active target triple to compilers that support a target flag.
 `sysroot` passes `--sysroot={path}` to compilers that support it.
+
+When both `target` and `sysroot` are configured, freight also derives conservative CPU tuning flags
+(such as `-march=`, `-mcpu=`, or `-mtune=`) from the target/sysroot pair unless auto CPU tuning is disabled in `~/.freight/config.toml`.
 
 Deps with `targets = [...]` lists are filtered: a dep is included only when its target list
 contains the active `compiler.target` value (or always when no target list is set).
@@ -449,6 +449,7 @@ Local config overrides global. Both share the same format:
 default_backend = "clang"       # preferred compiler family
 target          = "aarch64-linux-gnu"  # cross-compilation target triple
 sysroot         = "/opt/sysroot"
+auto-cpu-tuning = true          # set false to suppress derived -march/-mcpu/-mtune flags
 
 [debugger.gdb]
 args  = ["--tui"]   # raw extra flags before the program separator
