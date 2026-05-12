@@ -767,7 +767,10 @@ fn apply_sanitize_override(manifest: &mut crate::manifest::types::Manifest, prof
 
 fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, FreightError> {
     let mut manifest = load_manifest(project_dir)?;
-    let global = GlobalConfig::load();
+    let mut global = GlobalConfig::load();
+    if let Some(local) = GlobalConfig::load_local(project_dir) {
+        global.apply_local(local);
+    }
     // Project manifest backend wins over global config; "auto" defers to the next level.
     let configured_backend = if !manifest.compiler.backend.is_auto() {
         manifest.compiler.backend.clone()
@@ -776,6 +779,7 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
     };
     manifest.compiler.target = global.target.clone();
     manifest.compiler.sysroot = global.sysroot.clone();
+    manifest.compiler.auto_cpu_tuning = global.auto_cpu_tuning.unwrap_or(true);
 
     let tdir = templates_dir()
         .ok_or_else(|| FreightError::CompilerNotFound(

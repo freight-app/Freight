@@ -19,6 +19,13 @@ pch["compile"]   = "-x c++-header";
 pch["use"]       = "-include-pch {pch_path}";
 pch["extension"] = ".pch";
 
+linking["objcpp"] = #{
+    abi:        "c++",
+    compatible: ["c", "objc"],
+    linker:     "",
+    extensions: [".mm"],
+};
+
 // ── compiler_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [compiler.clang++] in freight.toml.
 

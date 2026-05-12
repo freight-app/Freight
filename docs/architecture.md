@@ -50,12 +50,11 @@ freight/
 │   │       │   ├── debugger.rs # DebuggerTemplate + detect_debuggers()
 │   │       │   └── tool.rs     # ToolTemplate + DetectedTool (formatters + linters)
 │   │       ├── doc/            # documentation extraction and rendering
-│   │       │   ├── mod.rs      # OutputFormat enum + render() dispatch
+│   │       │   ├── lib.rs      # OutputFormat enum + render() dispatch
 │   │       │   ├── extract.rs  # multi-language doc comment extractor
-│   │       │   ├── markdown.rs # math protection + MD→HTML + MD→LaTeX via pulldown-cmark
-│   │       │   ├── render.rs   # HTML renderer (self-contained, MathJax)
+│   │       │   ├── markdown.rs # math protection + Markdown conversion helpers
 │   │       │   ├── render_md.rs  # Markdown renderer (GFM, cross-document links)
-│   │       │   └── render_latex.rs # LaTeX renderer + PDF compilation
+│   │       │   └── render_json.rs # JSON + MessagePack renderers for tooling/doc apps
 │   │       └── build/          # compilation + linking orchestration
 │   │           ├── mod.rs      # build_project, clean_project, test_project (pub functions)
 │   │           ├── compile.rs  # source → object, parallel via rayon
@@ -67,7 +66,7 @@ freight/
 │   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
 │   ├── freight-doc/              # standalone doc generator binary (freight-doc CLI)
 │   │   └── src/
-│   │       └── main.rs         # freight-doc --format html|md|latex|pdf|all [DIR...] --out DIR
+│   │       └── main.rs         # freight-doc --format md|json|msgpack|all [DIR...] --out DIR
 │   └── freight-lsp/              # Language Server for freight.toml
 │       └── src/
 │           ├── lib.rs
@@ -80,12 +79,14 @@ freight/
 │   │   ├── g++.rhai
 │   │   ├── gcc.rhai
 │   │   ├── gfortran.rhai
+│   │   ├── gdc.rhai         # D (GCC frontend)
 │   │   └── gdb.rhai         # kind = "debugger"
 │   ├── llvm/
 │   │   ├── _llvm-base.rhai
 │   │   ├── clang++.rhai
 │   │   ├── clang.rhai
 │   │   ├── flang.rhai
+│   │   ├── ldc2.rhai        # D (LLVM frontend)
 │   │   ├── lldb.rhai        # kind = "debugger"
 │   │   ├── clang-format.rhai # kind = "formatter"
 │   │   └── clang-tidy.rhai  # kind = "linter"
@@ -122,6 +123,7 @@ freight/
 │   │   └── cpplint.rhai     # kind = "linter"
 │   ├── flawfinder/
 │   │   └── flawfinder.rhai  # kind = "linter"
+│   ├── dmd.rhai             # D reference compiler
 │   ├── msvc.rhai
 │   ├── tcc.rhai
 │   └── opencl.rhai          # requires_toolchain = ["cpp"]

@@ -168,11 +168,11 @@ enum Commands {
         #[arg(long)]
         release: bool,
     },
-    /// Extract doc comments and generate a documentation site in target/doc/
+    /// Open the dependency documentation browser, or generate API docs with --format
     Doc {
-        /// Output format: html | md | latex | pdf | all  (default: html)
-        #[arg(long, short, value_name = "FORMAT", default_value = "html")]
-        format: String,
+        /// Output format: md | json | msgpack | all
+        #[arg(long, short, value_name = "FORMAT")]
+        format: Option<String>,
     },
     /// Install build outputs to a system prefix (binaries, libs, headers)
     Install {
@@ -286,7 +286,7 @@ fn main() -> Result<()> {
             cmd_install(Some(&prefix), destdir.as_deref(), release, no_build, target.as_deref());
         }
         Commands::Package { release, target } => cmd_package(release, &target),
-        Commands::Doc { format } => cmd_doc(&format),
+        Commands::Doc { format } => cmd_doc(format.as_deref()),
         Commands::Man { out_dir } => cmd_man(out_dir.as_deref()),
         Commands::Login => cmd_login(),
         Commands::Publish => cmd_publish(),

@@ -30,7 +30,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `family` field in rhai scripts groups compilers into named suites
 - [x] `requires_toolchain` field marks guest/extension compilers (nvcc, hipcc, nasm, yasm, …); auto-dropped when no host toolchain is detected
 - [x] Toolchain version cache (`~/.freight/toolchain-cache.json`, mtime-validated)
-- [x] 20 bundled compiler templates: gcc, g++, gfortran, clang, clang++, flang, icpx, ifx, ispc, hipcc, nvcc, nvc, nvc++, nvfortran, gas, nasm, yasm, msvc, opencl, tcc
+- [x] 23 bundled compiler templates: gcc, g++, gfortran, gdc, clang, clang++, flang, ldc2, icpx, ifx, ispc, hipcc, nvcc, nvc, nvc++, nvfortran, gas, nasm, yasm, dmd, msvc, opencl, tcc
 - [x] gcc and clang scripts probe versioned binaries (`g++-14`, `clang++-17`, …) as fallbacks
 
 ### Build Engine ✓ COMPLETE
@@ -106,11 +106,10 @@ Feature branches follow the convention `feature/<name>` off `master`.
 
 ### Documentation Generator ✓ COMPLETE
 - [x] `doc/extract.rs` — line-scanner extractor for C/C++, Rust, Fortran, D, Ada
-- [x] `doc/markdown.rs` — math protection + MD→HTML + MD→LaTeX via pulldown-cmark
-- [x] `doc/render.rs` — HTML renderer with MathJax 3 CDN
+- [x] `doc/markdown.rs` — math protection + Markdown conversion helpers
 - [x] `doc/render_md.rs` — GFM Markdown renderer with per-file pages and index
-- [x] `doc/render_latex.rs` — LaTeX renderer + PDF via xelatex/pdflatex
-- [x] `freight doc [--format html|md|latex|pdf|all]`
+- [x] `doc/render_json.rs` — JSON + MessagePack renderers for tooling/doc apps
+- [x] `freight doc` dependency TUI plus `freight doc --format md|json|msgpack|all`
 - [x] `freight man [--out-dir DIR]` — man pages via clap_mangen
 - [x] `crates/freight-doc/` — standalone `freight-doc` binary
 - [x] `examples/doc-example/` — C, C++, Fortran sources with LaTeX math in comments

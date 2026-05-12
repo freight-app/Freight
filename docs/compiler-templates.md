@@ -18,12 +18,14 @@ toolchains/
 │   ├── g++.rhai
 │   ├── gcc.rhai
 │   ├── gfortran.rhai
+│   ├── gdc.rhai             # D (GCC frontend)
 │   └── gdb.rhai             # kind = "debugger"
 ├── llvm/
 │   ├── _llvm-base.rhai
 │   ├── clang++.rhai
 │   ├── clang.rhai
 │   ├── flang.rhai
+│   ├── ldc2.rhai            # D (LLVM frontend)
 │   ├── lldb.rhai            # kind = "debugger"
 │   ├── clang-format.rhai    # kind = "formatter"
 │   └── clang-tidy.rhai      # kind = "linter"
@@ -61,6 +63,7 @@ toolchains/
 │   └── cpplint.rhai         # kind = "linter"
 ├── flawfinder/
 │   └── flawfinder.rhai      # kind = "linter"
+├── dmd.rhai                 # D reference compiler
 ├── msvc.rhai
 ├── tcc.rhai
 └── opencl.rhai              # requires_toolchain = ["cpp"]
@@ -223,7 +226,7 @@ define_value = "-D{name}={value}";
 output       = "-o {path}";
 compile_only = "-c";
 dep_file     = "-MMD -MF {path}";  // empty = no dep files (mtime-only dirty check)
-target       = "";                  // empty = GCC cross-compiles via dedicated binary
+target       = "";                  // empty = this template does not emit a target flag
 sysroot      = "--sysroot={path}";
 
 // ── Arch-specific flags ───────────────────────────────────────────────────────
@@ -345,7 +348,7 @@ defaults["std"] = "c++17";   // used when [language.cpp] omits std =
 | `output` | Output path flag. `{path}` is substituted. |
 | `compile_only` | Flag to compile without linking (usually `-c`). |
 | `dep_file` | Dep file generation flag. `{path}` substituted. Empty = no dep files (mtime-only). |
-| `target` | Cross-compilation target flag. `{triple}` substituted. Empty = unsupported or uses dedicated binary. |
+| `target` | Cross-compilation target flag. `{triple}` substituted. Empty = this template does not emit a target flag. |
 | `sysroot` | Sysroot flag. `{path}` substituted. |
 | `system_lib` | System library flag. `{name}` substituted. Default: `"-l{name}"`. MSVC uses `"{name}.lib"`. |
 
