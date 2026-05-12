@@ -136,7 +136,7 @@ pub fn select_linker<'a>(
     }
 
     const PRIORITY: &[&str] = &[
-        "cpp", "cuda", "hip", "sycl", "c", "fortran", "ada", "d", "opencl", "ispc",
+        "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "opencl", "ispc",
     ];
     for &lang in PRIORITY {
         if manifest.language.contains_key(lang) {

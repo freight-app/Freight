@@ -108,7 +108,7 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 
 ### RISC-V GAS (via `riscv64-linux-gnu-gcc`)
 - **What**: GNU assembler for RISC-V targets.
-- **Template**: Extend `gcc.rhai` or create a dedicated cross-gcc template with RISC-V arch flags.
+- **Template**: Extend the GAS entries in `gcc.rhai` with RISC-V arch flags.
 
 ---
 
@@ -147,19 +147,20 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 
 ## Other Languages
 
-### D (`dmd` / `ldc2` / `gdc`) — `dmd.rhai` exists
-- `toolchains/dmd.rhai` exists for DMD. LDC (LLVM-based) and GDC (GCC-based) are worth adding.
-- `ldc2` uses mostly DMD-compatible flags for simple cases.
+### D (`dmd` / `ldc2` / `gdc`) ✓ templates exist
+- `toolchains/dmd.rhai` covers the reference compiler.
+- `toolchains/llvm/ldc2.rhai` covers the LLVM-based D compiler.
+- `toolchains/gnu/gdc.rhai` covers the GCC-based D compiler.
 - **ABI compatibility**: D's ABI is compatible with C (`extern(C)`) but not C++ by default.
   The `linking["d"]` ABI key handles this.
 
-### Ada (`gnat`) ✓ template exists
-- `toolchains/gnat.rhai` present. May need improvements for `gprbuild`-style multi-unit compilation.
+### Ada (`gnat`)
+- **Planned**: a GNAT template is still needed, ideally with `gprbuild`-style multi-unit handling rather than a simple one-file compiler invocation.
 
-### Objective-C / Objective-C++ (via Clang)
-- **What**: Clang compiles `.m` and `.mm` files natively with `-x objective-c` / `-x objective-c++`.
-- **Template**: Extend `clang.rhai` with `[linking.objc]` and `[linking.objcpp]` entries claiming
-  `.m` and `.mm` extensions. Flag set is the same as C/C++ plus `-framework Foundation` for macOS.
+### Objective-C / Objective-C++ (via Clang) ✓ template support exists
+- **What**: Clang compiles `.m` and `.mm` files natively.
+- **Template**: `clang.rhai` claims `.m` as `objc`; `clang++.rhai` claims `.mm` as `objcpp`.
+  Platform frameworks such as `-framework Foundation` can be supplied through manifest linker flags or a build script.
 
 ### Swift (`swiftc`)
 - **What**: Apple's Swift compiler. Produces object files linkable with C.

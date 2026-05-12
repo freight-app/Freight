@@ -186,6 +186,8 @@ pub struct BuildSettings {
     pub cpu_extensions: Vec<String>,
     /// C++ standard library: `"libc++"` | `"libstdc++"` | `"none"` | `""` (default/unset).
     pub stdlib: String,
+    /// Whether freight may derive CPU tuning flags from `target_triple` + `sysroot`.
+    pub auto_cpu_tuning: bool,
 }
 
 impl Default for BuildSettings {
@@ -206,6 +208,7 @@ impl Default for BuildSettings {
             arch: std::env::consts::ARCH.to_string(),
             cpu_extensions: vec![],
             stdlib: String::new(),
+            auto_cpu_tuning: true,
         }
     }
 }
@@ -734,6 +737,10 @@ impl CompilerTemplate {
             }
         }
 
+        for f in self.derived_target_cpu_flags(settings, &flags) {
+            push_flag_str(&mut flags, &f);
+        }
+
         // Arch flags (e.g. NASM output format: `-f elf64`).
         // Try arch.os first, then arch alone.
         if !self.arch_flags.is_empty() {
@@ -767,6 +774,84 @@ impl CompilerTemplate {
         }
 
         flags
+    }
+
+    fn derived_target_cpu_flags(&self, settings: &BuildSettings, existing_flags: &[String]) -> Vec<String> {
+        if !settings.auto_cpu_tuning || !self.accepts_gnu_cpu_tuning_flags() {
+            return vec![];
+        }
+        if existing_flags.iter().chain(settings.extra_flags.iter()).any(|f| is_cpu_tuning_flag(f)) {
+            return vec![];
+        }
+        let Some(target) = settings.target_triple.as_deref() else { return vec![] };
+        let Some(sysroot) = settings.sysroot.as_ref() else { return vec![] };
+        let target = target.to_ascii_lowercase();
+        let sysroot = sysroot.to_string_lossy().to_ascii_lowercase();
+        if self.structure.target.is_empty() && !target_matches_host(&target) {
+            return vec![];
+        }
+
+        if target.starts_with("aarch64") {
+            if let Some(cpu) = first_sysroot_token(&sysroot, &[
+                "neoverse-v2", "neoverse-v1", "neoverse-n2", "neoverse-n1",
+                "cortex-a78", "cortex-a76", "cortex-a75", "cortex-a73",
+                "cortex-a72", "cortex-a57", "cortex-a55", "cortex-a53",
+            ]) {
+                return vec![format!("-mcpu={cpu}")];
+            }
+            return vec!["-march=armv8-a".to_string()];
+        }
+
+        if target.starts_with("arm") || target.starts_with("thumb") {
+            let mut flags = Vec::new();
+            if let Some(cpu) = first_sysroot_token(&sysroot, &[
+                "cortex-m85", "cortex-m55", "cortex-m35p", "cortex-m33", "cortex-m23",
+                "cortex-m7", "cortex-m4", "cortex-m3", "cortex-m0plus", "cortex-m0",
+                "cortex-a9", "cortex-a8", "cortex-a7", "cortex-r5", "cortex-r4",
+            ]) {
+                flags.push(format!("-mcpu={cpu}"));
+                if cpu.starts_with("cortex-m") {
+                    flags.push("-mthumb".to_string());
+                }
+            }
+            if sysroot.contains("eabihf") || sysroot.contains("hardfloat") || sysroot.contains("hard-float") {
+                flags.push("-mfloat-abi=hard".to_string());
+            } else if sysroot.contains("softfp") {
+                flags.push("-mfloat-abi=softfp".to_string());
+            }
+            return flags;
+        }
+
+        if target.starts_with("riscv64") {
+            let mut flags = Vec::new();
+            let march = first_sysroot_token(&sysroot, &["rv64gcv", "rv64gc", "rv64imafdc", "rv64imac"])
+                .unwrap_or("rv64gc");
+            flags.push(format!("-march={march}"));
+            let abi = first_sysroot_token(&sysroot, &["lp64d", "lp64f", "lp64"])
+                .unwrap_or("lp64d");
+            flags.push(format!("-mabi={abi}"));
+            return flags;
+        }
+
+        if target.starts_with("x86_64") {
+            if let Some(march) = first_sysroot_token(&sysroot, &[
+                "x86-64-v4", "x86-64-v3", "x86-64-v2", "znver4", "znver3", "znver2",
+                "skylake-avx512", "skylake", "haswell",
+            ]) {
+                return vec![format!("-march={march}")];
+            }
+        }
+
+        vec![]
+    }
+
+    fn accepts_gnu_cpu_tuning_flags(&self) -> bool {
+        let handles_c_or_cpp = self.linking.contains_key("c") || self.linking.contains_key("cpp");
+        handles_c_or_cpp
+            && (self.family == "gnu"
+                || self.family == "llvm"
+                || self.family == "intel"
+                || matches!(self.name.as_str(), "gcc" | "g++" | "clang" | "clang++" | "icpx"))
     }
 
     /// Format the `-o <path>` flag pair.
@@ -1008,6 +1093,28 @@ fn push_flag_parts(s: &str) -> Vec<String> {
     s.split_whitespace().map(str::to_owned).collect()
 }
 
+fn is_cpu_tuning_flag(flag: &str) -> bool {
+    matches!(
+        flag.split_once('=').map(|(k, _)| k).unwrap_or(flag),
+        "-march" | "-mcpu" | "-mtune" | "-mfpu" | "-mfloat-abi" | "-mabi"
+    )
+}
+
+fn first_sysroot_token<'a>(sysroot: &str, tokens: &[&'a str]) -> Option<&'a str> {
+    tokens.iter().copied().find(|token| sysroot.contains(token))
+}
+
+fn target_matches_host(target: &str) -> bool {
+    let host = std::env::consts::ARCH;
+    match host {
+        "x86_64" => target.starts_with("x86_64") || target.starts_with("amd64"),
+        "aarch64" => target.starts_with("aarch64") || target.starts_with("arm64"),
+        "arm" => target.starts_with("arm") || target.starts_with("thumb"),
+        "riscv64" => target.starts_with("riscv64"),
+        other => target.starts_with(other),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1038,10 +1145,12 @@ mod tests {
         rhai("gnu/g++.rhai");
         rhai("gnu/gcc.rhai");
         rhai("gnu/gfortran.rhai");
+        rhai("gnu/gdc.rhai");
         // LLVM family
         rhai("llvm/clang++.rhai");
         rhai("llvm/clang.rhai");
         rhai("llvm/flang.rhai");
+        rhai("llvm/ldc2.rhai");
         // Intel
         rhai("intel/icpx.rhai");
         rhai("intel/ifx.rhai");
@@ -1057,6 +1166,7 @@ mod tests {
         rhai("asm/nasm.rhai");
         rhai("asm/yasm.rhai");
         // Standalone
+        rhai("dmd.rhai");
         CompilerTemplate::from_rhai(TCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
@@ -1455,7 +1565,7 @@ mod tests {
 
     #[test]
     fn gcc_does_not_emit_target_flag() {
-        // GCC cross-compiles via dedicated toolchain binary, not --target=.
+        // GCC templates do not emit --target=; target-aware compilers like Clang do.
         let t = gcc();
         let flags = t.assemble_flags(&BuildSettings {
             opt_level: "2".into(),
@@ -1493,6 +1603,54 @@ mod tests {
         });
         assert!(flags.iter().any(|f| f == "--target=aarch64-linux-gnu"));
         assert!(flags.iter().any(|f| f == "--sysroot=/opt/arm-sysroot"));
+    }
+
+    #[test]
+    fn derives_aarch64_cpu_from_target_and_sysroot() {
+        let t = clang();
+        let flags = t.assemble_flags(&BuildSettings {
+            target_triple: Some("aarch64-linux-gnu".into()),
+            sysroot: Some(PathBuf::from("/opt/sysroots/cortex-a72-linux-gnu")),
+            ..Default::default()
+        });
+        assert!(flags.iter().any(|f| f == "-mcpu=cortex-a72"), "got: {flags:?}");
+    }
+
+    #[test]
+    fn derives_riscv_arch_and_abi_from_target_and_sysroot() {
+        let t = clang();
+        let flags = t.assemble_flags(&BuildSettings {
+            target_triple: Some("riscv64-linux-gnu".into()),
+            sysroot: Some(PathBuf::from("/opt/sysroots/rv64gcv-lp64d")),
+            ..Default::default()
+        });
+        assert!(flags.iter().any(|f| f == "-march=rv64gcv"), "got: {flags:?}");
+        assert!(flags.iter().any(|f| f == "-mabi=lp64d"), "got: {flags:?}");
+    }
+
+    #[test]
+    fn auto_cpu_tuning_can_be_disabled() {
+        let t = clang();
+        let flags = t.assemble_flags(&BuildSettings {
+            target_triple: Some("aarch64-linux-gnu".into()),
+            sysroot: Some(PathBuf::from("/opt/sysroots/cortex-a72-linux-gnu")),
+            auto_cpu_tuning: false,
+            ..Default::default()
+        });
+        assert!(!flags.iter().any(|f| f.starts_with("-mcpu") || f.starts_with("-march")), "got: {flags:?}");
+    }
+
+    #[test]
+    fn manual_cpu_flag_suppresses_auto_cpu_tuning() {
+        let t = clang();
+        let flags = t.assemble_flags(&BuildSettings {
+            target_triple: Some("aarch64-linux-gnu".into()),
+            sysroot: Some(PathBuf::from("/opt/sysroots/cortex-a72-linux-gnu")),
+            extra_flags: vec!["-march=armv8.2-a".into()],
+            ..Default::default()
+        });
+        assert!(flags.iter().any(|f| f == "-march=armv8.2-a"), "got: {flags:?}");
+        assert!(!flags.iter().any(|f| f == "-mcpu=cortex-a72"), "got: {flags:?}");
     }
 
     #[test]

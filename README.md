@@ -20,7 +20,7 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 - **ccache / sccache** — compile cache wrappers detected automatically; opt out with `FREIGHT_NO_CACHE=1`
 - **Git dependencies** — `{ git = "url", branch = "main" }` with lock SHA enforcement and auto-fetch
 - **Language server** — `freight lsp` for `freight.toml` completions, hover docs, and go-to-definition
-- **API docs** — `freight doc` extracts doc comments and renders HTML, Markdown, LaTeX, or PDF with full math support
+- **Doc browser** — `freight doc` opens a terminal UI for installed local/global dependencies; `--format` extracts project doc comments as Markdown, JSON, or MessagePack
 
 ## Naming conventions
 
@@ -189,6 +189,9 @@ injected by calling the global `add_flag(s)` function. See
 | Assembly (GAS) | `gas` | as (binutils) | `.s` `.S` |
 | Assembly (NASM) | `nasm` | nasm | `.asm` `.nasm` |
 | Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
+| D | `d` | dmd / ldc2 / gdc | `.d` |
+| Objective-C | `objc` | clang | `.m` |
+| Objective-C++ | `objcpp` | clang++ | `.mm` |
 
 Mix any combination in a single project — freight routes each file extension to the right compiler automatically.
 
@@ -222,7 +225,8 @@ freight tree                          print dependency tree
 freight lsp                           run language server on stdio
 freight debug [<binary>] [--debugger <name>] [-- <args>]
 freight compile-commands [--release]  generate compile_commands.json
-freight doc [--format html|md|latex|pdf|all]
+freight doc                          browse installed dependency docs in a TUI
+freight doc --format md|json|msgpack|all  generate extracted API docs
 freight man [--out-dir DIR]           generate man pages
 ```
 
@@ -255,16 +259,18 @@ freight build
 freight run
 ```
 
-## Generating API docs
+## Browsing and generating docs
 
-`freight doc` extracts doc comments from your project's sources and renders them in one or more formats:
+`freight doc` opens an interactive terminal browser for installed dependencies. The browser lists local project dependencies from `freight.toml` / `.deps/` and global cached dependencies from `~/.freight`, with arrow-key and `j`/`k` scrolling plus details for any README or generated docs found for the selected dependency.
+
+Use `--format` when you want to extract doc comments from your project's sources and render them to `target/doc/`:
 
 ```sh
-freight doc                        # → target/doc/index.html  (HTML with MathJax)
-freight doc --format md            # → target/doc/index.md    (GFM Markdown)
-freight doc --format latex         # → target/doc/docs.tex    (LaTeX source)
-freight doc --format pdf           # → target/doc/docs.pdf    (requires xelatex or pdflatex)
-freight doc --format all           # → target/doc/html/  md/  latex/  pdf/
+freight doc                         # browse installed local/global dependencies
+freight doc --format md             # → target/doc/index.md    (GFM Markdown)
+freight doc --format json           # → target/doc/docs.json   (structured JSON)
+freight doc --format msgpack        # → target/doc/docs.msgpack (binary MessagePack)
+freight doc --format all            # → target/doc/md/  json/  msgpack/
 ```
 
 Recognised doc comment styles:
@@ -277,7 +283,7 @@ Recognised doc comment styles:
 | D | `/++ +/`, `/**`, `///` — DDoc |
 | Ada | `--!`, `---` |
 
-Doc comment bodies are processed as Markdown. LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim so MathJax (HTML/Markdown) and LaTeX itself can render it.
+Doc comment bodies are processed as Markdown. LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim in the generated Markdown and structured outputs.
 
 The `freight-doc` standalone binary works without a `freight.toml`:
 
