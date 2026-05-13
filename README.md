@@ -163,10 +163,6 @@ min_version = "14.0"
 [compiler.nvcc]
 sm_arch     = "sm_89"
 min_version = "11.8"
-
-# Validate that assembly sources are only built for x86_64.
-[language.asm]
-arch = "x86_64"
 ```
 
 Callbacks in the template receive a `ctx` object with `ctx.value`,
