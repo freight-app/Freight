@@ -120,6 +120,28 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
             }
         }
 
+        if let Some(repo) = &d.repo {
+            const KNOWN_REPOS: &[&str] = &["pkg-config", "conan", "vcpkg"];
+            if !KNOWN_REPOS.contains(&repo.as_str()) {
+                errors.push(ValidationError::new(
+                    &ctx,
+                    format!("unknown repo {:?}; accepted: {}", repo, KNOWN_REPOS.join(", ")),
+                ));
+            }
+            let is_version_dep = d.version.is_some()
+                && d.path.is_none()
+                && d.system.is_none()
+                && d.git.is_none()
+                && d.url.is_none()
+                && d.pkg_config.is_none();
+            if !is_version_dep {
+                errors.push(ValidationError::new(
+                    &ctx,
+                    "repo is only valid for version deps (no path, git, url, system, or pkg-config)",
+                ));
+            }
+        }
+
     }
 }
 

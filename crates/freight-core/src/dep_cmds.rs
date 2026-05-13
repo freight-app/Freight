@@ -201,8 +201,10 @@ pub fn update_git_deps(project_dir: &Path, only: Option<&str>) -> Result<Vec<Git
 /// Already-fetched directories (sentinel `.freight-fetched` present) are skipped.
 /// Returns the names of deps that were fetched or were already present.
 pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, FreightError> {
+    use crate::event::silent;
     use crate::fetch::http;
     let manifest = load_manifest(project_dir)?;
+    let progress = silent();
     let mut outcomes = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
@@ -211,7 +213,7 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
 
         let already = project_dir.join(".deps").join(name).join(".freight-fetched").exists();
         if !already {
-            http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir)?;
+            http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir, &progress)?;
         }
         outcomes.push((name.clone(), already));
     }

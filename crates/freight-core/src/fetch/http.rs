@@ -6,6 +6,7 @@ use curl::easy::Easy;
 use sha2::{Digest, Sha256};
 
 use crate::error::FreightError;
+use crate::event::{BuildEvent, Progress};
 
 /// Download a source archive to `.deps/{name}/`, verify SHA-256, and extract.
 ///
@@ -16,6 +17,7 @@ pub fn fetch_url_dep(
     url: &str,
     expected_sha256: Option<&str>,
     project_dir: &Path,
+    progress: &Progress,
 ) -> Result<PathBuf, FreightError> {
     let deps_dir = project_dir.join(".deps").join(name);
     let sentinel = deps_dir.join(".freight-fetched");
@@ -24,8 +26,7 @@ pub fn fetch_url_dep(
         return Ok(deps_dir);
     }
 
-    use owo_colors::OwoColorize;
-    println!("  {} {} from {}", "Fetching".dimmed(), name, url);
+    progress(BuildEvent::FetchingDep { name: name.to_string(), source: url.to_string() });
 
     std::fs::create_dir_all(project_dir.join(".deps"))?;
 

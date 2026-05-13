@@ -512,6 +512,11 @@ pub struct DetailedDep {
     /// compilation and linking. No source build is performed.
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "pkg-config", alias = "pkg_config")]
     pub pkg_config: Option<String>,
+    /// Explicit resolver to use for this version dep.
+    /// Accepted values: `"pkg-config"`, `"conan"`, `"vcpkg"`.
+    /// When omitted, freight tries `pkg-config → conan → vcpkg` in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 fn default_true() -> bool { true }
