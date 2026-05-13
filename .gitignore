@@ -2,6 +2,7 @@
 *.mod
 .vscode/
 .claude/
+CLAUDE.md
 # Generated per-project artifacts in examples
 examples/**/.deps/
 examples/**/freight.lock
