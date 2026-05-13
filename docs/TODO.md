@@ -16,21 +16,21 @@ Activate on `freight.toml`, delegate to `freight lsp` for diagnostics, completio
 go-to-definition. LSP currently implemented; remaining work is the extension packaging and
 Marketplace publish. Also add inlay hints and `freight.toml` schema validation.
 
-### B3 — Progress callbacks / structured build events ✓ in progress
-Build output goes to stdout via `println!`. Replace with a callback so GUI/TUI frontends and
-the LSP can consume structured events (file started, file done, warning, error) rather than
-parsing raw text. Required before a proper IDE integration can show per-file progress.
+### B3 — Progress callbacks / structured build events ✓ done
+`BuildEvent` enum + `Progress = Arc<dyn Fn(BuildEvent) + Send + Sync>` threaded through the
+entire build pipeline. CLI translates events to coloured output. GUI/TUI/LSP can subscribe
+without parsing stdout. All `println!`/`eprintln!` removed from `freight-core` build paths.
 
 ### B4 — Slot-based substitution
 `provides = [...]` currently only detects conflicts. Full substitution: the dep declared
 closest to the root wins; same-depth conflicts remain a hard error. Required before large
 dependency graphs with BLAS/LAPACK-style provider aliases are usable.
 
-### B5 — Package lookup chain expansion ✓ in progress
-Extend version dep resolution beyond pkg-config + vcpkg:
-- Package manager ownership lookup (conan, apt, brew, …)
-- Explicit `repo = "vcpkg"` selector when multiple repos coexist
-- Internal system cache registry (index installed libs/headers on first install; skip probing on subsequent builds)
+### B5 — Package lookup chain expansion ✓ done
+Version deps resolve via `pkg-config → conan → vcpkg`. `repo = "conan"|"vcpkg"|"pkg-config"`
+pins a specific resolver. System PM detection (apt/brew/dnf/pacman/zypper/winget) emits
+install hints on failure. `conan.rs` and `system_pm.rs` modules added.
+Remaining: internal system cache registry (index on first install; skip probing on rebuild).
 
 ### B6 — `freight bench`
 `bench` profile (release + debug, no strip), run binaries matching `bench_*` or in `benches/`,
