@@ -8,10 +8,12 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use freight_core::manifest::{load_manifest_str, validate, validate_dep_compat};
-use freight_core::toolchain::{CompilerTemplate, load_templates, templates_dir};
+use freight_core::toolchain::{load_templates, templates_dir, CompilerTemplate};
+use rhai::Engine;
 
-use crate::completion;
+use crate::completion::{self, DocumentKind};
 use crate::docs;
+use crate::fortran;
 use crate::position::{byte_to_position, locate, position_to_byte};
 
 pub struct Backend {
@@ -25,21 +27,54 @@ pub struct Backend {
 
 impl Backend {
     pub fn new(client: Client) -> Self {
-        let templates = templates_dir().map(|d| load_templates(&d)).unwrap_or_default();
-        Self { client, docs: DashMap::new(), templates }
+        let templates = templates_dir()
+            .map(|d| load_templates(&d))
+            .unwrap_or_default();
+        Self {
+            client,
+            docs: DashMap::new(),
+            templates,
+        }
     }
 
-    /// Only freight.toml files get the full treatment.
-    fn is_freight_toml(uri: &Url) -> bool {
-        uri.path().ends_with("/freight.toml") || uri.path().ends_with("freight.toml")
+    /// Classify documents the Freight LSP understands.
+    fn document_kind(uri: &Url) -> Option<DocumentKind> {
+        let path = uri.path();
+        let file_name = path.rsplit('/').next().unwrap_or(path);
+
+        if file_name == "freight.toml" {
+            Some(DocumentKind::Manifest)
+        } else if file_name == "build.freight" {
+            Some(DocumentKind::BuildScript)
+        } else if file_name.ends_with(".rhai") {
+            Some(DocumentKind::CompilerTemplate)
+        } else if is_fortran_file(file_name) {
+            Some(DocumentKind::FortranSource)
+        } else {
+            None
+        }
     }
 
     async fn refresh_diagnostics(&self, uri: Url, src: &str) {
         let diagnostics = self.compute_diagnostics(&uri, src);
-        self.client.publish_diagnostics(uri, diagnostics, None).await;
+        self.client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
     }
 
     fn compute_diagnostics(&self, uri: &Url, src: &str) -> Vec<Diagnostic> {
+        match Self::document_kind(uri) {
+            Some(DocumentKind::Manifest) => self.compute_manifest_diagnostics(uri, src),
+            Some(DocumentKind::BuildScript) => {
+                compute_rhai_syntax_diagnostics(src, "build.freight")
+            }
+            Some(DocumentKind::CompilerTemplate) => compute_template_diagnostics(src),
+            Some(DocumentKind::FortranSource) => fortran::analyze(src).diagnostics,
+            None => Vec::new(),
+        }
+    }
+
+    fn compute_manifest_diagnostics(&self, uri: &Url, src: &str) -> Vec<Diagnostic> {
         let mut out = Vec::new();
 
         let manifest = match load_manifest_str(src) {
@@ -54,7 +89,11 @@ impl Backend {
         };
 
         let mut errors = validate(&manifest, &self.templates);
-        if let Some(dir) = uri.to_file_path().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        if let Some(dir) = uri
+            .to_file_path()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+        {
             errors.extend(validate_dep_compat(&manifest, &dir, &self.templates));
         }
 
@@ -64,6 +103,31 @@ impl Backend {
         }
 
         out
+    }
+
+    fn fortran_definition(
+        &self,
+        src: &str,
+        pos: Position,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let Some(name) = fortran::identifier_at(src, pos) else {
+            return Ok(None);
+        };
+
+        for doc in &self.docs {
+            let uri = doc.key();
+            if Self::document_kind(uri) != Some(DocumentKind::FortranSource) {
+                continue;
+            }
+            if let Some(symbol) = fortran::find_symbol(doc.value(), &name) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                    uri: uri.clone(),
+                    range: symbol.selection_range,
+                })));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -83,12 +147,17 @@ impl LanguageServer for Backend {
                 )),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![
-                        "[".into(), ".".into(), "\"".into(), "=".into(),
+                        "[".into(),
+                        ".".into(),
+                        "\"".into(),
+                        "=".into(),
+                        "(".into(),
                     ]),
                     ..Default::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -100,30 +169,36 @@ impl LanguageServer for Backend {
             .await;
     }
 
-    async fn shutdown(&self) -> Result<()> { Ok(()) }
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let text = params.text_document.text;
         self.docs.insert(uri.clone(), text.clone());
-        if Self::is_freight_toml(&uri) {
+        if Self::document_kind(&uri).is_some() {
             self.refresh_diagnostics(uri, &text).await;
         }
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         // With FULL sync, the client sends the entire document each time.
-        let Some(change) = params.content_changes.into_iter().next() else { return };
+        let Some(change) = params.content_changes.into_iter().next() else {
+            return;
+        };
         let uri = params.text_document.uri.clone();
         self.docs.insert(uri.clone(), change.text.clone());
-        if Self::is_freight_toml(&uri) {
+        if Self::document_kind(&uri).is_some() {
             self.refresh_diagnostics(uri, &change.text).await;
         }
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !Self::is_freight_toml(&uri) { return }
+        if Self::document_kind(&uri).is_none() {
+            return;
+        }
         if let Some(text) = self.docs.get(&uri).map(|t| t.clone()) {
             self.refresh_diagnostics(uri, &text).await;
         }
@@ -138,24 +213,50 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        if !Self::is_freight_toml(&uri) { return Ok(None) }
-        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else { return Ok(None) };
+        let Some(kind) = Self::document_kind(&uri) else {
+            return Ok(None);
+        };
+        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else {
+            return Ok(None);
+        };
         let items = completion::complete(
             &src,
             params.text_document_position.position,
             &self.templates,
+            kind,
         );
         Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
-        if !Self::is_freight_toml(&uri) { return Ok(None) }
-        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else { return Ok(None) };
+        let Some(kind) = Self::document_kind(&uri) else {
+            return Ok(None);
+        };
+        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else {
+            return Ok(None);
+        };
 
         let pos = params.text_document_position_params.position;
-        let Some(field_path) = dotted_path_at(&src, pos) else { return Ok(None) };
-        let Some(doc) = docs::lookup(&field_path) else { return Ok(None) };
+        if kind == DocumentKind::FortranSource {
+            let Some(doc) = fortran::hover(&src, pos) else {
+                return Ok(None);
+            };
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: doc,
+                }),
+                range: None,
+            }));
+        }
+
+        let Some(field_path) = symbol_path_at(&src, pos, kind) else {
+            return Ok(None);
+        };
+        let Some(doc) = docs::lookup(kind, &field_path) else {
+            return Ok(None);
+        };
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -171,30 +272,92 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
-        if !Self::is_freight_toml(&uri) { return Ok(None) }
-        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else { return Ok(None) };
+        let Some(kind) = Self::document_kind(&uri) else {
+            return Ok(None);
+        };
+        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else {
+            return Ok(None);
+        };
 
         let pos = params.text_document_position_params.position;
-        // Find the path string literal under the cursor — only inside a `path = "..."` assignment.
-        let Some(rel) = path_dep_target_at(&src, pos) else { return Ok(None) };
+        match kind {
+            DocumentKind::Manifest => manifest_path_definition(uri, &src, pos),
+            DocumentKind::FortranSource => self.fortran_definition(&src, pos),
+            DocumentKind::BuildScript | DocumentKind::CompilerTemplate => Ok(None),
+        }
+    }
 
-        let Ok(this_file) = uri.to_file_path() else { return Ok(None) };
-        let Some(project_dir) = this_file.parent() else { return Ok(None) };
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let Some(DocumentKind::FortranSource) = Self::document_kind(&uri) else {
+            return Ok(None);
+        };
+        let Some(src) = self.docs.get(&uri).map(|t| t.clone()) else {
+            return Ok(None);
+        };
 
-        let target_dir: PathBuf = project_dir.join(&rel);
-        let target = target_dir.join("freight.toml");
-        if !target.exists() { return Ok(None) }
-
-        let Ok(target_uri) = Url::from_file_path(&target) else { return Ok(None) };
-        Ok(Some(GotoDefinitionResponse::Scalar(Location {
-            uri: target_uri,
-            range: Range { start: Position { line: 0, character: 0 },
-                           end:   Position { line: 0, character: 0 } },
-        })))
+        let symbols = fortran::analyze(&src)
+            .symbols
+            .into_iter()
+            .map(|s| s.to_document_symbol())
+            .collect();
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn is_fortran_file(file_name: &str) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    matches!(
+        lower.rsplit_once('.').map(|(_, ext)| ext),
+        Some("f" | "for" | "f90" | "f95" | "f03" | "f08" | "f18" | "fpp")
+    )
+}
+
+fn manifest_path_definition(
+    uri: Url,
+    src: &str,
+    pos: Position,
+) -> Result<Option<GotoDefinitionResponse>> {
+    // Find the path string literal under the cursor — only inside a `path = "..."` assignment.
+    let Some(rel) = path_dep_target_at(src, pos) else {
+        return Ok(None);
+    };
+
+    let Ok(this_file) = uri.to_file_path() else {
+        return Ok(None);
+    };
+    let Some(project_dir) = this_file.parent() else {
+        return Ok(None);
+    };
+
+    let target_dir: PathBuf = project_dir.join(&rel);
+    let target = target_dir.join("freight.toml");
+    if !target.exists() {
+        return Ok(None);
+    }
+
+    let Ok(target_uri) = Url::from_file_path(&target) else {
+        return Ok(None);
+    };
+    Ok(Some(GotoDefinitionResponse::Scalar(Location {
+        uri: target_uri,
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    })))
+}
 
 fn diagnostic(range: Range, severity: DiagnosticSeverity, message: String) -> Diagnostic {
     Diagnostic {
@@ -206,12 +369,95 @@ fn diagnostic(range: Range, severity: DiagnosticSeverity, message: String) -> Di
     }
 }
 
+fn compute_rhai_syntax_diagnostics(src: &str, label: &str) -> Vec<Diagnostic> {
+    let engine = Engine::new();
+    match engine.compile(src) {
+        Ok(_) => Vec::new(),
+        Err(e) => vec![rhai_diagnostic(src, &e.to_string(), label)],
+    }
+}
+
+fn compute_template_diagnostics(src: &str) -> Vec<Diagnostic> {
+    match CompilerTemplate::from_rhai(src) {
+        Ok(_) => Vec::new(),
+        Err(e) => vec![rhai_diagnostic(src, &e.to_string(), "compiler template")],
+    }
+}
+
+fn rhai_diagnostic(src: &str, msg: &str, label: &str) -> Diagnostic {
+    let range = extract_rhai_line_col(msg)
+        .map(|(line, col)| Range {
+            start: Position {
+                line,
+                character: col,
+            },
+            end: Position {
+                line,
+                character: col + 1,
+            },
+        })
+        .unwrap_or_else(|| first_line_range(src));
+
+    diagnostic(range, DiagnosticSeverity::ERROR, format!("{label}: {msg}"))
+}
+
+fn extract_rhai_line_col(msg: &str) -> Option<(u32, u32)> {
+    // Rhai commonly formats positions as "(line 3, position 12)"; keep this
+    // parser string-based so freight-lsp doesn't rely on a specific error type.
+    let lower = msg.to_ascii_lowercase();
+    let line_idx = lower.find("line ")?;
+    let line_rest = &lower[line_idx + 5..];
+    let line: u32 = line_rest
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+
+    let pos_idx = lower[line_idx..]
+        .find("position ")
+        .map(|i| line_idx + i)
+        .or_else(|| lower[line_idx..].find("column ").map(|i| line_idx + i))?;
+    let prefix_len = if lower[pos_idx..].starts_with("position ") {
+        9
+    } else {
+        7
+    };
+    let pos_rest = &lower[pos_idx + prefix_len..];
+    let col: u32 = pos_rest
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+
+    Some((line.saturating_sub(1), col.saturating_sub(1)))
+}
+
+fn first_line_range(src: &str) -> Range {
+    let line = src.lines().next().unwrap_or("");
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: line.chars().count() as u32,
+        },
+    }
+}
+
 /// Pull a `line N, column M` hint out of a TOML parse error and return a
 /// single-character range at that spot.
 fn parse_error_range(src: &str, msg: &str) -> (Range, String) {
     let (line, col) = extract_line_col(msg).unwrap_or((0, 0));
-    let start = Position { line, character: col };
-    let end = Position { line, character: col + 1 };
+    let start = Position {
+        line,
+        character: col,
+    };
+    let end = Position {
+        line,
+        character: col + 1,
+    };
     let range = Range { start, end };
 
     // Strip the "at line X column Y" suffix from the message if we extracted it —
@@ -243,6 +489,44 @@ fn extract_line_col(msg: &str) -> Option<(u32, u32)> {
     Some((line.saturating_sub(1), col.saturating_sub(1)))
 }
 
+fn symbol_path_at(src: &str, pos: Position, kind: DocumentKind) -> Option<String> {
+    match kind {
+        DocumentKind::Manifest => dotted_path_at(src, pos),
+        DocumentKind::BuildScript | DocumentKind::CompilerTemplate => identifier_at(src, pos),
+        DocumentKind::FortranSource => fortran::identifier_at(src, pos),
+    }
+}
+
+fn identifier_at(src: &str, pos: Position) -> Option<String> {
+    let byte = position_to_byte(src, pos).min(src.len());
+    let bytes = src.as_bytes();
+
+    let mut start = byte;
+    while start > 0 {
+        let ch = bytes[start - 1] as char;
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut end = byte;
+    while end < bytes.len() {
+        let ch = bytes[end] as char;
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+
+    if start == end {
+        return None;
+    }
+    Some(src[start..end].to_string())
+}
+
 /// Figure out which dotted manifest path the cursor is on so we can look up hover docs.
 /// Returns `"package.name"`, `"compiler.backend"`, `"dependencies"`, etc.
 fn dotted_path_at(src: &str, pos: Position) -> Option<String> {
@@ -254,7 +538,10 @@ fn dotted_path_at(src: &str, pos: Position) -> Option<String> {
 
     // Current line.
     let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line_end = src[byte..].find('\n').map(|i| byte + i).unwrap_or(src.len());
+    let line_end = src[byte..]
+        .find('\n')
+        .map(|i| byte + i)
+        .unwrap_or(src.len());
     let line = &src[line_start..line_end];
 
     // Inside a header → return the header name itself (`[compiler]` → `compiler`).
@@ -266,7 +553,9 @@ fn dotted_path_at(src: &str, pos: Position) -> Option<String> {
     // On an assignment line — return `<section>.<key>`.
     if let Some(eq) = line.find('=') {
         let key = line[..eq].trim().trim_matches('"').to_string();
-        if key.is_empty() { return None }
+        if key.is_empty() {
+            return None;
+        }
         return match section {
             Some(s) => Some(format!("{s}.{key}")),
             None => Some(key),
@@ -277,7 +566,9 @@ fn dotted_path_at(src: &str, pos: Position) -> Option<String> {
 }
 
 fn parse_header(line: &str) -> Option<String> {
-    let s = line.strip_prefix("[[").and_then(|s| s.strip_suffix("]]"))
+    let s = line
+        .strip_prefix("[[")
+        .and_then(|s| s.strip_suffix("]]"))
         .or_else(|| line.strip_prefix('[').and_then(|s| s.strip_suffix(']')))?;
     // Trim the array index off e.g. "bin" so docs keys line up.
     Some(s.to_string())
@@ -287,7 +578,10 @@ fn parse_header(line: &str) -> Option<String> {
 fn path_dep_target_at(src: &str, pos: Position) -> Option<String> {
     let byte = position_to_byte(src, pos);
     let line_start = src[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line_end = src[byte..].find('\n').map(|i| byte + i).unwrap_or(src.len());
+    let line_end = src[byte..]
+        .find('\n')
+        .map(|i| byte + i)
+        .unwrap_or(src.len());
     let line = &src[line_start..line_end];
 
     // Accept `path = "..."` anywhere on the line — covers both
@@ -302,7 +596,9 @@ fn path_dep_target_at(src: &str, pos: Position) -> Option<String> {
     let cursor_in_line = byte - line_start;
     let val_start = eq_pos + first_quote + 1;
     let val_end = val_start + end_quote;
-    if cursor_in_line < val_start || cursor_in_line > val_end { return None }
+    if cursor_in_line < val_start || cursor_in_line > val_end {
+        return None;
+    }
 
     Some(after_quote[..end_quote].to_string())
 }
@@ -310,4 +606,6 @@ fn path_dep_target_at(src: &str, pos: Position) -> Option<String> {
 // Silence the dead_code warning — byte_to_position is re-exported for the
 // tests in position.rs and may be handy for future diagnostic ranges.
 #[allow(dead_code)]
-fn _keep(src: &str) -> Position { byte_to_position(src, src.len()) }
+fn _keep(src: &str) -> Position {
+    byte_to_position(src, src.len())
+}

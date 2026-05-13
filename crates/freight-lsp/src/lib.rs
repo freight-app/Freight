@@ -1,4 +1,4 @@
-//! Language Server for `freight.toml`.
+//! Language Server for Freight manifests, build scripts, templates, and Fortran sources.
 //!
 //! Speaks LSP 3.17 over stdio via `tower-lsp`. The backend leans on `freight-core`
 //! for manifest parsing + validation; mapping errors back to source positions
@@ -7,6 +7,7 @@
 pub mod backend;
 pub mod completion;
 pub mod docs;
+pub mod fortran;
 pub mod position;
 
 use tower_lsp::{LspService, Server};
