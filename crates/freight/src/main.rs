@@ -1,12 +1,15 @@
 mod commands;
+mod completion;
 mod output;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+
+use crate::completion::{print_completion, CompletionShell};
 
 use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test, cmd_watch};
-use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::check::cmd_check;
+use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::debug::cmd_debug;
 use crate::commands::deps::{
     cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove,
@@ -14,20 +17,22 @@ use crate::commands::deps::{
 };
 use crate::commands::doc::{cmd_doc, cmd_man};
 use crate::commands::fmt::cmd_fmt;
-use crate::commands::lint::cmd_lint;
 use crate::commands::install::{cmd_install, cmd_package};
+use crate::commands::lint::cmd_lint;
 use crate::commands::new::{cmd_init, cmd_new};
 use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list, cmd_toolchain_use};
 
 /// Returns the top-level [`clap::Command`] for this binary.
 /// Used by `freight man` to generate man pages without re-parsing argv.
 pub(crate) fn cli_command() -> clap::Command {
-    use clap::CommandFactory;
     Cli::command()
 }
 
 #[derive(Parser)]
-#[command(name = "freight", about = "Build tool and package manager for C, C++, Fortran, and more")]
+#[command(
+    name = "freight",
+    about = "Build tool and package manager for C, C++, Fortran, and more"
+)]
 struct Cli {
     /// Print every compiler and linker invocation
     #[arg(long, short = 'v', global = true)]
@@ -208,6 +213,12 @@ enum Commands {
         #[arg(long, value_name = "DIR")]
         out_dir: Option<String>,
     },
+    /// Generate shell completion scripts
+    #[command(visible_alias = "completion")]
+    Completions {
+        /// Shell to generate completions for (bash, elvish, fish, powershell, zsh)
+        shell: CompletionShell,
+    },
     /// Authenticate with freight.dev
     Login,
     /// Upload this package to freight.dev
@@ -248,35 +259,99 @@ fn main() -> Result<()> {
 
     if cli.verbose {
         // Safety: single-threaded at this point; no rayon workers started yet.
-        unsafe { std::env::set_var("FREIGHT_VERBOSE", "1"); }
+        unsafe {
+            std::env::set_var("FREIGHT_VERBOSE", "1");
+        }
     }
     if let Some(n) = cli.jobs {
-        rayon::ThreadPoolBuilder::new().num_threads(n).build_global().ok();
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .ok();
     }
 
     match cli.command {
         Commands::New { name, lang } => cmd_new(&name, &lang),
         Commands::Init { lang } => cmd_init(lang.as_deref()),
-        Commands::Build { release, features, no_default_features, sanitize } => {
+        Commands::Build {
+            release,
+            features,
+            no_default_features,
+            sanitize,
+        } => {
             cmd_build(release, &features, !no_default_features, &sanitize);
         }
-        Commands::Run { release, bin, features, no_default_features, args, sanitize } => {
-            cmd_run(release, bin.as_deref(), &features, !no_default_features, &args, &sanitize);
+        Commands::Run {
+            release,
+            bin,
+            features,
+            no_default_features,
+            args,
+            sanitize,
+        } => {
+            cmd_run(
+                release,
+                bin.as_deref(),
+                &features,
+                !no_default_features,
+                &args,
+                &sanitize,
+            );
         }
-        Commands::Test { name, release, features, no_default_features, sanitize } => {
-            cmd_test(name.as_deref(), release, &features, !no_default_features, &sanitize);
+        Commands::Test {
+            name,
+            release,
+            features,
+            no_default_features,
+            sanitize,
+        } => {
+            cmd_test(
+                name.as_deref(),
+                release,
+                &features,
+                !no_default_features,
+                &sanitize,
+            );
         }
         Commands::Watch { release } => cmd_watch(release),
-        Commands::Debug { binary, debugger, launch_json, args } => {
+        Commands::Debug {
+            binary,
+            debugger,
+            launch_json,
+            args,
+        } => {
             cmd_debug(binary.as_deref(), debugger.as_deref(), &args, launch_json);
         }
-        Commands::Add { package, path, git, branch, tag, rev, system, dev } => {
+        Commands::Add {
+            package,
+            path,
+            git,
+            branch,
+            tag,
+            rev,
+            system,
+            dev,
+        } => {
             if let Some(package) = package {
-                cmd_add(&package, path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(), rev.as_deref(), system, dev);
+                cmd_add(
+                    &package,
+                    path.as_deref(),
+                    git.as_deref(),
+                    branch.as_deref(),
+                    tag.as_deref(),
+                    rev.as_deref(),
+                    system,
+                    dev,
+                );
             } else {
                 cmd_add_interactive(
-                    path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(),
-                    rev.as_deref(), system, dev,
+                    path.as_deref(),
+                    git.as_deref(),
+                    branch.as_deref(),
+                    tag.as_deref(),
+                    rev.as_deref(),
+                    system,
+                    dev,
                 );
             }
         }
@@ -289,12 +364,28 @@ fn main() -> Result<()> {
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
         Commands::CompileCommands { release } => cmd_compile_commands(release),
-        Commands::Install { prefix, destdir, release, no_build, target } => {
-            cmd_install(Some(&prefix), destdir.as_deref(), release, no_build, target.as_deref());
+        Commands::Install {
+            prefix,
+            destdir,
+            release,
+            no_build,
+            target,
+        } => {
+            cmd_install(
+                Some(&prefix),
+                destdir.as_deref(),
+                release,
+                no_build,
+                target.as_deref(),
+            );
         }
         Commands::Package { release, target } => cmd_package(release, &target),
         Commands::Doc { format } => cmd_doc(format.as_deref()),
         Commands::Man { out_dir } => cmd_man(out_dir.as_deref()),
+        Commands::Completions { shell } => {
+            let cmd = Cli::command();
+            print_completion(shell, &cmd);
+        }
         Commands::Login => cmd_login(),
         Commands::Publish => cmd_publish(),
         Commands::Yank { version } => cmd_yank(&version),
