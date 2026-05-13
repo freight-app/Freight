@@ -8,7 +8,7 @@ use freight_core::dep_cmds::{
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 
-use crate::commands::add_tui::select_vcpkg_package;
+use crate::commands::add_tui::select_vcpkg_packages;
 use crate::output::{print_error, print_status, print_success, print_warning};
 
 // ── freight tree ───────────────────────────────────────────────────────────────
@@ -183,9 +183,13 @@ pub fn cmd_add_interactive(
         return;
     }
 
-    match select_vcpkg_package() {
-        Ok(Some(package)) => cmd_add(&package, None, None, None, None, None, false, dev),
-        Ok(None) => print_status("cancel", "no dependency added"),
+    match select_vcpkg_packages() {
+        Ok(packages) if packages.is_empty() => print_status("cancel", "no dependency added"),
+        Ok(packages) => {
+            for package in packages {
+                cmd_add(&package, None, None, None, None, None, false, dev);
+            }
+        }
         Err(e) => print_error(&e.to_string()),
     }
 }
