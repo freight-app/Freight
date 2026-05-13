@@ -8,6 +8,7 @@ use freight_core::dep_cmds::{
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 
+use crate::commands::add_tui::select_vcpkg_package;
 use crate::output::{print_error, print_status, print_success, print_warning};
 
 // ── freight tree ───────────────────────────────────────────────────────────────
@@ -164,6 +165,29 @@ pub fn cmd_add(
     }
 
     refresh_lock(&project_dir);
+}
+
+pub fn cmd_add_interactive(
+    path: Option<&str>,
+    git: Option<&str>,
+    branch: Option<&str>,
+    tag: Option<&str>,
+    rev: Option<&str>,
+    system: bool,
+    dev: bool,
+) {
+    if path.is_some() || git.is_some() || branch.is_some() || tag.is_some() || rev.is_some() || system {
+        print_error(
+            "NAME[@VERSION] is required when adding path, git, or system dependencies"
+        );
+        return;
+    }
+
+    match select_vcpkg_package() {
+        Ok(Some(package)) => cmd_add(&package, None, None, None, None, None, false, dev),
+        Ok(None) => print_status("cancel", "no dependency added"),
+        Err(e) => print_error(&e.to_string()),
+    }
 }
 
 // ── freight remove ─────────────────────────────────────────────────────────────

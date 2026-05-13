@@ -9,8 +9,8 @@ use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::check::cmd_check;
 use crate::commands::debug::cmd_debug;
 use crate::commands::deps::{
-    cmd_add, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove, cmd_search, cmd_tree,
-    cmd_update, cmd_yank,
+    cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove,
+    cmd_search, cmd_tree, cmd_update, cmd_yank,
 };
 use crate::commands::doc::{cmd_doc, cmd_man};
 use crate::commands::fmt::cmd_fmt;
@@ -122,9 +122,9 @@ enum Commands {
     },
     /// Add a dependency
     Add {
-        /// Package name, optionally with version: `name` or `name@1.0`
+        /// Package name, optionally with version: `name` or `name@1.0`. Omit to browse vcpkg.
         #[arg(value_name = "NAME[@VERSION]")]
-        package: String,
+        package: Option<String>,
         /// Add as a path dependency pointing to a local freight project
         #[arg(long, value_name = "PATH")]
         path: Option<String>,
@@ -271,7 +271,14 @@ fn main() -> Result<()> {
             cmd_debug(binary.as_deref(), debugger.as_deref(), &args, launch_json);
         }
         Commands::Add { package, path, git, branch, tag, rev, system, dev } => {
-            cmd_add(&package, path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(), rev.as_deref(), system, dev);
+            if let Some(package) = package {
+                cmd_add(&package, path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(), rev.as_deref(), system, dev);
+            } else {
+                cmd_add_interactive(
+                    path.as_deref(), git.as_deref(), branch.as_deref(), tag.as_deref(),
+                    rev.as_deref(), system, dev,
+                );
+            }
         }
         Commands::Remove { package } => cmd_remove(&package),
         Commands::Update { package } => cmd_update(package.as_deref()),
