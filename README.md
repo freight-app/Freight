@@ -247,7 +247,7 @@ The `examples/` directory contains fully buildable projects:
 | `with-git-dep/` | Git dependency cloned and built automatically |
 | `with-external-deps/` | URL archive and pkg-config deps |
 | `prebuilt-demo/` | `build.freight` pre-build script |
-| `doc-example/` | C, C++, Fortran with LaTeX math in comments |
+| `doc-example/` | C, C++, Fortran libs as path deps; run `freight doc` here to demo the TUI |
 
 ```sh
 cd examples/hello-cpp
@@ -257,7 +257,20 @@ freight run
 
 ## Browsing and generating docs
 
-`freight doc` opens an interactive terminal browser for installed dependencies. The browser lists local project dependencies from `freight.toml` / `.deps/` and global cached dependencies from `~/.freight`, with arrow-key and `j`/`k` scrolling plus details for any README or generated docs found for the selected dependency.
+`freight doc` opens a two-mode terminal browser:
+
+**List mode** — left panel lists every dependency (local, local-dev, global), colour-coded by scope. The right panel shows the selected dep's name, kind, version, source, on-disk path, and any doc files found.
+
+**DocView mode** — press `Enter` or click a row to open the dependency's API docs. Freight first tries to extract doc comments from the dep's source tree; if none are found it falls back to `README.md` or `target/doc/index.md`.
+
+| Key | Action |
+|---|---|
+| `↑`/`↓`, `j`/`k` | move / scroll |
+| `PgUp`/`PgDn`, `Space` | jump a page |
+| `g` / `G` | top / bottom |
+| `Enter` / click | open docs for selected dep |
+| `Esc`, `Backspace` | return to dep list |
+| `q`, `Ctrl-C` | quit |
 
 Use `--format` when you want to extract doc comments from your project's sources and render them to `target/doc/`:
 

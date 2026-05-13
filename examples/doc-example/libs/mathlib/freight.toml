@@ -1,0 +1,12 @@
+[package]
+name        = "mathlib"
+version     = "0.1.0"
+description = "Portable math utilities — Doxygen-style C library"
+
+[language.c]
+std = "c17"
+
+[lib]
+type = "static"
+srcs = ["src/mathlib.c"]
+hdrs = ["src/mathlib.h", "src/numerics.h"]

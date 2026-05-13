@@ -6,9 +6,13 @@ description = "Multi-language doc comment showcase for freight-doc"
 [language.cpp]
 std = "c++17"
 
-[language.c]
-std = "c17"
-
 [[bin]]
 name = "doc-example"
 src  = "src/main.cpp"
+
+[dependencies]
+mathlib = { path = "libs/mathlib" }
+stats   = { path = "libs/stats" }
+
+[dev-dependencies]
+linalg  = { path = "libs/linalg" }

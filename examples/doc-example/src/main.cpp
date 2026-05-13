@@ -9,10 +9,7 @@
 #include <cstdio>
 #include <vector>
 #include "mathlib.h"
-
-// Forward declarations (defined in stats.cpp)
-double mean(const std::vector<double>&);
-double stddev(const std::vector<double>&);
+#include "stats.h"
 
 /// Print a labelled double value to stdout.
 /// @param label  Human-readable name for the value.

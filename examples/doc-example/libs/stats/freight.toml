@@ -1,0 +1,12 @@
+[package]
+name        = "stats"
+version     = "0.1.0"
+description = "Descriptive statistics — C++ library with Doxygen comments"
+
+[language.cpp]
+std = "c++17"
+
+[lib]
+type = "static"
+srcs = ["src/stats.cpp"]
+hdrs = ["src/stats.h"]

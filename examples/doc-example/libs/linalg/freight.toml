@@ -1,0 +1,11 @@
+[package]
+name        = "linalg"
+version     = "0.1.0"
+description = "Basic linear algebra routines — Fortran with FORD-style comments"
+
+[language.fortran]
+std = "f2018"
+
+[lib]
+type = "static"
+srcs = ["src/linalg.f90"]
