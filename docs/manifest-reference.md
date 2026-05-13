@@ -64,13 +64,21 @@ Declares a library output. Omit this section for binary-only projects.
 
 ```toml
 [lib]
-type    = "static"     # required — static | shared | header-only
-src     = "src/"       # directory containing source files (default: "src/")
-include = "include/"   # public include directory exposed to dependents
+type = "static"                          # required — static | shared | header-only
+srcs = ["src/mathlib.cpp", "src/vec.cpp"] # source files (string or list; globs allowed)
+hdrs = ["include/mathlib.h"]             # public headers exposed to dependents
 ```
 
-`header-only` libraries skip compilation entirely — freight records the include path so dependents
-can use it, but no `.a` or `.so` is produced.
+`srcs` accepts either a single string or a list. Glob patterns are expanded relative to the
+project root.
+
+`hdrs` lists the public API headers. Freight infers the public include directories from the
+parent paths of the listed files — e.g. `["include/mathlib.h", "include/vec.h"]` automatically
+exposes `include/` to dependents. When `hdrs` is empty, freight falls back to auto-detecting
+`include/` or `inc/` directories.
+
+`header-only` libraries skip compilation entirely — freight records the include paths so
+dependents can use them, but no `.a` or `.so` is produced.
 
 ---
 
@@ -142,18 +150,18 @@ Passes `-l{name}` to the linker. No source build; assumes the library is install
 
 ```toml
 # pkg-config only — error if pkg-config is not found
-zlib = { pkg_config = "zlib" }
+zlib = { pkg-config = "zlib" }
 
 # Combined — pkg-config first, bare -l{name} fallback if pkg-config fails
-zlib = { system = "z", pkg_config = "zlib" }
+zlib = { system = "z", pkg-config = "zlib" }
 ```
 
-`pkg_config` runs `pkg-config --cflags --libs <query>` and injects the resulting include dirs
+`pkg-config` runs `pkg-config --cflags --libs <query>` and injects the resulting include dirs
 (`-I`) into compilation and link flags (`-L`, `-l`, `-pthread` etc.) verbatim into the linker
 command. The query string is passed as-is to pkg-config, so version constraints work:
 `"glib-2.0 >= 2.56"`.
 
-When both `system` and `pkg_config` are set, pkg-config is tried first. If it fails (not installed
+When both `system` and `pkg-config` are set, pkg-config is tried first. If it fails (not installed
 or package not found), freight falls back to `-l{system}` and prints a warning.
 
 ### Git dependency
@@ -194,10 +202,10 @@ Any dep with a source (path, git, http, github) supports these additional keys:
 
 ```toml
 dep = {
-    path       = "../dep",
-    backend    = "cmake",               # cmake | make | meson | autotools | scons | bazel | none
-    cmake_args = ["-DBUILD_TESTS=OFF"], # extra args forwarded to cmake configure step
-    include    = ["include/", "src/"],  # explicit include dirs (skips auto-detection)
+    path        = "../dep",
+    backend     = "cmake",               # cmake | make | meson | autotools | scons | bazel | none
+    cmake-args  = ["-DBUILD_TESTS=OFF"], # extra args forwarded to cmake configure step
+    include     = ["include/", "src/"],  # explicit include dirs (skips auto-detection)
 }
 ```
 
@@ -269,11 +277,9 @@ debug     = false                 # emit debug symbols (-g)
 warnings  = "all"                 # none | default | all | error
 defines   = ["USE_BLAS", "FOO=1"] # extra -D flags
 flags     = ["-march=native"]     # verbatim extra flags appended to every compile invocation
+includes  = ["include/", "third-party/include/"]  # extra -I directories
 target    = "aarch64-linux-gnu"   # cross-compilation target triple
 sysroot   = "/opt/sysroot"        # sysroot path for cross-compilation
-
-[compiler.includes]
-paths = ["include/", "third_party/include/"]  # extra -I directories
 ```
 
 `backend = "auto"` selects the first detected compiler whose template handles the project's source
@@ -299,7 +305,7 @@ Hardware-specific flags. Drives `[arch_flags]` lookups and `-m<ext>` flag genera
 ```toml
 [target]
 arch           = "x86_64"           # overrides host arch for template [arch_flags] lookup
-cpu_extensions = ["avx2", "fma"]    # → -mavx2 -mfma  (template: cpu_extension = "-m{name}")
+cpu-extensions = ["avx2", "fma"]    # → -mavx2 -mfma  (template: cpu_extension = "-m{name}")
 ```
 
 `arch` defaults to `std::env::consts::ARCH`. It is used by assembler templates to select the
@@ -355,7 +361,7 @@ All fields are optional within each section:
 
 | Field | Description |
 |---|---|
-| `sources` | Glob patterns relative to the project root. Matched files are added to the build; files listed in any `[os.*]`/`[arch.*]` section are excluded from the unconditional `src/` walk. |
+| `srcs` | Glob patterns relative to the project root. Matched files are added to the build; files listed in any `[os.*]`/`[arch.*]` section are excluded from the unconditional `src/` walk. |
 | `defines` | Extra `-D` flags applied only on this platform. |
 | `flags` | Extra compiler flags applied only on this platform. |
 | `includes` | Extra include paths (`-I`) applied only on this platform. |
@@ -364,14 +370,14 @@ All fields are optional within each section:
 
 ```toml
 [os.linux]
-sources      = ["src/os/linux/**"]
+srcs         = ["src/os/linux/**"]
 defines      = ["PLATFORM_LINUX", "POSIX_BUILD"]
 flags        = ["-fvisibility=hidden"]
 includes     = ["/usr/local/include"]
 dependencies = { m = { system = "m" }, pthread = { system = "pthread" } }
 
 [os.windows]
-sources      = ["src/os/windows/**"]
+srcs         = ["src/os/windows/**"]
 defines      = ["WIN32_LEAN_AND_MEAN", "PLATFORM_WINDOWS"]
 dependencies = { ws2_32 = { system = "ws2_32" } }
 
@@ -379,15 +385,15 @@ dependencies = { ws2_32 = { system = "ws2_32" } }
 defines = ["POSIX_BUILD"]
 
 [arch.x86_64]
-sources = ["src/arch/x86_64/**"]
+srcs    = ["src/arch/x86_64/**"]
 defines = ["HAVE_SSE2"]
 
 [arch.aarch64]
-sources = ["src/arch/aarch64/**"]
+srcs    = ["src/arch/aarch64/**"]
 defines = ["HAVE_NEON"]
 ```
 
-Files matched by `sources` globs in any `[os.*]` or `[arch.*]` section are automatically
+Files matched by `srcs` globs in any `[os.*]` or `[arch.*]` section are automatically
 excluded from the unconditional source walk — they will never be compiled on a non-matching
 platform, even if they live under `src/`.
 
