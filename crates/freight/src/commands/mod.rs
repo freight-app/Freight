@@ -1,6 +1,7 @@
 //! CLI command shells. Every function here reads cwd / parses CLI args /
 //! prints results, then delegates to a pure function in `freight-core`.
 
+pub mod add_tui;
 pub mod build;
 pub mod check;
 pub mod compile_commands;
