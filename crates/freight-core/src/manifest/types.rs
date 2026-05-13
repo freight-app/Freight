@@ -353,6 +353,11 @@ pub struct Package {
     pub repository: Option<String>,
     #[serde(default)]
     pub keywords: Vec<String>,
+    /// vcpkg-style boolean platform expression that gates whether this package
+    /// can be built on the current host/target. Examples:
+    /// `"windows & x64"`, `"!windows"`, `"(windows & !uwp) | linux"`.
+    #[serde(default)]
+    pub supports: Option<String>,
     /// Virtual slots this package fills (e.g. `["blas"]`, `["cxx-stdlib"]`).
     /// If two active deps declare the same slot, freight errors before compilation.
     #[serde(default)]

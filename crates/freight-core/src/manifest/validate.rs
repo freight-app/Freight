@@ -220,6 +220,30 @@ fn validate_package(m: &Manifest, errors: &mut Vec<ValidationError>) {
             format!("version {:?} is not valid semver (expected major.minor.patch)", pkg.version),
         ));
     }
+
+    if let Some(supports) = &pkg.supports {
+        if supports.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "[package]",
+                "supports must not be empty when present",
+            ));
+        } else {
+            match m.supports_current_platform() {
+                Ok(true) => {}
+                Ok(false) => errors.push(ValidationError::new(
+                    "[package]",
+                    format!(
+                        "current platform is not supported by supports expression {:?}",
+                        supports,
+                    ),
+                )),
+                Err(msg) => errors.push(ValidationError::new(
+                    "[package]",
+                    format!("invalid supports expression {:?}: {msg}", supports),
+                )),
+            }
+        }
+    }
 }
 
 fn validate_language(m: &Manifest, templates: &[CompilerTemplate], errors: &mut Vec<ValidationError>) {
@@ -392,6 +416,25 @@ pub fn validate_dep_compat(
         let dep_dir = base_dir.join(rel_path);
         let Ok(src) = std::fs::read_to_string(dep_dir.join("freight.toml")) else { continue };
         let Ok(dep_manifest) = toml_edit::de::from_str::<Manifest>(&src) else { continue };
+
+        match dep_manifest.supports_current_platform() {
+            Ok(true) => {}
+            Ok(false) => errors.push(ValidationError::new(
+                &format!("[dependencies.{dep_name}]"),
+                format!(
+                    "dependency package {} does not support the current platform ({})",
+                    dep_manifest.package.name,
+                    dep_manifest.package.supports.as_deref().unwrap_or_default(),
+                ),
+            )),
+            Err(msg) => errors.push(ValidationError::new(
+                &format!("[dependencies.{dep_name}]"),
+                format!(
+                    "dependency package {} has an invalid supports expression: {msg}",
+                    dep_manifest.package.name,
+                ),
+            )),
+        }
 
         for dep_lang in dep_manifest.language.keys() {
             let dep_abi = templates.iter()

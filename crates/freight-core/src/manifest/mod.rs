@@ -1,4 +1,5 @@
 pub mod find;
+pub mod supports;
 pub mod types;
 pub mod validate;
 
