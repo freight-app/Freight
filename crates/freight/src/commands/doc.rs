@@ -1,4 +1,4 @@
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
 use freight_core::manifest::types::{Dependency, Manifest};
@@ -442,236 +442,411 @@ fn print_dependency_table(deps: &[DocDependency]) {
     }
 }
 
+// ── ratatui TUI ───────────────────────────────────────────────────────────────
+
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEventKind,
+    },
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    Terminal,
+};
+
+#[derive(Debug)]
+enum Mode {
+    /// Browsing the dependency list.
+    List,
+    /// Reading a dep's docs; `scroll` is the vertical line offset.
+    DocView { content: Vec<String>, scroll: u16 },
+}
+
+struct DocApp<'a> {
+    deps: &'a [DocDependency],
+    selected: usize,
+    list_offset: usize,
+    visible_list_rows: usize,
+    mode: Mode,
+}
+
+impl<'a> DocApp<'a> {
+    fn new(deps: &'a [DocDependency]) -> Self {
+        Self {
+            deps,
+            selected: 0,
+            list_offset: 0,
+            visible_list_rows: 0,
+            mode: Mode::List,
+        }
+    }
+
+    fn open_doc_view(&mut self) {
+        let dep = &self.deps[self.selected];
+        let content = load_doc_content(dep);
+        self.mode = Mode::DocView { content, scroll: 0 };
+    }
+}
+
 fn run_dependency_tui(deps: &[DocDependency]) -> anyhow::Result<()> {
     let mut stdout = io::stdout();
-    let _guard = TerminalGuard::enter(&mut stdout)?;
+    enable_raw_mode()?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
-    let mut selected = 0usize;
-    let mut scroll = 0usize;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    let result = run_doc_app(&mut terminal, deps);
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+    )?;
+    terminal.show_cursor()?;
+    result
+}
+
+fn run_doc_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    deps: &[DocDependency],
+) -> anyhow::Result<()> {
+    let mut app = DocApp::new(deps);
+
     loop {
-        let (cols, rows) = terminal_size();
-        let list_width = (cols / 3).max(28).min(cols.saturating_sub(30));
-        let visible = rows.saturating_sub(5) as usize;
-        if selected < scroll {
-            scroll = selected;
-        }
-        if selected >= scroll.saturating_add(visible.max(1)) {
-            scroll = selected.saturating_sub(visible.saturating_sub(1));
-        }
-        draw_dependency_tui(&mut stdout, deps, selected, scroll, list_width, cols, rows)?;
+        terminal.draw(|frame| {
+            let area = frame.area();
+            match &app.mode {
+                Mode::List => {
+                    draw_list(frame, &mut app, area);
+                }
+                Mode::DocView { content, scroll } => {
+                    draw_doc_view(frame, &deps[app.selected], content, *scroll, area);
+                }
+            }
+        })?;
 
-        match read_key()? {
-            UiKey::Quit => break,
-            UiKey::Down => selected = (selected + 1).min(deps.len() - 1),
-            UiKey::Up => selected = selected.saturating_sub(1),
-            UiKey::PageDown => selected = (selected + visible.max(1)).min(deps.len() - 1),
-            UiKey::PageUp => selected = selected.saturating_sub(visible.max(1)),
-            UiKey::Home => selected = 0,
-            UiKey::End => selected = deps.len() - 1,
-            UiKey::Ignore => {}
+        match event::read()? {
+            Event::Key(key) => {
+                if key.kind == KeyEventKind::Release {
+                    continue;
+                }
+                let quit = match &app.mode {
+                    Mode::List => handle_list_key(&mut app, key),
+                    Mode::DocView { .. } => handle_doc_view_key(&mut app, key),
+                };
+                if quit {
+                    break;
+                }
+            }
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                if let Mode::List = app.mode {
+                    // List block starts at row 2 (below title bar), list content at row 3.
+                    let list_start_row: u16 = 3;
+                    if mouse.row >= list_start_row {
+                        let clicked = app.list_offset + (mouse.row - list_start_row) as usize;
+                        if clicked < deps.len() {
+                            app.selected = clicked;
+                            app.open_doc_view();
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
 }
 
-struct TerminalGuard {
-    saved_stty: Option<String>,
-}
-
-impl TerminalGuard {
-    fn enter(stdout: &mut io::Stdout) -> anyhow::Result<Self> {
-        let saved_stty = std::process::Command::new("stty")
-            .arg("-g")
-            .output()
-            .ok()
-            .and_then(|out| {
-                out.status
-                    .success()
-                    .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            });
-        let _ = std::process::Command::new("stty")
-            .args(["raw", "-echo"])
-            .status();
-        write!(stdout, "\x1b[?1049h\x1b[?25l")?;
-        stdout.flush()?;
-        Ok(Self { saved_stty })
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let mut stdout = io::stdout();
-        let _ = write!(stdout, "\x1b[?25h\x1b[?1049l");
-        let _ = stdout.flush();
-        if let Some(saved) = &self.saved_stty {
-            let _ = std::process::Command::new("stty").arg(saved).status();
-        } else {
-            let _ = std::process::Command::new("stty").args(["sane"]).status();
+/// Returns `true` when the app should quit entirely.
+fn handle_list_key(app: &mut DocApp<'_>, key: KeyEvent) -> bool {
+    match key {
+        KeyEvent { code: KeyCode::Char('q'), .. }
+        | KeyEvent { code: KeyCode::Esc, .. }
+        | KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } => {
+            return true;
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum UiKey {
-    Up,
-    Down,
-    PageUp,
-    PageDown,
-    Home,
-    End,
-    Quit,
-    Ignore,
-}
-
-fn read_key() -> io::Result<UiKey> {
-    let mut stdin = io::stdin();
-    let mut byte = [0_u8; 1];
-    stdin.read_exact(&mut byte)?;
-    Ok(match byte[0] {
-        b'q' | 27 => {
-            if byte[0] == 27 {
-                let mut seq = [0_u8; 2];
-                if stdin.read(&mut seq)? == 2 && seq[0] == b'[' {
-                    match seq[1] {
-                        b'A' => UiKey::Up,
-                        b'B' => UiKey::Down,
-                        b'H' => UiKey::Home,
-                        b'F' => UiKey::End,
-                        b'5' | b'6' => {
-                            let mut tilde = [0_u8; 1];
-                            let _ = stdin.read(&mut tilde);
-                            if seq[1] == b'5' {
-                                UiKey::PageUp
-                            } else {
-                                UiKey::PageDown
-                            }
-                        }
-                        _ => UiKey::Quit,
-                    }
-                } else {
-                    UiKey::Quit
-                }
-            } else {
-                UiKey::Quit
-            }
+        KeyEvent { code: KeyCode::Up, .. }
+        | KeyEvent { code: KeyCode::Char('k'), .. } => {
+            app.selected = app.selected.saturating_sub(1);
         }
-        b'j' => UiKey::Down,
-        b'k' => UiKey::Up,
-        b'g' => UiKey::Home,
-        b'G' => UiKey::End,
-        b' ' => UiKey::PageDown,
-        _ => UiKey::Ignore,
-    })
-}
-
-fn terminal_size() -> (u16, u16) {
-    if let Ok(out) = std::process::Command::new("stty").arg("size").output() {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            let mut parts = text
-                .split_whitespace()
-                .filter_map(|p| p.parse::<u16>().ok());
-            if let (Some(rows), Some(cols)) = (parts.next(), parts.next()) {
-                return (cols, rows);
-            }
+        KeyEvent { code: KeyCode::Down, .. }
+        | KeyEvent { code: KeyCode::Char('j'), .. } => {
+            app.selected = (app.selected + 1).min(app.deps.len().saturating_sub(1));
         }
+        KeyEvent { code: KeyCode::PageUp, .. } => {
+            app.selected = app.selected.saturating_sub(app.visible_list_rows.max(1));
+        }
+        KeyEvent { code: KeyCode::PageDown, .. } => {
+            app.selected = (app.selected + app.visible_list_rows.max(1))
+                .min(app.deps.len().saturating_sub(1));
+        }
+        KeyEvent { code: KeyCode::Home, .. }
+        | KeyEvent { code: KeyCode::Char('g'), .. } => {
+            app.selected = 0;
+        }
+        KeyEvent { code: KeyCode::End, .. }
+        | KeyEvent { code: KeyCode::Char('G'), .. } => {
+            app.selected = app.deps.len().saturating_sub(1);
+        }
+        KeyEvent { code: KeyCode::Enter, .. } => {
+            app.open_doc_view();
+        }
+        _ => {}
     }
-    let cols = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
-    let rows = std::env::var("LINES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(30);
-    (cols, rows)
+    false
 }
 
-fn draw_dependency_tui(
-    stdout: &mut io::Stdout,
-    deps: &[DocDependency],
-    selected: usize,
-    scroll: usize,
-    list_width: u16,
-    cols: u16,
-    rows: u16,
-) -> io::Result<()> {
-    write!(stdout, "\x1b[2J\x1b[H")?;
-    write!(stdout, "freight doc — dependency documentation browser\r\n")?;
-    write!(stdout, "↑/↓ or j/k scroll  PgUp/PgDn jump  q quit\r\n\r\n")?;
-    write!(
-        stdout,
-        "{:<width$}  Details\r\n",
-        "Dependencies",
-        width = list_width as usize
-    )?;
+/// Returns `true` when the app should quit entirely.
+fn handle_doc_view_key(app: &mut DocApp<'_>, key: KeyEvent) -> bool {
+    let (content_len, scroll) = match &mut app.mode {
+        Mode::DocView { content, scroll } => (content.len() as u16, scroll),
+        Mode::List => return false,
+    };
+    match key {
+        KeyEvent { code: KeyCode::Char('q'), .. }
+        | KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } => {
+            return true;
+        }
+        KeyEvent { code: KeyCode::Esc, .. }
+        | KeyEvent { code: KeyCode::Backspace, .. } => {
+            app.mode = Mode::List;
+        }
+        KeyEvent { code: KeyCode::Up, .. }
+        | KeyEvent { code: KeyCode::Char('k'), .. } => {
+            *scroll = scroll.saturating_sub(1);
+        }
+        KeyEvent { code: KeyCode::Down, .. }
+        | KeyEvent { code: KeyCode::Char('j'), .. } => {
+            *scroll = (*scroll + 1).min(content_len.saturating_sub(1));
+        }
+        KeyEvent { code: KeyCode::PageUp, .. } => {
+            *scroll = scroll.saturating_sub(20);
+        }
+        KeyEvent { code: KeyCode::PageDown, .. } | KeyEvent { code: KeyCode::Char(' '), .. } => {
+            *scroll = (*scroll + 20).min(content_len.saturating_sub(1));
+        }
+        KeyEvent { code: KeyCode::Home, .. }
+        | KeyEvent { code: KeyCode::Char('g'), .. } => {
+            *scroll = 0;
+        }
+        KeyEvent { code: KeyCode::End, .. }
+        | KeyEvent { code: KeyCode::Char('G'), .. } => {
+            *scroll = content_len.saturating_sub(1);
+        }
+        _ => {}
+    }
+    false
+}
 
-    let max_rows = rows.saturating_sub(5) as usize;
-    let detail = detail_lines(&deps[selected]);
-    for line_idx in 0..max_rows {
-        let dep_idx = scroll + line_idx;
-        let list_text = if let Some(dep) = deps.get(dep_idx) {
-            let marker = if dep_idx == selected { "›" } else { " " };
-            truncate(
-                &format!("{marker} [{}] {}", dep.scope, dep.name),
-                list_width.saturating_sub(1) as usize,
-            )
-        } else {
-            String::new()
+fn draw_list(
+    frame: &mut ratatui::Frame,
+    app: &mut DocApp<'_>,
+    area: ratatui::layout::Rect,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(4)])
+        .split(area);
+
+    let help = Paragraph::new(
+        "↑/↓ j/k navigate  PgUp/PgDn jump  Enter/click → open docs  q quit",
+    )
+    .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(help, chunks[0]);
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(chunks[1]);
+
+    // ── left: dep list ──
+    let items: Vec<ListItem> = app.deps.iter().map(|d| {
+        let scope_color = match d.scope {
+            "local"      => Color::Cyan,
+            "local-dev"  => Color::Blue,
+            "global"     => Color::DarkGray,
+            _            => Color::White,
         };
-        let detail_text = detail.get(line_idx).map(String::as_str).unwrap_or("");
-        if dep_idx == selected {
-            write!(
-                stdout,
-                "\x1b[7m{:<width$}\x1b[0m  {}\r\n",
-                list_text,
-                truncate(detail_text, cols.saturating_sub(list_width + 3) as usize),
-                width = list_width as usize
-            )?;
-        } else {
-            write!(
-                stdout,
-                "{:<width$}  {}\r\n",
-                list_text,
-                truncate(detail_text, cols.saturating_sub(list_width + 3) as usize),
-                width = list_width as usize
-            )?;
-        }
-    }
-    stdout.flush()
-}
+        let line = Line::from(vec![
+            Span::styled(format!("[{}] ", d.scope), Style::default().fg(scope_color)),
+            Span::raw(&d.name),
+        ]);
+        ListItem::new(line)
+    }).collect();
 
-fn detail_lines(dep: &DocDependency) -> Vec<String> {
-    let mut lines = vec![
-        format!("Name:    {}", dep.name),
-        format!("Scope:   {}", dep.scope),
-        format!("Kind:    {}", dep.kind),
-        format!("Version: {}", dep.version),
-        format!("Source:  {}", dep.source),
-        format!(
-            "Path:    {}",
-            dep.path
-                .as_ref()
+    let mut state = ListState::default().with_offset(app.list_offset);
+    state.select(Some(app.selected));
+    let list = List::new(items)
+        .block(Block::default()
+            .title(format!("Dependencies ({})", app.deps.len()))
+            .borders(Borders::ALL))
+        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD))
+        .highlight_symbol("› ");
+    frame.render_stateful_widget(list, body[0], &mut state);
+    app.list_offset = state.offset();
+    app.visible_list_rows = body[0].height.saturating_sub(2) as usize;
+
+    // ── right: dep details ──
+    let dep = &app.deps[app.selected];
+    let has_docs = !dep.docs.is_empty() || dep.path.is_some();
+    let open_hint = if has_docs {
+        "Press Enter or click to open docs"
+    } else {
+        "No docs available — run `freight doc --format md` to generate"
+    };
+    let mut detail_lines: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled("Name:    ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(&dep.name),
+        ]),
+        Line::from(vec![
+            Span::styled("Kind:    ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(&dep.kind),
+        ]),
+        Line::from(vec![
+            Span::styled("Version: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(&dep.version),
+        ]),
+        Line::from(vec![
+            Span::styled("Source:  ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(&dep.source),
+        ]),
+        Line::from(vec![
+            Span::styled("Path:    ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(dep.path.as_ref()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "not installed on disk".into())
-        ),
-        String::new(),
-        "Documentation files:".into(),
+                .unwrap_or_else(|| "not installed on disk".into())),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled("Doc files:", Style::default().add_modifier(Modifier::BOLD))),
     ];
     if dep.docs.is_empty() {
-        lines.push("  No README or generated docs found. Run `freight doc --format md` in the dependency to generate API docs.".into());
+        detail_lines.push(Line::from(Span::styled(
+            "  (none found)",
+            Style::default().fg(Color::DarkGray),
+        )));
     } else {
-        lines.extend(dep.docs.iter().map(|p| format!("  {}", p.display())));
+        for doc in &dep.docs {
+            detail_lines.push(Line::from(format!("  {}", doc.display())));
+        }
     }
-    lines
+    detail_lines.push(Line::raw(""));
+    detail_lines.push(Line::from(Span::styled(
+        open_hint,
+        Style::default().fg(if has_docs { Color::Yellow } else { Color::DarkGray }),
+    )));
+
+    let details = Paragraph::new(detail_lines)
+        .block(Block::default().title("Details").borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(details, body[1]);
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
+fn draw_doc_view(
+    frame: &mut ratatui::Frame,
+    dep: &DocDependency,
+    content: &[String],
+    scroll: u16,
+    area: ratatui::layout::Rect,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(4)])
+        .split(area);
+
+    let total = content.len();
+    let help = Paragraph::new(format!(
+        "↑/↓ j/k scroll  PgUp/PgDn page  g/G top/bottom  Esc/Backspace ← list  q quit   [{}/{}]",
+        scroll.saturating_add(1).min(total as u16),
+        total,
+    ))
+    .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(help, chunks[0]);
+
+    let lines: Vec<Line> = content.iter().map(|l| Line::raw(l.as_str())).collect();
+    let para = Paragraph::new(lines)
+        .block(Block::default()
+            .title(format!("docs: {}", dep.name))
+            .borders(Borders::ALL))
+        .scroll((scroll, 0));
+    frame.render_widget(para, chunks[1]);
+}
+
+// ── Doc content loading ────────────────────────────────────────────────────────
+
+fn load_doc_content(dep: &DocDependency) -> Vec<String> {
+    // 1. Try extracting API docs from the dep's source directory.
+    if let Some(dep_dir) = &dep.path {
+        let src_dir = dep_dir.join("src");
+        let scan_dir = if src_dir.is_dir() { src_dir } else { dep_dir.clone() };
+        let doc_set = freight_doc::extract::extract_dir(&scan_dir);
+        if !doc_set.items.is_empty() {
+            return format_doc_items(&doc_set.items);
+        }
     }
-    let keep = max.saturating_sub(1);
-    let mut out: String = s.chars().take(keep).collect();
-    out.push('…');
-    out
+
+    // 2. Fall back to reading the first available doc file (README.md, index.md, …).
+    for doc_path in &dep.docs {
+        if let Ok(text) = std::fs::read_to_string(doc_path) {
+            let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+            if lines.is_empty() {
+                lines.push("(empty file)".into());
+            }
+            return lines;
+        }
+    }
+
+    vec![
+        format!("No documentation found for '{}'.", dep.name),
+        String::new(),
+        "Run `freight doc --format md` inside the dependency directory".into(),
+        "to generate API docs, or add a README.md.".into(),
+    ]
+}
+
+fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<String> {
+    use freight_doc::extract::TagKind;
+    let mut lines = Vec::new();
+    for item in items {
+        let sep = "─".repeat(60);
+        lines.push(format!("── {} {} ({}) ──", item.kind.label(), item.name, item.lang.label()));
+        if !item.signature.is_empty() {
+            lines.push(format!("  {}", item.signature));
+        }
+        if !item.brief.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("  {}", item.brief));
+        }
+        if !item.body.is_empty() {
+            lines.push(String::new());
+            for body_line in item.body.lines() {
+                lines.push(format!("  {}", body_line));
+            }
+        }
+        for tag in &item.tags {
+            match &tag.kind {
+                TagKind::Param => {
+                    let name = tag.name.as_deref().unwrap_or("?");
+                    lines.push(format!("  @param {}  {}", name, tag.text));
+                }
+                _ => {
+                    lines.push(format!("  @{}  {}", tag.kind.label(), tag.text));
+                }
+            }
+        }
+        lines.push(sep);
+        lines.push(String::new());
+    }
+    if lines.is_empty() {
+        lines.push("(no documented items found in source)".into());
+    }
+    lines
 }
