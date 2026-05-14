@@ -174,7 +174,7 @@ enum Commands {
     /// Print the dependency tree
     Tree,
     /// Show package metadata
-    Info { package: String },
+    Info { package: Option<String> },
     /// Search freight.dev
     Search { query: String },
     /// Validate freight.toml
@@ -382,7 +382,7 @@ fn main() -> Result<()> {
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Fetch => cmd_fetch(),
         Commands::Tree => cmd_tree(),
-        Commands::Info { package } => cmd_info(&package),
+        Commands::Info { package } => cmd_info(package.as_deref()),
         Commands::Search { query } => cmd_search(&query),
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),

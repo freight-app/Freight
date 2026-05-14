@@ -4,7 +4,7 @@
 //! well-known OS library (pthread, ws2_32, …). Freight uses these as the final
 //! step in `resolve_version_dep` when pkg-config, conan, and vcpkg all fail.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
