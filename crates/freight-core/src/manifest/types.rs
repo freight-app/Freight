@@ -535,6 +535,11 @@ pub struct DetailedDep {
     /// When omitted, freight tries `pkg-config → conan → vcpkg` in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// Override the dep's own `[compiler] unity` setting.
+    /// `unity = true` forces a unity build of this dep regardless of its manifest;
+    /// `unity = false` disables unity even if the dep enables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unity: Option<bool>,
 }
 
 fn default_true() -> bool { true }
@@ -706,6 +711,12 @@ pub struct CompilerConfig {
     /// injected into every source file of the matching language.
     #[serde(default)]
     pub pch: Option<String>,
+    /// Enable unity (jumbo) builds: all sources of the same language are concatenated
+    /// into a single translation unit via `#include` and compiled together.
+    /// Trades incremental speed for faster full builds and better cross-TU inlining.
+    /// Only applies to C, C++, CUDA, HIP, and OpenCL; other languages compile individually.
+    #[serde(default)]
+    pub unity: bool,
     /// Per-compiler-tool option sub-tables: `[compiler.<name>]`.
     /// Options here are forwarded to the matching template's `compiler_option` handlers.
     #[serde(flatten, default)]
@@ -726,6 +737,7 @@ impl Default for CompilerConfig {
             sysroot: None,
             auto_cpu_tuning: true,
             pch: None,
+            unity: false,
             per_tool: HashMap::default(),
         }
     }

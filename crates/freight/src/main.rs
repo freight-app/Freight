@@ -72,6 +72,9 @@ enum Commands {
         /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
         #[arg(long, value_name = "LIST", value_delimiter = ',')]
         sanitize: Vec<String>,
+        /// Select a specific workspace member to build
+        #[arg(long, short = 'p', value_name = "PACKAGE")]
+        package: Option<String>,
     },
     /// Build and run the default binary
     Run {
@@ -92,6 +95,9 @@ enum Commands {
         /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
         #[arg(long, value_name = "LIST", value_delimiter = ',')]
         sanitize: Vec<String>,
+        /// Select a specific workspace member to run
+        #[arg(long, short = 'p', value_name = "PACKAGE")]
+        package: Option<String>,
     },
     /// Build and run benchmarks in benches/
     Bench {
@@ -103,6 +109,9 @@ enum Commands {
         /// Do not activate default features
         #[arg(long)]
         no_default_features: bool,
+        /// Select a specific workspace member to benchmark
+        #[arg(long, short = 'p', value_name = "PACKAGE")]
+        package: Option<String>,
     },
     /// Build and run tests
     Test {
@@ -118,6 +127,9 @@ enum Commands {
         /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
         #[arg(long, value_name = "LIST", value_delimiter = ',')]
         sanitize: Vec<String>,
+        /// Select a specific workspace member to test
+        #[arg(long, short = 'p', value_name = "PACKAGE")]
+        package: Option<String>,
     },
     /// Build (debug) and launch an interactive debugger session
     Debug {
@@ -294,8 +306,9 @@ fn main() -> Result<()> {
             features,
             no_default_features,
             sanitize,
+            package,
         } => {
-            cmd_build(release, &features, !no_default_features, &sanitize);
+            cmd_build(release, package.as_deref(), &features, !no_default_features, &sanitize);
         }
         Commands::Run {
             release,
@@ -304,9 +317,11 @@ fn main() -> Result<()> {
             no_default_features,
             args,
             sanitize,
+            package,
         } => {
             cmd_run(
                 release,
+                package.as_deref(),
                 bin.as_deref(),
                 &features,
                 !no_default_features,
@@ -318,8 +333,9 @@ fn main() -> Result<()> {
             name,
             features,
             no_default_features,
+            package,
         } => {
-            cmd_bench(name.as_deref(), &features, !no_default_features);
+            cmd_bench(name.as_deref(), package.as_deref(), &features, !no_default_features);
         }
         Commands::Test {
             name,
@@ -327,10 +343,12 @@ fn main() -> Result<()> {
             features,
             no_default_features,
             sanitize,
+            package,
         } => {
             cmd_test(
                 name.as_deref(),
                 release,
+                package.as_deref(),
                 &features,
                 !no_default_features,
                 &sanitize,

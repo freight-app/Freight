@@ -18,6 +18,7 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 - **Cross-compilation** — `[compiler] target` and `sysroot` for toolchain-native cross builds
 - **`freight watch`** — rebuild automatically on file changes (200 ms debounce)
 - **ccache / sccache** — compile cache wrappers detected automatically; opt out with `FREIGHT_NO_CACHE=1`
+- **Unity builds** — `[compiler] unity = true` merges all sources per language into one TU via `#include`; per-dep override with `mylib = { path = "…", unity = true }`
 - **Git dependencies** — `{ git = "url", branch = "main" }` with lock SHA enforcement and auto-fetch
 - **Language server** — `freight lsp` for `freight.toml` completions, hover docs, and go-to-definition
 - **Doc browser** — `freight doc` opens a terminal UI for installed local/global dependencies; `--format` extracts project doc comments as Markdown, JSON, or MessagePack
@@ -87,6 +88,7 @@ src  = "src/main.cpp"
 opt-level = 2
 warnings  = "all"
 includes  = ["third-party/"]      # private -I dirs for this project
+# unity = true                    # merge all sources per language into one TU
 
 [profile.dev]
 opt-level = 0
@@ -215,10 +217,10 @@ members = ["app/", "libfoo/", "libbar/"]
 ```
 freight new <name> --lang <lang>      scaffold a new project
 freight init                          init freight in current directory
-freight build [--release]             build
-freight run   [--release] [-- <args>] build and run
-freight test  [<filter>]              build and run tests
-freight bench [<filter>]              build and run benchmarks in benches/
+freight build [--release] [-p <pkg>]  build (or single workspace member)
+freight run   [--release] [-p <pkg>] [-- <args>] build and run
+freight test  [<filter>]  [-p <pkg>]  build and run tests
+freight bench [<filter>]  [-p <pkg>]  build and run benchmarks in benches/
 freight watch [--release]             watch for changes and rebuild
 freight clean                         wipe target/
 freight check                         validate freight.toml

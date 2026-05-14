@@ -45,6 +45,18 @@ fn which_tool(name: &str) -> Option<PathBuf> {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// Languages for which unity builds are supported (sources combined via `#include`).
+pub const UNITY_SUPPORTED_LANGS: &[&str] = &["c", "cpp", "cuda", "hip", "opencl"];
+
+fn unity_ext_for_lang(lang_key: &str) -> &'static str {
+    match lang_key {
+        "cpp" | "cuda" => "cpp",
+        "hip" => "hip",
+        "opencl" => "cl",
+        _ => "c",
+    }
+}
+
 pub struct CompileResult {
     /// All object files that exist after this call (compiled or already up-to-date).
     pub objects: Vec<PathBuf>,
@@ -111,6 +123,115 @@ pub fn compile_sources(
     let skipped = pairs.iter().filter(|(_, c)| !*c).count();
 
     Ok(CompileResult { objects, compiled_sources, compiled, skipped })
+}
+
+/// Unity (jumbo) build: merge all sources of the same language into one TU via `#include`.
+///
+/// Languages in [`UNITY_SUPPORTED_LANGS`] are grouped and compiled as a single file each.
+/// Other languages (Fortran, assembly, ISPC, …) fall back to individual compilation.
+/// C++20 modules should not use this path — the caller must skip unity when modules are present.
+pub fn compile_sources_unity(
+    project_dir: &Path,
+    manifest: &Manifest,
+    backend: &Backend,
+    profile: &str,
+    sources: &[SourceFile],
+    include_dirs: &[PathBuf],
+    detected: &[DetectedCompiler],
+    feature_defines: &[String],
+    header_unit_flags: &[String],
+    progress: &Progress,
+) -> Result<CompileResult, FreightError> {
+    use std::collections::HashMap;
+    use std::fmt::Write as FmtWrite;
+
+    let pf = primary_family(backend, detected);
+    let progress_clone = progress.clone();
+
+    // Split sources: unifiable langs vs. compile-individually langs.
+    let (unity_srcs, regular_srcs): (Vec<SourceFile>, Vec<SourceFile>) = sources
+        .iter()
+        .cloned()
+        .partition(|s| UNITY_SUPPORTED_LANGS.contains(&s.lang_key.as_str()));
+
+    let reg_result = if !regular_srcs.is_empty() {
+        compile_sources(project_dir, manifest, backend, profile, &regular_srcs,
+            include_dirs, detected, feature_defines, header_unit_flags, progress)?
+    } else {
+        CompileResult { objects: vec![], compiled_sources: vec![], compiled: 0, skipped: 0 }
+    };
+
+    if unity_srcs.is_empty() {
+        return Ok(reg_result);
+    }
+
+    let unity_dir = project_dir.join("target").join(profile).join("unity");
+    fs::create_dir_all(&unity_dir)?;
+
+    let mut all_objects = reg_result.objects;
+    let mut total_compiled = reg_result.compiled;
+    let mut total_skipped = reg_result.skipped;
+
+    // Group by language key.
+    let mut groups: HashMap<String, Vec<SourceFile>> = HashMap::new();
+    for src in unity_srcs {
+        groups.entry(src.lang_key.clone()).or_default().push(src);
+    }
+
+    for (lang_key, lang_sources) in &groups {
+        let ext = unity_ext_for_lang(lang_key);
+        let unity_src = unity_dir.join(format!("{lang_key}_unity.{ext}"));
+        let obj = unity_dir.join(format!("{lang_key}_unity.o"));
+        let dep = unity_dir.join(format!("{lang_key}_unity.d"));
+
+        // Regenerate the unity file if it's absent or any source is newer.
+        let unity_mtime = mtime(&unity_src);
+        let needs_regen = unity_mtime.is_none() || lang_sources.iter().any(|s| {
+            mtime(&project_dir.join(&s.path))
+                .map_or(true, |sm| unity_mtime.map_or(true, |um| sm >= um))
+        });
+        if needs_regen {
+            let mut content = String::new();
+            for src in lang_sources {
+                let _ = writeln!(content, "#include \"{}\"", project_dir.join(&src.path).display());
+            }
+            fs::write(&unity_src, &content)?;
+        }
+
+        // Up-to-date: object must exist and be newer than every constituent source.
+        let obj_mtime = mtime(&obj);
+        let up_to_date = obj_mtime.is_some()
+            && !lang_sources.iter().any(|s| {
+                mtime(&project_dir.join(&s.path))
+                    .map_or(true, |sm| obj_mtime.map_or(true, |om| sm >= om))
+            })
+            && is_up_to_date(&unity_src, &obj, &dep);
+
+        if up_to_date {
+            for src in lang_sources {
+                progress_clone(BuildEvent::Fresh { path: src.path.clone() });
+            }
+            total_skipped += lang_sources.len();
+            all_objects.push(obj);
+            continue;
+        }
+
+        let compiler = select_compiler(lang_key, backend, detected, pf)
+            .ok_or_else(|| FreightError::NoCompilerForLang(lang_key.clone()))?;
+
+        let settings = settings_for_lang(manifest, profile, lang_key, include_dirs, project_dir, feature_defines);
+        let compile_bin = resolve_compile_binary(compiler, lang_key);
+
+        for src in lang_sources {
+            progress_clone(BuildEvent::Compiling { path: src.path.clone() });
+        }
+        compile_one(&unity_src, &obj, &dep, &compile_bin, compiler, &settings, header_unit_flags)?;
+
+        total_compiled += lang_sources.len();
+        all_objects.push(obj);
+    }
+
+    Ok(CompileResult { objects: all_objects, compiled_sources: vec![], compiled: total_compiled, skipped: total_skipped })
 }
 
 // ── Compiler selection ────────────────────────────────────────────────────────

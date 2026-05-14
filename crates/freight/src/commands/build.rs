@@ -8,7 +8,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use freight_core::build::{
     bench_project_with, bench_workspace_with,
-    build_project_with, build_workspace_with, clean_project, clean_workspace,
+    build_project_at, build_project_with, build_workspace_with, clean_project, clean_workspace,
     test_project_with, test_workspace_with,
 };
 use freight_core::event::{BuildEvent, Progress};
@@ -94,12 +94,12 @@ fn at_workspace_root() -> bool {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-pub fn cmd_build(release: bool, features: &[String], use_defaults: bool, sanitize: &[String]) {
+pub fn cmd_build(release: bool, package: Option<&str>, features: &[String], use_defaults: bool, sanitize: &[String]) {
     let profile = if release { "release" } else { "dev" };
 
     let progress = make_progress();
     if at_workspace_root() {
-        match build_workspace_with(profile, &progress) {
+        match build_workspace_with(profile, package, features, use_defaults, &progress) {
             Ok(outputs) => {
                 println!();
                 for o in &outputs {
@@ -114,6 +114,11 @@ pub fn cmd_build(release: bool, features: &[String], use_defaults: bool, sanitiz
             }
             Err(e) => { println!(); print_error(&e.to_string()); }
         }
+        return;
+    }
+
+    if package.is_some() {
+        print_error("`-p` can only be used at a workspace root");
         return;
     }
 
@@ -132,11 +137,28 @@ pub fn cmd_build(release: bool, features: &[String], use_defaults: bool, sanitiz
     }
 }
 
-pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaults: bool, run_args: &[String], sanitize: &[String]) {
+pub fn cmd_run(release: bool, package: Option<&str>, bin: Option<&str>, features: &[String], use_defaults: bool, run_args: &[String], sanitize: &[String]) {
     let profile = if release { "release" } else { "dev" };
 
     if at_workspace_root() {
-        print_error("`freight run` is not supported at workspace root — cd into a member directory");
+        let Some(pkg) = package else {
+            print_error("`freight run` is not supported at workspace root — use `-p <package>` to select a member");
+            return;
+        };
+        let member_dir = match find_workspace_member_dir(pkg) {
+            Some(d) => d,
+            None => { print_error(&format!("package `{pkg}` not found in workspace")); return; }
+        };
+        let output = match build_project_at(&member_dir, profile, features, use_defaults, None, sanitize, &make_progress()) {
+            Ok(o) => o,
+            Err(e) => { println!(); print_error(&e.to_string()); return; }
+        };
+        run_binary(output, bin, run_args);
+        return;
+    }
+
+    if package.is_some() {
+        print_error("`-p` can only be used at a workspace root");
         return;
     }
 
@@ -145,13 +167,18 @@ pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaul
         Err(e) => { println!(); print_error(&e.to_string()); return; }
     };
 
-    let candidate: Option<&std::path::PathBuf> = match bin {
+    run_binary(output, bin, run_args);
+}
+
+fn run_binary(output: freight_core::build::BuildOutput, bin: Option<&str>, run_args: &[String]) {
+    let candidate: Option<std::path::PathBuf> = match bin {
         Some(name) => {
             let matched: Vec<_> = output.binaries.iter()
                 .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                .cloned()
                 .collect();
             match matched.as_slice() {
-                [b] => Some(b),
+                [b] => Some(b.clone()),
                 [] => {
                     print_error(&format!("no binary named {name:?} — available: {}",
                         output.binaries.iter()
@@ -160,7 +187,7 @@ pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaul
                     ));
                     return;
                 }
-                _ => Some(matched[0]),
+                _ => Some(matched[0].clone()),
             }
         }
         None => match output.binaries.as_slice() {
@@ -168,7 +195,7 @@ pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaul
                 print_error("no binary target produced — add a [[bin]] section to freight.toml");
                 return;
             }
-            [b] => Some(b),
+            [b] => Some(b.clone()),
             _ => {
                 print_error(&format!(
                     "multiple [[bin]] targets — use --bin <name> to select one: {}",
@@ -186,7 +213,7 @@ pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaul
         use owo_colors::OwoColorize;
         println!("    {} {}", "Running".bold().green(), bin_path.display());
         println!();
-        let status = Command::new(bin_path).args(run_args).status();
+        let status = Command::new(&bin_path).args(run_args).status();
         match status {
             Ok(s) if !s.success() => {
                 if let Some(code) = s.code() {
@@ -197,6 +224,16 @@ pub fn cmd_run(release: bool, bin: Option<&str>, features: &[String], use_defaul
             Ok(_) => {}
         }
     }
+}
+
+fn find_workspace_member_dir(pkg: &str) -> Option<PathBuf> {
+    let cwd = env::current_dir().ok()?;
+    let ws_dir = find_manifest_dir(&cwd)?;
+    let ws = load_workspace_manifest(&ws_dir)?;
+    ws.members.iter().find_map(|m| {
+        let dir = ws_dir.join(m.trim_end_matches('/'));
+        if dir.file_name().and_then(|n| n.to_str()) == Some(pkg) { Some(dir) } else { None }
+    })
 }
 
 pub fn cmd_clean() {
@@ -302,11 +339,11 @@ fn run_build(profile: &str, project_dir: &std::path::Path) {
     }
 }
 
-pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_defaults: bool, sanitize: &[String]) {
+pub fn cmd_test(filter: Option<&str>, release: bool, package: Option<&str>, features: &[String], use_defaults: bool, sanitize: &[String]) {
     let profile = if release { "release" } else { "dev" };
     let progress = make_progress();
     if at_workspace_root() {
-        match test_workspace_with(profile, filter, &progress) {
+        match test_workspace_with(profile, filter, package, features, use_defaults, &progress) {
             Ok(summary) => {
                 println!();
                 if summary.total == 0 {
@@ -326,6 +363,11 @@ pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_de
             }
             Err(e) => { println!(); print_error(&e.to_string()); }
         }
+        return;
+    }
+
+    if package.is_some() {
+        print_error("`-p` can only be used at a workspace root");
         return;
     }
 
@@ -351,10 +393,10 @@ pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_de
     }
 }
 
-pub fn cmd_bench(filter: Option<&str>, features: &[String], use_defaults: bool) {
+pub fn cmd_bench(filter: Option<&str>, package: Option<&str>, features: &[String], use_defaults: bool) {
     let progress = make_progress();
     if at_workspace_root() {
-        match bench_workspace_with(filter, &progress) {
+        match bench_workspace_with(filter, package, features, use_defaults, &progress) {
             Ok(summary) => {
                 println!();
                 if summary.results.is_empty() {
@@ -365,6 +407,11 @@ pub fn cmd_bench(filter: Option<&str>, features: &[String], use_defaults: bool) 
             }
             Err(e) => { println!(); print_error(&e.to_string()); }
         }
+        return;
+    }
+
+    if package.is_some() {
+        print_error("`-p` can only be used at a workspace root");
         return;
     }
 

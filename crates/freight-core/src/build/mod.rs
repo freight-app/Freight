@@ -10,7 +10,7 @@ pub mod modules;
 pub mod pch;
 pub mod script;
 
-pub use compile::{CompileResult, compile_sources, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
+pub use compile::{CompileResult, UNITY_SUPPORTED_LANGS, compile_sources, compile_sources_unity, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
 pub use deps::{ResolvedDep, check_slot_conflicts, resolve_dep_graph};
 pub use discover::{DiscoveredSources, SourceFile, discover};
 pub use link::{LinkResult, link_static_lib, link_targets, link_test_binary, select_linker};
@@ -87,22 +87,41 @@ struct BuiltDeps {
 /// the workspace root so that clangd (and other LSP clients) can serve the
 /// entire workspace from a single database.
 pub fn build_workspace(profile: &str) -> Result<Vec<BuildOutput>, FreightError> {
-    build_workspace_with(profile, &silent())
+    build_workspace_with(profile, None, &[], true, &silent())
 }
 
 /// Like [`build_workspace`] but routes all progress through `progress`.
-pub fn build_workspace_with(profile: &str, progress: &Progress) -> Result<Vec<BuildOutput>, FreightError> {
+///
+/// `package` — when `Some`, build only the workspace member whose directory name matches.
+/// `features` / `use_defaults` — forwarded to `build_project_at` for the selected member;
+/// ignored when building the entire workspace (all members use their own defaults).
+pub fn build_workspace_with(profile: &str, package: Option<&str>, features: &[String], use_defaults: bool, progress: &Progress) -> Result<Vec<BuildOutput>, FreightError> {
     let cwd = std::env::current_dir()?;
     let ws_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
     let ws = load_workspace_manifest(&ws_dir)
         .ok_or_else(|| FreightError::ManifestParse("not a workspace root".into()))?;
 
+    if let Some(pkg) = package {
+        let found = ws.members.iter().any(|m| {
+            ws_dir.join(m.trim_end_matches('/')).file_name()
+                .and_then(|n| n.to_str()) == Some(pkg)
+        });
+        if !found {
+            return Err(FreightError::ManifestParse(format!("package `{pkg}` not found in workspace")));
+        }
+    }
+
     let mut outputs = Vec::new();
     let mut member_dirs: Vec<PathBuf> = Vec::new();
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        outputs.push(build_project_at(&member_dir, profile, &[], true, None, &[], progress)?);
+        let member_name = member_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(pkg) = package {
+            if member_name != pkg { continue; }
+        }
+        let (mem_features, mem_defaults) = if package.is_some() { (features, use_defaults) } else { (&[][..], true) };
+        outputs.push(build_project_at(&member_dir, profile, mem_features, mem_defaults, None, &[], progress)?);
         member_dirs.push(member_dir);
     }
 
@@ -137,22 +156,39 @@ pub fn clean_workspace() -> Result<(), FreightError> {
 
 /// Test every member of a workspace rooted at the current working directory.
 pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary, FreightError> {
-    test_workspace_with(profile, filter, &silent())
+    test_workspace_with(profile, filter, None, &[], true, &silent())
 }
 
 /// Like [`test_workspace`] but routes all progress through `progress`.
-pub fn test_workspace_with(profile: &str, filter: Option<&str>, progress: &Progress) -> Result<TestSummary, FreightError> {
+///
+/// `package` — when `Some`, test only the member whose directory name matches.
+pub fn test_workspace_with(profile: &str, filter: Option<&str>, package: Option<&str>, features: &[String], use_defaults: bool, progress: &Progress) -> Result<TestSummary, FreightError> {
     let cwd = std::env::current_dir()?;
     let ws_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
     let ws = load_workspace_manifest(&ws_dir)
         .ok_or_else(|| FreightError::ManifestParse("not a workspace root".into()))?;
 
+    if let Some(pkg) = package {
+        let found = ws.members.iter().any(|m| {
+            ws_dir.join(m.trim_end_matches('/')).file_name()
+                .and_then(|n| n.to_str()) == Some(pkg)
+        });
+        if !found {
+            return Err(FreightError::ManifestParse(format!("package `{pkg}` not found in workspace")));
+        }
+    }
+
     let mut total_passed = 0;
     let mut total_failed = 0;
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        let s = test_project_at(&member_dir, profile, filter, &[], true, &[], progress)?;
+        let member_name = member_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(pkg) = package {
+            if member_name != pkg { continue; }
+        }
+        let (mem_features, mem_defaults) = if package.is_some() { (features, use_defaults) } else { (&[][..], true) };
+        let s = test_project_at(&member_dir, profile, filter, mem_features, mem_defaults, &[], progress)?;
         total_passed += s.passed;
         total_failed += s.failed;
     }
@@ -595,18 +631,33 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
 
 // ── Bench pipeline ────────────────────────────────────────────────────────────
 
-/// Benchmark every member of a workspace.
-pub fn bench_workspace_with(filter: Option<&str>, progress: &Progress) -> Result<BenchSummary, FreightError> {
+/// Benchmark every member of a workspace (or a specific member when `package` is given).
+pub fn bench_workspace_with(filter: Option<&str>, package: Option<&str>, features: &[String], use_defaults: bool, progress: &Progress) -> Result<BenchSummary, FreightError> {
     let cwd = std::env::current_dir()?;
     let ws_dir = find_manifest_dir(&cwd)
         .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
     let ws = load_workspace_manifest(&ws_dir)
         .ok_or_else(|| FreightError::ManifestParse("not a workspace root".into()))?;
 
+    if let Some(pkg) = package {
+        let found = ws.members.iter().any(|m| {
+            ws_dir.join(m.trim_end_matches('/')).file_name()
+                .and_then(|n| n.to_str()) == Some(pkg)
+        });
+        if !found {
+            return Err(FreightError::ManifestParse(format!("package `{pkg}` not found in workspace")));
+        }
+    }
+
     let mut all: Vec<BenchResult> = Vec::new();
     for member in &ws.members {
         let member_dir = ws_dir.join(member.trim_end_matches('/'));
-        let s = bench_project_at(&member_dir, "bench", filter, &[], true, progress)?;
+        let member_name = member_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(pkg) = package {
+            if member_name != pkg { continue; }
+        }
+        let (mem_features, mem_defaults) = if package.is_some() { (features, use_defaults) } else { (&[][..], true) };
+        let s = bench_project_at(&member_dir, "bench", filter, mem_features, mem_defaults, progress)?;
         all.extend(s.results);
     }
     Ok(BenchSummary { results: all })
@@ -864,8 +915,11 @@ fn build_sources(
 ) -> Result<CompileResult, FreightError> {
     let scanned = scan_sources(project_dir, sources);
     if has_modules(&scanned) {
+        // C++20 modules have their own dependency ordering — unity doesn't apply.
         let mut plan = plan_module_build(project_dir, profile, scanned)?;
         compile_module_sources(project_dir, manifest, backend, profile, &mut plan, include_dirs, detected, feature_defines, header_unit_flags, progress)
+    } else if manifest.compiler.unity {
+        compile::compile_sources_unity(project_dir, manifest, backend, profile, sources, include_dirs, detected, feature_defines, header_unit_flags, progress)
     } else {
         compile_sources(project_dir, manifest, backend, profile, sources, include_dirs, detected, feature_defines, header_unit_flags, progress)
     }
@@ -928,10 +982,23 @@ fn build_resolved_deps(
 
         progress(BuildEvent::BuildStarted { name: dep.name.clone(), profile: profile.to_string() });
 
-        let compile_result = compile_sources(
-            &dep.dir, &dep.manifest, backend, profile,
-            &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines, &[], progress,
-        )?;
+        // Unity override: root manifest's `mylib = { ..., unity = true/false }` wins over dep's own flag.
+        let effective_unity = root_manifest.effective_dependencies()
+            .get(&dep.name)
+            .and_then(|d| if let Dependency::Detailed(dd) = d { dd.unity } else { None })
+            .unwrap_or(dep.manifest.compiler.unity);
+
+        let compile_result = if effective_unity {
+            compile::compile_sources_unity(
+                &dep.dir, &dep.manifest, backend, profile,
+                &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines, &[], progress,
+            )?
+        } else {
+            compile_sources(
+                &dep.dir, &dep.manifest, backend, profile,
+                &dep_found.sources, &dep_include_dirs, detected, &dep_feature_defines, &[], progress,
+            )?
+        };
 
         let lib_out = dep.dir.join("target").join(profile)
             .join(format!("lib{}.a", dep.name));

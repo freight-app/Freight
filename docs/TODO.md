@@ -90,10 +90,14 @@ with runtime option handlers are evaluated live so their callbacks remain active
 Windows targets emit and install `.exe` binaries, with shared-library packaging
 using the existing Windows DLL/import-lib layout for MinGW or Windows sysroots.
 
-### S14 — Unity / jumbo builds
+### S14 — Unity / jumbo builds ✓ done
 `[compiler] unity = true` — concatenate all TUs per language into one translation
-unit. Trades incremental speed for full-build speed and better cross-TU inlining.
+unit via `#include`. Trades incremental speed for full-build speed and better cross-TU
+inlining. Applies to C, C++, CUDA, HIP, OpenCL; other languages compile individually.
+Per-dep override: `mylib = { path = "../mylib", unity = true }`.
+C++20 named-module projects skip unity (modules have their own dependency ordering).
 
-### S15 — Workspace per-member feature flags
-`freight build -p mylib --features tls`, workspace-level `[patch]` overrides,
-`freight workspace graph` visualisation.
+### S15 — Workspace per-member feature flags ✓ done
+`freight build -p mylib --features tls` — build/test/bench/run a single workspace
+member and pass features to it. `freight run -p myapp` runs a member's binary.
+Remaining: workspace-level `[patch]` overrides, `freight workspace graph` visualisation.
