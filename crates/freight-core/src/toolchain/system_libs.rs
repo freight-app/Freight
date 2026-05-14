@@ -42,7 +42,7 @@ pub fn load_from(dir: &Path) -> Vec<SystemLibStub> {
             continue;
         }
         let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        let Ok(raw) = toml::from_str::<RawStub>(&src) else { continue };
+        let Ok(raw) = toml_edit::de::from_str::<RawStub>(&src) else { continue };
         // Skip stubs whose platform expression doesn't match the current host.
         if let Some(expr) = &raw.package.supports {
             if !eval_supports(expr) {
