@@ -17,7 +17,7 @@ use crate::commands::deps::{
     cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove,
     cmd_search, cmd_tree, cmd_update, cmd_yank,
 };
-use crate::commands::doc::{cmd_doc, cmd_man};
+use crate::commands::doc::cmd_doc;
 use crate::commands::fmt::cmd_fmt;
 use crate::commands::install::{cmd_install, cmd_package};
 use crate::commands::lint::cmd_lint;
@@ -25,7 +25,6 @@ use crate::commands::new::{cmd_init, cmd_new};
 use crate::commands::toolchain::{cmd_toolchain_add, cmd_toolchain_list, cmd_toolchain_use};
 
 /// Returns the top-level [`clap::Command`] for this binary.
-/// Used by `freight man` to generate man pages without re-parsing argv.
 pub(crate) fn cli_command() -> clap::Command {
     Cli::command()
 }
@@ -205,11 +204,17 @@ enum Commands {
         #[arg(long)]
         release: bool,
     },
-    /// Open the dependency documentation browser, or generate API docs with --format
+    /// Open the dependency documentation browser, or generate API docs / man pages
     Doc {
         /// Output format: md | json | msgpack | all
         #[arg(long, short, value_name = "FORMAT")]
         format: Option<String>,
+        /// Generate man pages for all freight subcommands
+        #[arg(long)]
+        man: bool,
+        /// Output directory for man pages (default: target/man/)
+        #[arg(long, value_name = "DIR", requires = "man")]
+        out_dir: Option<String>,
     },
     /// Install build outputs to a system prefix (binaries, libs, headers)
     Install {
@@ -239,13 +244,7 @@ enum Commands {
         #[arg(long, value_name = "TRIPLES", value_delimiter = ',')]
         target: Vec<String>,
     },
-    /// Generate man pages for all freight subcommands
-    Man {
-        /// Output directory (default: target/man/)
-        #[arg(long, value_name = "DIR")]
-        out_dir: Option<String>,
-    },
-    /// Generate shell completion scripts
+/// Generate shell completion scripts
     #[command(visible_alias = "completion")]
     Completions {
         /// Shell to generate completions for (bash, elvish, fish, powershell, zsh)
@@ -430,8 +429,7 @@ fn main() -> Result<()> {
             );
         }
         Commands::Package { release, target } => cmd_package(release, &target),
-        Commands::Doc { format } => cmd_doc(format.as_deref()),
-        Commands::Man { out_dir } => cmd_man(out_dir.as_deref()),
+        Commands::Doc { format, man, out_dir } => cmd_doc(format.as_deref(), man, out_dir.as_deref()),
         Commands::Completions { shell } => {
             let cmd = Cli::command();
             print_completion(shell, &cmd);

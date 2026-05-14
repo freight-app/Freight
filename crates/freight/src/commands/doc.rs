@@ -11,8 +11,10 @@ use crate::output::{print_error, print_status, print_success, print_warning};
 
 // ── freight doc ─────────────────────────────────────────────────────────────────
 
-pub fn cmd_doc(format: Option<&str>) {
-    if let Some(format) = format {
+pub fn cmd_doc(format: Option<&str>, man: bool, out_dir: Option<&str>) {
+    if man {
+        cmd_man(out_dir);
+    } else if let Some(format) = format {
         generate_docs(format);
     } else if let Err(e) = open_dependency_tui() {
         print_error(&format!("failed to open dependency docs: {e}"));
@@ -170,7 +172,7 @@ fn generate_docs(format: &str) {
 
 // ── freight man ─────────────────────────────────────────────────────────────────
 
-pub fn cmd_man(out_dir: Option<&str>) {
+fn cmd_man(out_dir: Option<&str>) {
     let out = out_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target").join("man"));
