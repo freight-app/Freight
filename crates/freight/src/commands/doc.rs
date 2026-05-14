@@ -812,37 +812,183 @@ fn load_doc_content(dep: &DocDependency) -> Vec<String> {
     ]
 }
 
+fn convert_math(text: &str) -> String {
+    let mut s = text.to_string();
+    // Greek letters
+    let greek = [
+        ("\\alpha","α"),("\\beta","β"),("\\gamma","γ"),("\\delta","δ"),
+        ("\\epsilon","ε"),("\\zeta","ζ"),("\\eta","η"),("\\theta","θ"),
+        ("\\iota","ι"),("\\kappa","κ"),("\\lambda","λ"),("\\mu","μ"),
+        ("\\nu","ν"),("\\xi","ξ"),("\\pi","π"),("\\rho","ρ"),
+        ("\\sigma","σ"),("\\tau","τ"),("\\upsilon","υ"),("\\phi","φ"),
+        ("\\chi","χ"),("\\psi","ψ"),("\\omega","ω"),
+        ("\\Gamma","Γ"),("\\Delta","Δ"),("\\Theta","Θ"),("\\Lambda","Λ"),
+        ("\\Xi","Ξ"),("\\Pi","Π"),("\\Sigma","Σ"),("\\Upsilon","Υ"),
+        ("\\Phi","Φ"),("\\Psi","Ψ"),("\\Omega","Ω"),
+    ];
+    for (pat, rep) in &greek { s = s.replace(pat, rep); }
+    // Operators and symbols
+    let ops = [
+        ("\\sum","Σ"),("\\prod","Π"),("\\int","∫"),("\\oint","∮"),
+        ("\\sqrt","√"),("\\infty","∞"),("\\partial","∂"),("\\nabla","∇"),
+        ("\\times","×"),("\\cdot","·"),("\\div","÷"),("\\pm","±"),("\\mp","∓"),
+        ("\\leq","≤"),("\\geq","≥"),("\\neq","≠"),("\\approx","≈"),
+        ("\\equiv","≡"),("\\sim","~"),("\\propto","∝"),("\\in","∈"),
+        ("\\notin","∉"),("\\subset","⊂"),("\\supset","⊃"),("\\cup","∪"),
+        ("\\cap","∩"),("\\emptyset","∅"),("\\forall","∀"),("\\exists","∃"),
+        ("\\neg","¬"),("\\land","∧"),("\\lor","∨"),("\\oplus","⊕"),
+        ("\\to","→"),("\\Rightarrow","⇒"),("\\Leftrightarrow","⟺"),
+        ("\\ldots","…"),("\\cdots","⋯"),("\\vdots","⋮"),("\\ddots","⋱"),
+        ("\\circ","∘"),("\\perp","⊥"),("\\parallel","∥"),
+        ("\\langle","⟨"),("\\rangle","⟩"),("\\lceil","⌈"),("\\rceil","⌉"),
+        ("\\lfloor","⌊"),("\\rfloor","⌋"),
+    ];
+    for (pat, rep) in &ops { s = s.replace(pat, rep); }
+    // Superscripts: ^{digit} or ^digit
+    let sups = [("^0","⁰"),("^1","¹"),("^2","²"),("^3","³"),("^4","⁴"),
+                ("^5","⁵"),("^6","⁶"),("^7","⁷"),("^8","⁸"),("^9","⁹")];
+    for (pat, rep) in &sups { s = s.replace(pat, rep); }
+    // Subscripts: _{digit} or _digit
+    let subs = [("_0","₀"),("_1","₁"),("_2","₂"),("_3","₃"),("_4","₄"),
+                ("_5","₅"),("_6","₆"),("_7","₇"),("_8","₈"),("_9","₉")];
+    for (pat, rep) in &subs { s = s.replace(pat, rep); }
+    // \frac{a}{b} → a/b (simple heuristic for short fracs)
+    while let Some(start) = s.find("\\frac{") {
+        let after = &s[start + 6..];
+        if let Some(mid) = after.find('}') {
+            let num = &after[..mid];
+            let rest = &after[mid + 1..];
+            if rest.starts_with('{') {
+                if let Some(end) = rest.find('}') {
+                    let den = &rest[1..end];
+                    let replacement = format!("({num}/{den})");
+                    s = format!("{}{}{}", &s[..start], replacement, &rest[end + 1..]);
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    // Strip display math delimiters $$...$$
+    while let Some(a) = s.find("$$") {
+        if let Some(b) = s[a + 2..].find("$$") {
+            let inner = s[a + 2..a + 2 + b].trim().to_string();
+            s = format!("{} {} {}", &s[..a], inner, &s[a + 4 + b..]);
+        } else { break; }
+    }
+    // Strip inline math delimiters $...$
+    while let Some(a) = s.find('$') {
+        if let Some(b) = s[a + 1..].find('$') {
+            let inner = s[a + 1..a + 1 + b].to_string();
+            s = format!("{}{}{}", &s[..a], inner, &s[a + 2 + b..]);
+        } else { break; }
+    }
+    // Remove remaining bare backslash commands we didn't handle
+    s = s.replace('\\', "");
+    s
+}
+
+fn param_table(params: &[(&str, &str)], width: usize) -> Vec<String> {
+    if params.is_empty() { return vec![]; }
+    let name_col = params.iter().map(|(n, _)| n.len()).max().unwrap_or(4).max(4);
+    let desc_col = (width.saturating_sub(name_col + 7)).max(10);
+    let hr_top  = format!("  ┌{:─<w$}┬{:─<d$}┐", "", "", w = name_col + 2, d = desc_col + 2);
+    let hr_head = format!("  ├{:─<w$}┼{:─<d$}┤", "", "", w = name_col + 2, d = desc_col + 2);
+    let hr_bot  = format!("  └{:─<w$}┴{:─<d$}┘", "", "", w = name_col + 2, d = desc_col + 2);
+    let mut out = vec![hr_top];
+    out.push(format!("  │ {:<w$} │ {:<d$} │", "Name", "Description", w = name_col, d = desc_col));
+    out.push(hr_head);
+    for (name, desc) in params {
+        // Word-wrap the description column
+        let mut words = desc.split_whitespace().peekable();
+        let mut first = true;
+        let mut cur = String::new();
+        let mut rows: Vec<String> = Vec::new();
+        while words.peek().is_some() {
+            let word = words.next().unwrap();
+            if cur.is_empty() {
+                cur = word.to_string();
+            } else if cur.len() + 1 + word.len() <= desc_col {
+                cur.push(' ');
+                cur.push_str(word);
+            } else {
+                rows.push(cur.clone());
+                cur = word.to_string();
+            }
+        }
+        if !cur.is_empty() { rows.push(cur); }
+        if rows.is_empty() { rows.push(String::new()); }
+        for (i, row) in rows.iter().enumerate() {
+            let n_cell = if first { format!("{:<w$}", name, w = name_col) } else { " ".repeat(name_col) };
+            first = false;
+            out.push(format!("  │ {n_cell} │ {:<d$} │", row, d = desc_col));
+        }
+    }
+    out.push(hr_bot);
+    out
+}
+
 fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<String> {
     use freight_doc::extract::TagKind;
+    const WIDTH: usize = 72;
     let mut lines = Vec::new();
     for item in items {
-        let sep = "─".repeat(60);
-        lines.push(format!("── {} {} ({}) ──", item.kind.label(), item.name, item.lang.label()));
+        // ── header ──
+        let title = format!(" {} {}  ({}) ", item.kind.label(), item.name, item.lang.label());
+        let dashes = WIDTH.saturating_sub(title.len() + 4);
+        lines.push(format!("── {}{} ──", title, "─".repeat(dashes)));
+
+        // ── signature ──
         if !item.signature.is_empty() {
+            lines.push(String::new());
             lines.push(format!("  {}", item.signature));
         }
+
+        // ── brief ──
         if !item.brief.is_empty() {
             lines.push(String::new());
-            lines.push(format!("  {}", item.brief));
+            lines.push(format!("  {}", convert_math(&item.brief)));
         }
+
+        // ── body ──
         if !item.body.is_empty() {
             lines.push(String::new());
             for body_line in item.body.lines() {
-                lines.push(format!("  {}", body_line));
+                lines.push(format!("  {}", convert_math(body_line)));
             }
         }
+
+        // ── parameters table ──
+        let params: Vec<(&str, &str)> = item.tags.iter()
+            .filter(|t| t.kind == TagKind::Param)
+            .map(|t| (t.name.as_deref().unwrap_or("?"), t.text.as_str()))
+            .collect();
+        if !params.is_empty() {
+            lines.push(String::new());
+            lines.push("  Parameters".to_string());
+            lines.extend(param_table(&params, WIDTH));
+        }
+
+        // ── returns ──
+        for tag in item.tags.iter().filter(|t| t.kind == TagKind::Return) {
+            lines.push(String::new());
+            lines.push(format!("  Returns  {}", convert_math(&tag.text)));
+        }
+
+        // ── other tags (Note, Warning, See, Since, Deprecated, Example, Other) ──
         for tag in &item.tags {
             match &tag.kind {
-                TagKind::Param => {
-                    let name = tag.name.as_deref().unwrap_or("?");
-                    lines.push(format!("  @param {}  {}", name, tag.text));
-                }
-                _ => {
-                    lines.push(format!("  @{}  {}", tag.kind.label(), tag.text));
+                TagKind::Param | TagKind::Return => {}
+                TagKind::Brief => {}
+                kind => {
+                    lines.push(String::new());
+                    lines.push(format!("  {}  {}", kind.label(), convert_math(&tag.text)));
                 }
             }
         }
-        lines.push(sep);
+
+        lines.push(String::new());
+        lines.push("─".repeat(WIDTH));
         lines.push(String::new());
     }
     if lines.is_empty() {
