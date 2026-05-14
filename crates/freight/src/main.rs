@@ -185,8 +185,11 @@ enum Commands {
         #[arg(long)]
         dev: bool,
     },
-    /// Show package metadata
-    Info { package: String },
+    /// Show package metadata. Omit PACKAGE to show the current package.
+    Info {
+        #[arg(value_name = "PACKAGE")]
+        package: Option<String>,
+    },
     /// Search freight.dev
     Search { query: String },
     /// Validate freight.toml
@@ -395,7 +398,7 @@ fn main() -> Result<()> {
         Commands::Fetch => cmd_fetch(),
         Commands::Tree => cmd_tree(),
         Commands::Graph { format, output, dev } => cmd_graph(&format, output.as_deref(), dev),
-        Commands::Info { package } => cmd_info(&package),
+        Commands::Info { package } => cmd_info(package.as_deref()),
         Commands::Search { query } => cmd_search(&query),
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
@@ -436,4 +439,27 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_accepts_missing_package_for_current_project() {
+        let cli = Cli::try_parse_from(["freight", "info"]).unwrap();
+        match cli.command {
+            Commands::Info { package } => assert_eq!(package, None),
+            _ => panic!("expected info command"),
+        }
+    }
+
+    #[test]
+    fn info_accepts_registry_package_name() {
+        let cli = Cli::try_parse_from(["freight", "info", "zlib"]).unwrap();
+        match cli.command {
+            Commands::Info { package } => assert_eq!(package.as_deref(), Some("zlib")),
+            _ => panic!("expected info command"),
+        }
+    }
 }
