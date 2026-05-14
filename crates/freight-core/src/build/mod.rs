@@ -297,11 +297,17 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         progress(BuildEvent::Warning(format!("could not write freight.lock: {e}")));
     }
 
-    let cc = compile_commands::generate(
+    let cc = compile_commands::generate_incremental(
         project_dir, manifest, effective_backend, detected, profile,
         &all_sources, &include_dirs, &feature_defines, &pch_clangd_flags,
+        Some(&compile_result.compiled_sources),
     );
-    if let Err(e) = compile_commands::write(project_dir, &cc) {
+    if let Err(e) = compile_commands::write(project_dir, &cc)
+        .and_then(|_| compile_commands::write_incremental_cache(
+            project_dir, manifest, effective_backend, detected, profile,
+            &all_sources, &include_dirs, &feature_defines, &pch_clangd_flags,
+        ))
+    {
         progress(BuildEvent::Warning(format!("could not write compile_commands.json: {e}")));
     }
 
@@ -336,12 +342,16 @@ pub fn generate_compile_commands_at(project_dir: &Path, profile: &str) -> Result
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(dep_includes);
 
-    let commands = compile_commands::generate(
+    let commands = compile_commands::generate_incremental(
         project_dir, manifest, effective_backend, detected, profile,
-        &found.sources, &include_dirs, &feature_defines, &[],
+        &found.sources, &include_dirs, &feature_defines, &[], None,
     );
     let count = commands.len();
-    compile_commands::write(project_dir, &commands)?;
+    compile_commands::write(project_dir, &commands)
+        .and_then(|_| compile_commands::write_incremental_cache(
+            project_dir, manifest, effective_backend, detected, profile,
+            &found.sources, &include_dirs, &feature_defines, &[],
+        ))?;
     Ok(count)
 }
 
@@ -784,7 +794,10 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
         global.default_backend.clone().map(Backend).unwrap_or_default()
     };
     manifest.compiler.target = global.target.clone();
-    manifest.compiler.sysroot = global.sysroot.clone();
+    manifest.compiler.sysroot = std::env::var_os("FREIGHT_SYSROOT")
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy().into_owned())
+        .or_else(|| global.sysroot.clone());
     manifest.compiler.auto_cpu_tuning = global.auto_cpu_tuning.unwrap_or(true);
 
     let tdir = templates_dir()

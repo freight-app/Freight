@@ -78,11 +78,11 @@ list from the command line without editing `freight.toml`.
 `rerun_if_changed("path")` and `rerun_if_env_changed("VAR")` — skip re-running
 the build script when declared inputs haven't changed.
 
-### S10 — `compile_commands.json` incremental update
-Cache the previous output; only re-emit entries for sources that changed.
-Avoids a full re-scan on every `freight build` in large projects.
+### S10 — `compile_commands.json` incremental update ✓ done
+Cache the previous output and source mtimes under `target/{profile}/`; only re-emit entries
+for sources that changed or when command-affecting settings change.
 
-### S11 — `FREIGHT_SYSROOT` env auto-propagation
+### S11 — `FREIGHT_SYSROOT` env auto-propagation ✓ done
 When `FREIGHT_SYSROOT` is set, inject `--sysroot=` automatically without
 requiring `[compiler] sysroot` in the manifest.
 

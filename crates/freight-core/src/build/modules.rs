@@ -253,6 +253,7 @@ pub fn compile_module_sources(
     let mut all_objects: Vec<PathBuf> = Vec::new();
     let mut total_compiled = 0usize;
     let mut total_skipped = 0usize;
+    let mut compiled_sources: Vec<PathBuf> = Vec::new();
 
     let progress = progress.clone();
 
@@ -268,9 +269,14 @@ pub fn compile_module_sources(
             })
             .collect();
 
-        for (obj, compiled) in results? {
+        for (scanned, (obj, compiled)) in batch.iter().zip(results?) {
             all_objects.push(obj);
-            if compiled { total_compiled += 1; } else { total_skipped += 1; }
+            if compiled {
+                total_compiled += 1;
+                compiled_sources.push(scanned.source.path.clone());
+            } else {
+                total_skipped += 1;
+            }
         }
     }
 
@@ -284,12 +290,17 @@ pub fn compile_module_sources(
         })
         .collect();
 
-    for (obj, compiled) in results? {
+    for (scanned, (obj, compiled)) in plan.rest.iter().zip(results?) {
         all_objects.push(obj);
-        if compiled { total_compiled += 1; } else { total_skipped += 1; }
+        if compiled {
+            total_compiled += 1;
+            compiled_sources.push(scanned.source.path.clone());
+        } else {
+            total_skipped += 1;
+        }
     }
 
-    Ok(CompileResult { objects: all_objects, compiled: total_compiled, skipped: total_skipped })
+    Ok(CompileResult { objects: all_objects, compiled_sources, compiled: total_compiled, skipped: total_skipped })
 }
 
 // ── MIU compilation ───────────────────────────────────────────────────────────

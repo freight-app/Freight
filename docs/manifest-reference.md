@@ -288,7 +288,7 @@ languages. Override with an explicit name (e.g. `"clang"`) to pin a specific too
 ### Cross-compilation
 
 `target` passes the active target triple to compilers that support a target flag.
-`sysroot` passes `--sysroot={path}` to compilers that support it.
+`sysroot` passes `--sysroot={path}` to compilers that support it. If the `FREIGHT_SYSROOT` environment variable is set, it supplies the same sysroot automatically and takes precedence over the global config value for the current invocation.
 
 When both `target` and `sysroot` are configured, freight also derives conservative CPU tuning flags
 (such as `-march=`, `-mcpu=`, or `-mtune=`) from the target/sysroot pair unless auto CPU tuning is disabled in `~/.freight/config.toml`.

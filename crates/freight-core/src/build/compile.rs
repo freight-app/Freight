@@ -47,6 +47,8 @@ fn which_tool(name: &str) -> Option<PathBuf> {
 pub struct CompileResult {
     /// All object files that exist after this call (compiled or already up-to-date).
     pub objects: Vec<PathBuf>,
+    /// Source files that were actually recompiled during this invocation.
+    pub compiled_sources: Vec<PathBuf>,
     pub compiled: usize,
     pub skipped: usize,
 }
@@ -99,10 +101,15 @@ pub fn compile_sources(
 
     let pairs = results?;
     let objects = pairs.iter().map(|(o, _)| o.clone()).collect();
+    let compiled_sources = sources
+        .iter()
+        .zip(pairs.iter())
+        .filter_map(|(src, (_, compiled))| compiled.then(|| src.path.clone()))
+        .collect();
     let compiled = pairs.iter().filter(|(_, c)| *c).count();
     let skipped = pairs.iter().filter(|(_, c)| !*c).count();
 
-    Ok(CompileResult { objects, compiled, skipped })
+    Ok(CompileResult { objects, compiled_sources, compiled, skipped })
 }
 
 // ── Compiler selection ────────────────────────────────────────────────────────

@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
+use super::compile::{object_path, resolve_compile_binary, select_compiler, settings_for_lang};
+use super::discover::SourceFile;
 use crate::error::FreightError;
 use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::DetectedCompiler;
-use super::compile::{resolve_compile_binary, select_compiler, settings_for_lang, object_path};
-use super::discover::SourceFile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileCommand {
@@ -21,11 +23,25 @@ pub struct CompileCommand {
     pub output: PathBuf,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CompileCommandsCache {
+    signature: u64,
+    sources: HashMap<PathBuf, SourceStamp>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SourceStamp {
+    mtime_secs: u64,
+    mtime_nanos: u32,
+}
+
 /// Load an existing `compile_commands.json`.  Returns an empty vec on any error
 /// (missing file, parse error) so callers can treat it as an optional cache.
 pub fn load(project_dir: &Path) -> Vec<CompileCommand> {
     let path = project_dir.join("compile_commands.json");
-    let Ok(bytes) = std::fs::read(&path) else { return vec![] };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return vec![];
+    };
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
@@ -34,11 +50,12 @@ pub fn load(project_dir: &Path) -> Vec<CompileCommand> {
 /// Entries in `existing` whose file is NOT present in `new_entries` are kept
 /// as-is (useful when workspace members each own a subset of the full DB).
 /// The result is sorted by file path for deterministic, diff-friendly output.
-pub fn merge(existing: Vec<CompileCommand>, new_entries: Vec<CompileCommand>) -> Vec<CompileCommand> {
-    let mut by_file: HashMap<PathBuf, CompileCommand> = existing
-        .into_iter()
-        .map(|c| (c.file.clone(), c))
-        .collect();
+pub fn merge(
+    existing: Vec<CompileCommand>,
+    new_entries: Vec<CompileCommand>,
+) -> Vec<CompileCommand> {
+    let mut by_file: HashMap<PathBuf, CompileCommand> =
+        existing.into_iter().map(|c| (c.file.clone(), c)).collect();
     for entry in new_entries {
         by_file.insert(entry.file.clone(), entry);
     }
@@ -65,7 +82,9 @@ pub fn generate(
     feature_defines: &[String],
     extra_flags: &[String],
 ) -> Vec<CompileCommand> {
-    let abs_dir = project_dir.canonicalize().unwrap_or_else(|_| project_dir.to_path_buf());
+    let abs_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
     let prefix = format!("{}/", abs_dir.to_string_lossy());
 
     // Strip the absolute project root from a single argument token so that the
@@ -88,14 +107,17 @@ pub fn generate(
     let mut commands = Vec::new();
 
     for source in sources {
-        let Some(compiler) =
-            select_compiler(&source.lang_key, backend, detected, None)
-        else {
+        let Some(compiler) = select_compiler(&source.lang_key, backend, detected, None) else {
             continue;
         };
 
         let settings = settings_for_lang(
-            manifest, profile, &source.lang_key, include_dirs, project_dir, feature_defines,
+            manifest,
+            profile,
+            &source.lang_key,
+            include_dirs,
+            project_dir,
+            feature_defines,
         );
         let compile_bin = resolve_compile_binary(compiler, &source.lang_key);
         let obj = object_path(project_dir, profile, &source.path);
@@ -125,11 +147,130 @@ pub fn generate(
     commands
 }
 
-/// Serialise `commands` to `<project_dir>/compile_commands.json`.
+/// Incrementally update compile commands by reusing existing entries for
+/// unchanged sources and regenerating only missing, dirty, or invalidated ones.
+pub fn generate_incremental(
+    project_dir: &Path,
+    manifest: &Manifest,
+    backend: &Backend,
+    detected: &[DetectedCompiler],
+    profile: &str,
+    sources: &[SourceFile],
+    include_dirs: &[PathBuf],
+    feature_defines: &[String],
+    extra_flags: &[String],
+    dirty_sources: Option<&[PathBuf]>,
+) -> Vec<CompileCommand> {
+    let signature = generation_signature(
+        manifest,
+        backend,
+        detected,
+        profile,
+        include_dirs,
+        feature_defines,
+        extra_flags,
+    );
+    let previous_cache = load_cache(project_dir, profile);
+    let signature_changed = previous_cache
+        .as_ref()
+        .is_none_or(|cache| cache.signature != signature);
+    let existing = load(project_dir);
+
+    if existing.is_empty() || signature_changed {
+        return generate(
+            project_dir,
+            manifest,
+            backend,
+            detected,
+            profile,
+            sources,
+            include_dirs,
+            feature_defines,
+            extra_flags,
+        );
+    }
+
+    let source_paths: HashSet<PathBuf> = sources.iter().map(|src| src.path.clone()).collect();
+    let existing_files: HashSet<PathBuf> =
+        existing.iter().map(|entry| entry.file.clone()).collect();
+    let dirty: HashSet<PathBuf> = dirty_sources
+        .map(|paths| paths.iter().cloned().collect())
+        .unwrap_or_else(|| {
+            dirty_sources_from_stamps(project_dir, sources, previous_cache.as_ref())
+        });
+
+    let to_regenerate: Vec<SourceFile> = sources
+        .iter()
+        .filter(|src| dirty.contains(&src.path) || !existing_files.contains(&src.path))
+        .cloned()
+        .collect();
+
+    let retained: Vec<CompileCommand> = existing
+        .into_iter()
+        .filter(|entry| source_paths.contains(&entry.file) && !dirty.contains(&entry.file))
+        .collect();
+
+    if to_regenerate.is_empty() {
+        let mut retained = retained;
+        retained.sort_by(|a, b| a.file.cmp(&b.file));
+        return retained;
+    }
+
+    merge(
+        retained,
+        generate(
+            project_dir,
+            manifest,
+            backend,
+            detected,
+            profile,
+            &to_regenerate,
+            include_dirs,
+            feature_defines,
+            extra_flags,
+        ),
+    )
+}
+
+/// Serialise `commands` to `<project_dir>/compile_commands.json` and refresh
+/// the sidecar cache used by [`generate_incremental`].
 ///
-/// Skips the write when the on-disk content is already identical so that LSP
-/// servers (clangd, fortls, serve-d…) are not woken up unnecessarily on
+/// Skips the JSON write when the on-disk content is already identical so that
+/// LSP servers (clangd, fortls, serve-d…) are not woken up unnecessarily on
 /// incremental builds where nothing changed.
+pub fn write_incremental_cache(
+    project_dir: &Path,
+    manifest: &Manifest,
+    backend: &Backend,
+    detected: &[DetectedCompiler],
+    profile: &str,
+    sources: &[SourceFile],
+    include_dirs: &[PathBuf],
+    feature_defines: &[String],
+    extra_flags: &[String],
+) -> Result<(), FreightError> {
+    let signature = generation_signature(
+        manifest,
+        backend,
+        detected,
+        profile,
+        include_dirs,
+        feature_defines,
+        extra_flags,
+    );
+    let cache = CompileCommandsCache {
+        signature,
+        sources: sources
+            .iter()
+            .filter_map(|src| {
+                source_stamp(project_dir, &src.path).map(|stamp| (src.path.clone(), stamp))
+            })
+            .collect(),
+    };
+    save_cache(project_dir, profile, &cache)
+}
+
+/// Serialise `commands` to `<project_dir>/compile_commands.json`.
 pub fn write(project_dir: &Path, commands: &[CompileCommand]) -> Result<(), FreightError> {
     let path = project_dir.join("compile_commands.json");
     let json = serde_json::to_string_pretty(commands)
@@ -140,6 +281,85 @@ pub fn write(project_dir: &Path, commands: &[CompileCommand]) -> Result<(), Frei
             return Ok(());
         }
     }
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+fn generation_signature(
+    manifest: &Manifest,
+    backend: &Backend,
+    detected: &[DetectedCompiler],
+    profile: &str,
+    include_dirs: &[PathBuf],
+    feature_defines: &[String],
+    extra_flags: &[String],
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    profile.hash(&mut hasher);
+    backend.0.hash(&mut hasher);
+    serde_json::to_string(manifest)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    include_dirs.hash(&mut hasher);
+    feature_defines.hash(&mut hasher);
+    extra_flags.hash(&mut hasher);
+    for compiler in detected {
+        compiler.path.hash(&mut hasher);
+        compiler.template.name.hash(&mut hasher);
+        compiler.template.family.hash(&mut hasher);
+        compiler.version.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn dirty_sources_from_stamps(
+    project_dir: &Path,
+    sources: &[SourceFile],
+    cache: Option<&CompileCommandsCache>,
+) -> HashSet<PathBuf> {
+    let Some(cache) = cache else {
+        return sources.iter().map(|src| src.path.clone()).collect();
+    };
+    sources
+        .iter()
+        .filter(|src| cache.sources.get(&src.path) != source_stamp(project_dir, &src.path).as_ref())
+        .map(|src| src.path.clone())
+        .collect()
+}
+
+fn source_stamp(project_dir: &Path, source: &Path) -> Option<SourceStamp> {
+    let modified = project_dir.join(source).metadata().ok()?.modified().ok()?;
+    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some(SourceStamp {
+        mtime_secs: duration.as_secs(),
+        mtime_nanos: duration.subsec_nanos(),
+    })
+}
+
+fn cache_path(project_dir: &Path, profile: &str) -> PathBuf {
+    project_dir
+        .join("target")
+        .join(profile)
+        .join("compile_commands.cache.json")
+}
+
+fn load_cache(project_dir: &Path, profile: &str) -> Option<CompileCommandsCache> {
+    let path = cache_path(project_dir, profile);
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn save_cache(
+    project_dir: &Path,
+    profile: &str,
+    cache: &CompileCommandsCache,
+) -> Result<(), FreightError> {
+    let path = cache_path(project_dir, profile);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(cache)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     std::fs::write(path, json)?;
     Ok(())
 }
