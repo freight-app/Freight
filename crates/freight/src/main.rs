@@ -9,7 +9,7 @@ use crate::completion::{
     print_completion, print_completion_candidates, CompletionContext, CompletionShell,
 };
 
-use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test, cmd_watch};
+use crate::commands::build::{cmd_bench, cmd_build, cmd_clean, cmd_run, cmd_test, cmd_watch};
 use crate::commands::check::cmd_check;
 use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::debug::cmd_debug;
@@ -92,6 +92,17 @@ enum Commands {
         /// Enable sanitizers for this run (e.g. address,undefined). Overrides the profile setting.
         #[arg(long, value_name = "LIST", value_delimiter = ',')]
         sanitize: Vec<String>,
+    },
+    /// Build and run benchmarks in benches/
+    Bench {
+        /// Run only the bench with this name (file stem)
+        name: Option<String>,
+        /// Activate specific features (comma-separated or repeated)
+        #[arg(long, value_name = "FEATURES", value_delimiter = ',')]
+        features: Vec<String>,
+        /// Do not activate default features
+        #[arg(long)]
+        no_default_features: bool,
     },
     /// Build and run tests
     Test {
@@ -314,6 +325,13 @@ fn main() -> Result<()> {
                 &args,
                 &sanitize,
             );
+        }
+        Commands::Bench {
+            name,
+            features,
+            no_default_features,
+        } => {
+            cmd_bench(name.as_deref(), &features, !no_default_features);
         }
         Commands::Test {
             name,

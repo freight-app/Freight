@@ -21,7 +21,7 @@ Marketplace publish. Also add inlay hints and `freight.toml` schema validation.
 entire build pipeline. CLI translates events to coloured output. GUI/TUI/LSP can subscribe
 without parsing stdout. All `println!`/`eprintln!` removed from `freight-core` build paths.
 
-### B4 — Slot-based substitution
+### B4 — Slot-based substitution ✓ done
 `provides = [...]` currently only detects conflicts. Full substitution: the dep declared
 closest to the root wins; same-depth conflicts remain a hard error. Required before large
 dependency graphs with BLAS/LAPACK-style provider aliases are usable.
@@ -30,7 +30,7 @@ dependency graphs with BLAS/LAPACK-style provider aliases are usable.
 Version deps resolve via `pkg-config → conan → vcpkg → system-lib stub`. `repo = "system"|"conan"|"vcpkg"|"pkg-config"` pins a specific resolver. System PM detection (apt/brew/dnf/pacman/zypper/winget) emits install hints on failure. `conan.rs`, `system_pm.rs`, and `system_libs.rs` modules added. 24 built-in stubs in `toolchains/system-libs/` cover common OS primitives (pthread, ws2_32, libm, dl, rt, d3d11, …). Users can add stubs to `~/.freight/toolchains/system-libs/`.
 Remaining: internal system cache registry (index on first install; skip probing on rebuild).
 
-### B6 — `freight bench`
+### B6 — `freight bench` ✓ done
 `bench` profile (release + debug, no strip), run binaries matching `bench_*` or in `benches/`,
 print a timing table. Optional Criterion integration via a flag.
 

@@ -35,6 +35,12 @@ pub enum BuildEvent {
     TestRunning { name: String },
     /// Result of a single test binary.
     TestResult { name: String, passed: bool },
+    /// Linking a benchmark binary.
+    BenchLinking { name: String },
+    /// Running a benchmark binary.
+    BenchRunning { name: String },
+    /// Result of a single benchmark binary (wall-clock mean in nanoseconds).
+    BenchResult { name: String, mean_ns: u64 },
 }
 
 /// A shared, thread-safe progress sink.

@@ -154,7 +154,19 @@ impl Manifest {
             let p = match current_name.as_str() {
                 "dev"     => self.profile.dev.clone()?,
                 "release" => self.profile.release.clone()?,
-                _         => self.profile.custom.get(&current_name).cloned()?,
+                // Built-in bench default: release-speed + debug symbols, no strip.
+                // Overridable with [profile.bench] in freight.toml.
+                "bench" => self.profile.custom.get("bench").cloned()
+                    .unwrap_or(Profile {
+                        inherits:  None,
+                        opt_level: Some(3),
+                        debug:     Some(true),
+                        lto:       Some(false),
+                        strip:     Some(false),
+                        sanitize:  vec![],
+                        features:  vec![],
+                    }),
+                _       => self.profile.custom.get(&current_name).cloned()?,
             };
             let next = p.inherits.clone();
             chain.push(p);

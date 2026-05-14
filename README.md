@@ -215,6 +215,7 @@ freight init                          init freight in current directory
 freight build [--release]             build
 freight run   [--release] [-- <args>] build and run
 freight test  [<filter>]              build and run tests
+freight bench [<filter>]              build and run benchmarks in benches/
 freight watch [--release]             watch for changes and rebuild
 freight clean                         wipe target/
 freight check                         validate freight.toml

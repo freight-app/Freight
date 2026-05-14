@@ -47,6 +47,20 @@ pub struct TestSummary {
     pub total: usize,
 }
 
+/// Wall-clock timing for one benchmark binary.
+pub struct BenchResult {
+    pub name: String,
+    /// Mean execution time in nanoseconds across all runs.
+    pub mean_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+    pub runs: usize,
+}
+
+pub struct BenchSummary {
+    pub results: Vec<BenchResult>,
+}
+
 struct ProjectContext {
     project_dir: PathBuf,
     manifest: Manifest,
@@ -577,6 +591,187 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     }
 
     Ok(TestSummary { passed, failed, total: passed + failed })
+}
+
+// ── Bench pipeline ────────────────────────────────────────────────────────────
+
+/// Benchmark every member of a workspace.
+pub fn bench_workspace_with(filter: Option<&str>, progress: &Progress) -> Result<BenchSummary, FreightError> {
+    let cwd = std::env::current_dir()?;
+    let ws_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    let ws = load_workspace_manifest(&ws_dir)
+        .ok_or_else(|| FreightError::ManifestParse("not a workspace root".into()))?;
+
+    let mut all: Vec<BenchResult> = Vec::new();
+    for member in &ws.members {
+        let member_dir = ws_dir.join(member.trim_end_matches('/'));
+        let s = bench_project_at(&member_dir, "bench", filter, &[], true, progress)?;
+        all.extend(s.results);
+    }
+    Ok(BenchSummary { results: all })
+}
+
+/// Build and run benchmark binaries found in `benches/`.
+pub fn bench_project(filter: Option<&str>, features: &[String], use_defaults: bool) -> Result<BenchSummary, FreightError> {
+    bench_project_with(filter, features, use_defaults, &silent())
+}
+
+/// Like [`bench_project`] but routes progress through `progress`.
+pub fn bench_project_with(filter: Option<&str>, features: &[String], use_defaults: bool, progress: &Progress) -> Result<BenchSummary, FreightError> {
+    let cwd = std::env::current_dir()?;
+    let project_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    bench_project_at(&project_dir, "bench", filter, features, use_defaults, progress)
+}
+
+/// Build and run benchmark binaries for the project at `project_dir`.
+///
+/// Benchmarks are discovered in the `benches/` directory — any compilable
+/// source file there is treated as a standalone bench binary with its own
+/// `main()`. Each binary is run [`BENCH_RUNS`] times and the wall-clock min,
+/// max, and mean are reported. Pass a filter to run only benches whose file
+/// stem matches exactly.
+pub fn bench_project_at(
+    project_dir: &Path,
+    profile: &str,
+    filter: Option<&str>,
+    features: &[String],
+    use_defaults: bool,
+    progress: &Progress,
+) -> Result<BenchSummary, FreightError> {
+    let mut ctx = load_project_at(project_dir, profile)?;
+    inject_option_handler_flags(&mut ctx)?;
+    let ProjectContext { project_dir, manifest, effective_backend, templates, detected, found } = &ctx;
+    let project_dir = project_dir.as_path();
+
+    let profile_features_buf: Vec<String> = manifest.build_settings_for(profile)
+        .sanitize.iter().map(|s| format!("sanitize_{s}")).collect();
+    let all_requested: Vec<String> = features.iter().chain(profile_features_buf.iter()).cloned().collect();
+
+    let resolution = features::resolve_features(&manifest.features, &all_requested, use_defaults)?;
+    let feature_defines = features::to_defines(&resolution.active);
+    let activated_deps = resolution.activated_deps;
+
+    ensure_git_deps_fetched(project_dir, manifest, progress)?;
+
+    let resolved_deps = resolve_dep_graph(project_dir, manifest, false, &activated_deps)?;
+    let to_drop = check_slot_conflicts(&resolved_deps, manifest)?;
+    let resolved_deps: Vec<ResolvedDep> = resolved_deps.into_iter()
+        .filter(|d| !to_drop.contains(&d.name))
+        .collect();
+    let built = build_resolved_deps(manifest, project_dir, effective_backend, profile, templates, detected, &resolved_deps, progress)?;
+    let (foreign_built, _pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+
+    let mut all_libs = built.libs.clone();
+    let mut all_dep_includes = built.include_dirs.clone();
+    let mut all_raw_link_flags: Vec<String> = Vec::new();
+    for f in foreign_built {
+        all_libs.extend(f.libs);
+        all_dep_includes.extend(f.include_dirs);
+        all_raw_link_flags.extend(f.raw_link_flags);
+    }
+
+    let mut include_dirs = found.include_dirs.clone();
+    include_dirs.extend(all_dep_includes.iter().cloned());
+
+    let compile_result = build_sources(project_dir, manifest, effective_backend, profile, &found.sources, &include_dirs, detected, &feature_defines, &[], progress)?;
+
+    // Exclude [[bin]] entry-point objects (contain a main()) from bench linking.
+    let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
+        .map(|b| object_path(project_dir, profile, Path::new(&b.src)))
+        .collect();
+    let lib_objects: Vec<PathBuf> = compile_result.objects.iter()
+        .filter(|o| !bin_obj_paths.contains(*o))
+        .cloned()
+        .collect();
+
+    let bench_dir = project_dir.join("benches");
+    if !bench_dir.is_dir() {
+        return Ok(BenchSummary { results: vec![] });
+    }
+
+    let ext_map = discover::build_ext_map(manifest, templates);
+    let mut bench_srcs: Vec<SourceFile> = Vec::new();
+
+    for entry in WalkDir::new(&bench_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path();
+        let ext = match path.extension().and_then(|e| e.to_str()) {
+            Some(e) => format!(".{e}"),
+            None => continue,
+        };
+        if let Some(lang_key) = ext_map.get(ext.as_str()) {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+            if filter.map_or(true, |f| f == stem) {
+                let rel = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
+                bench_srcs.push(SourceFile { path: rel, lang_key: lang_key.clone() });
+            }
+        }
+    }
+    bench_srcs.sort_by(|a, b| a.path.cmp(&b.path));
+
+    if bench_srcs.is_empty() {
+        return Ok(BenchSummary { results: vec![] });
+    }
+
+    let bench_compile = compile_sources(
+        project_dir, manifest, effective_backend, profile, &bench_srcs, &include_dirs, detected, &feature_defines, &[], progress,
+    )?;
+
+    let out_dir = project_dir.join("target").join(profile).join("benches");
+    std::fs::create_dir_all(&out_dir)?;
+
+    const BENCH_RUNS: usize = 5;
+    let mut results = Vec::new();
+
+    for (src, bench_obj) in bench_srcs.iter().zip(bench_compile.objects.iter()) {
+        let stem = src.path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+        let bench_bin = out_dir.join(stem);
+
+        progress(BuildEvent::BenchLinking { name: stem.to_string() });
+
+        let all_objs: Vec<PathBuf> = std::iter::once(bench_obj.clone())
+            .chain(lib_objects.iter().cloned())
+            .collect();
+        link_test_binary(
+            &all_objs, &bench_bin, manifest, profile,
+            detected, templates, &all_libs, &all_raw_link_flags,
+        )?;
+
+        progress(BuildEvent::BenchRunning { name: stem.to_string() });
+
+        let mut samples_ns: Vec<u64> = Vec::with_capacity(BENCH_RUNS);
+        for _ in 0..BENCH_RUNS {
+            let t0 = std::time::Instant::now();
+            let ok = Command::new(&bench_bin).status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let elapsed = t0.elapsed().as_nanos() as u64;
+            if ok {
+                samples_ns.push(elapsed);
+            }
+        }
+
+        let runs = samples_ns.len();
+        let (mean_ns, min_ns, max_ns) = if runs == 0 {
+            (0, 0, 0)
+        } else {
+            let sum: u64 = samples_ns.iter().sum();
+            let min = *samples_ns.iter().min().unwrap();
+            let max = *samples_ns.iter().max().unwrap();
+            (sum / runs as u64, min, max)
+        };
+
+        progress(BuildEvent::BenchResult { name: stem.to_string(), mean_ns });
+        results.push(BenchResult { name: stem.to_string(), mean_ns, min_ns, max_ns, runs });
+    }
+
+    Ok(BenchSummary { results })
 }
 
 // ── Git dep helpers ───────────────────────────────────────────────────────────

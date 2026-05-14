@@ -7,6 +7,7 @@ use std::time::Duration;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use freight_core::build::{
+    bench_project_with, bench_workspace_with,
     build_project_with, build_workspace_with, clean_project, clean_workspace,
     test_project_with, test_workspace_with,
 };
@@ -67,6 +68,15 @@ fn make_progress() -> Progress {
             } else {
                 println!("{:>12} {} ... FAILED", "test".bold().red(), name);
             }
+        }
+        BuildEvent::BenchLinking { name } => {
+            print_status("Linking", &name);
+        }
+        BuildEvent::BenchRunning { name } => {
+            print_status("Benchmarking", &name);
+        }
+        BuildEvent::BenchResult { name, mean_ns } => {
+            println!("{:>12} {} … {}", "bench".bold().cyan(), name, fmt_duration(mean_ns));
         }
     })
 }
@@ -338,5 +348,69 @@ pub fn cmd_test(filter: Option<&str>, release: bool, features: &[String], use_de
             }
         }
         Err(e) => { println!(); print_error(&e.to_string()); }
+    }
+}
+
+pub fn cmd_bench(filter: Option<&str>, features: &[String], use_defaults: bool) {
+    let progress = make_progress();
+    if at_workspace_root() {
+        match bench_workspace_with(filter, &progress) {
+            Ok(summary) => {
+                println!();
+                if summary.results.is_empty() {
+                    println!("no bench files found in any workspace member");
+                    return;
+                }
+                print_bench_table(&summary.results);
+            }
+            Err(e) => { println!(); print_error(&e.to_string()); }
+        }
+        return;
+    }
+
+    match bench_project_with(filter, features, use_defaults, &progress) {
+        Ok(summary) => {
+            println!();
+            if summary.results.is_empty() {
+                println!("no bench files found under benches/");
+                return;
+            }
+            print_bench_table(&summary.results);
+        }
+        Err(e) => { println!(); print_error(&e.to_string()); }
+    }
+}
+
+fn print_bench_table(results: &[freight_core::build::BenchResult]) {
+    use owo_colors::OwoColorize;
+    let name_width = results.iter().map(|r| r.name.len()).max().unwrap_or(10).max(10);
+    println!("{:>12}  {:<width$}  {:>12}  {:>12}  {:>12}  {}",
+        "bench".bold().cyan(),
+        "name", "mean", "min", "max", "runs",
+        width = name_width,
+    );
+    println!("{}", "─".repeat(name_width + 52));
+    for r in results {
+        println!("{:>12}  {:<width$}  {:>12}  {:>12}  {:>12}  {}",
+            "",
+            r.name,
+            fmt_duration(r.mean_ns),
+            fmt_duration(r.min_ns),
+            fmt_duration(r.max_ns),
+            r.runs,
+            width = name_width,
+        );
+    }
+}
+
+fn fmt_duration(ns: u64) -> String {
+    if ns >= 1_000_000_000 {
+        format!("{:.3} s ", ns as f64 / 1_000_000_000.0)
+    } else if ns >= 1_000_000 {
+        format!("{:.3} ms", ns as f64 / 1_000_000.0)
+    } else if ns >= 1_000 {
+        format!("{:.3} µs", ns as f64 / 1_000.0)
+    } else {
+        format!("{ns} ns")
     }
 }

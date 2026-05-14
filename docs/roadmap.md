@@ -47,6 +47,14 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Toolset roles — `output_obj`/`output_bin` split, `lto_link` flag category, `system_lib` format string
 - [x] MSVC support — `/Fo`, `/Fe`, `/GL` + `/LTCG`, `{name}.lib` system libs, `/showIncludes` dep tracking
 
+### Benchmarks ✓ COMPLETE
+- [x] Built-in `bench` profile — `opt-level = 3`, `debug = true`, `strip = false`, `lto = false`; overridable via `[profile.bench]` in `freight.toml`
+- [x] `freight bench [<filter>]` — build and run all source files under `benches/` as standalone bench binaries
+- [x] Each bench binary is run 5 times; per-bench min / mean / max wall-clock table printed to stdout
+- [x] Workspace support — `freight bench` at workspace root runs benches for every member
+- [x] `BenchLinking`, `BenchRunning`, `BenchResult` events added to `BuildEvent` for GUI/TUI frontends
+- [x] `bench_project`, `bench_project_with`, `bench_project_at`, `bench_workspace_with` public API in `freight-core`
+
 ### Dependencies ✓ COMPLETE
 - [x] Path dependency resolution — compile dep, archive to `.a`, link into project
 - [x] System dependency linking — `{ system = "..." }` → `-l{name}` (or `{name}.lib` for MSVC)
@@ -60,6 +68,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `.deps/<name>/` folder convention for version-pinned deps
 - [x] Transitive dep checks — errors if a dep's dep is not present, does not fetch recursively
 - [x] Dep include dirs accumulated in topo order for multi-level dep builds
+- [x] `provides = [...]` slot-based substitution — shallower dep wins; same-depth conflict = hard `SlotConflict` error; root project (depth 0) always wins; dropped deps filtered before compilation
 
 ### Foreign Build System Integration ✓ COMPLETE
 - [x] Auto-detect foreign build system from dep directory — CMake > Meson > Autotools > SCons > Make
