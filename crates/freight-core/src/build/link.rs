@@ -87,7 +87,7 @@ pub fn link_targets(
                 }
                 outputs.push(out);
             }
-            LibType::HeaderOnly => {}
+            LibType::HeaderOnly | LibType::System => {}
         }
     }
 

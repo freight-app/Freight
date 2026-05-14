@@ -138,7 +138,7 @@ pub fn install_project(project_dir: &Path, opts: &InstallOptions) -> Result<Inst
                     &mut items,
                 )?;
             }
-            LibType::HeaderOnly => {}
+            LibType::HeaderOnly | LibType::System => {}
         }
 
         // ── Public headers ────────────────────────────────────────────────────
