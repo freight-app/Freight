@@ -1,7 +1,7 @@
 // Shared C++ language parameters — identical across all C++ compilers.
 // Compiler-specific things (modules, pch, sanitizers) stay in the compiler file.
 
-extensions = [".cpp", ".cppm", ".cc", ".cxx", ".c++"];
+extensions = [".cpp", ".cppm", ".ixx", ".mpp", ".cc", ".cxx", ".c++"];
 
 defaults["std"] = "c++17";
 
@@ -13,5 +13,5 @@ linking["cpp"] = #{
     abi:        "c++",
     compatible: ["c", "fortran"],
     linker:     "",
-    extensions: [".cpp", ".cppm", ".cc", ".cxx", ".c++"],
+    extensions: [".cpp", ".cppm", ".ixx", ".mpp", ".cc", ".cxx", ".c++"],
 };
