@@ -5,7 +5,7 @@ use regex::Regex;
 
 use super::cache::{freight_home, ToolchainCache};
 use super::script::quick_kind;
-use super::template::CompilerTemplate;
+use super::template::{from_rhai_file_cached, CompilerTemplate};
 use crate::error::FreightError;
 
 /// A compiler found on this machine.
@@ -115,7 +115,7 @@ pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
         }
         let Ok(src) = std::fs::read_to_string(path) else { continue };
         if quick_kind(&src) != "compiler" { continue; }
-        match CompilerTemplate::from_rhai_file(path) {
+        match from_rhai_file_cached(path, &src) {
             Ok(t) => templates.push(t),
             Err(e) => eprintln!("warn: skipping {:?}: {e}", path.file_name().unwrap_or_default()),
         }

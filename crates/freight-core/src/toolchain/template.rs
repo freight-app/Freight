@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use rhai::{AST, Engine, FnPtr};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::FreightError;
+use super::cache::freight_home;
 use super::script;
 
 // ── Raw deserialization structs (map directly to TOML layout) ─────────────────
@@ -132,6 +135,120 @@ struct RawLinking {
     compile_binary: Option<String>,
 }
 
+
+// ── Persistent Rhai template cache ───────────────────────────────────────────
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct TemplateCache {
+    entries: HashMap<String, CompilerTemplate>,
+}
+
+/// Parse a compiler template from a Rhai file, using `~/.freight/template-cache.msgpack`
+/// for templates that do not declare runtime option handlers.
+///
+/// The cache key is derived from the file contents and the contents of directly
+/// included base files. Handler-bearing templates are evaluated every time so
+/// their Rhai `FnPtr` callbacks remain callable at build time.
+pub fn from_rhai_file_cached(path: &Path, src: &str) -> Result<CompilerTemplate, FreightError> {
+    if has_runtime_handlers(src) {
+        return CompilerTemplate::from_rhai_file(path);
+    }
+
+    let key = template_cache_key(path, src)?;
+    let Some(cache_path) = template_cache_path() else {
+        return CompilerTemplate::from_rhai_file(path);
+    };
+
+    let mut cache = load_template_cache(&cache_path);
+    if let Some(template) = cache.entries.get(&key).cloned() {
+        return Ok(template);
+    }
+
+    let template = CompilerTemplate::from_rhai_file(path)?;
+    if template.compiler_option_handlers.is_empty() && template.language_option_handlers.is_empty() {
+        cache.entries.insert(key, template.clone());
+        save_template_cache(&cache_path, &cache);
+    }
+    Ok(template)
+}
+
+fn template_cache_path() -> Option<PathBuf> {
+    Some(freight_home()?.join("template-cache.msgpack"))
+}
+
+fn load_template_cache(path: &Path) -> TemplateCache {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| rmp_serde::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn save_template_cache(path: &Path, cache: &TemplateCache) {
+    let Some(parent) = path.parent() else { return };
+    if std::fs::create_dir_all(parent).is_err() { return; }
+    let Ok(bytes) = rmp_serde::to_vec_named(cache) else { return };
+    let tmp = path.with_extension("msgpack.tmp");
+    if std::fs::write(&tmp, bytes).is_ok() {
+        let _ = std::fs::rename(tmp, path);
+    }
+}
+
+fn template_cache_key(path: &Path, src: &str) -> Result<String, FreightError> {
+    let file_hash = sha256_hex(src.as_bytes());
+    let base_hash = included_base_hash(path, src)?;
+    Ok(format!("v1:{file_hash}:{base_hash}"))
+}
+
+fn included_base_hash(path: &Path, src: &str) -> Result<String, FreightError> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut included = include_paths(src)
+        .into_iter()
+        .map(|include| {
+            let p = dir.join(&include);
+            if p.extension().is_some() { p } else { p.with_extension("rhai") }
+        })
+        .collect::<Vec<_>>();
+    included.sort();
+
+    let mut hasher = Sha256::new();
+    for p in included {
+        hasher.update(p.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        let bytes = std::fs::read(&p).map_err(FreightError::Io)?;
+        hasher.update(bytes);
+        hasher.update([0xff]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn include_paths(src: &str) -> Vec<String> {
+    src.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || !trimmed.starts_with("include") { return None; }
+            let rest = trimmed.trim_start_matches("include").trim_start();
+            let rest = rest.strip_prefix('(').unwrap_or(rest).trim_start();
+            quoted_prefix(rest)
+        })
+        .collect()
+}
+
+fn quoted_prefix(input: &str) -> Option<String> {
+    let rest = input.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn has_runtime_handlers(src: &str) -> bool {
+    src.contains("compiler_option") || src.contains("language_option")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// ABI and linking compatibility declared by a compiler template.
@@ -140,7 +257,7 @@ struct RawLinking {
 /// `[language.X]` sections of `freight.toml` (e.g. `"cpp"`, `"cuda"`). Each entry
 /// describes what ABI the compiler's output conforms to and which other ABIs it can
 /// be linked against.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkingInfo {
     /// The ABI label this compiler's output conforms to (e.g. `"c++"`, `"cuda"`).
     pub abi: String,
@@ -214,7 +331,7 @@ impl Default for BuildSettings {
 }
 
 /// Module compilation strategy differs between GCC and Clang.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ModuleStyle {
     /// GCC: single step — produces both `.pcm` and `.o`.
     Gcc {
@@ -235,7 +352,7 @@ pub enum ModuleStyle {
     Unsupported,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructureFlags {
     pub include_dir: String,
     pub define: String,
@@ -256,14 +373,14 @@ pub struct StructureFlags {
     pub sysroot: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PassthroughConfig {
     pub enabled: bool,
     pub prefix: String,
 }
 
 /// Precompiled header (PCH) configuration for a compiler template.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PchConfig {
     /// Flag(s) to compile a header as a PCH, e.g. `"-x c++-header"`.
     pub compile: String,
@@ -275,7 +392,7 @@ pub struct PchConfig {
 }
 
 /// A fully-parsed compiler template loaded from a `.toml` file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompilerTemplate {
     pub name: String,
     /// Compiler family label used for same-family selection when `backend = "auto"`.
@@ -334,12 +451,16 @@ pub struct CompilerTemplate {
     // Present only when the Rhai script registered `compiler_option` or
     // `language_option` callbacks. `None` when loaded from a TOML template.
     /// Rhai engine used to call stored FnPtrs (kept alive so closures remain valid).
+    #[serde(skip)]
     pub(super) handler_engine: Option<Arc<Engine>>,
     /// AST of the script that declared the handlers (needed by Rhai closure calls).
+    #[serde(skip)]
     pub(super) handler_ast: Option<AST>,
     /// Handlers registered via `compiler_option(name, fn)` in the Rhai script.
+    #[serde(skip)]
     pub compiler_option_handlers: HashMap<String, FnPtr>,
     /// Handlers registered via `language_option(name, fn)` in the Rhai script.
+    #[serde(skip)]
     pub language_option_handlers: HashMap<String, FnPtr>,
 
     flags_opt: HashMap<String, String>,
@@ -1170,6 +1291,25 @@ mod tests {
         CompilerTemplate::from_rhai(TCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
+    }
+
+    #[test]
+    fn template_cache_round_trips_as_messagepack() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("template-cache.msgpack");
+        let mut cache = TemplateCache::default();
+        cache.entries.insert("gcc".to_string(), gcc());
+
+        save_template_cache(&path, &cache);
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_ne!(bytes.first().copied(), Some(b'{'), "cache must not be JSON text");
+        assert!(serde_json::from_slice::<TemplateCache>(&bytes).is_err());
+
+        let loaded = load_template_cache(&path);
+        let gcc = loaded.entries.get("gcc").expect("cached template should reload");
+        assert_eq!(gcc.name, "g++");
+        assert_eq!(gcc.binary, "g++");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::event::{BuildEvent, Progress};
 use crate::manifest::types::{Dependency, LibType, Manifest};
 use crate::toolchain::template::BuildSettings;
 use crate::toolchain::{CompilerTemplate, DetectedCompiler};
+use crate::vendor::parse_triple;
 
 use super::compile::object_path;
 
@@ -38,9 +39,10 @@ pub fn link_targets(
     progress: &Progress,
 ) -> Result<LinkResult, FreightError> {
     let mut outputs: Vec<PathBuf> = Vec::new();
+    let target_os = link_target_os(manifest);
 
     for bin in &manifest.bins {
-        let out = project_dir.join("target").join(profile).join(&bin.name);
+        let out = project_dir.join("target").join(profile).join(executable_name(&bin.name, &target_os));
         let linker = select_linker(manifest, detected, templates)
             .ok_or_else(|| FreightError::CompilerNotFound("no suitable linker found".into()))?;
 
@@ -74,7 +76,7 @@ pub fn link_targets(
                 outputs.push(out);
             }
             LibType::Shared => {
-                let lib_name = shared_lib_name(&manifest.package.name);
+                let lib_name = shared_lib_name(&manifest.package.name, &target_os);
                 let out = project_dir.join("target").join(profile).join(&lib_name);
                 let linker = select_linker(manifest, detected, templates)
                     .ok_or_else(|| FreightError::CompilerNotFound("no suitable linker found".into()))?;
@@ -180,12 +182,27 @@ fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<(), Frei
     run_cmd(cmd, out)
 }
 
-fn shared_lib_name(name: &str) -> String {
-    match std::env::consts::OS {
+fn shared_lib_name(name: &str, target_os: &str) -> String {
+    match target_os {
         "macos" => format!("lib{name}.dylib"),
         "windows" => format!("{name}.dll"),
         _ => format!("lib{name}.so"),
     }
+}
+
+fn executable_name(name: &str, target_os: &str) -> String {
+    if target_os == "windows" && !name.ends_with(".exe") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+fn link_target_os(manifest: &Manifest) -> String {
+    manifest.compiler.target.as_deref()
+        .map(parse_triple)
+        .map(|(_, os)| os)
+        .unwrap_or_else(|| std::env::consts::OS.to_string())
 }
 
 fn link_shared(
@@ -197,7 +214,8 @@ fn link_shared(
     dep_libs: &[PathBuf],
     extra_link_flags: &[String],
 ) -> Result<(), FreightError> {
-    let shared_flag = if std::env::consts::OS == "macos" { "-dynamiclib" } else { "-shared" };
+    let target_os = link_target_os(manifest);
+    let shared_flag = if target_os == "macos" { "-dynamiclib" } else { "-shared" };
     let mut cmd = Command::new(&linker.path);
     cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
     cmd.arg(shared_flag);

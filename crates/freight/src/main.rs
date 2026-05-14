@@ -211,7 +211,7 @@ enum Commands {
         #[arg(long, value_name = "TRIPLE")]
         target: Option<String>,
     },
-    /// Build and pack outputs into a redistributable tar.gz archive
+    /// Build and pack outputs into a redistributable archive (.tar.gz, or .zip for Windows targets)
     Package {
         /// Package the release build (default: true)
         #[arg(long, default_value_t = true)]
