@@ -10,19 +10,15 @@ toolset["cc"]  = _cc;
 toolset["cxx"] = _cxx;
 toolset["ld"]  = _cxx;
 
-language_option("modules", "true", |ctx| {
-    set_module("style",         "clang");
-    set_module("precompile",    "--precompile");
-    set_module("import_module", "-fmodule-file={name}={pcm_path}");
-    set_module("header_unit",   "-x c++-header");
-});
+modules["style"]         = "clang";
+modules["precompile"]    = "--precompile";
+modules["import_module"] = "-fmodule-file={name}={pcm_path}";
+modules["header_unit"]   = "-x c++-header";
 
-language_option("pch", |ctx| {
-    set_pch("compile",     "-x c++-header");
-    set_pch("use",         "-include-pch {pch_path}");
-    set_pch("extension",   ".pch");
-    set_pch("clangd_flag", "-include {header_path}");
-});
+pch["compile"]      = "-x c++-header";
+pch["use"]          = "-include-pch {pch_path}";
+pch["extension"]    = ".pch";
+pch["clangd_flag"]  = "-include {header_path}";
 
 linking["objcpp"] = #{
     abi:        "c++",
