@@ -958,7 +958,7 @@ fn param_table(params: &[(&str, &str)], width: usize) -> Vec<Line<'static>> {
 }
 
 fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<Line<'static>> {
-    use freight_doc::extract::TagKind;
+    use freight_doc::extract::{DocKind, TagKind};
     const WIDTH: usize = 72;
 
     let bdr  = Style::default().fg(Color::DarkGray);
@@ -987,13 +987,25 @@ fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<Line<'static
             Span::styled(trail, bdr),
         ]));
 
-        // ── signature ──
-        if !item.signature.is_empty() {
-            lines.push(Line::raw(""));
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(item.signature.clone(), sig_sty),
-            ]));
+        // ── signature / declaration ──
+        // Functions/subroutines: show the full signature (return type + params).
+        // Everything else (struct, enum, class, …): the captured first line ends with `{`
+        // which looks truncated, so show a clean "kind name" instead.
+        {
+            let decl = match &item.kind {
+                DocKind::Function | DocKind::Subroutine => {
+                    if item.signature.is_empty() { format!("{} {}", item.kind.label(), item.name) }
+                    else { item.signature.clone() }
+                }
+                _ => {
+                    if item.name.is_empty() { item.signature.clone() }
+                    else { format!("{} {}", item.kind.label(), item.name) }
+                }
+            };
+            if !decl.is_empty() {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(vec![Span::raw("  "), Span::styled(decl, sig_sty)]));
+            }
         }
 
         // ── brief ──
