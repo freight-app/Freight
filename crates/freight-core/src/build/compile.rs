@@ -6,12 +6,13 @@ use std::time::SystemTime;
 
 use rayon::prelude::*;
 
+use super::diagnostics::format_compiler_diagnostics;
+use super::discover::SourceFile;
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
 use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::template::BuildSettings;
 use crate::toolchain::DetectedCompiler;
-use super::discover::SourceFile;
 
 // ── Compiler cache wrapper (ccache / sccache) ─────────────────────────────────
 
@@ -338,7 +339,7 @@ pub(crate) fn compile_one(
         };
         return Err(FreightError::CompileFailed(
             source_abs.to_string_lossy().into_owned(),
-            diag.trim().to_owned(),
+            format_compiler_diagnostics(source_abs, &diag),
         ));
     }
 

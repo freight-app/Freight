@@ -1,5 +1,6 @@
 pub mod compile;
 pub mod compile_commands;
+pub(crate) mod diagnostics;
 pub mod deps;
 pub mod discover;
 pub mod features;
