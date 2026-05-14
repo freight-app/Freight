@@ -40,9 +40,8 @@ linking["d"] = #{
     extensions: [".d"],
 };
 
-compiler_option("dip1000", |ctx| {
+compiler_option("dip1000", "false", |ctx| {
     if ctx.value == "true" { add_flag("-preview=dip1000"); }
-    ""
 });
 
 fn check() { find_tool("ldc2") != () }

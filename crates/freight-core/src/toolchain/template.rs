@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-use rhai::{AST, Engine, FnPtr};
+use rhai::{AST, Engine};
 use serde::{Deserialize, Serialize};
 
 use crate::error::FreightError;
 use super::cache::freight_home;
-use super::script;
+use super::script::{self, OptionHandler};
 
 // ── Raw deserialization structs (map directly to TOML layout) ─────────────────
 
@@ -456,12 +456,12 @@ pub struct CompilerTemplate {
     /// AST of the script that declared the handlers (needed by Rhai closure calls).
     #[serde(skip)]
     pub(super) handler_ast: Option<AST>,
-    /// Handlers registered via `compiler_option(name, fn)` in the Rhai script.
+    /// Handlers registered via `compiler_option(name, default, fn)` in the Rhai script.
     #[serde(skip)]
-    pub compiler_option_handlers: HashMap<String, FnPtr>,
-    /// Handlers registered via `language_option(name, fn)` in the Rhai script.
+    pub(super) compiler_option_handlers: HashMap<String, OptionHandler>,
+    /// Handlers registered via `language_option(name, default, fn)` in the Rhai script.
     #[serde(skip)]
-    pub language_option_handlers: HashMap<String, FnPtr>,
+    pub(super) language_option_handlers: HashMap<String, OptionHandler>,
 
     flags_opt: HashMap<String, String>,
     flags_debug: HashMap<String, String>,
@@ -603,8 +603,8 @@ impl CompilerTemplate {
         def: script::ToolchainDef,
         handler_engine: Option<Arc<Engine>>,
         handler_ast: Option<AST>,
-        compiler_option_handlers: HashMap<String, FnPtr>,
-        language_option_handlers: HashMap<String, FnPtr>,
+        compiler_option_handlers: HashMap<String, OptionHandler>,
+        language_option_handlers: HashMap<String, OptionHandler>,
     ) -> Result<Self, FreightError> {
         // Primary binary: prefer explicit toolset roles, fall back to set_binary()
         let binary = ["ld", "cxx", "cc"]
@@ -1291,6 +1291,47 @@ mod tests {
         CompilerTemplate::from_rhai(TCC_RHAI).unwrap();
         CompilerTemplate::from_rhai(OPENCL_RHAI).unwrap();
         CompilerTemplate::from_rhai(MSVC_RHAI).unwrap();
+    }
+
+    #[test]
+    fn option_handlers_use_registered_defaults() {
+        let t = CompilerTemplate::from_rhai(r#"
+            name = "toy";
+            binary = "toycc";
+            version_arg = "--version";
+            version_regex = "(.*)";
+            extensions = [".toy"];
+
+            compiler_option("mode", "safe", |ctx| {
+                add_flag("--mode=" + ctx.value);
+            });
+
+            compiler_option("feature", |ctx| {
+                add_flag("--feature=" + ctx.value);
+            });
+
+            language_option("dialect", "portable", |ctx| {
+                add_flag("--dialect=" + ctx.value);
+            });
+        "#).unwrap();
+
+        let empty = HashMap::new();
+        assert_eq!(
+            t.run_compiler_option_handlers(&empty, "1.0", "x86_64", "linux").unwrap(),
+            vec!["--mode=safe".to_string()],
+            "the defaulted handler runs, but the two-argument handler without a value does not"
+        );
+        assert_eq!(
+            t.run_language_option_handlers(&empty, "1.0", "x86_64", "linux").unwrap(),
+            vec!["--dialect=portable".to_string()]
+        );
+
+        let mut overridden = HashMap::new();
+        overridden.insert("mode".to_string(), "fast".to_string());
+        overridden.insert("feature".to_string(), "on".to_string());
+        let mut flags = t.run_compiler_option_handlers(&overridden, "1.0", "x86_64", "linux").unwrap();
+        flags.sort();
+        assert_eq!(flags, vec!["--feature=on".to_string(), "--mode=fast".to_string()]);
     }
 
     #[test]

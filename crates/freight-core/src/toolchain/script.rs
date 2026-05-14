@@ -13,8 +13,14 @@ pub(super) struct EvalResult {
     pub def: ToolchainDef,
     pub engine: Engine,
     pub ast: AST,
-    pub compiler_option_handlers: HashMap<String, FnPtr>,
-    pub language_option_handlers: HashMap<String, FnPtr>,
+    pub compiler_option_handlers: HashMap<String, OptionHandler>,
+    pub language_option_handlers: HashMap<String, OptionHandler>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct OptionHandler {
+    pub default_value: Option<String>,
+    pub callback: FnPtr,
 }
 
 // ── Builder structs ───────────────────────────────────────────────────────────
@@ -82,10 +88,10 @@ pub(super) struct LinkingParams {
 
 thread_local! {
     static CURRENT: RefCell<Option<ToolchainDef>> = RefCell::new(None);
-    /// Collected `compiler_option(name, fn)` registrations from the current script eval.
-    static COLLECTED_COMP_OPTS: RefCell<HashMap<String, FnPtr>> = RefCell::new(HashMap::new());
-    /// Collected `language_option(name, fn)` registrations from the current script eval.
-    static COLLECTED_LANG_OPTS: RefCell<HashMap<String, FnPtr>> = RefCell::new(HashMap::new());
+    /// Collected `compiler_option(name, default, fn)` registrations from the current script eval.
+    static COLLECTED_COMP_OPTS: RefCell<HashMap<String, OptionHandler>> = RefCell::new(HashMap::new());
+    /// Collected `language_option(name, default, fn)` registrations from the current script eval.
+    static COLLECTED_LANG_OPTS: RefCell<HashMap<String, OptionHandler>> = RefCell::new(HashMap::new());
     /// Flags accumulated by `add_flag(s)` calls inside option handlers at build time.
     static PENDING_FLAGS: RefCell<Vec<String>> = RefCell::new(Vec::new());
 }
@@ -319,14 +325,14 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
 /// - `ctx.os`      — effective target OS
 /// - `ctx.name`    — template name (e.g. `"clang++"`)
 ///
-/// A handler returns `""` on success or a non-empty string as an error message.
+/// A handler returns `()`/nothing on success or a non-empty string as an error message.
 /// Flags injected via the global `add_flag()` function are collected and returned.
 ///
 /// Returns `Err(FreightError::OptionError)` if any handler returns a non-empty string.
 pub(super) fn run_handlers(
     engine: &Engine,
     ast: &AST,
-    handlers: &HashMap<String, FnPtr>,
+    handlers: &HashMap<String, OptionHandler>,
     options: &HashMap<String, String>,
     version: &str,
     arch: &str,
@@ -334,18 +340,24 @@ pub(super) fn run_handlers(
     name: &str,
 ) -> Result<Vec<String>, crate::error::FreightError> {
     let mut all_flags = Vec::new();
-    for (opt_name, value) in options {
-        let Some(handler) = handlers.get(opt_name) else { continue };
+    for (opt_name, handler) in handlers {
+        let Some(value) = options
+            .get(opt_name)
+            .cloned()
+            .or_else(|| handler.default_value.clone())
+        else {
+            continue;
+        };
 
         let mut ctx = rhai::Map::new();
-        ctx.insert("value".into(),   rhai::Dynamic::from(value.clone()));
+        ctx.insert("value".into(),   rhai::Dynamic::from(value));
         ctx.insert("version".into(), rhai::Dynamic::from(version.to_string()));
         ctx.insert("arch".into(),    rhai::Dynamic::from(arch.to_string()));
         ctx.insert("os".into(),      rhai::Dynamic::from(os.to_string()));
         ctx.insert("name".into(),    rhai::Dynamic::from(name.to_string()));
 
         PENDING_FLAGS.with(|f| f.borrow_mut().clear());
-        let result = handler.call::<rhai::Dynamic>(engine, ast, (rhai::Dynamic::from(ctx),));
+        let result = handler.callback.call::<rhai::Dynamic>(engine, ast, (rhai::Dynamic::from(ctx),));
         let collected: Vec<String> = PENDING_FLAGS.with(|f| f.borrow().clone());
         all_flags.extend(collected);
 
@@ -511,10 +523,24 @@ fn make_engine(base_dir: Option<PathBuf>) -> Engine {
     // Called in template scripts to declare per-option callbacks. Handlers are
     // stored in thread-locals during eval, then moved into CompilerTemplate.
     e.register_fn("compiler_option", |name: String, handler: FnPtr| {
-        COLLECTED_COMP_OPTS.with(|c| { c.borrow_mut().insert(name, handler); });
+        COLLECTED_COMP_OPTS.with(|c| {
+            c.borrow_mut().insert(name, OptionHandler { default_value: None, callback: handler });
+        });
+    });
+    e.register_fn("compiler_option", |name: String, default_value: String, handler: FnPtr| {
+        COLLECTED_COMP_OPTS.with(|c| {
+            c.borrow_mut().insert(name, OptionHandler { default_value: Some(default_value), callback: handler });
+        });
     });
     e.register_fn("language_option", |name: String, handler: FnPtr| {
-        COLLECTED_LANG_OPTS.with(|c| { c.borrow_mut().insert(name, handler); });
+        COLLECTED_LANG_OPTS.with(|c| {
+            c.borrow_mut().insert(name, OptionHandler { default_value: None, callback: handler });
+        });
+    });
+    e.register_fn("language_option", |name: String, default_value: String, handler: FnPtr| {
+        COLLECTED_LANG_OPTS.with(|c| {
+            c.borrow_mut().insert(name, OptionHandler { default_value: Some(default_value), callback: handler });
+        });
     });
 
     // ── add_flag ──────────────────────────────────────────────────────────────

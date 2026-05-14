@@ -67,7 +67,6 @@ linking["cuda"] = #{
 // [compiler.nvcc] sm_arch = "sm_89"  →  --gpu-architecture=sm_89
 compiler_option("sm_arch", |ctx| {
     add_flag("--gpu-architecture=" + ctx.value);
-    ""
 });
 
 // [compiler.nvcc] min_version = "11.8"  →  error if nvcc < 11.8
@@ -75,7 +74,6 @@ compiler_option("min_version", |ctx| {
     if !version_gte(ctx.version, ctx.value) {
         return "nvcc " + ctx.version + " is below required minimum " + ctx.value;
     }
-    ""
 });
 
 // ── language_option handlers ──────────────────────────────────────────────────
@@ -87,7 +85,6 @@ language_option("arch", |ctx| {
         return "nvcc requires arch '" + ctx.value +
                "' but the effective target is '" + ctx.arch + "'";
     }
-    ""
 });
 
 fn check() {

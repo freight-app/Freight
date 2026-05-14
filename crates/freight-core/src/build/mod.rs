@@ -1062,11 +1062,18 @@ fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightEr
     let arch = ctx.manifest.target.arch.as_deref().unwrap_or(std::env::consts::ARCH);
     let os = std::env::consts::OS;
 
-    // Language-option handlers: look up the active compiler for each language with extra options.
-    let lang_keys: Vec<String> = ctx.manifest.language.keys().cloned().collect();
+    // Collect the set of language keys actually present in discovered sources.
+    let discovered_lang_keys: std::collections::HashSet<String> =
+        ctx.found.sources.iter().map(|s| s.lang_key.clone()).collect();
+
+    // Language-option handlers: look up the active compiler for each discovered or configured
+    // language. Running with an empty option map allows template-declared defaults to apply
+    // even when `[language.<key>]` omits the option.
+    let lang_keys: std::collections::HashSet<String> = ctx.manifest.language.keys().cloned()
+        .chain(discovered_lang_keys.iter().cloned())
+        .collect();
     for lang_key in lang_keys {
-        let extra = ctx.manifest.language[&lang_key].extra.clone();
-        if extra.is_empty() { continue; }
+        let extra = ctx.manifest.effective_language_settings(&lang_key).extra;
         let Some(compiler) = compile::select_compiler(&lang_key, &ctx.effective_backend, &ctx.detected, None) else {
             continue;
         };
@@ -1077,21 +1084,24 @@ fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightEr
             .map(|d| d.template.run_language_option_handlers(&extra, &version, arch, os))
             .transpose()?
             .unwrap_or_default();
-        ctx.manifest.language.get_mut(&lang_key).unwrap().injected_flags.extend(flags);
+        ctx.manifest.language.entry(lang_key).or_default().injected_flags.extend(flags);
     }
 
-    // Compiler-option handlers: dispatched per [compiler.<name>] section.
-    // Collect the set of language keys actually present in discovered sources.
-    let discovered_lang_keys: std::collections::HashSet<String> =
-        ctx.found.sources.iter().map(|s| s.lang_key.clone()).collect();
-
-    let per_tool: Vec<(String, std::collections::HashMap<String, String>)> = ctx.manifest.compiler.per_tool
-        .iter()
-        .map(|(k, v)| (k.clone(), v.options.clone()))
+    // Compiler-option handlers: dispatched per active compiler and per [compiler.<name>] section.
+    // Running active compiler handlers with an empty option map allows template-declared defaults
+    // to apply even when `[compiler.<name>]` omits the option.
+    let active_tool_names: std::collections::HashSet<String> = discovered_lang_keys.iter()
+        .filter_map(|lang_key| {
+            compile::select_compiler(lang_key, &ctx.effective_backend, &ctx.detected, None)
+                .map(|d| d.template.name.clone())
+        })
         .collect();
 
+    let mut per_tool: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
+        active_tool_names.iter().map(|name| (name.clone(), std::collections::HashMap::new())).collect();
+    per_tool.extend(ctx.manifest.compiler.per_tool.iter().map(|(k, v)| (k.clone(), v.options.clone())));
+
     for (tool_name, options) in per_tool {
-        if options.is_empty() { continue; }
         let Some(compiler) = ctx.detected.iter().find(|d| d.template.name == tool_name) else {
             continue; // not detected — skip silently
         };
@@ -1100,12 +1110,7 @@ fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightEr
 
         // Only propagate flags if this compiler is the active backend for at least one
         // discovered language. If detected but not active, handlers ran for validation only.
-        let is_active = discovered_lang_keys.iter().any(|lang_key| {
-            compile::select_compiler(lang_key, &ctx.effective_backend, &ctx.detected, None)
-                .map(|d| d.template.name == tool_name)
-                .unwrap_or(false)
-        });
-        if is_active {
+        if active_tool_names.contains(&tool_name) {
             ctx.manifest.compiler.flags.extend(flags);
         }
     }

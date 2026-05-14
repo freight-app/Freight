@@ -22,7 +22,6 @@ language_option("arch", |ctx| {
         return "assembler requires arch '" + ctx.value +
                "' but the effective target is '" + ctx.arch + "'";
     }
-    ""
 });
 
 fn check() {

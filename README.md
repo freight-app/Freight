@@ -152,6 +152,9 @@ When a project depends on this library, freight infers the public include direct
 Beyond the standard settings (`opt-level`, `warnings`, `lto`, `std`, etc.),
 individual compiler templates can expose their own options via
 `compiler_option` and `language_option` callbacks registered in `.rhai` files.
+Those registrations can include a default value, so handlers can still run when
+the corresponding manifest option is omitted; omit the default when no fallback
+is useful, and omit a return value when the handler succeeds.
 
 **`[compiler.<name>]`** — options dispatched to the named compiler regardless
 of which language is being compiled.
