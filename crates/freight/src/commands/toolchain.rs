@@ -20,34 +20,60 @@ pub fn cmd_toolchain_list() {
     } else {
         let groups = group_into_toolchains(detected);
 
-        println!("{:<12} {:<28} {}", "Toolchain", "Languages", "Compilers");
-        println!("{}", "-".repeat(72));
-        for tc in &groups.toolchains {
-            let langs = tc.languages.join(", ");
-            let compilers: Vec<String> = tc.compilers
-                .iter()
-                .map(|c| format!("{} {}", c.template.name, c.version))
-                .collect();
-            println!("{:<12} {:<28} {}", tc.name, langs, compilers.join(", "));
-        }
+        let toolchain_rows: Vec<Vec<String>> = groups
+            .toolchains
+            .iter()
+            .map(|tc| {
+                let compilers: Vec<String> = tc
+                    .compilers
+                    .iter()
+                    .map(|c| format!("{} {}", c.template.name, c.version))
+                    .collect();
+                let cpu_extensions = tc
+                    .compilers
+                    .iter()
+                    .flat_map(|c| c.cpu_extensions.iter().map(String::as_str))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                vec![
+                    tc.name.clone(),
+                    tc.languages.join(", "),
+                    compilers.join(", "),
+                    display_or_dash(cpu_extensions),
+                ]
+            })
+            .collect();
+        print_table(
+            &["Toolchain", "Languages", "Compilers", "CPU Extensions"],
+            &toolchain_rows,
+        );
 
         if !groups.guests.is_empty() {
             println!();
             println!("Guest extensions (extend the active toolchain):");
-            println!("{:<12} {:<16} {:<12} {}", "Compiler", "Languages", "Version", "Requires");
-            println!("{}", "-".repeat(60));
-            for g in &groups.guests {
-                let mut langs: Vec<&str> =
-                    g.template.linking.keys().map(String::as_str).collect();
-                langs.sort_unstable();
-                println!(
-                    "{:<12} {:<16} {:<12} host: {}",
-                    g.template.name,
-                    langs.join(", "),
-                    g.version,
-                    g.template.requires_toolchain.join(", "),
-                );
-            }
+            let guest_rows: Vec<Vec<String>> = groups
+                .guests
+                .iter()
+                .map(|g| {
+                    let mut langs: Vec<&str> =
+                        g.template.linking.keys().map(String::as_str).collect();
+                    langs.sort_unstable();
+
+                    vec![
+                        g.template.name.clone(),
+                        langs.join(", "),
+                        g.version.clone(),
+                        format!("host: {}", g.template.requires_toolchain.join(", ")),
+                    ]
+                })
+                .collect();
+            print_table(
+                &["Compiler", "Languages", "Version", "Requires"],
+                &guest_rows,
+            );
         }
     }
 
@@ -56,14 +82,22 @@ pub fn cmd_toolchain_list() {
     let debuggers = detect_debuggers(&dbg_templates);
     if !debuggers.is_empty() {
         println!();
-        println!("{:<12} {:<12} {}", "Debugger", "Version", "Path");
-        println!("{}", "-".repeat(60));
-        for d in &debuggers {
-            let dap = d.dap_path.as_ref()
-                .map(|p| format!("  (dap: {})", p.display()))
-                .unwrap_or_default();
-            println!("{:<12} {:<12} {}{}", d.template.name, d.version, d.path.display(), dap);
-        }
+        let debugger_rows: Vec<Vec<String>> = debuggers
+            .iter()
+            .map(|d| {
+                let dap = d
+                    .dap_path
+                    .as_ref()
+                    .map(|p| format!(" (dap: {})", p.display()))
+                    .unwrap_or_default();
+                vec![
+                    d.template.name.clone(),
+                    d.version.clone(),
+                    format!("{}{}", d.path.display(), dap),
+                ]
+            })
+            .collect();
+        print_table(&["Debugger", "Version", "Path"], &debugger_rows);
     }
 }
 
@@ -96,4 +130,59 @@ pub fn cmd_toolchain_use(name: &str) {
         }
         Err(e) => print_error(&format!("failed to set default toolchain: {e}")),
     }
+}
+
+fn display_or_dash(value: String) -> String {
+    if value.is_empty() {
+        "—".to_string()
+    } else {
+        value
+    }
+}
+
+fn print_table(headers: &[&str], rows: &[Vec<String>]) {
+    let widths: Vec<usize> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, header)| {
+            rows.iter()
+                .filter_map(|row| row.get(i))
+                .map(|cell| cell.chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(header.chars().count())
+        })
+        .collect();
+
+    print_table_border(&widths);
+    print_table_row(
+        &headers.iter().map(|h| h.to_string()).collect::<Vec<_>>(),
+        &widths,
+    );
+    print_table_border(&widths);
+    for row in rows {
+        print_table_row(row, &widths);
+    }
+    print_table_border(&widths);
+}
+
+fn print_table_border(widths: &[usize]) {
+    print!("+");
+    for width in widths {
+        print!("-{}-+", "-".repeat(*width));
+    }
+    println!();
+}
+
+fn print_table_row(row: &[String], widths: &[usize]) {
+    print!("|");
+    for (i, width) in widths.iter().enumerate() {
+        let cell = row.get(i).map(String::as_str).unwrap_or("");
+        print!(
+            " {}{} |",
+            cell,
+            " ".repeat(width.saturating_sub(cell.chars().count()))
+        );
+    }
+    println!();
 }

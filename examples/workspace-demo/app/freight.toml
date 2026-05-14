@@ -1,0 +1,18 @@
+[package]
+name        = "workspace-app"
+version     = "0.1.0"
+description = "Binary member that links the workspace-core library"
+license     = "MIT"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "workspace-app"
+src  = "src/main.c"
+
+[dependencies]
+workspace-core = { path = "../core" }
+
+[compiler]
+warnings = "all"

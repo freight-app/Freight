@@ -457,10 +457,87 @@ pub fn cmd_search(query: &str) {
     ));
 }
 
-pub fn cmd_info(package: &str) {
-    print_warning(&format!(
-        "`freight info {package}` requires freight.dev, which is not yet available"
-    ));
+pub fn cmd_info(package: Option<&str>) {
+    if let Some(package) = package {
+        print_warning(&format!(
+            "`freight info {package}` requires freight.dev, which is not yet available"
+        ));
+        return;
+    }
+
+    let (project_dir, manifest) = match locate_project() {
+        Ok(p) => p,
+        Err(e) => { print_error(&e.to_string()); return; }
+    };
+
+    print_current_package_info(&project_dir, &manifest);
+}
+
+fn print_current_package_info(project_dir: &Path, manifest: &Manifest) {
+    println!("{} {}", manifest.package.name, manifest.package.version);
+
+    print_optional_field("description", non_empty(&manifest.package.description));
+    print_optional_list("authors", &manifest.package.authors);
+    print_optional_field("license", non_empty(&manifest.package.license));
+    print_optional_field("repository", manifest.package.repository.as_deref());
+    print_optional_field("readme", manifest.package.readme.as_deref());
+    print_optional_list("keywords", &manifest.package.keywords);
+    print_optional_field("supports", manifest.package.supports.as_deref());
+    print_optional_list("provides", &manifest.package.provides);
+    print_status("manifest", &project_dir.join("freight.toml").display().to_string());
+
+    if !manifest.language.is_empty() {
+        let mut languages: Vec<_> = manifest.language.keys().map(String::as_str).collect();
+        languages.sort_unstable();
+        print_status("languages", &languages.join(", "));
+    }
+
+    if let Some(lib) = &manifest.lib {
+        print_status("library", &format!("{:?}", lib.lib_type).to_lowercase());
+    }
+
+    if !manifest.bins.is_empty() {
+        let mut bins: Vec<_> = manifest.bins.iter().map(|bin| bin.name.as_str()).collect();
+        bins.sort_unstable();
+        print_status("binaries", &bins.join(", "));
+    }
+
+    print_dependency_summary("dependencies", &manifest.dependencies);
+    print_dependency_summary("dev-deps", &manifest.dev_dependencies);
+
+    if !manifest.features.is_empty() {
+        let mut features: Vec<_> = manifest.features.keys().map(String::as_str).collect();
+        features.sort_unstable();
+        print_status("features", &features.join(", "));
+    }
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn print_optional_field(label: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        if !value.is_empty() {
+            print_status(label, value);
+        }
+    }
+}
+
+fn print_optional_list(label: &str, values: &[String]) {
+    if !values.is_empty() {
+        print_status(label, &values.join(", "));
+    }
+}
+
+fn print_dependency_summary(label: &str, deps: &std::collections::HashMap<String, Dependency>) {
+    if deps.is_empty() {
+        return;
+    }
+
+    let mut names: Vec<_> = deps.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    print_status(label, &names.join(", "));
 }
 
 pub fn cmd_login() {

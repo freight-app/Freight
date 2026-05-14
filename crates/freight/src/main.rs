@@ -424,3 +424,26 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_accepts_missing_package_for_current_project() {
+        let cli = Cli::try_parse_from(["freight", "info"]).unwrap();
+        match cli.command {
+            Commands::Info { package } => assert_eq!(package, None),
+            _ => panic!("expected info command"),
+        }
+    }
+
+    #[test]
+    fn info_accepts_registry_package_name() {
+        let cli = Cli::try_parse_from(["freight", "info", "zlib"]).unwrap();
+        match cli.command {
+            Commands::Info { package } => assert_eq!(package.as_deref(), Some("zlib")),
+            _ => panic!("expected info command"),
+        }
+    }
+}

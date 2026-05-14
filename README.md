@@ -234,11 +234,11 @@ freight man [--out-dir DIR]           generate man pages
 
 ## Examples
 
-The `examples/` directory contains fully buildable projects:
+The `examples/` directory contains fully buildable projects. See [`examples/README.md`](examples/README.md) for a command-by-command tour that covers building, running, testing, benchmarking, features, dependency graphing, docs, install/package flows, and workspaces.
 
 | Example | What it shows |
 |---|---|
-| `hello-cpp/` | Multi-file C++ with tests |
+| `hello-cpp/` | Multi-file C++ with tests and a benchmark |
 | `c-simple/` | Pure C, Collatz benchmark |
 | `multi-lang/` | C + C++ mixed project |
 | `with-deps/` | Path dependency (static lib) |
@@ -254,11 +254,17 @@ The `examples/` directory contains fully buildable projects:
 | `with-external-deps/` | URL archive and pkg-config deps |
 | `prebuilt-demo/` | `build.freight` pre-build script |
 | `doc-example/` | C, C++, Fortran libs as path deps; run `freight doc` here to demo the TUI |
+| `with-build-script/` | `build.freight` pre-build script with generated header and optional package probing |
+| `migrated-from-cmake/` | Side-by-side CMake and Freight manifests for the same C++ project |
+| `workspace-demo/` | Workspace root with app and library members, plus a path dependency |
 
 ```sh
 cd examples/hello-cpp
+freight check
 freight build
 freight run
+freight test
+freight bench
 ```
 
 ## Browsing and generating docs

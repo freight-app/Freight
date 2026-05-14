@@ -66,7 +66,11 @@ toolchains/
 ├── dmd.rhai                 # D reference compiler
 ├── msvc.rhai
 ├── tcc.rhai
-└── opencl.rhai              # requires_toolchain = ["cpp"]
+├── opencl.rhai              # requires_toolchain = ["cpp"]
+└── system-libs/             # TOML stubs for OS libraries used by dep resolution
+    ├── pthread.toml
+    ├── ws2_32.toml
+    └── ...
 ```
 
 ---
@@ -79,7 +83,13 @@ Freight merges templates from two locations at startup:
 2. **User scripts** — installed in `~/.freight/templates/` via `freight toolchain add <path>`
 
 User scripts with the same `name` as a bundled script take precedence. Files starting with `_`
-are shared includes — they are never loaded as standalone templates.
+are shared includes — they are never loaded as standalone templates. The bundled directory is
+found via `CRANE_TEMPLATES_DIR`, `<binary-dir>/toolchains/`, or the cargo-development layout.
+
+Compiler templates that do **not** register runtime option callbacks are cached in
+`~/.freight/template-cache.msgpack`. The cache key includes the template contents and directly
+included base files. Templates that call `compiler_option` or `language_option` are evaluated live
+so their Rhai callback pointers remain available during builds.
 
 A fast `kind` pre-check reads the first `kind = "..."` line of each file before doing a full
 Rhai evaluation, routing each template to the correct loader:
@@ -171,6 +181,8 @@ passthrough_prefix = "";      // e.g. "-Xcompiler" for nvcc
 // supported_archs = ["x86_64", "aarch64"];  // hide on unlisted host architectures
 // supported_os    = ["linux", "windows"];   // hide on unlisted host OSes
 // required_tools  = ["ptxas", "fatbinary"]; // extra binaries that must be on PATH
+// required_env    = ["ONEAPI_ROOT"];       // SDK environment variables that must be set
+// min_version     = "12.0";                // hide if detected version is older
 
 // ── Toolset roles ─────────────────────────────────────────────────────────────
 
@@ -199,6 +211,9 @@ warnings["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 
 lto["true"]  = "-flto";
 lto["false"] = "";
+// lto_link is optional and used when the link-step spelling differs (MSVC /LTCG).
+// lto_link["true"]  = "/LTCG";
+// lto_link["false"] = "";
 
 sanitize = "-fsanitize={values}";  // {values} = comma-joined sanitizer list
 cpu_ext  = "-m{name}";             // e.g. avx2 → -mavx2
@@ -228,6 +243,10 @@ compile_only = "-c";
 dep_file     = "-MMD -MF {path}";  // empty = no dep files (mtime-only dirty check)
 target       = "";                  // empty = this template does not emit a target flag
 sysroot      = "--sysroot={path}";
+// output_obj   = "/Fo{path}";          // optional compile-step output override
+// output_bin   = "/Fe{path}";          // optional link-step output override
+// dep_file_mode = "file";              // "file" (default), "stdout", or "none"
+// system_lib   = "-l{name}";           // default; MSVC uses "{name}.lib"
 
 // ── Arch-specific flags ───────────────────────────────────────────────────────
 // "arch.os" is checked first; "arch" is the fallback.
@@ -238,6 +257,7 @@ sysroot      = "--sysroot={path}";
 // ── C++20 module support ──────────────────────────────────────────────────────
 
 modules["style"]         = "gcc";                          // "gcc", "clang", or "none"
+modules["enable_flag"]   = "-fmodules-ts";                 // automatically added for GCC-style modules
 modules["compile_miu"]   = "-fmodule-output={pcm_path}";  // GCC one-step: .o + .pcm
 modules["import_module"] = "-fmodule-file={name}={pcm_path}";
 modules["header_unit"]   = "-fmodule-header";
@@ -263,7 +283,7 @@ fn check() {
 }
 
 // ── Arch-conditional flags ────────────────────────────────────────────────────
-// load_flags are applied at detection time. Use top-level code (not fn load()).
+// load_flags are evaluated at template load time and folded into default flags.
 
 if arch == "x86_64" {
     load_flags["cc"]  += ["-m64"];
@@ -295,6 +315,8 @@ if arch == "x86_64" {
 | `supported_archs` | `[string]` | If non-empty, hide this toolchain on unlisted host architectures. |
 | `supported_os` | `[string]` | If non-empty, hide this toolchain on unlisted host OSes. |
 | `required_tools` | `[string]` | Extra binaries that must be on PATH for this toolchain to be considered available. |
+| `required_env` | `[string]` | Environment variables that must be set for this toolchain to be considered available (useful for SDK setup scripts). |
+| `min_version` | string | Minimum detected version required during discovery. Older binaries are skipped with a warning. |
 | `always_flags` | `[string]` | Flags always prepended to every compiler invocation. |
 
 ### Toolset roles
@@ -321,11 +343,19 @@ warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra -Wpedantic";
 warnings["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 
-lto["true"]  = "-flto";    // LTO on/off
+lto["true"]  = "-flto";    // compile-step LTO on/off
 lto["false"] = "";
+
+// Optional link-step LTO map when the linker uses different spelling.
+lto_link["true"]  = "/LTCG";
+lto_link["false"] = "";
 
 sanitize = "-fsanitize={values}";   // {values} = comma-joined sanitizer list
 cpu_ext  = "-m{name}";              // e.g. avx2 → -mavx2
+
+stdlib["libc++"]    = "-stdlib=libc++";  // selected by [language.cpp] stdlib
+stdlib["libstdc++"] = "";
+runtime["musl"]     = "-static";         // selected by [compiler] runtime
 ```
 
 ### Defaults map
@@ -338,6 +368,35 @@ language file so it applies consistently across all compilers of that language:
 defaults["std"] = "c++17";   // used when [language.cpp] omits std =
 ```
 
+`defaults["stdlib"]` works the same way for C++ standard-library selection when a template
+defines the `stdlib` flag map. The manifest value still wins when present.
+
+### Runtime, stdlib, and link-step flags
+
+Use `stdlib[...]` for language-level C++ standard library selection and `runtime[...]` for
+compiler/runtime choices such as glibc vs musl. These maps are converted into flags by the build
+settings layer; unknown keys simply produce no flag.
+
+```rhai
+defaults["stdlib"] = "libstdc++";
+stdlib["libstdc++"] = "";
+stdlib["libc++"]    = "-stdlib=libc++";
+stdlib["none"]      = "-nostdlib++";
+
+runtime["glibc"] = "";
+runtime["musl"]  = "-static";
+runtime["none"]  = "-nostdlib -nodefaultlibs";
+```
+
+`lto[...]` is emitted during compilation. If a compiler needs a different flag during final
+linking, also set `lto_link[...]`; otherwise Freight reuses the compile-step LTO behaviour.
+
+```rhai
+lto["true"]      = "/GL";
+lto["false"]     = "";
+lto_link["true"] = "/LTCG";
+```
+
 ### Structure templates
 
 | Field | Description |
@@ -345,18 +404,22 @@ defaults["std"] = "c++17";   // used when [language.cpp] omits std =
 | `include_dir` | Include path flag. `{path}` is substituted. |
 | `define` | Define flag. `{name}` is substituted. |
 | `define_value` | Define-with-value flag. `{name}` and `{value}` are substituted. |
-| `output` | Output path flag. `{path}` is substituted. |
+| `output` | Output path flag. `{path}` is substituted. Used for both compile and link unless overridden. |
+| `output_obj` | Optional compile-step output override. Falls back to `output`. MSVC uses `/Fo{path}`. |
+| `output_bin` | Optional link-step output override. Falls back to `output`. MSVC uses `/Fe{path}`. |
 | `compile_only` | Flag to compile without linking (usually `-c`). |
 | `dep_file` | Dep file generation flag. `{path}` substituted. Empty = no dep files (mtime-only). |
+| `dep_file_mode` | Header dependency mode: `"file"` (default), `"stdout"` for compiler include tracing, or `"none"`. |
 | `target` | Cross-compilation target flag. `{triple}` substituted. Empty = this template does not emit a target flag. |
 | `sysroot` | Sysroot flag. `{path}` substituted. |
-| `system_lib` | System library flag. `{name}` substituted. Default: `"-l{name}"`. MSVC uses `"{name}.lib"`. |
+| `system_lib` | System library flag. `{name}` substituted. Default: `"-l{name}"`. MSVC uses `"{name}.lib"`; D compilers use `"-L-l{name}"`. |
 
 ### C++20 modules
 
 ```rhai
 modules["style"]         = "gcc";                          // "gcc", "clang", or "none"
 // GCC one-step (produces .o + .pcm in a single invocation):
+modules["enable_flag"]   = "-fmodules-ts";
 modules["compile_miu"]   = "-fmodule-output={pcm_path}";
 modules["import_module"] = "-fmodule-file={name}={pcm_path}";
 modules["header_unit"]   = "-fmodule-header";
@@ -379,6 +442,37 @@ linking["cpp"] = #{
 An optional `compile_binary` key overrides which binary compiles files for that language key
 (e.g. `gcc` for C files when the template is `g++`).
 
+### System-library link templates and stubs
+
+`system_lib` controls how Freight turns a resolved system dependency into a linker argument for
+this compiler family:
+
+```rhai
+system_lib = "-l{name}";     // GCC/Clang default
+system_lib = "{name}.lib";   // MSVC
+system_lib = "-L-l{name}";   // D compilers that forward linker args with -L
+```
+
+This is separate from the bundled `toolchains/system-libs/*.toml` stubs. Stubs participate in
+dependency resolution for version-style manifest entries (after pkg-config, Conan, and vcpkg) and
+provide a package name, supported platform expression, headers for display, and a logical link name.
+The selected compiler template then renders that logical link name through `system_lib`.
+
+A minimal stub looks like this:
+
+```toml
+[package]
+name = "pthread"
+supports = "unix"
+
+[lib]
+link = "pthread"
+hdrs = ["pthread.h"]
+```
+
+For example, `pthread = "0"` can resolve to the `pthread` stub on Unix; a GNU-like compiler emits
+`-lpthread`, while an MSVC-style template would render the same logical link name as `pthread.lib`.
+
 ### Hooks
 
 ```rhai
@@ -387,7 +481,7 @@ fn check() {
     find_tool("g++") != ()
 }
 
-// Arch-conditional load-time flags — use top-level code, not a fn load().
+// Arch-conditional load-time flags.
 if arch == "x86_64" {
     load_flags["cxx"] += ["-m64"];
 }
@@ -695,12 +789,14 @@ available settings and their valid values for the detected tool.
 4. Set `requires_toolchain` if the compiler wraps another toolchain; leave empty for self-contained compilers
 5. Use `include` to pull in a `_base` file for shared flags and a `languages/_<lang>` file for extensions/standards/linking
 6. Set `binary`, `version_arg`, `version_regex`
-7. Add flag maps: at minimum `opt`, `dbg`, `warnings`, `lto`
-8. Add `defaults["std"]` in the language shared file if a default standard applies
-9. Set structure fields — at minimum `include_dir`, `define`, `output`, `compile_only`
-10. Add `dep_file` if the compiler supports Makefile dep files
-11. Add `fn check()` to hide the toolchain when the binary is absent
-12. Test with `freight toolchain list` to verify detection, then `freight build` on a real project
+7. Add `required_tools`, `required_env`, or `min_version` when the binary alone is not enough to prove availability
+8. Add flag maps: at minimum `opt`, `dbg`, `warnings`, `lto`; add `lto_link` when link-time spelling differs
+9. Add `defaults["std"]` in the language shared file if a default standard applies
+10. Set structure fields — at minimum `include_dir`, `define`, `output`, `compile_only`
+11. Add `output_obj`, `output_bin`, `dep_file_mode`, or `system_lib` for compilers whose compile/link conventions differ
+12. Add `dep_file` if the compiler supports Makefile dep files
+13. Add `fn check()` to hide the toolchain when the binary is absent
+14. Test with `freight toolchain list` to verify detection, then `freight build` on a real project
 
 ### Writing a new debugger script
 
@@ -784,7 +880,8 @@ looks up `"arch.os"` first, then `"arch"` as a fallback.
 
 ### Load-time arch-conditional flags
 
-Arch-conditional flags are set via top-level code (not a `fn load()`) using `load_flags`:
+Arch-conditional flags are set with `load_flags`. Top-level code is preferred for simple cases;
+`fn load()` is also called after evaluation for templates that want to group load-time logic:
 
 ```rhai
 if arch == "x86_64" {
@@ -792,10 +889,31 @@ if arch == "x86_64" {
 }
 ```
 
+### Automatic CPU tuning from target sysroots
+
+For GNU-like C/C++ compilers (`family = "gnu"`, `"llvm"`, or `"intel"`), Freight can derive a
+small set of CPU tuning flags from `[compiler] target` plus `[compiler] sysroot`. This happens only
+when `auto_cpu_tuning` is enabled in the build settings, the template handles `c` or `cpp`, and no
+explicit CPU-tuning flag is already present in template or manifest flags.
+
+Examples of derived flags include:
+
+| Target/sysroot hint | Derived flags |
+|---|---|
+| `aarch64...` with `neoverse-n2` in the sysroot path | `-mcpu=neoverse-n2` |
+| generic `aarch64...` | `-march=armv8-a` |
+| ARM EABI hard-float sysroots | `-mfloat-abi=hard` |
+| `riscv64...` | `-march=rv64gc -mabi=lp64d` unless the sysroot names a more specific ISA/ABI |
+| `x86_64...` with `x86-64-v3`, `znver4`, `skylake`, etc. in the sysroot path | `-march=<hint>` |
+
+Templates do not need to opt in beyond using a GNU-like family/name and declaring C/C++ linking
+metadata. Set explicit flags such as `-march=...`, `-mcpu=...`, `-mtune=...`, or `-mabi=...` in the
+manifest when you need to override the heuristic.
+
 ### `fn check()` for availability detection
 
 Return `false` to hide the toolchain when its binary isn't present or the platform is
-unsupported. This is the only hook function; load-time side effects use top-level code.
+unsupported. Load-time side effects should use top-level code or `fn load()` plus `load_flags`.
 
 ```rhai
 fn check() {

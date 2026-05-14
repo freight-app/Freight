@@ -1,0 +1,16 @@
+[package]
+name        = "workspace-core"
+version     = "0.1.0"
+description = "Library member used by the workspace demo"
+license     = "MIT"
+
+[language.c]
+std = "c17"
+
+[lib]
+type = "static"
+srcs = ["src/workspace_core.c"]
+hdrs = ["inc/workspace_core.h"]
+
+[compiler]
+warnings = "all"
