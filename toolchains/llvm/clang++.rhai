@@ -39,20 +39,6 @@ compiler_option("lto_mode", |ctx| {
     }
 });
 
-// [compiler.clang++] min_version = "14.0"  →  error if clang++ < 14.0
-compiler_option("min_version", |ctx| {
-    if !version_gte(ctx.version, ctx.value) {
-        return ctx.name + " " + ctx.version + " is below required minimum " + ctx.value;
-    }
-});
-
-// [compiler.clang++] max_version = "17.0"  →  error if clang++ > 17.0
-compiler_option("max_version", |ctx| {
-    if !version_lte(ctx.version, ctx.value) {
-        return ctx.name + " " + ctx.version + " exceeds required maximum " + ctx.value;
-    }
-});
-
 fn check() {
     for b in ["clang++", "clang++-18", "clang++-17", "clang++-16", "clang++-15", "clang++-14"] {
         if find_tool(b) != () { return true; }

@@ -69,13 +69,6 @@ compiler_option("sm_arch", |ctx| {
     add_flag("--gpu-architecture=" + ctx.value);
 });
 
-// [compiler.nvcc] min_version = "11.8"  →  error if nvcc < 11.8
-compiler_option("min_version", |ctx| {
-    if !version_gte(ctx.version, ctx.value) {
-        return "nvcc " + ctx.version + " is below required minimum " + ctx.value;
-    }
-});
-
 // ── language_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [language.cuda] in freight.toml.
 

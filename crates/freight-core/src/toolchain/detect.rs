@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -282,6 +283,31 @@ fn version_ge(a: &str, b: &str) -> bool {
         }
     }
     true // equal counts as satisfied
+}
+
+/// Check `[compiler.<name>] min_version` / `max_version` manifest constraints
+/// against the detected compiler version.  Returns an error whose message can
+/// be forwarded directly to the user.
+pub fn check_manifest_version_bounds(
+    tool_name: &str,
+    detected: &str,
+    options: &HashMap<String, String>,
+) -> Result<(), FreightError> {
+    if let Some(min) = options.get("min_version") {
+        if !version_ge(detected, min) {
+            return Err(FreightError::OptionError(format!(
+                "{tool_name} {detected} is below required minimum {min}"
+            )));
+        }
+    }
+    if let Some(max) = options.get("max_version") {
+        if !version_ge(max, detected) {
+            return Err(FreightError::OptionError(format!(
+                "{tool_name} {detected} exceeds required maximum {max}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Second-pass filter: remove toolchains whose `requires_toolchain` ABI keys are
