@@ -51,10 +51,6 @@ Print a coloured table. Analogous to `cargo outdated`.
 GCC/Clang column markers and MSVC error codes are parsed into concise
 summaries with clickable `file:line:col` references and source snippets.
 
-### S4 — `freight graph` ✓ done
-Emits the dependency graph as DOT or Mermaid to stdout or a file. Useful for
-auditing transitive deps in large projects.
-
 ### S5 — `--emit asm`
 `freight build --emit asm` — write `.s` files to `target/{profile}/asm/` so
 developers can inspect codegen without a separate `objdump` workflow.

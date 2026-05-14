@@ -1,18 +1,16 @@
 use std::path::Path;
 
-use anyhow::Context;
-
 use freight_core::dep_cmds::{
     locate_project, manifest_add_dep, manifest_remove_dep, regen_lock,
     fetch_git_deps, fetch_package_deps, fetch_url_deps, update_git_deps, invalidate_url_dep,
     DetailedDep, GitDepAction, PackageDepAction, RegenLockOutcome,
 };
-use freight_core::graph::{build_dependency_graph, GraphFormat};
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 
 use crate::commands::add_tui::select_vcpkg_packages;
 use crate::output::{print_error, print_status, print_success, print_warning};
+use owo_colors::OwoColorize;
 
 // ── freight tree ───────────────────────────────────────────────────────────────
 
@@ -22,11 +20,15 @@ pub fn cmd_tree() {
         Err(e) => { print_error(&e.to_string()); return; }
     };
 
-    println!("{} {}", manifest.package.name, manifest.package.version);
-    print_dep_tree(&manifest, &project_dir, "", true);
+    println!(
+        "{} {}",
+        manifest.package.name.bold().bright_blue(),
+        manifest.package.version.bright_black()
+    );
+    print_dep_tree(&manifest, &project_dir, "");
 }
 
-fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_root: bool) {
+fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str) {
     let deps: Vec<(&String, &Dependency)> = {
         let mut v: Vec<_> = manifest.dependencies.iter().collect();
         v.sort_by_key(|(k, _)| k.as_str());
@@ -37,69 +39,88 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
         let is_last = i == deps.len() - 1;
         let connector = if is_last { "└── " } else { "├── " };
         let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+        let branch = format!("{prefix}{connector}").bright_black().to_string();
 
         match dep {
             Dependency::Simple(ver) => {
-                println!("{}{}{} {} (package)", prefix, connector, name, ver);
+                print_package_dep(&branch, name, ver);
             }
             Dependency::Detailed(d) if d.system.is_some() => {
-                if let Some(query) = &d.pkg_config {
-                    println!("{}{}{} (system, pkg-config: {})", prefix, connector, name, query);
-                } else {
-                    println!("{}{}{} (system)", prefix, connector, name);
-                }
+                print_system_dep(&branch, name, d);
             }
             Dependency::Detailed(d) if d.path.is_some() => {
                 let rel = d.path.as_deref().unwrap_or("?");
                 let dep_dir = project_dir.join(rel);
                 if let Ok(m) = load_manifest(&dep_dir) {
-                    println!("{}{}{} {} (path+{})", prefix, connector, name, m.package.version, rel);
-                    print_dep_tree(&m, &dep_dir, &child_prefix, false);
+                    println!(
+                        "{}{} {} {}",
+                        branch,
+                        name.bold().bright_blue(),
+                        m.package.version.bright_black(),
+                        format!("(path+{rel})").yellow()
+                    );
+                    print_dep_tree(&m, &dep_dir, &child_prefix);
                 } else {
-                    println!("{}{}{} ??? (path+{}) [not found]", prefix, connector, name, rel);
+                    println!(
+                        "{}{} {} {}",
+                        branch,
+                        name.bold().bright_blue(),
+                        "???".red().bold(),
+                        format!("(path+{rel}) [not found]").yellow()
+                    );
                 }
             }
             Dependency::Detailed(d) if d.git.is_some() => {
                 let url = d.git.as_deref().unwrap_or("?");
-                println!("{}{}{} (git+{})", prefix, connector, name, url);
+                println!(
+                    "{}{} {}",
+                    branch,
+                    name.bold().bright_blue(),
+                    format!("(git+{url})").yellow()
+                );
             }
             Dependency::Detailed(d) if d.url.is_some() => {
                 let url = d.url.as_deref().unwrap_or("?");
-                println!("{}{}{} (url: {})", prefix, connector, name, url);
+                println!(
+                    "{}{} {}",
+                    branch,
+                    name.bold().bright_blue(),
+                    format!("(url: {url})").yellow()
+                );
             }
             Dependency::Detailed(d) => {
                 let ver = d.version.as_deref().unwrap_or("*");
-                println!("{}{}{} {} (package)", prefix, connector, name, ver);
+                print_package_dep(&branch, name, ver);
             }
         }
     }
 }
 
+fn print_package_dep(branch: &str, name: &str, version: &str) {
+    println!(
+        "{}{} {} {}",
+        branch,
+        name.bold().bright_blue(),
+        version.bright_black(),
+        "(package)".green()
+    );
+}
 
-// ── freight graph ──────────────────────────────────────────────────────────────
-
-pub fn cmd_graph(format: &str, output: Option<&str>, include_dev: bool) {
-    let (project_dir, manifest) = match locate_project() {
-        Ok(p) => p,
-        Err(e) => { print_error(&e.to_string()); return; }
-    };
-
-    let format = match GraphFormat::parse(format) {
-        Ok(format) => format,
-        Err(e) => { print_error(&e.to_string()); return; }
-    };
-
-    let graph = build_dependency_graph(&project_dir, &manifest, include_dev);
-    let rendered = graph.render(format);
-
-    if let Some(path) = output {
-        if let Err(e) = std::fs::write(path, rendered)
-            .with_context(|| format!("failed to write dependency graph to {path}"))
-        {
-            print_error(&e.to_string());
-        }
+fn print_system_dep(branch: &str, name: &str, dep: &DetailedDep) {
+    if let Some(query) = &dep.pkg_config {
+        println!(
+            "{}{} {}",
+            branch,
+            name.bold().bright_blue(),
+            format!("(system, pkg-config: {query})").cyan()
+        );
     } else {
-        print!("{rendered}");
+        println!(
+            "{}{} {}",
+            branch,
+            name.bold().bright_blue(),
+            "(system)".cyan()
+        );
     }
 }
 
