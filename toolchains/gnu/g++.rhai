@@ -9,16 +9,20 @@ toolset["cc"]  = _gcc;
 toolset["cxx"] = _gxx;
 toolset["ld"]  = _gxx;
 
-modules["style"]         = "gcc";
-modules["enable_flag"]   = "-fmodules-ts";
-modules["compile_miu"]   = "-fmodule-output={pcm_path}";
-modules["import_module"] = "-fmodule-file={name}={pcm_path}";
-modules["header_unit"]   = "-fmodule-header";
+language_option("modules", "true", |ctx| {
+    set_module("style",         "gcc");
+    set_module("enable_flag",   "-fmodules-ts");
+    set_module("compile_miu",   "-fmodule-output={pcm_path}");
+    set_module("import_module", "-fmodule-file={name}={pcm_path}");
+    set_module("header_unit",   "-fmodule-header");
+});
 
-pch["compile"]      = "-x c++-header";
-pch["use"]          = "-include {header_path}";
-pch["extension"]    = ".gch";
-pch["clangd_flag"]  = "-include {header_path}";
+language_option("pch", "", |ctx| {
+    set_pch("compile",     "-x c++-header");
+    set_pch("use",         "-include {header_path}");
+    set_pch("extension",   ".gch");
+    set_pch("clangd_flag", "-include {header_path}");
+});
 
 // ── compiler_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [compiler.g++] in freight.toml.

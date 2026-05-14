@@ -241,6 +241,28 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
     // fn load() can append to load_flags via the map type (immediate side-effects).
     let _ = engine.call_fn::<()>(&mut scope, &ast, "load", ());
 
+    // ── Evaluate structural language_option handlers at load time ──────────
+    // "modules" and "pch" handlers use set_module()/set_pch() to configure
+    // the template.  We call them now — while CURRENT is still live — so
+    // those writes land in ToolchainDef.  Any add_flag() output is discarded
+    // (the same flags will be emitted again when run_handlers fires at build
+    // time, if the manifest option is present).
+    for key in &["modules", "pch"] {
+        let handler_opt: Option<OptionHandler> = COLLECTED_LANG_OPTS.with(|c| c.borrow().get(*key).cloned());
+        if let Some(handler) = handler_opt {
+            let value = handler.default_value.clone().unwrap_or_default();
+            let mut ctx = Map::new();
+            ctx.insert("value".into(),   Dynamic::from(value));
+            ctx.insert("version".into(), Dynamic::from(String::new()));
+            ctx.insert("arch".into(),    Dynamic::from(std::env::consts::ARCH.to_string()));
+            ctx.insert("os".into(),      Dynamic::from(std::env::consts::OS.to_string()));
+            ctx.insert("name".into(),    Dynamic::from(String::new()));
+            PENDING_FLAGS.with(|f| f.borrow_mut().clear());
+            let _ = handler.callback.call::<Dynamic>(&engine, &ast, (Dynamic::from(ctx),));
+            PENDING_FLAGS.with(|f| f.borrow_mut().clear());
+        }
+    }
+
     // ── Collect map data from thread-local state ───────────────────────────
     let mut def = CURRENT
         .with(|c| c.borrow_mut().take())
@@ -506,6 +528,20 @@ fn make_engine(base_dir: Option<PathBuf>) -> Engine {
                 .unwrap_or_default()
                 .into()
         })
+    });
+
+    // ── set_module / set_pch — callable inside language_option callbacks ─────
+    // These write to CURRENT via with_def, which is a silent no-op when CURRENT
+    // is None (i.e., at build time when run_handlers fires the same callback).
+    // Structural configuration therefore only takes effect at template load time.
+    e.register_fn("set_module", |key: String, val: String| {
+        with_def(|d| {
+            if key == "style" { d.module_style = val; }
+            else { d.module_params.insert(key, val); }
+        });
+    });
+    e.register_fn("set_pch", |key: String, val: String| {
+        with_def(|d| { d.pch.insert(key, val); });
     });
 
     // ── env map (read-only) ───────────────────────────────────────────────────
