@@ -15,7 +15,7 @@ use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::debug::cmd_debug;
 use crate::commands::deps::{
     cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_remove,
-    cmd_graph, cmd_search, cmd_tree, cmd_update, cmd_yank,
+    cmd_search, cmd_tree, cmd_update, cmd_yank,
 };
 use crate::commands::doc::{cmd_doc, cmd_man};
 use crate::commands::fmt::cmd_fmt;
@@ -173,18 +173,6 @@ enum Commands {
     Fetch,
     /// Print the dependency tree
     Tree,
-    /// Emit the dependency graph as DOT or Mermaid
-    Graph {
-        /// Output format: dot | mermaid
-        #[arg(long, short, default_value = "dot", value_name = "FORMAT")]
-        format: String,
-        /// Write graph output to a file instead of stdout
-        #[arg(long, short, value_name = "FILE")]
-        output: Option<String>,
-        /// Include [dev-dependencies] declared by the root package
-        #[arg(long)]
-        dev: bool,
-    },
     /// Show package metadata
     Info { package: String },
     /// Search freight.dev
@@ -394,7 +382,6 @@ fn main() -> Result<()> {
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Fetch => cmd_fetch(),
         Commands::Tree => cmd_tree(),
-        Commands::Graph { format, output, dev } => cmd_graph(&format, output.as_deref(), dev),
         Commands::Info { package } => cmd_info(&package),
         Commands::Search { query } => cmd_search(&query),
         Commands::Check => cmd_check(),
