@@ -178,6 +178,21 @@ command. The query string is passed as-is to pkg-config, so version constraints 
 When both `system` and `pkg-config` are set, pkg-config is tried first. If it fails (not installed
 or package not found), freight falls back to `-l{system}` and prints a warning.
 
+**pkgconf fallback** — if `pkg-config` is not found on `$PATH`, freight automatically retries with
+`pkgconf` (a compatible alternative common on Alpine, Void, and other distributions).
+
+**Cross-compilation** — when `[compiler] target` is set, freight resolves `PKG_CONFIG_PATH`,
+`PKG_CONFIG_LIBDIR`, and `PKG_CONFIG_SYSROOT_DIR` with the following priority order so each can
+be configured independently per target:
+
+1. `<VAR>_<target>` — e.g. `PKG_CONFIG_PATH_aarch64-linux-gnu`
+2. `<VAR>_<target_underscored>` — e.g. `PKG_CONFIG_PATH_aarch64_linux_gnu`
+3. `TARGET_<VAR>` — e.g. `TARGET_PKG_CONFIG_PATH`
+4. `<VAR>` — the plain variable
+
+**Static linking** — set `PKG_CONFIG_ALL_STATIC=1` in your environment to pass `--static` to
+every pkg-config invocation, requesting static-link flags from all `.pc` files.
+
 ### Git dependency
 
 ```toml
@@ -230,6 +245,20 @@ Specifying an explicit `backend` when the required marker file is absent is an e
 `backend = "none"` skips the build entirely — useful when you want to explicitly declare a
 header-only dep. Freight also auto-detects header-only deps: if no compilable source files are found
 after fetching, the build step is skipped and include dirs are collected automatically.
+
+**CMake build details** — when `backend = "cmake"` (or auto-detected):
+- Ninja is used as the generator when `ninja` is on `$PATH`; otherwise CMake's default (Unix Makefiles) is used.
+- When `[compiler] target` is set, `-DCMAKE_SYSTEM_NAME` and `-DCMAKE_SYSTEM_PROCESSOR` are injected automatically from the target triple.
+- Parallel builds via `cmake --build --parallel N` on CMake ≥ 3.12.
+- `cmake --install` installs built artifacts to `.freight-build/install/` so headers and archives are always found at a predictable path.
+- Additional arguments from `cmake-args` are forwarded to the configure step verbatim.
+
+**Autotools build details** — when `backend = "autotools"` (or auto-detected):
+- When `[compiler] target` is set, `--host=<triple>` is passed to `configure` automatically.
+- Configure is skipped when `config.status` and `Makefile` are already present and `configure` has not been modified since the last configure run (fast-build).
+- `--enable-static --disable-shared` is always passed for predictable static archive output.
+- `make -j{N}` runs with all available CPU cores.
+- For wasm/Emscripten targets, `emconfigure` and `emmake` are used in place of `configure` and `make`.
 
 ### Dependency filters
 

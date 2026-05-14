@@ -57,15 +57,25 @@ freight/
 │   │       │   ├── markdown.rs # math protection + Markdown conversion helpers
 │   │       │   ├── render_md.rs  # Markdown renderer (GFM, cross-document links)
 │   │       │   └── render_json.rs # JSON + MessagePack renderers for tooling/doc apps
-│   │       └── build/          # compilation + linking orchestration
-│   │           ├── mod.rs      # build_project, clean_project, test_project (pub functions)
-│   │           ├── compile.rs  # source → object, parallel via rayon
-│   │           ├── link.rs     # object → binary / .a / .so
-│   │           ├── discover.rs # walkdir source discovery
-│   │           ├── deps.rs     # dep graph resolution + topo sort
-│   │           ├── features.rs # Cargo-style [features] resolve + define generation
-│   │           ├── foreign.rs  # foreign build system integration (cmake/make/meson/autotools/scons)
-│   │           └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   │       ├── build/          # compilation + linking orchestration
+│   │       │   ├── mod.rs      # build_project, clean_project, test_project (pub functions)
+│   │       │   ├── compile.rs  # source → object, parallel via rayon
+│   │       │   ├── link.rs     # object → binary / .a / .so
+│   │       │   ├── discover.rs # walkdir source discovery
+│   │       │   ├── deps.rs     # dep graph resolution + topo sort
+│   │       │   ├── features.rs # Cargo-style [features] resolve + define generation
+│   │       │   └── modules.rs  # C++20 module scanner, DAG, phased compilation
+│   │       └── meta/           # foreign build system + package resolver integrations
+│   │           ├── mod.rs      # build_foreign_deps orchestrator, detect_build_system, invoke_build_system
+│   │           ├── cmake.rs    # CMake: Ninja generator, cross-compile SYSTEM_NAME/PROCESSOR, --parallel, --install
+│   │           ├── autotools.rs # Autotools: --host, parallel make, fast-build skip, Emscripten
+│   │           ├── pkg_config.rs # pkg-config + pkgconf fallback, cross-compile env var lookup, static mode
+│   │           ├── make.rs     # plain Makefile builds
+│   │           ├── meson.rs    # Meson builds
+│   │           ├── scons.rs    # SCons builds
+│   │           ├── bazel.rs    # Bazel builds
+│   │           ├── conan.rs    # Conan package manager integration
+│   │           └── system_pm.rs # host system package manager detection (apt/brew/dnf/…) for install hints
 │   ├── freight-doc/              # standalone doc generator binary (freight-doc CLI)
 │   │   └── src/
 │   │       └── main.rs         # freight-doc --format md|json|msgpack|all [DIR...] --out DIR
