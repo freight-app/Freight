@@ -730,6 +730,7 @@ pub fn parse_vcpkg_search(output: &str) -> Vec<VcpkgPackage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use freight_core::supports::SupportsExpr;
 
     #[test]
     fn package_docs_url_points_at_vcpkg_package_page() {
@@ -754,25 +755,19 @@ mod tests {
     fn evaluates_vcpkg_supports_against_triplet_tags() {
         let env = TripletSupportEnv::from_triplet("x64-linux");
         assert_eq!(
-            SupportsExpr::parse("linux").unwrap().eval(&env).unwrap(),
+            eval_tristate(&SupportsExpr::parse("linux").unwrap(), &env),
             TriState::True
         );
         assert_eq!(
-            SupportsExpr::parse("windows").unwrap().eval(&env).unwrap(),
+            eval_tristate(&SupportsExpr::parse("windows").unwrap(), &env),
             TriState::False
         );
         assert_eq!(
-            SupportsExpr::parse("linux & !windows")
-                .unwrap()
-                .eval(&env)
-                .unwrap(),
+            eval_tristate(&SupportsExpr::parse("linux & !windows").unwrap(), &env),
             TriState::True
         );
         assert_eq!(
-            SupportsExpr::parse("linux & unknown-feature")
-                .unwrap()
-                .eval(&env)
-                .unwrap(),
+            eval_tristate(&SupportsExpr::parse("linux & unknown-feature").unwrap(), &env),
             TriState::Unknown
         );
     }
