@@ -466,7 +466,7 @@ enum Mode {
     /// Browsing the dependency list.
     List,
     /// Reading a dep's docs; `scroll` is the vertical line offset.
-    DocView { content: Vec<String>, scroll: u16 },
+    DocView { content: Vec<Line<'static>>, scroll: u16 },
 }
 
 struct DocApp<'a> {
@@ -753,7 +753,7 @@ fn draw_list(
 fn draw_doc_view(
     frame: &mut ratatui::Frame,
     dep: &DocDependency,
-    content: &[String],
+    content: &[Line<'static>],
     scroll: u16,
     area: ratatui::layout::Rect,
 ) {
@@ -771,8 +771,7 @@ fn draw_doc_view(
     .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, chunks[0]);
 
-    let lines: Vec<Line> = content.iter().map(|l| Line::raw(l.as_str())).collect();
-    let para = Paragraph::new(lines)
+    let para = Paragraph::new(content.to_vec())
         .block(Block::default()
             .title(format!("docs: {}", dep.name))
             .borders(Borders::ALL))
@@ -782,7 +781,7 @@ fn draw_doc_view(
 
 // ── Doc content loading ────────────────────────────────────────────────────────
 
-fn load_doc_content(dep: &DocDependency) -> Vec<String> {
+fn load_doc_content(dep: &DocDependency) -> Vec<Line<'static>> {
     // 1. Try extracting API docs from the dep's source directory.
     if let Some(dep_dir) = &dep.path {
         let src_dir = dep_dir.join("src");
@@ -796,19 +795,19 @@ fn load_doc_content(dep: &DocDependency) -> Vec<String> {
     // 2. Fall back to reading the first available doc file (README.md, index.md, …).
     for doc_path in &dep.docs {
         if let Ok(text) = std::fs::read_to_string(doc_path) {
-            let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+            let mut lines: Vec<Line<'static>> = text.lines().map(|l| Line::raw(l.to_string())).collect();
             if lines.is_empty() {
-                lines.push("(empty file)".into());
+                lines.push(Line::raw("(empty file)"));
             }
             return lines;
         }
     }
 
     vec![
-        format!("No documentation found for '{}'.", dep.name),
-        String::new(),
-        "Run `freight doc --format md` inside the dependency directory".into(),
-        "to generate API docs, or add a README.md.".into(),
+        Line::raw(format!("No documentation found for '{}'.", dep.name)),
+        Line::raw(""),
+        Line::raw("Run `freight doc --format md` inside the dependency directory"),
+        Line::raw("to generate API docs, or add a README.md."),
     ]
 }
 
@@ -888,22 +887,37 @@ fn convert_math(text: &str) -> String {
     s
 }
 
-fn param_table(params: &[(&str, &str)], width: usize) -> Vec<String> {
+fn param_table(params: &[(&str, &str)], width: usize) -> Vec<Line<'static>> {
     if params.is_empty() { return vec![]; }
     let name_col = params.iter().map(|(n, _)| n.len()).max().unwrap_or(4).max(4);
     let desc_col = (width.saturating_sub(name_col + 7)).max(10);
-    let hr_top  = format!("  ┌{:─<w$}┬{:─<d$}┐", "", "", w = name_col + 2, d = desc_col + 2);
-    let hr_head = format!("  ├{:─<w$}┼{:─<d$}┤", "", "", w = name_col + 2, d = desc_col + 2);
-    let hr_bot  = format!("  └{:─<w$}┴{:─<d$}┘", "", "", w = name_col + 2, d = desc_col + 2);
-    let mut out = vec![hr_top];
-    out.push(format!("  │ {:<w$} │ {:<d$} │", "Name", "Description", w = name_col, d = desc_col));
-    out.push(hr_head);
-    for (name, desc) in params {
-        // Word-wrap the description column
+
+    let bdr = Style::default().fg(Color::DarkGray);
+    let hdr = Style::default().add_modifier(Modifier::BOLD);
+    let nam = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+
+    let rule = |l: &'static str, m: &'static str, r: &'static str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("  {l}{}{m}{}{r}", "─".repeat(name_col + 2), "─".repeat(desc_col + 2)), bdr),
+        ])
+    };
+    let sep_mid = rule("├", "┼", "┤");
+
+    let mut out: Vec<Line<'static>> = vec![rule("┌", "┬", "┐")];
+    out.push(Line::from(vec![
+        Span::styled("  │ ", bdr),
+        Span::styled(format!("{:<w$}", "Name",        w = name_col), hdr),
+        Span::styled(" │ ", bdr),
+        Span::styled(format!("{:<w$}", "Description", w = desc_col), hdr),
+        Span::styled(" │", bdr),
+    ]));
+    out.push(rule("├", "┼", "┤"));
+
+    for (idx, (name, desc)) in params.iter().enumerate() {
+        // Word-wrap description column
         let mut words = desc.split_whitespace().peekable();
-        let mut first = true;
-        let mut cur = String::new();
         let mut rows: Vec<String> = Vec::new();
+        let mut cur = String::new();
         while words.peek().is_some() {
             let word = words.next().unwrap();
             if cur.is_empty() {
@@ -918,43 +932,81 @@ fn param_table(params: &[(&str, &str)], width: usize) -> Vec<String> {
         }
         if !cur.is_empty() { rows.push(cur); }
         if rows.is_empty() { rows.push(String::new()); }
+
         for (i, row) in rows.iter().enumerate() {
-            let n_cell = if first { format!("{:<w$}", name, w = name_col) } else { " ".repeat(name_col) };
-            first = false;
-            out.push(format!("  │ {n_cell} │ {:<d$} │", row, d = desc_col));
+            let (name_cell, name_style) = if i == 0 {
+                (format!("{:<w$}", name, w = name_col), nam)
+            } else {
+                (" ".repeat(name_col), Style::default())
+            };
+            out.push(Line::from(vec![
+                Span::styled("  │ ", bdr),
+                Span::styled(name_cell, name_style),
+                Span::styled(" │ ", bdr),
+                Span::raw(format!("{:<w$}", row, w = desc_col)),
+                Span::styled(" │", bdr),
+            ]));
+        }
+
+        // Separator between params (not after the last one)
+        if idx + 1 < params.len() {
+            out.push(sep_mid.clone());
         }
     }
-    out.push(hr_bot);
+    out.push(rule("└", "┴", "┘"));
     out
 }
 
-fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<String> {
+fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<Line<'static>> {
     use freight_doc::extract::TagKind;
     const WIDTH: usize = 72;
-    let mut lines = Vec::new();
+
+    let bdr  = Style::default().fg(Color::DarkGray);
+    let kind_sty = Style::default().fg(Color::DarkGray);
+    let name_sty = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let lang_sty = Style::default().fg(Color::DarkGray);
+    let sig_sty  = Style::default().fg(Color::LightGreen);
+    let sec_sty  = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+    let tag_sty  = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
     for item in items {
         // ── header ──
-        let title = format!(" {} {}  ({}) ", item.kind.label(), item.name, item.lang.label());
-        let dashes = WIDTH.saturating_sub(title.len() + 4);
-        lines.push(format!("── {}{} ──", title, "─".repeat(dashes)));
+        let kind_s = item.kind.label().to_string();
+        let name_s = item.name.clone();
+        let lang_s = format!("  ({}) ", item.lang.label());
+        let used = kind_s.len() + 1 + name_s.len() + lang_s.len() + 6;
+        let trail = "─".repeat(WIDTH.saturating_sub(used)) + " ──";
+        lines.push(Line::from(vec![
+            Span::styled("── ", bdr),
+            Span::styled(kind_s, kind_sty),
+            Span::raw(" "),
+            Span::styled(name_s, name_sty),
+            Span::styled(lang_s, lang_sty),
+            Span::styled(trail, bdr),
+        ]));
 
         // ── signature ──
         if !item.signature.is_empty() {
-            lines.push(String::new());
-            lines.push(format!("  {}", item.signature));
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(item.signature.clone(), sig_sty),
+            ]));
         }
 
         // ── brief ──
         if !item.brief.is_empty() {
-            lines.push(String::new());
-            lines.push(format!("  {}", convert_math(&item.brief)));
+            lines.push(Line::raw(""));
+            lines.push(Line::raw(format!("  {}", convert_math(&item.brief))));
         }
 
         // ── body ──
         if !item.body.is_empty() {
-            lines.push(String::new());
+            lines.push(Line::raw(""));
             for body_line in item.body.lines() {
-                lines.push(format!("  {}", convert_math(body_line)));
+                lines.push(Line::raw(format!("  {}", convert_math(body_line))));
             }
         }
 
@@ -964,35 +1016,47 @@ fn format_doc_items(items: &[freight_doc::extract::DocItem]) -> Vec<String> {
             .map(|t| (t.name.as_deref().unwrap_or("?"), t.text.as_str()))
             .collect();
         if !params.is_empty() {
-            lines.push(String::new());
-            lines.push("  Parameters".to_string());
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Parameters", sec_sty),
+            ]));
             lines.extend(param_table(&params, WIDTH));
         }
 
         // ── returns ──
         for tag in item.tags.iter().filter(|t| t.kind == TagKind::Return) {
-            lines.push(String::new());
-            lines.push(format!("  Returns  {}", convert_math(&tag.text)));
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Returns  ", sec_sty),
+                Span::raw(convert_math(&tag.text)),
+            ]));
         }
 
-        // ── other tags (Note, Warning, See, Since, Deprecated, Example, Other) ──
+        // ── other tags ──
         for tag in &item.tags {
             match &tag.kind {
-                TagKind::Param | TagKind::Return => {}
-                TagKind::Brief => {}
+                TagKind::Param | TagKind::Return | TagKind::Brief => {}
                 kind => {
-                    lines.push(String::new());
-                    lines.push(format!("  {}  {}", kind.label(), convert_math(&tag.text)));
+                    lines.push(Line::raw(""));
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(kind.label().to_string(), tag_sty),
+                        Span::raw("  "),
+                        Span::raw(convert_math(&tag.text)),
+                    ]));
                 }
             }
         }
 
-        lines.push(String::new());
-        lines.push("─".repeat(WIDTH));
-        lines.push(String::new());
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("─".repeat(WIDTH), bdr));
+        lines.push(Line::raw(""));
     }
+
     if lines.is_empty() {
-        lines.push("(no documented items found in source)".into());
+        lines.push(Line::raw("(no documented items found in source)"));
     }
     lines
 }
