@@ -266,16 +266,12 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), FreightError> {
 ///
 /// The flag format is determined by `linker.system_lib_flag(name)` — GCC/Clang produce
 /// `-l{name}`, MSVC produces `{name}.lib`.
-///
-/// Deps with `pkg_config = "..."` are skipped here — pkg-config already provides the
-/// correct link flags via `raw_link_flags` from `build_foreign_deps`.
 fn collect_system_lib_flags(manifest: &Manifest, linker: &CompilerTemplate) -> Vec<String> {
     let effective = manifest.effective_dependencies();
     effective.values()
         .chain(manifest.dev_dependencies.values())
         .filter_map(|dep| {
             if let Dependency::Detailed(d) = dep {
-                if d.pkg_config.is_some() { return None; }
                 d.system.as_deref()
             } else {
                 None

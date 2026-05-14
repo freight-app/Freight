@@ -525,13 +525,8 @@ pub struct DetailedDep {
     /// Recommended for `url` deps; `freight fetch` rejects archives with a mismatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
-    /// pkg-config query string, e.g. `"libfoo >= 2.0"`. Freight runs
-    /// `pkg-config --cflags --libs <query>` and injects the result into
-    /// compilation and linking. No source build is performed.
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "pkg-config", alias = "pkg_config")]
-    pub pkg_config: Option<String>,
     /// Explicit resolver to use for this version dep.
-    /// Accepted values: `"pkg-config"`, `"conan"`, `"vcpkg"`.
+    /// Accepted values: `"conan"`, `"vcpkg"`, `"system"`.
     /// When omitted, freight tries `pkg-config → conan → vcpkg` in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,

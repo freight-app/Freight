@@ -106,22 +106,8 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
         let Dependency::Detailed(d) = dep else { continue };
         let ctx = format!("[dependencies.{name}]");
 
-        // pkg_config is for system-installed libraries. It can be used alone
-        // (`{ pkg_config = "zlib" }`) or with system as a -l{name} fallback
-        // (`{ system = "z", pkg_config = "zlib" }`). It must not be combined
-        // with source dep kinds (path / git / url).
-        if d.pkg_config.is_some() {
-            let has_source = d.path.is_some() || d.git.is_some() || d.url.is_some();
-            if has_source {
-                errors.push(ValidationError::new(
-                    &ctx,
-                    "pkg_config cannot be combined with path, git, or url",
-                ));
-            }
-        }
-
         if let Some(repo) = &d.repo {
-            const KNOWN_REPOS: &[&str] = &["pkg-config", "conan", "vcpkg", "system"];
+            const KNOWN_REPOS: &[&str] = &["conan", "vcpkg", "system"];
             if !KNOWN_REPOS.contains(&repo.as_str()) {
                 errors.push(ValidationError::new(
                     &ctx,
@@ -134,12 +120,11 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
                 && d.path.is_none()
                 && d.system.is_none()
                 && d.git.is_none()
-                && d.url.is_none()
-                && d.pkg_config.is_none();
+                && d.url.is_none();
             if !is_version_dep {
                 errors.push(ValidationError::new(
                     &ctx,
-                    "repo is only valid for version deps (no path, git, url, system, or pkg-config)",
+                    "repo is only valid for version deps (no path, git, url, or system)",
                 ));
             }
         }

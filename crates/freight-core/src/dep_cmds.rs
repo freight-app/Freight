@@ -277,8 +277,7 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
                 && d.path.is_none()
                 && d.system.is_none()
                 && d.git.is_none()
-                && d.url.is_none()
-                && d.pkg_config.is_none() => d.version.as_deref(),
+                && d.url.is_none() => d.version.as_deref(),
         _ => None,
     }
 }

@@ -106,22 +106,13 @@ fn print_package_dep(branch: &str, name: &str, version: &str) {
     );
 }
 
-fn print_system_dep(branch: &str, name: &str, dep: &DetailedDep) {
-    if let Some(query) = &dep.pkg_config {
-        println!(
-            "{}{} {}",
-            branch,
-            name.bold().bright_blue(),
-            format!("(system, pkg-config: {query})").cyan()
-        );
-    } else {
-        println!(
-            "{}{} {}",
-            branch,
-            name.bold().bright_blue(),
-            "(system)".cyan()
-        );
-    }
+fn print_system_dep(branch: &str, name: &str, _dep: &DetailedDep) {
+    println!(
+        "{}{} {}",
+        branch,
+        name.bold().bright_blue(),
+        "(system)".cyan()
+    );
 }
 
 // ── freight add ────────────────────────────────────────────────────────────────

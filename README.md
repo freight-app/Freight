@@ -121,9 +121,8 @@ json    = { url = "https://github.com/nlohmann/json/releases/download/v3.11.3/js
 sse-opt = { path = "../sse-opt", arch = "x86_64" }
 
 # Advanced overrides — only needed when the defaults don't fit:
-#   pkg-config = "glib-2.0 >= 2.56"   explicit pkg-config query (pkg-config name differs from dep key)
-#   system = "mylib"                   skip all resolvers, pass -l{name} directly
-#   repo = "vcpkg"                     pin to a specific resolver (pkg-config / conan / vcpkg / system)
+#   system = "mylib"   skip all resolvers, pass -l{name} directly
+#   repo = "vcpkg"     pin to a specific resolver (conan / vcpkg / system)
 
 # OS-conditional sources, defines, and includes
 [os.linux]
@@ -264,7 +263,7 @@ The `examples/` directory contains fully buildable projects. See [`examples/READ
 | `with-cmake-dep/` | Foreign CMake dependency (auto-detected) |
 | `with-make-dep/` | Foreign Make dependency (auto-detected) |
 | `with-git-dep/` | Git dependency cloned and built automatically |
-| `with-external-deps/` | URL archive and pkg-config deps |
+| `with-external-deps/` | URL archive and version deps |
 | `prebuilt-demo/` | `build.freight` pre-build script |
 | `doc-example/` | C, C++, Fortran libs as path deps; run `freight doc` here to demo the TUI |
 | `with-build-script/` | `build.freight` pre-build script with generated header and optional package probing |

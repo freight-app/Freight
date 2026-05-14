@@ -65,57 +65,6 @@ pub fn build_foreign_deps(
 
         let Dependency::Detailed(d) = dep else { continue };
 
-        // ── pkg-config dep ────────────────────────────────────────────────────
-        if let Some(query) = &d.pkg_config {
-            progress(BuildEvent::ResolvingDep { name: name.clone(), via: "pkg-config".to_string() });
-            match pkg_config_query(query) {
-                Ok(pc) => {
-                    let version = pkg_config_version(query);
-                    pkg_results.push(ResolvedPkgConfig {
-                        name: name.clone(),
-                        found: true,
-                        version,
-                        include_dirs: pc.include_dirs.clone(),
-                    });
-                    results.push(ForeignBuilt {
-                        name: name.clone(),
-                        libs: vec![],
-                        include_dirs: pc.include_dirs,
-                        raw_link_flags: pc.link_flags,
-                    });
-                }
-                Err(e) => {
-                    if let Some(fallback) = &d.system {
-                        progress(BuildEvent::Warning(format!(
-                            "pkg-config for '{name}' failed ({e}); falling back to -l{fallback}"
-                        )));
-                        pkg_results.push(ResolvedPkgConfig {
-                            name: name.clone(), found: false,
-                            version: String::new(), include_dirs: vec![],
-                        });
-                        results.push(ForeignBuilt {
-                            name: name.clone(), libs: vec![],
-                            include_dirs: vec![],
-                            raw_link_flags: vec![format!("-l{fallback}")],
-                        });
-                    } else if d.optional {
-                        progress(BuildEvent::Warning(format!(
-                            "pkg-config for '{name}' not found (optional, skipping)"
-                        )));
-                        pkg_results.push(ResolvedPkgConfig {
-                            name: name.clone(), found: false,
-                            version: String::new(), include_dirs: vec![],
-                        });
-                    } else {
-                        return Err(FreightError::ManifestParse(format!(
-                            "pkg-config failed for '{name}' and no system fallback: {e}"
-                        )));
-                    }
-                }
-            }
-            continue;
-        }
-
         // ── Pure system dep — -l{name} handled by linker, nothing to build ───
         if d.system.is_some() {
             continue;
@@ -196,8 +145,7 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
                 && d.path.is_none()
                 && d.system.is_none()
                 && d.git.is_none()
-                && d.url.is_none()
-                && d.pkg_config.is_none() => d.version.as_deref(),
+                && d.url.is_none() => d.version.as_deref(),
         _ => None,
     }
 }
@@ -244,23 +192,6 @@ fn resolve_version_dep(
     progress: &Progress,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
     match repo {
-        Some("pkg-config") => {
-            progress(BuildEvent::ResolvingDep { name: name.to_string(), via: "pkg-config".to_string() });
-            match pkg_config_query(query) {
-                Ok(pc) => {
-                    let ver = pkg_config_version(query);
-                    Ok(Some((
-                        ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs: pc.include_dirs.clone(), raw_link_flags: pc.link_flags },
-                        Some(ResolvedPkgConfig { name: name.to_string(), found: true, version: ver, include_dirs: pc.include_dirs }),
-                    )))
-                }
-                Err(e) if optional => {
-                    progress(BuildEvent::Warning(format!("'{name}' not found via pkg-config (optional, skipping): {e}")));
-                    Ok(None)
-                }
-                Err(e) => Err(e),
-            }
-        }
         Some("conan") => {
             match conan::resolve_conan_dep(name, name, version, project_dir, progress) {
                 Ok(built) => Ok(Some((built, None))),
@@ -299,7 +230,7 @@ fn resolve_version_dep(
             )))
         }
         Some(other) => Err(FreightError::ManifestParse(format!(
-            "unknown repo '{other}' for dep '{name}'; accepted: pkg-config, conan, vcpkg, system"
+            "unknown repo '{other}' for dep '{name}'; accepted: conan, vcpkg, system"
         ))),
         None => {
             // Default chain: pkg-config → conan (if available) → vcpkg → system hint

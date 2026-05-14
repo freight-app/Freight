@@ -305,12 +305,7 @@ fn dependency_summary(
             )
         }
         Dependency::Detailed(d) if d.system.is_some() => {
-            let source = d
-                .pkg_config
-                .as_deref()
-                .or(d.system.as_deref())
-                .unwrap_or("system")
-                .to_string();
+            let source = d.system.as_deref().unwrap_or("system").to_string();
             (
                 "system".to_string(),
                 d.version.clone().unwrap_or_else(|| "*".into()),
