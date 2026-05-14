@@ -1,0 +1,10 @@
+[package]
+name        = "psapi"
+version     = "0"
+description = "Process Status API — memory usage, module enumeration, working set queries"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "psapi"
+hdrs = ["psapi.h"]

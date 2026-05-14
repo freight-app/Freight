@@ -1,0 +1,10 @@
+[package]
+name        = "shell32"
+version     = "0"
+description = "Win32 shell — SHBrowseForFolder, ShellExecute, file associations, taskbar"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "shell32"
+hdrs = ["shlobj.h", "shellapi.h"]

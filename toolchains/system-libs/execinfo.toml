@@ -1,0 +1,10 @@
+[package]
+name        = "execinfo"
+version     = "0"
+description = "Stack backtrace — backtrace, backtrace_symbols"
+supports    = "freebsd | openbsd | netbsd | dragonfly"
+
+[lib]
+type = "system"
+link = "execinfo"
+hdrs = ["execinfo.h"]

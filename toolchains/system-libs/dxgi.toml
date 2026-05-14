@@ -1,0 +1,10 @@
+[package]
+name        = "dxgi"
+version     = "0"
+description = "DXGI — swap chains, adapters, display output enumeration shared across D3D versions"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "dxgi"
+hdrs = ["dxgi.h", "dxgi1_2.h", "dxgi1_6.h"]

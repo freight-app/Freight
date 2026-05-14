@@ -1,0 +1,10 @@
+[package]
+name        = "uuid"
+version     = "0"
+description = "UUID/GUID utilities — UuidCreate, UuidToString, RPC UUID support"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "uuid"
+hdrs = ["rpcdce.h", "rpc.h"]

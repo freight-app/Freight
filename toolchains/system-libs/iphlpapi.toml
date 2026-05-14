@@ -1,0 +1,10 @@
+[package]
+name        = "iphlpapi"
+version     = "0"
+description = "IP Helper API — network adapter enumeration, routing tables, ARP, ICMP"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "iphlpapi"
+hdrs = ["iphlpapi.h", "iptypes.h"]

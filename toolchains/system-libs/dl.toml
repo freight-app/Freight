@@ -1,0 +1,10 @@
+[package]
+name        = "dl"
+version     = "0"
+description = "Dynamic linking — dlopen, dlsym, dlclose, dlerror"
+supports    = "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos | android"
+
+[lib]
+type = "system"
+link = "dl"
+hdrs = ["dlfcn.h"]

@@ -121,14 +121,16 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
         }
 
         if let Some(repo) = &d.repo {
-            const KNOWN_REPOS: &[&str] = &["pkg-config", "conan", "vcpkg"];
+            const KNOWN_REPOS: &[&str] = &["pkg-config", "conan", "vcpkg", "system"];
             if !KNOWN_REPOS.contains(&repo.as_str()) {
                 errors.push(ValidationError::new(
                     &ctx,
                     format!("unknown repo {:?}; accepted: {}", repo, KNOWN_REPOS.join(", ")),
                 ));
             }
-            let is_version_dep = d.version.is_some()
+            // repo = "system" needs no version (system libs have no meaningful version).
+            let version_optional = repo.as_str() == "system";
+            let is_version_dep = (d.version.is_some() || version_optional)
                 && d.path.is_none()
                 && d.system.is_none()
                 && d.git.is_none()

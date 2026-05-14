@@ -1,0 +1,10 @@
+[package]
+name        = "dbghelp"
+version     = "0"
+description = "Debug helper — StackWalk64, SymFromAddr, MiniDumpWriteDump, symbol loading"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "dbghelp"
+hdrs = ["dbghelp.h"]

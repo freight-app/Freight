@@ -405,6 +405,10 @@ pub struct LibTarget {
     /// Include directories are inferred from the parent directories of listed headers.
     #[serde(default)]
     pub hdrs: Vec<String>,
+    /// For `type = "system"` only: the linker flag name passed as `-l<link>`.
+    /// Defaults to the package name when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
@@ -414,6 +418,8 @@ pub enum LibType {
     Static,
     Shared,
     HeaderOnly,
+    /// Pre-installed system library — only `-l<link>` is added; no source build.
+    System,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

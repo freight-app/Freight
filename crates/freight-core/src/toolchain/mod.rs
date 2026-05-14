@@ -2,6 +2,7 @@ pub mod cache;
 pub mod debugger;
 pub mod detect;
 mod script;
+pub mod system_libs;
 pub mod template;
 pub mod tool;
 
@@ -16,6 +17,7 @@ pub use detect::{
     load_templates, load_all_templates, templates_dir, user_templates_dir, toolchain_add, toolchain_use,
 };
 pub use template::{BuildSettings, CompilerTemplate, ModuleStyle};
+pub use system_libs::{SystemLibStub, load_system_lib_stubs, find_stub};
 pub use tool::{
     DetectedTool, ToolTemplate,
     collect_sources, detect_tools,

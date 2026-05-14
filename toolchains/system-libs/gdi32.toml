@@ -1,0 +1,10 @@
+[package]
+name        = "gdi32"
+version     = "0"
+description = "Win32 GDI — 2D graphics, device contexts, fonts, bitmaps"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "gdi32"
+hdrs = ["windows.h", "wingdi.h"]

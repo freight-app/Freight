@@ -1,0 +1,10 @@
+[package]
+name        = "advapi32"
+version     = "0"
+description = "Win32 advanced API — registry, services, security, cryptography (legacy)"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "advapi32"
+hdrs = ["windows.h", "wincrypt.h", "sddl.h"]

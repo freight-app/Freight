@@ -1,0 +1,10 @@
+[package]
+name        = "comdlg32"
+version     = "0"
+description = "Common dialogs — GetOpenFileName, GetSaveFileName, ChooseColor, ChooseFont, PrintDlg"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "comdlg32"
+hdrs = ["commdlg.h"]

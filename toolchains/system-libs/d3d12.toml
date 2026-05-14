@@ -1,0 +1,10 @@
+[package]
+name        = "d3d12"
+version     = "0"
+description = "Direct3D 12 — explicit GPU control, command lists, descriptor heaps, ray tracing"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "d3d12"
+hdrs = ["d3d12.h", "d3d12sdklayers.h", "d3dcommon.h"]

@@ -1,0 +1,10 @@
+[package]
+name        = "m"
+version     = "0"
+description = "C math library — trigonometry, exponentiation, logarithms, rounding"
+supports    = "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos | android"
+
+[lib]
+type = "system"
+link = "m"
+hdrs = ["math.h", "complex.h", "tgmath.h", "fenv.h"]

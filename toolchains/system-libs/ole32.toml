@@ -1,0 +1,10 @@
+[package]
+name        = "ole32"
+version     = "0"
+description = "COM/OLE — CoCreateInstance, CoInitialize, IUnknown, marshalling"
+supports    = "windows"
+
+[lib]
+type = "system"
+link = "ole32"
+hdrs = ["objbase.h", "combaseapi.h", "unknwn.h"]
