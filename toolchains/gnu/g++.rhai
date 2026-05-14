@@ -23,11 +23,6 @@ pch["clangd_flag"]  = "-include {header_path}";
 // ── compiler_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [compiler.g++] in freight.toml.
 
-// [compiler.g++] march = "native"  →  -march=native
-compiler_option("march", |ctx| {
-    add_flag(`-march=${ctx.value}`);
-});
-
 // [compiler.g++] min_version = "12.0"  →  error if g++ < 12.0
 compiler_option("min_version", |ctx| {
     if !version_gte(ctx.version, ctx.value) {

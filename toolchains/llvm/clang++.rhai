@@ -30,11 +30,6 @@ linking["objcpp"] = #{
 // ── compiler_option handlers ──────────────────────────────────────────────────
 // Declare options users can set under [compiler.clang++] in freight.toml.
 
-// [compiler.clang++] march = "native"  →  -march=native
-compiler_option("march", |ctx| {
-    add_flag(`-march=${ctx.value}`);
-});
-
 // [compiler.clang++] lto_mode = "thin"  →  -flto=thin  (requires Clang ≥ 3.9)
 compiler_option("lto_mode", |ctx| {
     if ctx.value == "thin" && version_gte(ctx.version, "3.9") {
