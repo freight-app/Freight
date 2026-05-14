@@ -10,7 +10,7 @@ pub mod modules;
 pub mod pch;
 pub mod script;
 
-pub use compile::{CompileResult, UNITY_SUPPORTED_LANGS, compile_sources, compile_sources_unity, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
+pub use compile::{CompileResult, UNITY_SUPPORTED_LANGS, compile_sources, compile_sources_unity, emit_asm_sources, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
 pub use deps::{ResolvedDep, check_slot_conflicts, resolve_dep_graph};
 pub use discover::{DiscoveredSources, SourceFile, discover};
 pub use link::{LinkResult, link_static_lib, link_targets, link_test_binary, select_linker};
@@ -420,6 +420,27 @@ fn collect_dep_include_dirs(project_dir: &Path, manifest: &Manifest) -> Vec<Path
         .iter()
         .flat_map(|dep| deps::dep_include_dirs(&dep.dir, &dep.manifest))
         .collect()
+}
+
+/// Emit assembly files for all sources of the project at the current working directory.
+///
+/// Writes `.s` files to `target/{profile}/asm/` preserving the source tree structure.
+/// Skips pure assembler sources (gas/nasm/yasm) and languages without `-S` support.
+pub fn emit_asm_project_with(profile: &str, progress: &Progress) -> Result<(), FreightError> {
+    let cwd = std::env::current_dir()?;
+    let project_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    let ctx = load_project_at(&project_dir, profile)?;
+    let ProjectContext { project_dir, manifest, effective_backend, detected, found, .. } = &ctx;
+
+    let resolution = features::resolve_features(&manifest.features, &[], true)?;
+    let feature_defines = features::to_defines(&resolution.active);
+    let include_dirs = found.include_dirs.clone();
+
+    compile::emit_asm_sources(
+        project_dir, manifest, effective_backend, profile,
+        &found.sources, &include_dirs, detected, &feature_defines, progress,
+    )
 }
 
 /// Wipe the project's `target/` directory (finds project by walking up from cwd).

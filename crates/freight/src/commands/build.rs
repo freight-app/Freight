@@ -9,7 +9,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use freight_core::build::{
     bench_project_with, bench_workspace_with,
     build_project_at, build_project_with, build_workspace_with, clean_project, clean_workspace,
-    test_project_with, test_workspace_with,
+    emit_asm_project_with, test_project_with, test_workspace_with,
 };
 use freight_core::event::{BuildEvent, Progress};
 use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
@@ -78,7 +78,44 @@ fn make_progress() -> Progress {
         BuildEvent::BenchResult { name, mean_ns } => {
             println!("{:>12} {} … {}", "bench".bold().cyan(), name, fmt_duration(mean_ns));
         }
+        BuildEvent::Timing { .. } => {}   // collected separately; not printed inline
+        BuildEvent::EmittedAsm { path } => {
+            println!("{:>12} {}", "Emitted".dimmed(), path.display());
+        }
     })
+}
+
+/// Like [`make_progress`] but also collects [`BuildEvent::Timing`] events into
+/// the returned `Arc<Mutex<Vec<(PathBuf, u64)>>>` for post-build reporting.
+fn make_timed_progress() -> (Progress, std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, u64)>>>) {
+    use std::sync::{Arc, Mutex};
+    use owo_colors::OwoColorize;
+
+    let timings: Arc<Mutex<Vec<(PathBuf, u64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let timings_sink = Arc::clone(&timings);
+
+    let progress: Progress = Arc::new(move |event| match event {
+        BuildEvent::Timing { ref path, ns } => {
+            timings_sink.lock().unwrap().push((path.clone(), ns));
+        }
+        BuildEvent::BuildStarted { name, profile } => print_status("Building", &format!("{name} [{profile}]")),
+        BuildEvent::Compiling { path } => print_status("Compiling", &path.display().to_string()),
+        BuildEvent::Fresh { path } => println!("{:>12} {}", "Fresh".dimmed(), path.display()),
+        BuildEvent::Linking { name } => print_status("Linking", &name),
+        BuildEvent::Archiving { name } => print_status("Archiving", &name),
+        BuildEvent::RunningScript { cached } => {
+            if cached { println!("{:>12} build script (cached)", "Running".dimmed()); }
+            else { print_status("Running", "build script"); }
+        }
+        BuildEvent::FetchingDep { name, source } => print_status("Fetching", &format!("{name} ({source})")),
+        BuildEvent::ResolvingDep { name, via } => println!("{:>12} {} ({})", "Resolving".dimmed(), name, via),
+        BuildEvent::BuildingForeignDep { name, backend } => print_status("Building", &format!("{name} ({backend})")),
+        BuildEvent::Warning(msg) => print_warning(&msg),
+        BuildEvent::EmittedAsm { path } => println!("{:>12} {}", "Emitted".dimmed(), path.display()),
+        _ => {}
+    });
+
+    (progress, timings)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,10 +131,21 @@ fn at_workspace_root() -> bool {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-pub fn cmd_build(release: bool, package: Option<&str>, features: &[String], use_defaults: bool, sanitize: &[String]) {
+pub fn cmd_build(release: bool, package: Option<&str>, features: &[String], use_defaults: bool, sanitize: &[String], emit: &[String], time_passes: bool) {
     let profile = if release { "release" } else { "dev" };
 
-    let progress = make_progress();
+    if time_passes {
+        // Safety: single-threaded here; rayon workers not yet started.
+        unsafe { std::env::set_var("FREIGHT_TIME_PASSES", "1"); }
+    }
+
+    let (progress, timings) = if time_passes {
+        make_timed_progress()
+    } else {
+        (make_progress(), std::sync::Arc::new(std::sync::Mutex::new(vec![])))
+    };
+
+    let build_ok;
     if at_workspace_root() {
         match build_workspace_with(profile, package, features, use_defaults, &progress) {
             Ok(outputs) => {
@@ -111,29 +159,42 @@ pub fn cmd_build(release: bool, package: Option<&str>, features: &[String], use_
                         println!("    {}", bin.display());
                     }
                 }
+                build_ok = true;
             }
-            Err(e) => { println!(); print_error(&e.to_string()); }
+            Err(e) => { println!(); print_error(&e.to_string()); build_ok = false; }
         }
-        return;
+    } else {
+        if package.is_some() {
+            print_error("`-p` can only be used at a workspace root");
+            return;
+        }
+        match build_project_with(profile, features, use_defaults, sanitize, &progress) {
+            Ok(output) => {
+                println!();
+                print_success(&format!(
+                    "{} ({} compiled, {} up to date)",
+                    output.package_name, output.compiled, output.skipped,
+                ));
+                for bin in &output.binaries {
+                    println!("    {}", bin.display());
+                }
+                build_ok = true;
+            }
+            Err(e) => { println!(); print_error(&e.to_string()); build_ok = false; }
+        }
     }
 
-    if package.is_some() {
-        print_error("`-p` can only be used at a workspace root");
-        return;
-    }
-
-    match build_project_with(profile, features, use_defaults, sanitize, &progress) {
-        Ok(output) => {
-            println!();
-            print_success(&format!(
-                "{} ({} compiled, {} up to date)",
-                output.package_name, output.compiled, output.skipped,
-            ));
-            for bin in &output.binaries {
-                println!("    {}", bin.display());
+    if build_ok {
+        if emit.iter().any(|e| e.eq_ignore_ascii_case("asm")) {
+            if let Err(e) = emit_asm_project_with(profile, &progress) {
+                print_error(&format!("--emit asm failed: {e}"));
             }
         }
-        Err(e) => { println!(); print_error(&e.to_string()); }
+        if time_passes {
+            let mut t = timings.lock().unwrap();
+            t.sort_by(|a, b| b.1.cmp(&a.1));
+            print_timing_table(&t);
+        }
     }
 }
 
@@ -448,6 +509,30 @@ fn print_bench_table(results: &[freight_core::build::BenchResult]) {
             width = name_width,
         );
     }
+}
+
+fn print_timing_table(timings: &[(PathBuf, u64)]) {
+    use owo_colors::OwoColorize;
+    if timings.is_empty() { return; }
+    println!();
+    let name_width = timings.iter()
+        .map(|(p, _)| p.display().to_string().len())
+        .max().unwrap_or(20).max(20).min(60);
+    println!("{:>12}  {:<width$}  {:>10}", "time-passes".bold().yellow(), "file", "time", width = name_width);
+    println!("{}", "─".repeat(name_width + 26));
+    for (path, ns) in timings {
+        println!("{:>12}  {:<width$}  {:>10}",
+            "",
+            truncate_left(&path.display().to_string(), name_width),
+            fmt_duration(*ns),
+            width = name_width,
+        );
+    }
+}
+
+fn truncate_left(s: &str, max: usize) -> String {
+    if s.len() <= max { s.to_string() }
+    else { format!("…{}", &s[s.len() - max + 1..]) }
 }
 
 fn fmt_duration(ns: u64) -> String {

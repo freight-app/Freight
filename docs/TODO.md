@@ -51,21 +51,30 @@ Print a coloured table. Analogous to `cargo outdated`.
 GCC/Clang column markers and MSVC error codes are parsed into concise
 summaries with clickable `file:line:col` references and source snippets.
 
-### S5 — `--emit asm`
-`freight build --emit asm` — write `.s` files to `target/{profile}/asm/` so
-developers can inspect codegen without a separate `objdump` workflow.
+### S4 — `freight graph` ✓ done
+Emits the dependency graph as DOT or Mermaid to stdout or a file. Useful for
+auditing transitive deps in large projects.
 
-### S6 — `--time-passes`
-Instrument each compilation step and print a per-file build time table sorted
-descending. Helps identify which TUs dominate build time.
+### S5 — `--emit asm` ✓ done
+`freight build --emit asm` — runs an extra `-S` pass for each source file and
+writes `.s` files to `target/{profile}/asm/`, preserving the source tree structure.
+Skips pure-assembler sources (gas/nasm/yasm). Non-fatal: failures are surfaced as
+warnings rather than aborting the build. Normal object compilation and linking still happen.
 
-### S7 — Profile inheritance
-`[profile.custom] inherits = "release"; debug = true` — avoid duplicating the
-full flag set for profiling or coverage profiles.
+### S6 — `--time-passes` ✓ done
+`freight build --time-passes` — instruments every `compile_one` call, emits
+`BuildEvent::Timing` events, then prints a per-file table sorted slowest-first after
+the build completes. Uses the `FREIGHT_TIME_PASSES` env var internally so rayon workers
+can record timings without changing function signatures.
 
-### S8 — Sanitizer preset override via CLI
-`freight test --sanitize address,undefined` — override the profile's sanitize
-list from the command line without editing `freight.toml`.
+### S7 — Profile inheritance ✓ done
+`[profile.custom] inherits = "release"; debug = true` — fully implemented:
+`resolve_profile` walks the `inherits` chain (max 16 hops, cycle-safe), merges
+parent→child with child fields winning when `Some`/non-empty.
+
+### S8 — Sanitizer preset override via CLI ✓ done
+`freight test --sanitize address,undefined` — `apply_sanitize_override` patches the
+active profile's sanitize list; `--sanitize` is wired through `build`, `test`, and `run`.
 
 ### S9 — `rerun_if` in `build.freight`
 `rerun_if_changed("path")` and `rerun_if_env_changed("VAR")` — skip re-running

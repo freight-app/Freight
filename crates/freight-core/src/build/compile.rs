@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use rayon::prelude::*;
 
@@ -106,7 +106,11 @@ pub fn compile_sources(
             fs::create_dir_all(obj.parent().expect("obj path always has a parent"))?;
 
             progress(BuildEvent::Compiling { path: src.path.clone() });
+            let t0 = Instant::now();
             compile_one(&src_abs, &obj, &dep, &compile_bin, compiler, &settings, header_unit_flags)?;
+            if std::env::var_os("FREIGHT_TIME_PASSES").is_some() {
+                progress(BuildEvent::Timing { path: src.path.clone(), ns: t0.elapsed().as_nanos() as u64 });
+            }
 
             Ok((obj, true))
         })
@@ -525,6 +529,100 @@ pub(crate) fn print_cmd(cmd: &Command) {
     let prog = cmd.get_program().to_string_lossy();
     let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
     eprintln!("     {} {} {}", "cmd".dimmed(), prog, args.join(" "));
+}
+
+// ── Assembly emission ─────────────────────────────────────────────────────────
+
+/// Languages for which assembly emission (`-S`) is not meaningful or supported.
+/// Pure assemblers (gas/nasm/yasm) already work with textual assembly source.
+const ASM_EMIT_SKIP_LANGS: &[&str] = &["gas", "nasm", "yasm", "ispc"];
+
+/// Emit textual assembly for every source in `sources` into `target/{profile}/asm/`.
+///
+/// Runs in parallel alongside the normal build. Uses the same compiler flags as
+/// compilation, replacing `-c` with `-S`. Non-fatal: failures are surfaced as
+/// [`BuildEvent::Warning`] rather than aborting the build.
+pub fn emit_asm_sources(
+    project_dir: &Path,
+    manifest: &Manifest,
+    backend: &Backend,
+    profile: &str,
+    sources: &[SourceFile],
+    include_dirs: &[PathBuf],
+    detected: &[DetectedCompiler],
+    feature_defines: &[String],
+    progress: &Progress,
+) -> Result<(), FreightError> {
+    let pf = primary_family(backend, detected);
+    let asm_dir = project_dir.join("target").join(profile).join("asm");
+    fs::create_dir_all(&asm_dir)?;
+
+    let eligible: Vec<&SourceFile> = sources.iter()
+        .filter(|s| !ASM_EMIT_SKIP_LANGS.contains(&s.lang_key.as_str()))
+        .collect();
+
+    eligible.par_iter().for_each(|src| {
+        let src_abs = project_dir.join(&src.path);
+
+        // Preserve directory structure to avoid name collisions between files
+        // with the same name in different subdirectories.
+        let asm_rel = {
+            let mut p = src.path.clone();
+            p.set_extension("s");
+            p
+        };
+        let asm_path = asm_dir.join(&asm_rel);
+
+        if let Some(parent) = asm_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                progress(BuildEvent::Warning(format!("emit-asm: cannot create dir: {e}")));
+                return;
+            }
+        }
+
+        let compiler = match select_compiler(&src.lang_key, backend, detected, pf) {
+            Some(c) => c,
+            None => return, // no compiler for this lang — skip silently
+        };
+
+        let settings = settings_for_lang(manifest, profile, &src.lang_key, include_dirs, project_dir, feature_defines);
+        let compile_bin = resolve_compile_binary(compiler, &src.lang_key);
+
+        let mut cmd = if let Some(wrapper) = cache_wrapper() {
+            let mut c = Command::new(wrapper);
+            c.arg(&compile_bin);
+            c
+        } else {
+            Command::new(&compile_bin)
+        };
+        cmd.args(compiler.template.assemble_flags(&settings));
+        cmd.arg("-S");
+        cmd.arg(&src_abs);
+        cmd.arg("-o");
+        cmd.arg(&asm_path);
+
+        if std::env::var_os("FREIGHT_VERBOSE").is_some() {
+            print_cmd(&cmd);
+        }
+
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                progress(BuildEvent::EmittedAsm { path: asm_path });
+            }
+            Ok(out) => {
+                let msg = String::from_utf8_lossy(&out.stderr).into_owned();
+                progress(BuildEvent::Warning(format!(
+                    "emit-asm failed for {}: {}",
+                    src.path.display(), msg.lines().next().unwrap_or("unknown error")
+                )));
+            }
+            Err(e) => {
+                progress(BuildEvent::Warning(format!("emit-asm: {e}")));
+            }
+        }
+    });
+
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

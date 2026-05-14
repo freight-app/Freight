@@ -41,6 +41,10 @@ pub enum BuildEvent {
     BenchRunning { name: String },
     /// Result of a single benchmark binary (wall-clock mean in nanoseconds).
     BenchResult { name: String, mean_ns: u64 },
+    /// Wall-clock time to compile one source file (only emitted when `--time-passes` is active).
+    Timing { path: PathBuf, ns: u64 },
+    /// An assembly file was emitted to `target/{profile}/asm/` (one per source).
+    EmittedAsm { path: PathBuf },
 }
 
 /// A shared, thread-safe progress sink.

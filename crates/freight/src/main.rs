@@ -75,6 +75,13 @@ enum Commands {
         /// Select a specific workspace member to build
         #[arg(long, short = 'p', value_name = "PACKAGE")]
         package: Option<String>,
+        /// Extra outputs to emit alongside object files. Accepted value: `asm`
+        /// (writes `.s` files to `target/{profile}/asm/`).
+        #[arg(long, value_name = "FORMAT", value_delimiter = ',')]
+        emit: Vec<String>,
+        /// Print a per-file compilation time table sorted by slowest first.
+        #[arg(long)]
+        time_passes: bool,
     },
     /// Build and run the default binary
     Run {
@@ -307,8 +314,10 @@ fn main() -> Result<()> {
             no_default_features,
             sanitize,
             package,
+            emit,
+            time_passes,
         } => {
-            cmd_build(release, package.as_deref(), &features, !no_default_features, &sanitize);
+            cmd_build(release, package.as_deref(), &features, !no_default_features, &sanitize, &emit, time_passes);
         }
         Commands::Run {
             release,
