@@ -85,14 +85,16 @@ for sources that changed or when command-affecting settings change.
 When `FREIGHT_SYSROOT` is set, inject `--sysroot=` automatically without
 requiring `[compiler] sysroot` in the manifest.
 
-### S12 — Template evaluation cache
-Cache parsed `.rhai` template results to `~/.freight/template-cache.json`.
-Cache key = per-file content hash + base-file hash. Requires `Serialize`/
-`Deserialize` on `CompilerTemplate` and all nested types.
+### S12 — Template evaluation cache ✓ done
+Cache parsed `.rhai` template results to `~/.freight/template-cache.msgpack`.
+Cache key = per-file content hash + base-file hash. `CompilerTemplate` and
+serializable nested template metadata derive `Serialize`/`Deserialize`; templates
+with runtime option handlers are evaluated live so their callbacks remain active.
 
-### S13 — macOS / Windows distribution packages
-`freight package --target x86_64-windows` producing a `.zip` instead of `.tar.gz`.
-Cross-compiled `.exe` via `x86_64-w64-mingw32` toolchain or a Windows sysroot.
+### S13 — macOS / Windows distribution packages ✓ done
+`freight package --target x86_64-windows` produces a `.zip` instead of `.tar.gz`.
+Windows targets emit and install `.exe` binaries, with shared-library packaging
+using the existing Windows DLL/import-lib layout for MinGW or Windows sysroots.
 
 ### S14 — Unity / jumbo builds
 `[compiler] unity = true` — concatenate all TUs per language into one translation

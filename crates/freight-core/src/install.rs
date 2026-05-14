@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::io::{Seek, Write};
 
 use crate::build::build_project_at;
 use crate::error::FreightError;
@@ -97,7 +98,8 @@ pub fn install_project(project_dir: &Path, opts: &InstallOptions) -> Result<Inst
 
     // ── Binaries ──────────────────────────────────────────────────────────────
     for bin in &manifest.bins {
-        let src = project_dir.join("target").join(profile).join(&bin.name);
+        let bin_file = executable_name(&bin.name, &target_os);
+        let src = project_dir.join("target").join(profile).join(&bin_file);
         if !src.exists() {
             return Err(FreightError::InstallFailed(format!(
                 "binary '{}' not found in target/{profile}/ — run `freight build` first",
@@ -105,7 +107,7 @@ pub fn install_project(project_dir: &Path, opts: &InstallOptions) -> Result<Inst
             )));
         }
         fs::create_dir_all(&bin_dir)?;
-        let dst = bin_dir.join(&bin.name);
+        let dst = bin_dir.join(&bin_file);
         copy_file(&src, &dst)?;
         set_mode(&dst, 0o755)?;
         items.push(InstalledItem { dst, kind: InstalledKind::Binary });
@@ -170,7 +172,7 @@ pub fn install_project(project_dir: &Path, opts: &InstallOptions) -> Result<Inst
 }
 
 /// Build in release mode, install to a staging dir, and produce a
-/// `{name}-{version}-{arch}-{os}.tar.gz` in `target/package/`.
+/// `{name}-{version}-{arch}-{os}.tar.gz` (or `.zip` for Windows targets) in `target/package/`.
 ///
 /// `target` is an optional cross-compilation triple (e.g. `aarch64-linux-gnu`).
 /// When provided it overrides the manifest's `[compiler] target` and is used to
@@ -210,8 +212,15 @@ pub fn package_project(project_dir: &Path, release: bool, target: Option<&str>) 
         target:   target.map(str::to_string),
     })?;
 
-    let archive = pkg_dir.join(format!("{stem}.tar.gz"));
-    create_tarball(&pkg_dir, &stem, &archive)?;
+    let archive = if pkg_os == "windows" {
+        let archive = pkg_dir.join(format!("{stem}.zip"));
+        create_zip_archive(&pkg_dir, &stem, &archive)?;
+        archive
+    } else {
+        let archive = pkg_dir.join(format!("{stem}.tar.gz"));
+        create_tarball(&pkg_dir, &stem, &archive)?;
+        archive
+    };
     fs::remove_dir_all(&staging)?;
 
     Ok(archive)
@@ -341,6 +350,122 @@ fn make_symlink(dir: &Path, link_name: &str, target: &str) -> Result<(), Freight
 #[cfg(not(unix))]
 fn make_symlink(_dir: &Path, _link: &str, _target: &str) -> Result<(), FreightError> {
     Ok(()) // Symlinks on Windows require elevated rights; skip silently.
+}
+
+
+fn executable_name(name: &str, target_os: &str) -> String {
+    if target_os == "windows" && !name.ends_with(".exe") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+fn create_zip_archive(parent: &Path, stem: &str, archive: &Path) -> Result<(), FreightError> {
+    let root = parent.join(stem);
+    let mut files = Vec::new();
+    collect_zip_files(&root, &root, stem, &mut files)?;
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = fs::File::create(archive)?;
+    let mut central = Vec::new();
+
+    for (name, path) in files {
+        let data = fs::read(&path)?;
+        let crc = crc32(&data);
+        let offset = out.stream_position()? as u32;
+        let name_bytes = name.as_bytes();
+
+        write_u32(&mut out, 0x0403_4b50)?;
+        write_u16(&mut out, 20)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u32(&mut out, crc)?;
+        write_u32(&mut out, data.len() as u32)?;
+        write_u32(&mut out, data.len() as u32)?;
+        write_u16(&mut out, name_bytes.len() as u16)?;
+        write_u16(&mut out, 0)?;
+        out.write_all(name_bytes)?;
+        out.write_all(&data)?;
+
+        central.push((name, crc, data.len() as u32, offset));
+    }
+
+    let central_start = out.stream_position()? as u32;
+    for (name, crc, len, offset) in &central {
+        let name_bytes = name.as_bytes();
+        write_u32(&mut out, 0x0201_4b50)?;
+        write_u16(&mut out, 20)?;
+        write_u16(&mut out, 20)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u32(&mut out, *crc)?;
+        write_u32(&mut out, *len)?;
+        write_u32(&mut out, *len)?;
+        write_u16(&mut out, name_bytes.len() as u16)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u16(&mut out, 0)?;
+        write_u32(&mut out, 0)?;
+        write_u32(&mut out, *offset)?;
+        out.write_all(name_bytes)?;
+    }
+    let central_end = out.stream_position()? as u32;
+    let central_size = central_end - central_start;
+
+    write_u32(&mut out, 0x0605_4b50)?;
+    write_u16(&mut out, 0)?;
+    write_u16(&mut out, 0)?;
+    write_u16(&mut out, central.len() as u16)?;
+    write_u16(&mut out, central.len() as u16)?;
+    write_u32(&mut out, central_size)?;
+    write_u32(&mut out, central_start)?;
+    write_u16(&mut out, 0)?;
+
+    Ok(())
+}
+
+fn collect_zip_files(root: &Path, dir: &Path, stem: &str, files: &mut Vec<(String, PathBuf)>) -> Result<(), FreightError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_zip_files(root, &path, stem, files)?;
+        } else if path.is_file() {
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            let rel = rel.components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.push((format!("{stem}/{rel}"), path));
+        }
+    }
+    Ok(())
+}
+
+fn write_u16<W: Write>(w: &mut W, n: u16) -> Result<(), FreightError> {
+    w.write_all(&n.to_le_bytes()).map_err(FreightError::Io)
+}
+
+fn write_u32<W: Write>(w: &mut W, n: u32) -> Result<(), FreightError> {
+    w.write_all(&n.to_le_bytes()).map_err(FreightError::Io)
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for &byte in bytes {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 fn create_tarball(parent: &Path, stem: &str, archive: &Path) -> Result<(), FreightError> {

@@ -500,6 +500,7 @@ dependencies = [
  "rayon",
  "regex",
  "rhai",
+ "rmp-serde",
  "semver",
  "serde",
  "serde_json",
