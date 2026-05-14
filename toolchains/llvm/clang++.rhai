@@ -17,7 +17,7 @@ language_option("modules", "true", |ctx| {
     set_module("header_unit",   "-x c++-header");
 });
 
-language_option("pch", "", |ctx| {
+language_option("pch", |ctx| {
     set_pch("compile",     "-x c++-header");
     set_pch("use",         "-include-pch {pch_path}");
     set_pch("extension",   ".pch");

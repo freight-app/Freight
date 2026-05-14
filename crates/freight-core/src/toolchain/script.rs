@@ -241,24 +241,19 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
     // fn load() can append to load_flags via the map type (immediate side-effects).
     let _ = engine.call_fn::<()>(&mut scope, &ast, "load", ());
 
-    // ── Evaluate structural language_option handlers at load time ──────────
-    // "modules" and "pch" handlers use set_module()/set_pch() to configure
-    // the template.  We call them now — while CURRENT is still live — so
-    // those writes land in ToolchainDef.  Any add_flag() output is discarded
-    // (the same flags will be emitted again when run_handlers fires at build
-    // time, if the manifest option is present).
+    // Call "modules" and "pch" handlers now while CURRENT is still live so
+    // their set_module()/set_pch() writes land in ToolchainDef.  add_flag()
+    // output is discarded; those flags are emitted again at build time.
     for key in &["modules", "pch"] {
-        let handler_opt: Option<OptionHandler> = COLLECTED_LANG_OPTS.with(|c| c.borrow().get(*key).cloned());
-        if let Some(handler) = handler_opt {
-            let value = handler.default_value.clone().unwrap_or_default();
+        if let Some(h) = COLLECTED_LANG_OPTS.with(|c| c.borrow().get(*key).cloned()) {
             let mut ctx = Map::new();
-            ctx.insert("value".into(),   Dynamic::from(value));
+            ctx.insert("value".into(),   Dynamic::from(h.default_value.unwrap_or_default()));
             ctx.insert("version".into(), Dynamic::from(String::new()));
             ctx.insert("arch".into(),    Dynamic::from(std::env::consts::ARCH.to_string()));
             ctx.insert("os".into(),      Dynamic::from(std::env::consts::OS.to_string()));
             ctx.insert("name".into(),    Dynamic::from(String::new()));
             PENDING_FLAGS.with(|f| f.borrow_mut().clear());
-            let _ = handler.callback.call::<Dynamic>(&engine, &ast, (Dynamic::from(ctx),));
+            let _ = h.callback.call::<Dynamic>(&engine, &ast, (Dynamic::from(ctx),));
             PENDING_FLAGS.with(|f| f.borrow_mut().clear());
         }
     }
