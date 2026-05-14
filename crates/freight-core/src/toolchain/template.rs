@@ -389,6 +389,10 @@ pub struct PchConfig {
     pub use_flag: String,
     /// File extension for the PCH output, e.g. `".pch"` or `".gch"`.
     pub extension: String,
+    /// Flag injected into `compile_commands.json` for IDE/clangd consumers.
+    /// Clangd needs the *source* header, not the opaque binary PCH.
+    /// Placeholder: `{header_path}`. Defaults to `"-include {header_path}"` when empty.
+    pub clangd_flag: String,
 }
 
 /// A fully-parsed compiler template loaded from a `.toml` file.
@@ -694,9 +698,10 @@ impl CompilerTemplate {
 
         let get_pch = |k: &str| def.pch.get(k).cloned().unwrap_or_default();
         let pch = PchConfig {
-            compile:   get_pch("compile"),
-            use_flag:  get_pch("use"),
-            extension: get_pch("extension"),
+            compile:     get_pch("compile"),
+            use_flag:    get_pch("use"),
+            extension:   get_pch("extension"),
+            clangd_flag: get_pch("clangd_flag"),
         };
 
         Ok(Self {
@@ -1165,6 +1170,16 @@ impl CompilerTemplate {
         args.push(header_abs.to_string_lossy().into_owned());
         args.extend(self.output_flag(pcm_path));
         Some((std::path::PathBuf::from(&self.binary), args))
+    }
+
+    /// Return the `import_module` flag template for named modules (e.g. `"-fmodule-file={name}={pcm_path}"`).
+    /// Returns `""` when the compiler does not support named modules.
+    pub fn module_import_template(&self) -> &str {
+        match &self.modules {
+            ModuleStyle::Gcc   { import_module, .. } => import_module,
+            ModuleStyle::Clang { import_module, .. } => import_module,
+            ModuleStyle::Unsupported => "",
+        }
     }
 
     /// Format a `-fmodule-file=` import flag for a header unit.

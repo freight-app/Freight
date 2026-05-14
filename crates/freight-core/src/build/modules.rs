@@ -286,8 +286,7 @@ pub fn compile_module_sources(
     let results: Result<Vec<(PathBuf, bool)>, FreightError> = plan.rest
         .par_iter()
         .map(|scanned| {
-            let mflags = import_flags(&scanned.imports, bmi_map);
-            compile_non_miu(project_dir, manifest, backend, profile, scanned, include_dirs, detected, &mflags, feature_defines, header_unit_flags, &progress)
+            compile_non_miu(project_dir, manifest, backend, profile, scanned, include_dirs, detected, bmi_map, feature_defines, header_unit_flags, &progress)
         })
         .collect();
 
@@ -341,7 +340,7 @@ fn compile_miu(
     fs::create_dir_all(obj.parent().unwrap())?;
     fs::create_dir_all(bmi.parent().unwrap())?;
 
-    let dep_import_flags = import_flags(&scanned.imports, bmi_map);
+    let dep_import_flags = import_flags(&scanned.imports, bmi_map, compiler.template.module_import_template());
 
     progress(BuildEvent::Compiling { path: scanned.source.path.clone() });
 
@@ -418,7 +417,7 @@ fn compile_non_miu(
     scanned: &ScannedSource,
     include_dirs: &[PathBuf],
     detected: &[DetectedCompiler],
-    module_flags_slice: &[String],
+    bmi_map: &HashMap<String, PathBuf>,
     feature_defines: &[String],
     header_unit_flags: &[String],
     progress: &Progress,
@@ -437,7 +436,8 @@ fn compile_non_miu(
     let settings = settings_for_lang(manifest, profile, &scanned.source.lang_key, include_dirs, project_dir, feature_defines);
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
 
-    let mut all_flags: Vec<String> = module_flags_slice.to_vec();
+    // Build import flags using the compiler's template rather than a hardcoded format.
+    let mut all_flags: Vec<String> = import_flags(&scanned.imports, bmi_map, compiler.template.module_import_template());
     all_flags.extend_from_slice(header_unit_flags);
 
     fs::create_dir_all(obj.parent().unwrap())?;
@@ -448,11 +448,18 @@ fn compile_non_miu(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Build `-fmodule-file=<name>=<path>` flags for every import that has a known BMI.
-fn import_flags(imports: &[String], bmi_map: &HashMap<String, PathBuf>) -> Vec<String> {
+/// Build module-import flags for every import that has a known BMI.
+/// `tmpl` is the compiler's `import_module` format string (e.g. `-fmodule-file={name}={pcm_path}`).
+fn import_flags(imports: &[String], bmi_map: &HashMap<String, PathBuf>, tmpl: &str) -> Vec<String> {
+    if tmpl.is_empty() {
+        return vec![];
+    }
     imports.iter()
         .filter_map(|name| {
-            bmi_map.get(name).map(|bmi| format!("-fmodule-file={}={}", name, bmi.display()))
+            bmi_map.get(name).map(|bmi| {
+                tmpl.replace("{name}", name)
+                    .replace("{pcm_path}", &bmi.display().to_string())
+            })
         })
         .collect()
 }
@@ -628,7 +635,11 @@ mod tests {
     fn import_flags_produces_module_file_flags() {
         let mut map = HashMap::new();
         map.insert("math".to_string(), PathBuf::from("/proj/target/dev/modules/math.pcm"));
-        let flags = import_flags(&["math".to_string(), "unknown".to_string()], &map);
+        let flags = import_flags(
+            &["math".to_string(), "unknown".to_string()],
+            &map,
+            "-fmodule-file={name}={pcm_path}",
+        );
         assert_eq!(flags.len(), 1);
         assert_eq!(flags[0], "-fmodule-file=math=/proj/target/dev/modules/math.pcm");
     }

@@ -56,7 +56,7 @@ pub fn compile_pch(
         if let (Some(hm), Some(pm)) = (header_mtime, pch_mtime) {
             if pm >= hm {
                 let use_flag = expand_pch_use_flag(&pch_cfg.use_flag, &header_path, &pch_out);
-                let clangd_flag = format!("-include {}", header_path.display());
+                let clangd_flag = expand_pch_clangd_flag(&pch_cfg.clangd_flag, &header_path);
                 return Ok(Some(CompiledPch { use_flag, clangd_flag }));
             }
         }
@@ -90,8 +90,16 @@ pub fn compile_pch(
     }
 
     let use_flag = expand_pch_use_flag(&pch_cfg.use_flag, &header_path, &pch_out);
-    let clangd_flag = format!("-include {}", header_path.display());
+    let clangd_flag = expand_pch_clangd_flag(&pch_cfg.clangd_flag, &header_path);
     Ok(Some(CompiledPch { use_flag, clangd_flag }))
+}
+
+fn expand_pch_clangd_flag(template: &str, header_path: &Path) -> String {
+    if template.is_empty() {
+        format!("-include {}", header_path.display())
+    } else {
+        template.replace("{header_path}", &header_path.display().to_string())
+    }
 }
 
 fn expand_pch_use_flag(template: &str, header_path: &Path, pch_path: &Path) -> String {
