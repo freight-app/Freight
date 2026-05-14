@@ -168,7 +168,7 @@ fn probe_cached(
         return None;
     }
     let path = which(&template.binary)?;
-    if !requirements_met(template) {
+    if !requirements_met(template, &path) {
         return None;
     }
     let version = if let Some(v) = cache.get_version(&path) {
@@ -209,14 +209,14 @@ fn host_supported(template: &CompilerTemplate) -> bool {
 
 /// Check required co-tools and env vars. Emits a warning for each missing item
 /// so the user knows why the toolchain was skipped.
-fn requirements_met(template: &CompilerTemplate) -> bool {
+fn requirements_met(template: &CompilerTemplate, compiler_path: &Path) -> bool {
     let mut ok = true;
     for tool in &template.required_tools {
-        if which(tool).is_none() {
+        if find_required_tool(tool, compiler_path).is_none() {
             eprintln!(
                 "warn: {} found but required tool '{}' is not in PATH \
-                 — installation may be incomplete",
-                template.name, tool
+                 or next to '{}' — installation may be incomplete",
+                template.name, tool, template.binary,
             );
             ok = false;
         }
@@ -232,6 +232,21 @@ fn requirements_met(template: &CompilerTemplate) -> bool {
         }
     }
     ok
+}
+
+fn find_required_tool(tool: &str, compiler_path: &Path) -> Option<PathBuf> {
+    which(tool).or_else(|| {
+        let sibling = compiler_path.parent()?.join(executable_name(tool));
+        sibling.is_file().then_some(sibling)
+    })
+}
+
+fn executable_name(binary: &str) -> String {
+    if cfg!(windows) && !binary.ends_with(".exe") {
+        format!("{binary}.exe")
+    } else {
+        binary.to_string()
+    }
 }
 
 /// Check `set_min_version`. Emits a warning when the detected version is older.
@@ -310,7 +325,7 @@ fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
         return None;
     }
     let path = which(&template.binary)?;
-    if !requirements_met(template) {
+    if !requirements_met(template, &path) {
         return None;
     }
     let version = query_version(template, &path).unwrap_or_else(|| "unknown".into());
@@ -403,6 +418,20 @@ mod tests {
 
     const TEMPLATES_DIR: &str =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
+
+    #[test]
+    fn required_tools_can_live_next_to_compiler() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let compiler = dir.path().join(executable_name("nvcc"));
+        let helper = dir.path().join(executable_name("ptxas"));
+        std::fs::write(&compiler, "").expect("compiler marker");
+        std::fs::write(&helper, "").expect("helper marker");
+
+        assert_eq!(
+            find_required_tool("ptxas", &compiler).as_deref(),
+            Some(helper.as_path())
+        );
+    }
 
     // ── version_ge ────────────────────────────────────────────────────────────
 
