@@ -44,7 +44,7 @@ freight fmt --check
 freight lint
 freight debug --launch-json
 freight doc --format all
-freight man --out-dir target/man
+freight doc --man --out-dir target/man
 freight install --destdir target/stage --prefix /usr/local
 freight package
 ```

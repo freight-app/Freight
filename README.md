@@ -190,7 +190,7 @@ injected by calling the global `add_flag(s)` function. See
 | Language | Key | Compiler | Extensions |
 |---|---|---|---|
 | C | `c` | gcc / clang / tcc / msvc / icpx | `.c` |
-| C++ | `cpp` | g++ / clang++ / msvc / icpx | `.cpp` `.cc` `.cxx` `.c++` `.cppm` |
+| C++ | `cpp` | g++ / clang++ / msvc / icpx | `.cpp` `.cc` `.cxx` `.c++` `.cppm` `.ixx` `.mpp` |
 | Fortran | `fortran` | gfortran / flang / ifx / nvfortran | `.f90` `.f95` `.f03` `.f08` `.f` |
 | CUDA | `cuda` | nvcc | `.cu` `.cuh` |
 | HIP | `hip` | hipcc | `.hip` |
@@ -237,9 +237,9 @@ freight tree                          print dependency tree
 freight lsp                           run language server on stdio
 freight debug [<binary>] [--debugger <name>] [-- <args>]
 freight compile-commands [--release]  generate compile_commands.json
-freight doc                          browse installed dependency docs in a TUI
+freight doc                           browse installed dependency docs in a TUI
 freight doc --format md|json|msgpack|all  generate extracted API docs
-freight man [--out-dir DIR]           generate man pages
+freight doc --man [--out-dir DIR]     generate man pages
 ```
 
 ## Examples

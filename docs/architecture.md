@@ -208,7 +208,7 @@ freight build
 | `pulldown-cmark` | 0.12 | Markdown processing in `doc/markdown.rs` |
 | `thiserror` | 1 | Error types in `freight-core` |
 | `tempfile` | 3 | Test helpers |
-| `clap_mangen` | 0.2 | Man page generation for `freight man` |
+| `clap_mangen` | 0.2 | Man page generation for `freight doc --man` |
 | `rhai` | 1 | Compiler template scripting engine |
 | `tower-lsp` | 0.20 | LSP transport in `freight-lsp` |
 | `tokio` | 1 | Async runtime for the LSP server |

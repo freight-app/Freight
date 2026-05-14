@@ -170,7 +170,7 @@ fn generate_docs(format: &str) {
     }
 }
 
-// ── freight man ─────────────────────────────────────────────────────────────────
+// ── man page generation (freight doc --man) ───────────────────────────────────
 
 fn cmd_man(out_dir: Option<&str>) {
     let out = out_dir

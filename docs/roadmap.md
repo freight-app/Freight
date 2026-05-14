@@ -127,7 +127,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `doc/render_md.rs` — GFM Markdown renderer with per-file pages and index
 - [x] `doc/render_json.rs` — JSON + MessagePack renderers for tooling/doc apps
 - [x] `freight doc` dependency TUI plus `freight doc --format md|json|msgpack|all`
-- [x] `freight man [--out-dir DIR]` — man pages via clap_mangen
+- [x] `freight doc --man [--out-dir DIR]` — man pages via clap_mangen
 - [x] `crates/freight-doc/` — standalone `freight-doc` binary
 - [x] `examples/doc-example/` — C, C++, Fortran sources with LaTeX math in comments; multi-lib project showcasing path deps in the TUI
 - [x] TUI DocView: colored rendering — item name (yellow/bold), signature (green), section labels (magenta/bold), table borders (dark gray), param names (cyan/bold)
