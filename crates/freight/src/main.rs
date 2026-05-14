@@ -5,7 +5,9 @@ mod output;
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 
-use crate::completion::{print_completion, CompletionShell};
+use crate::completion::{
+    print_completion, print_completion_candidates, CompletionContext, CompletionShell,
+};
 
 use crate::commands::build::{cmd_build, cmd_clean, cmd_run, cmd_test, cmd_watch};
 use crate::commands::check::cmd_check;
@@ -242,6 +244,9 @@ enum Commands {
         #[command(subcommand)]
         command: ToolchainCommands,
     },
+    /// Internal helper used by generated shell completion scripts
+    #[command(name = "__complete", hide = true)]
+    Complete { context: CompletionContext },
 }
 
 #[derive(Subcommand)]
@@ -396,6 +401,7 @@ fn main() -> Result<()> {
             ToolchainCommands::Add { name } => cmd_toolchain_add(&name),
             ToolchainCommands::Use { name } => cmd_toolchain_use(&name),
         },
+        Commands::Complete { context } => print_completion_candidates(context),
     }
 
     Ok(())

@@ -1,4 +1,5 @@
 use clap::{Command, ValueEnum};
+use freight_core::toolchain::{detect_all_cached, group_into_toolchains, load_all_templates};
 use std::io::{self, Write};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -9,6 +10,47 @@ pub(crate) enum CompletionShell {
     #[value(name = "powershell", alias = "power-shell")]
     PowerShell,
     Zsh,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum CompletionContext {
+    /// Dependency keys accepted in inline dependency tables and by `freight add` flags.
+    #[value(name = "add-dep-keys")]
+    AddDepKeys,
+    /// Detected primary toolchain names accepted by `freight toolchain use`.
+    #[value(name = "toolchain-use")]
+    ToolchainUse,
+}
+
+const DEP_KEYS: &[&str] = &[
+    "version", "path", "git", "branch", "tag", "rev", "system", "backend", "include",
+];
+
+pub(crate) fn print_completion_candidates(context: CompletionContext) {
+    let candidates = completion_candidates(context);
+    if !candidates.is_empty() {
+        let mut stdout = io::stdout();
+        for candidate in candidates {
+            let _ = writeln!(stdout, "{candidate}");
+        }
+    }
+}
+
+fn completion_candidates(context: CompletionContext) -> Vec<String> {
+    match context {
+        CompletionContext::AddDepKeys => DEP_KEYS.iter().map(|key| (*key).to_string()).collect(),
+        CompletionContext::ToolchainUse => detected_toolchain_names(),
+    }
+}
+
+fn detected_toolchain_names() -> Vec<String> {
+    let templates = load_all_templates();
+    if templates.is_empty() {
+        return Vec::new();
+    }
+    let detected = detect_all_cached(&templates);
+    let groups = group_into_toolchains(detected);
+    groups.toolchains.into_iter().map(|tc| tc.name).collect()
 }
 
 pub(crate) fn print_completion(shell: CompletionShell, cmd: &Command) {
@@ -62,6 +104,16 @@ _freight()
 {cases}        *) ;;
     esac
 
+    if [[ $cmd == add && $cur != -* ]]; then
+        COMPREPLY=( $(compgen -W "$(freight __complete add-dep-keys 2>/dev/null) $opts" -- "$cur") )
+        return 0
+    fi
+
+    if [[ $cmd == toolchain && ${{COMP_CWORD}} -ge 3 && ${{COMP_WORDS[2]}} == use && $cur != -* ]]; then
+        COMPREPLY=( $(compgen -W "$(freight __complete toolchain-use 2>/dev/null)" -- "$cur") )
+        return 0
+    fi
+
     if [[ $cur == -* ]]; then
         COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
     else
@@ -105,6 +157,16 @@ _freight() {{
     esac
   fi
 
+  if [[ ${{words[2]}} == add && ${{words[CURRENT]}} != -* ]]; then
+    compadd -- ${{(f)"$(freight __complete add-dep-keys 2>/dev/null)"}} $opts
+    return
+  fi
+
+  if [[ ${{words[2]}} == toolchain && ${{words[3]}} == use && ${{words[CURRENT]}} != -* ]]; then
+    compadd -- ${{(f)"$(freight __complete toolchain-use 2>/dev/null)"}}
+    return
+  fi
+
   if [[ ${{words[CURRENT]}} == -* ]]; then
     compadd -- $opts
   else
@@ -143,6 +205,8 @@ fn fish_completion(cmd: &Command) -> String {
             ));
         }
     }
+    out.push_str("complete -c freight -n '__fish_seen_subcommand_from add; and not __fish_seen_argument -s h -l help' -a '(freight __complete add-dep-keys 2>/dev/null)' -d 'dependency key'\n");
+    out.push_str("complete -c freight -n '__fish_seen_subcommand_from toolchain; and __fish_seen_subcommand_from use' -a '(freight __complete toolchain-use 2>/dev/null)' -d 'detected toolchain'\n");
     out
 }
 
@@ -278,4 +342,39 @@ fn shell_quote(word: &str) -> String {
 
 fn escape_single(word: &str) -> String {
     word.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_dependency_key_candidates_include_supported_dep_fields() {
+        let candidates = completion_candidates(CompletionContext::AddDepKeys);
+        for expected in [
+            "version", "path", "git", "branch", "tag", "rev", "system", "backend", "include",
+        ] {
+            assert!(candidates.iter().any(|candidate| candidate == expected));
+        }
+    }
+
+    #[test]
+    fn bash_completion_wires_dynamic_contexts_without_exposing_helper_command() {
+        let script = bash_completion(&crate::cli_command());
+        assert!(script.contains("freight __complete add-dep-keys"));
+        assert!(script.contains("freight __complete toolchain-use"));
+        assert!(script.contains("toolchain"));
+        assert!(!command_names(&crate::cli_command()).contains(&"__complete".to_string()));
+    }
+
+    #[test]
+    fn zsh_and_fish_completion_wire_dynamic_contexts() {
+        let cmd = crate::cli_command();
+        let zsh = zsh_completion(&cmd);
+        let fish = fish_completion(&cmd);
+        assert!(zsh.contains("freight __complete add-dep-keys"));
+        assert!(zsh.contains("freight __complete toolchain-use"));
+        assert!(fish.contains("freight __complete add-dep-keys"));
+        assert!(fish.contains("freight __complete toolchain-use"));
+    }
 }

@@ -40,7 +40,7 @@ print a timing table. Optional Criterion integration via a flag.
 
 ## Small tasks
 
-### S1 — Tab completion
+### S1 — Tab completion ✓ done
 Generate shell completions (bash, zsh, fish) for all subcommands and their options.
 When the user presses tab under `freight add`, offer known dep keys; under
 `freight toolchain use`, offer detected compiler names.
