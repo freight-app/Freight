@@ -49,10 +49,9 @@ When the user presses tab under `freight add`, offer known dep keys; under
 Compare locked path-dep revs and registry versions against latest available.
 Print a coloured table. Analogous to `cargo outdated`.
 
-### S3 — Better compiler diagnostics
-Parse GCC/Clang column markers and MSVC error codes, re-emit with clickable
-`file:line:col` references and a source snippet. Reduce wall-of-text compile
-errors to a concise summary.
+### S3 — Better compiler diagnostics ✓ done
+GCC/Clang column markers and MSVC error codes are parsed into concise
+summaries with clickable `file:line:col` references and source snippets.
 
 ### S4 — `freight graph` ✓ done
 Emits the dependency graph as DOT or Mermaid to stdout or a file. Useful for

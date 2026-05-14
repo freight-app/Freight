@@ -24,6 +24,7 @@ use super::compile::{
     compile_one, dep_file_path, is_up_to_date, object_path,
     resolve_compile_binary, select_compiler, settings_for_lang, CompileResult,
 };
+use super::diagnostics::format_compiler_diagnostics;
 use super::discover::SourceFile;
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -403,7 +404,7 @@ fn precompile_clang(
     let diag = if stdout.is_empty() { stderr } else { format!("{stdout}\n{stderr}") };
     Err(FreightError::CompileFailed(
         source.to_string_lossy().into_owned(),
-        diag.trim().to_owned(),
+        format_compiler_diagnostics(source, &diag),
     ))
 }
 
