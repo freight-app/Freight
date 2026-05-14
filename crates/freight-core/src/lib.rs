@@ -2,6 +2,7 @@ pub mod build;
 pub mod dep_cmds;
 pub mod error;
 pub mod event;
+pub mod graph;
 
 pub mod install;
 pub mod lock;

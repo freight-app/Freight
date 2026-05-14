@@ -1,10 +1,13 @@
 use std::path::Path;
 
+use anyhow::Context;
+
 use freight_core::dep_cmds::{
     locate_project, manifest_add_dep, manifest_remove_dep, regen_lock,
     fetch_git_deps, fetch_package_deps, fetch_url_deps, update_git_deps, invalidate_url_dep,
     DetailedDep, GitDepAction, PackageDepAction, RegenLockOutcome,
 };
+use freight_core::graph::{build_dependency_graph, GraphFormat};
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 
@@ -69,6 +72,34 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, _is_roo
                 println!("{}{}{} {} (package)", prefix, connector, name, ver);
             }
         }
+    }
+}
+
+
+// ── freight graph ──────────────────────────────────────────────────────────────
+
+pub fn cmd_graph(format: &str, output: Option<&str>, include_dev: bool) {
+    let (project_dir, manifest) = match locate_project() {
+        Ok(p) => p,
+        Err(e) => { print_error(&e.to_string()); return; }
+    };
+
+    let format = match GraphFormat::parse(format) {
+        Ok(format) => format,
+        Err(e) => { print_error(&e.to_string()); return; }
+    };
+
+    let graph = build_dependency_graph(&project_dir, &manifest, include_dev);
+    let rendered = graph.render(format);
+
+    if let Some(path) = output {
+        if let Err(e) = std::fs::write(path, rendered)
+            .with_context(|| format!("failed to write dependency graph to {path}"))
+        {
+            print_error(&e.to_string());
+        }
+    } else {
+        print!("{rendered}");
     }
 }
 
