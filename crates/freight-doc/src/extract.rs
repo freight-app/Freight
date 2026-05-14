@@ -182,6 +182,10 @@ fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
         {
             let (block, end) = collect_c_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
+            if is_c_conditional_directive(sym) {
+                i = end + 1;
+                continue;
+            }
             let (name, kind) = detect_c_symbol(sym);
             let item = build_item(block, name, kind, file, i + 1, lang.clone(), sym.to_string());
             if item_has_content(&item) { items.push(item); }
@@ -193,6 +197,10 @@ fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
         if t.starts_with("///") && !t.starts_with("////") {
             let (block, end) = collect_line_block(&lines, i, "///");
             let sym = next_non_blank(&lines, end + 1);
+            if is_c_conditional_directive(sym) {
+                i = end + 1;
+                continue;
+            }
             let (name, kind) = detect_c_symbol(sym);
             let item = build_item(block, name, kind, file, i + 1, lang.clone(), sym.to_string());
             if item_has_content(&item) { items.push(item); }
@@ -262,6 +270,14 @@ fn next_non_blank<'a>(lines: &[&'a str], from: usize) -> &'a str {
         .find(|l| !l.trim().is_empty())
         .copied()
         .unwrap_or("")
+}
+
+fn is_c_conditional_directive(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("#if")
+        || t.starts_with("#elif")
+        || t.starts_with("#else")
+        || t.starts_with("#endif")
 }
 
 /// Strip storage-class and attribute qualifiers that precede a type or name.
@@ -820,6 +836,23 @@ void sort(int *arr, size_t len);"#;
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].brief, "A utility macro.");
         assert!(matches!(got[0].kind, DocKind::Macro));
+    }
+
+    #[test]
+    fn c_define_keeps_doc_comment() {
+        let src = "/** Feature flag for vector code. */\n#define HAVE_VEC 1";
+        let got = items(src, &DocLanguage::C);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "HAVE_VEC");
+        assert_eq!(got[0].brief, "Feature flag for vector code.");
+        assert!(matches!(got[0].kind, DocKind::Macro));
+    }
+
+    #[test]
+    fn c_ifdef_does_not_consume_doc_comment() {
+        let src = "/** Header guard. */\n#ifndef MATHLIB_H\n#define MATHLIB_H";
+        let got = items(src, &DocLanguage::C);
+        assert!(got.is_empty(), "conditional directives should not become documented items");
     }
 
     #[test]
