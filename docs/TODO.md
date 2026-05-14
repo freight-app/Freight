@@ -54,8 +54,8 @@ Parse GCC/Clang column markers and MSVC error codes, re-emit with clickable
 `file:line:col` references and a source snippet. Reduce wall-of-text compile
 errors to a concise summary.
 
-### S4 — `freight graph`
-Emit the dependency graph as DOT or Mermaid to stdout or a file. Useful for
+### S4 — `freight graph` ✓ done
+Emits the dependency graph as DOT or Mermaid to stdout or a file. Useful for
 auditing transitive deps in large projects.
 
 ### S5 — `--emit asm`

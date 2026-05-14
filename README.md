@@ -218,6 +218,8 @@ freight add <name> [--path P] [--git URL [--branch B] [--rev R]] [--system] [--d
 freight remove <package>
 freight update [<package>]
 freight tree                          print dependency tree
+freight graph [--format dot|mermaid] [--output FILE] [--dev]
+                                      emit dependency graph
 freight lsp                           run language server on stdio
 freight debug [<binary>] [--debugger <name>] [-- <args>]
 freight compile-commands [--release]  generate compile_commands.json
