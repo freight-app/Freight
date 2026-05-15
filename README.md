@@ -24,7 +24,9 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 - **Profile inheritance** — `[profile.profiling] inherits = "release"; debug = true` avoids duplicating the full flag set
 - **Sanitizer CLI override** — `freight build/test --sanitize address,undefined` overrides the profile's sanitize list
 - **Git dependencies** — `{ git = "url", branch = "main" }` with lock SHA enforcement and auto-fetch
-- **Language server** — `freight lsp` for `freight.toml` completions, hover docs, and go-to-definition
+- **URL dependencies** — `{ url = "…", sha256 = "…" }` downloads and verifies source archives
+- **Patch support** — `patches = ["patches/fix.patch"]` applies `patch -p1` after fetch, before build
+- **freight registry** — `freight add <name>` resolves from [freight.dev](https://freight.dev); registry seeded from vcpkg port definitions
 - **Doc browser** — `freight doc` opens a terminal UI for installed local/global dependencies; `--format` extracts project doc comments as Markdown, JSON, or MessagePack
 
 ## Naming conventions
@@ -36,7 +38,7 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 | `freight.lock` | Auto-generated lockfile (commit this) |
 | `build.freight` | Optional pre-build hook script |
 | `~/.freight/` | Global cache: toolchain cache, user templates, credentials |
-| `freight.dev` | The package registry (not yet live) |
+| `freight.dev` | The package registry |
 
 ## Installation
 
@@ -107,7 +109,7 @@ debug     = false
 [dependencies]
 # Path dependency — compiles a sibling freight project and links its archive
 myutils = { path = "../myutils" }
-# Version string — freight tries pkg-config → conan → vcpkg → system-lib stub automatically
+# Version string — freight tries pkg-config → system-lib stubs → freight registry
 zlib    = "1.3.1"
 openssl = ">=3.0"
 # OS-filtered: freight ships built-in stubs for common platform libs
@@ -115,6 +117,8 @@ pthread = { version = "0", os = "unix" }    # only linked on unix
 ws2_32  = { version = "0", os = "windows" } # only linked on Windows
 # Git dependency — cloned into .deps/; branch, tag, and rev are all accepted
 imgui   = { git = "https://github.com/ocornut/imgui", branch = "master" }
+# Git dependency with patches applied after clone
+sdl2    = { git = "https://github.com/libsdl-org/SDL", tag = "release-2.30.0", patches = ["patches/sdl2-fix.patch"] }
 # URL archive — downloaded and extracted; sha256 recommended for reproducibility
 json    = { url = "https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp", sha256 = "9bea4..." }
 # Architecture-filtered path dependency
@@ -122,7 +126,6 @@ sse-opt = { path = "../sse-opt", arch = "x86_64" }
 
 # Advanced overrides — only needed when the defaults don't fit:
 #   system = "mylib"   skip all resolvers, pass -l{name} directly
-#   repo = "vcpkg"     pin to a specific resolver (conan / vcpkg / system)
 
 # OS-conditional sources, defines, and includes
 [os.linux]
@@ -232,11 +235,12 @@ freight watch [--release]             watch for changes and rebuild
 freight clean                         wipe target/
 freight check                         validate freight.toml
 freight toolchain list                show detected compilers and their supported CPU extensions
-freight add <name> [--path P] [--git URL [--branch B] [--rev R]] [--system] [--dev]
+freight add <name[@version]> [--path P] [--git URL [--branch B] [--tag T] [--rev R]]
+            [--system] [--repo <name>] [--dev]
 freight remove <package>
 freight update [<package>]
+freight fetch                         download all git and url deps
 freight tree                          print dependency tree
-freight lsp                           run language server on stdio
 freight debug [<binary>] [--debugger <name>] [-- <args>]
 freight compile-commands [--release]  generate compile_commands.json
 freight doc                           browse installed dependency docs in a TUI
