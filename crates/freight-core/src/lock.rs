@@ -34,6 +34,34 @@ pub struct LockPackage {
 // ── I/O ───────────────────────────────────────────────────────────────────────
 
 impl LockFile {
+    /// Insert or update a registry dep entry in the lockfile and save it.
+    ///
+    /// Called after a successful `freight fetch` for a version dep.
+    pub fn upsert_registry_dep(
+        project_dir: &Path,
+        name: &str,
+        version: &str,
+        source: &str,
+        checksum: &str,
+    ) -> std::io::Result<()> {
+        let mut lock = Self::load(project_dir).unwrap_or_default();
+        if let Some(pkg) = lock.packages.iter_mut().find(|p| p.name == name) {
+            pkg.version  = version.to_string();
+            pkg.source   = Some(source.to_string());
+            pkg.checksum = if checksum.is_empty() { None } else { Some(checksum.to_string()) };
+        } else {
+            lock.packages.push(LockPackage {
+                name:         name.to_string(),
+                version:      version.to_string(),
+                source:       Some(source.to_string()),
+                checksum:     if checksum.is_empty() { None } else { Some(checksum.to_string()) },
+                dependencies: vec![],
+            });
+            lock.packages.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        lock.save(project_dir)
+    }
+
     pub fn load(project_dir: &Path) -> Option<Self> {
         let src = std::fs::read_to_string(project_dir.join("freight.lock")).ok()?;
         toml_edit::de::from_str(&src).ok()

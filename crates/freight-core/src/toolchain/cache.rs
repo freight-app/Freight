@@ -159,7 +159,75 @@ impl GlobalConfig {
                 }
             }
         }
+        // Overlay tokens from ~/.freight/credentials.toml without clobbering
+        // other config settings. Credentials take priority over config.toml tokens.
+        if let Some(creds) = Self::load_credentials() {
+            for cred in creds {
+                if let Some(r) = config.registries.iter_mut().find(|r| r.url == cred.url) {
+                    if cred.token.is_some() { r.token = cred.token; }
+                } else {
+                    config.registries.push(cred);
+                }
+            }
+        }
         config
+    }
+
+    /// Load tokens from `~/.freight/credentials.toml`.
+    ///
+    /// Format (subset of registry config — only url + token required):
+    /// ```toml
+    /// [[registry]]
+    /// url   = "https://freight.dev"
+    /// token = "abc123"
+    /// ```
+    pub fn load_credentials() -> Option<Vec<RegistryConfig>> {
+        #[derive(serde::Deserialize)]
+        struct Creds { #[serde(default, rename = "registry")] registries: Vec<RegistryConfig> }
+        let path = freight_home()?.join("credentials.toml");
+        let data = std::fs::read_to_string(path).ok()?;
+        let c: Creds = toml_edit::de::from_str(&data).ok()?;
+        Some(c.registries)
+    }
+
+    /// Write or update a token for `registry_url` in `~/.freight/credentials.toml`.
+    pub fn save_credential(registry_url: &str, name: &str, token: &str) -> Result<(), crate::error::FreightError> {
+        #[derive(serde::Deserialize, serde::Serialize, Default)]
+        struct Creds { #[serde(default, rename = "registry")] registries: Vec<RegistryConfig> }
+
+        let path = freight_home()
+            .ok_or_else(|| crate::error::FreightError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound, "cannot determine ~/.freight directory",
+            )))?
+            .join("credentials.toml");
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut creds: Creds = path.exists()
+            .then(|| std::fs::read_to_string(&path).ok())
+            .flatten()
+            .and_then(|data| toml_edit::de::from_str(&data).ok())
+            .unwrap_or_default();
+
+        if let Some(r) = creds.registries.iter_mut().find(|r| r.url == registry_url) {
+            r.token = Some(token.to_string());
+            if r.name.is_empty() { r.name = name.to_string(); }
+        } else {
+            creds.registries.push(RegistryConfig {
+                name:  name.to_string(),
+                url:   registry_url.to_string(),
+                token: Some(token.to_string()),
+            });
+        }
+
+        let toml = toml_edit::ser::to_string_pretty(&creds)
+            .map_err(|e| crate::error::FreightError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other, e.to_string(),
+            )))?;
+        std::fs::write(&path, toml)?;
+        Ok(())
     }
 
     /// Load the system-wide config from `/etc/freight/config.toml`

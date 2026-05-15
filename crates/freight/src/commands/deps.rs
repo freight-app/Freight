@@ -2,13 +2,16 @@ use std::path::Path;
 
 use freight_core::dep_cmds::{
     locate_project, manifest_add_dep, manifest_remove_dep, regen_lock,
-    fetch_git_deps, fetch_package_deps, fetch_url_deps, update_git_deps, invalidate_url_dep,
-    DetailedDep, GitDepAction, PackageDepAction, RegenLockOutcome,
+    fetch_git_deps, fetch_package_deps, fetch_registry_deps, fetch_url_deps,
+    update_git_deps, invalidate_url_dep,
+    DetailedDep, GitDepAction, PackageDepAction, RegistryDepAction, RegenLockOutcome,
 };
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
+use freight_core::registry::freight_registry::FreightRegistry;
 use freight_core::registry::repos::{repo_by_name, registries_in_order};
-use freight_core::toolchain::cache::GlobalConfig;
+use freight_core::registry::DEFAULT_REGISTRY_URL;
+use freight_core::toolchain::cache::{freight_home, GlobalConfig};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 use owo_colors::OwoColorize;
@@ -495,6 +498,40 @@ pub fn cmd_fetch() {
         Err(e) => { print_error(&e.to_string()); all_ok = false; }
     }
 
+    // Download version deps from configured registries.
+    let config = {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let mut cfg = GlobalConfig::load();
+        if let Some(local) = GlobalConfig::load_local(&project_dir) {
+            cfg.apply_local(local);
+        }
+        let _ = cwd; // suppress unused warning
+        cfg
+    };
+    match fetch_registry_deps(&project_dir, &config) {
+        Ok(outcomes) => {
+            for o in outcomes {
+                any_work = true;
+                match o.action {
+                    RegistryDepAction::AlreadyPresent => {
+                        print_status("ok", &format!("{} (registry, up to date)", o.name));
+                    }
+                    RegistryDepAction::Downloaded => {
+                        print_success(&format!("fetched `{}@{}`", o.name, o.version));
+                    }
+                    RegistryDepAction::Unavailable => {
+                        print_warning(&format!(
+                            "`{}@{}` not found in any registry — run `freight login` or check your config",
+                            o.name, o.version
+                        ));
+                        all_ok = false;
+                    }
+                }
+            }
+        }
+        Err(e) => { print_error(&e.to_string()); all_ok = false; }
+    }
+
     if !any_work {
         println!("no dependencies to fetch");
         return;
@@ -506,19 +543,91 @@ pub fn cmd_fetch() {
     }
 }
 
-// ── Registry stubs ───────────────────────────────────────────────────────────
+// ── Registry commands ────────────────────────────────────────────────────────
 
-pub fn cmd_search(query: &str) {
-    print_warning(&format!(
-        "`freight search {query}` requires freight.dev, which is not yet available"
-    ));
+pub fn cmd_search(query: &str, repo: Option<&str>) {
+    let config = GlobalConfig::load();
+
+    let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = if let Some(rname) = repo {
+        match repo_by_name(rname, &config) {
+            Ok(r) => vec![r],
+            Err(e) => { print_error(&e.to_string()); return; }
+        }
+    } else {
+        registries_in_order(&config)
+    };
+
+    let mut any = false;
+    for r in &repos {
+        let label = if r.repo_key().is_empty() { "freight.dev" } else { r.repo_key() };
+        match r.search(query) {
+            Ok(results) if !results.is_empty() => {
+                if !any {
+                    println!("{:<32}  {:<12}  {}", "name".bold(), "latest".bold(), "description".bold());
+                    println!("{}", "─".repeat(72).bright_black());
+                }
+                for pkg in &results {
+                    println!(
+                        "{:<32}  {:<12}  {}",
+                        pkg.name.bright_blue(),
+                        pkg.latest.bright_black(),
+                        pkg.description.as_deref().unwrap_or("").dimmed()
+                    );
+                }
+                any = true;
+            }
+            Ok(_) => {
+                print_status(label, &format!("no results for `{query}`"));
+            }
+            Err(e) => {
+                print_warning(&format!("{label}: {e}"));
+            }
+        }
+    }
+
+    if !any {
+        println!("no packages found matching `{query}`");
+    }
 }
 
-pub fn cmd_info(package: Option<&str>) {
+pub fn cmd_info(package: Option<&str>, repo: Option<&str>) {
     if let Some(package) = package {
-        print_warning(&format!(
-            "`freight info {package}` requires freight.dev, which is not yet available"
-        ));
+        let config = GlobalConfig::load();
+        let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = if let Some(rname) = repo {
+            match repo_by_name(rname, &config) {
+                Ok(r) => vec![r],
+                Err(e) => { print_error(&e.to_string()); return; }
+            }
+        } else {
+            registries_in_order(&config)
+        };
+
+        for r in &repos {
+            let label = if r.repo_key().is_empty() { "freight.dev" } else { r.repo_key() };
+            match r.lookup(package) {
+                Ok(Some(info)) => {
+                    println!("{} {}", info.name.bold().bright_blue(), format!("(via {label})").bright_black());
+                    if let Some(desc) = &info.description {
+                        println!("  {desc}");
+                    }
+                    println!();
+                    println!("  {:<16}  {}", "version".bold(), "status".bold());
+                    println!("  {}", "─".repeat(30).bright_black());
+                    for v in &info.versions {
+                        let yanked = if v.checksum.is_none() { "" } else { "" };
+                        // The versions vec comes from ApiPackage; yanked flag not exposed yet.
+                        println!("  {:<16}  {yanked}", v.version.bright_blue());
+                    }
+                    return;
+                }
+                Ok(None) => continue,
+                Err(e) => {
+                    print_warning(&format!("{label}: {e}"));
+                    continue;
+                }
+            }
+        }
+        print_error(&format!("`{package}` not found in any configured registry"));
         return;
     }
 
@@ -597,18 +706,166 @@ fn print_dependency_summary(label: &str, deps: &std::collections::HashMap<String
     print_status(label, &names.join(", "));
 }
 
-pub fn cmd_login() {
-    print_warning("freight.dev registry is not yet available — `freight login` is a no-op");
+pub fn cmd_login(registry_url: Option<&str>, token_arg: Option<&str>) {
+    let config = GlobalConfig::load();
+
+    // Determine the registry URL: explicit flag → first configured → freight.dev.
+    let url = registry_url
+        .map(str::to_string)
+        .or_else(|| config.registries.first().map(|r| r.url.clone()))
+        .unwrap_or_else(|| DEFAULT_REGISTRY_URL.to_string());
+
+    // Find the registry name for display and credentials key.
+    let name = config
+        .registries
+        .iter()
+        .find(|r| r.url == url)
+        .map(|r| r.name.clone())
+        .unwrap_or_else(|| "freight".to_string());
+
+    let token = match token_arg {
+        Some(t) => t.to_string(),
+        None => {
+            use std::io::{self, Write};
+            print!("Token for {url}: ");
+            io::stdout().flush().ok();
+            let mut t = String::new();
+            io::stdin().read_line(&mut t).ok();
+            t.trim().to_string()
+        }
+    };
+
+    if token.is_empty() {
+        print_error("token cannot be empty");
+        return;
+    }
+
+    match GlobalConfig::save_credential(&url, &name, &token) {
+        Ok(()) => {
+            let creds_path = freight_home()
+                .map(|h| h.join("credentials.toml").to_string_lossy().into_owned())
+                .unwrap_or_else(|| "~/.freight/credentials.toml".into());
+            print_success(&format!("token saved to {creds_path}"));
+        }
+        Err(e) => print_error(&e.to_string()),
+    }
 }
 
-pub fn cmd_publish() {
-    print_warning("freight.dev registry is not yet available — `freight publish` is a no-op");
+pub fn cmd_publish(dry_run: bool, repo: Option<&str>) {
+    let project_dir = match locate_project_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let manifest = match load_manifest(&project_dir) {
+        Ok(m) => m,
+        Err(e) => { print_error(&e.to_string()); return; }
+    };
+
+    let name    = &manifest.package.name;
+    let version = &manifest.package.version;
+    let description = if manifest.package.description.is_empty() { None } else { Some(manifest.package.description.as_str()) };
+    let license     = if manifest.package.license.is_empty()     { None } else { Some(manifest.package.license.as_str())     };
+
+    if dry_run {
+        print_status("dry-run", &format!("would publish {name}@{version}"));
+        if let Some(d) = description { print_status("description", d); }
+        if let Some(l) = license     { print_status("license", l); }
+        return;
+    }
+
+    // Bundle the project into a tarball, excluding target/ .deps/ .freight-build/
+    let archive = project_dir.join("target").join(format!("{name}-{version}.tar.gz"));
+    if let Some(p) = archive.parent() { std::fs::create_dir_all(p).ok(); }
+
+    print_status("packaging", &format!("{name}@{version}"));
+
+    let ok = std::process::Command::new("tar")
+        .current_dir(&project_dir)
+        .args([
+            "--exclude=./target",
+            "--exclude=./.deps",
+            "--exclude=./.freight-build",
+            "-czf",
+            &archive.to_string_lossy(),
+            ".",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !ok {
+        print_error("failed to create tarball — is `tar` installed?");
+        return;
+    }
+
+    let tarball = match std::fs::read(&archive) {
+        Ok(b) => b,
+        Err(e) => { print_error(&format!("cannot read tarball: {e}")); return; }
+    };
+    let _ = std::fs::remove_file(&archive);
+
+    let config = {
+        let mut cfg = GlobalConfig::load();
+        if let Some(local) = GlobalConfig::load_local(&project_dir) { cfg.apply_local(local); }
+        cfg
+    };
+
+    let registry: FreightRegistry = if let Some(rname) = repo {
+        match config.registries.iter().find(|r| r.name == rname) {
+            Some(c) => FreightRegistry::from_config(c),
+            None    => { print_error(&format!("unknown registry `{rname}`")); return; }
+        }
+    } else {
+        match config.registries.first() {
+            Some(c) => FreightRegistry::from_config(c),
+            None    => FreightRegistry::default_registry(),
+        }
+    };
+
+    print_status("publishing", &format!("{name}@{version} ({} bytes)", tarball.len()));
+
+    match registry.publish_package(name, version, description, license, &tarball) {
+        Ok(()) => print_success(&format!("published {name}@{version}")),
+        Err(e) => print_error(&e.to_string()),
+    }
 }
 
-pub fn cmd_yank(version: &str) {
-    print_warning(&format!(
-        "freight.dev registry is not yet available — `freight yank {version}` is a no-op"
-    ));
+pub fn cmd_yank(version_arg: &str, undo: bool, repo: Option<&str>) {
+    // Accept "name@version" or just "version" (infer name from current manifest).
+    let (pkg_name, version) = if let Some(at) = version_arg.find('@') {
+        (version_arg[..at].to_string(), &version_arg[at + 1..])
+    } else {
+        let project_dir = match locate_project_dir() {
+            Some(d) => d,
+            None => return,
+        };
+        let manifest = match load_manifest(&project_dir) {
+            Ok(m) => m,
+            Err(e) => { print_error(&e.to_string()); return; }
+        };
+        (manifest.package.name.clone(), version_arg)
+    };
+
+    let config = GlobalConfig::load();
+    let registry: FreightRegistry = if let Some(rname) = repo {
+        match config.registries.iter().find(|r| r.name == rname) {
+            Some(c) => FreightRegistry::from_config(c),
+            None    => { print_error(&format!("unknown registry `{rname}`")); return; }
+        }
+    } else {
+        match config.registries.first() {
+            Some(c) => FreightRegistry::from_config(c),
+            None    => FreightRegistry::default_registry(),
+        }
+    };
+
+    let action = if undo { "unyank" } else { "yank" };
+    print_status(action, &format!("{pkg_name}@{version}"));
+
+    match registry.yank_version(&pkg_name, version, !undo) {
+        Ok(()) => print_success(&format!("{action}ed {pkg_name}@{version}")),
+        Err(e) => print_error(&e.to_string()),
+    }
 }
 
 // ── Local helpers ────────────────────────────────────────────────────────────

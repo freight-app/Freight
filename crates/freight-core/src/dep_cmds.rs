@@ -12,6 +12,8 @@ use crate::fetch::{self, git};
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest};
+use crate::registry::FreightRegistry;
+use crate::toolchain::cache::GlobalConfig;
 use crate::toolchain::{detect_all_cached, load_templates, templates_dir};
 
 pub use crate::manifest::types::DetailedDep;
@@ -229,6 +231,105 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
 
 /// Resolve version-only package deps by preferring system packages and falling
 /// back to the project-local vcpkg install tree.
+/// Action taken for a registry-fetched version dep.
+#[derive(Debug)]
+pub enum RegistryDepAction {
+    /// Already present in `.deps/<name>/`.
+    AlreadyPresent,
+    /// Downloaded from the registry and extracted.
+    Downloaded,
+    /// Registry unreachable and dep not cached locally.
+    Unavailable,
+}
+
+#[derive(Debug)]
+pub struct RegistryDepOutcome {
+    pub name:    String,
+    pub version: String,
+    pub action:  RegistryDepAction,
+}
+
+/// Download all version deps that are missing from `.deps/` and update the lockfile.
+///
+/// Version deps are `Dependency::Simple("x.y")` or `Dependency::Detailed { version, repo, .. }`.
+pub fn fetch_registry_deps(
+    project_dir: &Path,
+    config: &GlobalConfig,
+) -> Result<Vec<RegistryDepOutcome>, FreightError> {
+    let manifest = load_manifest(project_dir)?;
+    let mut outcomes = Vec::new();
+
+    for (name, dep) in &manifest.dependencies {
+        let (version, repo_name) = match dep {
+            Dependency::Simple(v) => (v.as_str(), None),
+            Dependency::Detailed(d)
+                if d.version.is_some()
+                    && d.path.is_none()
+                    && d.system.is_none()
+                    && d.git.is_none()
+                    && d.url.is_none() =>
+            {
+                (d.version.as_deref().unwrap(), d.repo.as_deref())
+            }
+            _ => continue,
+        };
+
+        // Skip wildcard versions — no specific version to fetch.
+        if version.trim().is_empty() || version == "*" {
+            continue;
+        }
+
+        // If already fetched, record and move on.
+        let sentinel = project_dir.join(".deps").join(name).join(".freight-fetched");
+        if sentinel.exists() {
+            outcomes.push(RegistryDepOutcome {
+                name:    name.clone(),
+                version: version.to_string(),
+                action:  RegistryDepAction::AlreadyPresent,
+            });
+            continue;
+        }
+
+        // Find the registry to use.
+        let registry: FreightRegistry = if let Some(rname) = repo_name {
+            match config.registries.iter().find(|r| r.name == rname) {
+                Some(c) => FreightRegistry::from_config(c),
+                None => {
+                    outcomes.push(RegistryDepOutcome {
+                        name: name.clone(), version: version.to_string(),
+                        action: RegistryDepAction::Unavailable,
+                    });
+                    continue;
+                }
+            }
+        } else {
+            match config.registries.first() {
+                Some(c) => FreightRegistry::from_config(c),
+                None    => FreightRegistry::default_registry(),
+            }
+        };
+
+        match registry.download_tarball(name, version, project_dir) {
+            Ok(checksum) => {
+                let source = registry.source_string();
+                let _ = LockFile::upsert_registry_dep(project_dir, name, version, &source, &checksum);
+                outcomes.push(RegistryDepOutcome {
+                    name: name.clone(), version: version.to_string(),
+                    action: RegistryDepAction::Downloaded,
+                });
+            }
+            Err(_) => {
+                outcomes.push(RegistryDepOutcome {
+                    name: name.clone(), version: version.to_string(),
+                    action: RegistryDepAction::Unavailable,
+                });
+            }
+        }
+    }
+
+    Ok(outcomes)
+}
+
 pub enum PackageDepAction {
     SystemPresent,
     Fetched,

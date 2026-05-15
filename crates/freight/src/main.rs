@@ -195,10 +195,20 @@ enum Commands {
     Fetch,
     /// Print the dependency tree
     Tree,
-    /// Show package metadata
-    Info { package: Option<String> },
-    /// Search freight.dev
-    Search { query: String },
+    /// Show package metadata (from registry when a name is given, or the current project)
+    Info {
+        package: Option<String>,
+        /// Registry to query (default: all configured registries in order)
+        #[arg(long, value_name = "NAME")]
+        repo: Option<String>,
+    },
+    /// Search the package registry
+    Search {
+        query: String,
+        /// Registry to search (default: all configured registries in order)
+        #[arg(long, value_name = "NAME")]
+        repo: Option<String>,
+    },
     /// Validate freight.toml
     Check,
     /// Wipe target/
@@ -254,12 +264,36 @@ enum Commands {
         /// Shell to generate completions for (bash, elvish, fish, powershell, zsh)
         shell: CompletionShell,
     },
-    /// Authenticate with freight.dev
-    Login,
-    /// Upload this package to freight.dev
-    Publish,
-    /// Yank a published version
-    Yank { version: String },
+    /// Authenticate with a registry and save the token
+    Login {
+        /// Registry base URL (default: https://freight.dev or first configured registry)
+        #[arg(long, value_name = "URL")]
+        registry: Option<String>,
+        /// API token (prompted interactively if omitted)
+        #[arg(long, value_name = "TOKEN")]
+        token: Option<String>,
+    },
+    /// Upload this package to a registry
+    Publish {
+        /// Dry run: print what would be uploaded without sending
+        #[arg(long)]
+        dry_run: bool,
+        /// Registry to publish to (default: first configured registry)
+        #[arg(long, value_name = "NAME")]
+        repo: Option<String>,
+    },
+    /// Yank a published version (prevents new installs)
+    Yank {
+        /// Package name and version to yank (e.g. mylib@1.0.0)
+        /// Omit the package name to use the current project
+        version: String,
+        /// Undo a yank (re-allow installs)
+        #[arg(long)]
+        undo: bool,
+        /// Registry to operate on (default: first configured registry)
+        #[arg(long, value_name = "NAME")]
+        repo: Option<String>,
+    },
     /// Format source files
     Fmt {
         /// Check formatting without modifying files
@@ -406,8 +440,8 @@ fn main() -> Result<()> {
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Fetch => cmd_fetch(),
         Commands::Tree => cmd_tree(),
-        Commands::Info { package } => cmd_info(package.as_deref()),
-        Commands::Search { query } => cmd_search(&query),
+        Commands::Info { package, repo } => cmd_info(package.as_deref(), repo.as_deref()),
+        Commands::Search { query, repo } => cmd_search(&query, repo.as_deref()),
         Commands::Check => cmd_check(),
         Commands::Clean => cmd_clean(),
         Commands::CompileCommands { release } => cmd_compile_commands(release),
@@ -432,9 +466,9 @@ fn main() -> Result<()> {
             let cmd = Cli::command();
             print_completion(shell, &cmd);
         }
-        Commands::Login => cmd_login(),
-        Commands::Publish => cmd_publish(),
-        Commands::Yank { version } => cmd_yank(&version),
+        Commands::Login { registry, token } => cmd_login(registry.as_deref(), token.as_deref()),
+        Commands::Publish { dry_run, repo } => cmd_publish(dry_run, repo.as_deref()),
+        Commands::Yank { version, undo, repo } => cmd_yank(&version, undo, repo.as_deref()),
         Commands::Fmt { check } => cmd_fmt(check),
         Commands::Lint { fix } => cmd_lint(fix),
         Commands::Toolchain { command } => match command {
@@ -456,7 +490,7 @@ mod tests {
     fn info_accepts_missing_package_for_current_project() {
         let cli = Cli::try_parse_from(["freight", "info"]).unwrap();
         match cli.command {
-            Commands::Info { package } => assert_eq!(package, None),
+            Commands::Info { package, .. } => assert_eq!(package, None),
             _ => panic!("expected info command"),
         }
     }
@@ -465,7 +499,7 @@ mod tests {
     fn info_accepts_registry_package_name() {
         let cli = Cli::try_parse_from(["freight", "info", "zlib"]).unwrap();
         match cli.command {
-            Commands::Info { package } => assert_eq!(package.as_deref(), Some("zlib")),
+            Commands::Info { package, .. } => assert_eq!(package.as_deref(), Some("zlib")),
             _ => panic!("expected info command"),
         }
     }
