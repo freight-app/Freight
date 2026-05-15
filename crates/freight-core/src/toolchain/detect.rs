@@ -80,7 +80,11 @@ pub fn group_into_toolchains(detected: Vec<DetectedCompiler>) -> ToolchainGroups
     let toolchains = map
         .into_iter()
         .map(|(name, mut compilers)| {
-            compilers.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+            // Primary sort: compiler name; secondary: newest version first.
+            compilers.sort_by(|a, b| {
+                a.template.name.cmp(&b.template.name)
+                    .then_with(|| version_cmp_desc(&a.version, &b.version))
+            });
             let mut languages: Vec<String> = compilers
                 .iter()
                 .flat_map(|c| c.template.linking.keys().cloned())
@@ -125,15 +129,18 @@ pub fn load_templates(templates_dir: &Path) -> Vec<CompilerTemplate> {
 }
 
 /// Probe PATH for every template's binary and return those that are present with their version.
+/// Each template may yield multiple entries when versioned variants (e.g. `gcc-12`, `gcc-13`)
+/// are installed alongside the unversioned name.
 pub fn detect_all(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {
     let mut found = Vec::new();
     for template in templates {
-        if let Some(detected) = probe(template) {
-            found.push(detected);
-        }
+        found.extend(probe_all(template));
     }
     let mut found = filter_by_toolchain_deps(found);
-    found.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+    found.sort_by(|a, b| {
+        a.template.name.cmp(&b.template.name)
+            .then_with(|| version_cmp_desc(&a.version, &b.version))
+    });
     found
 }
 
@@ -146,9 +153,7 @@ pub fn detect_all_cached(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler
     let mut found = Vec::new();
 
     for template in templates {
-        if let Some(detected) = probe_cached(template, &mut cache, &mut dirty) {
-            found.push(detected);
-        }
+        found.extend(probe_all_cached(template, &mut cache, &mut dirty));
     }
 
     if dirty {
@@ -156,48 +161,82 @@ pub fn detect_all_cached(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler
     }
 
     let mut found = filter_by_toolchain_deps(found);
-    found.sort_by(|a, b| a.template.name.cmp(&b.template.name));
+    found.sort_by(|a, b| {
+        a.template.name.cmp(&b.template.name)
+            .then_with(|| version_cmp_desc(&a.version, &b.version))
+    });
     found
 }
 
-fn probe_cached(
+/// Return the major version component of a version string, or 0 for unknown.
+fn version_major(v: &str) -> u64 {
+    v.split('.').next().and_then(|p| p.parse().ok()).unwrap_or(0)
+}
+
+/// Ordering for two version strings: newest first (descending by major, then minor, …).
+fn version_cmp_desc(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+    };
+    let av = parse(a);
+    let bv = parse(b);
+    let len = av.len().max(bv.len());
+    for i in 0..len {
+        let x = av.get(i).copied().unwrap_or(0);
+        let y = bv.get(i).copied().unwrap_or(0);
+        match y.cmp(&x) { // reversed: b before a = descending
+            std::cmp::Ordering::Equal => {}
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn probe_all_cached(
     template: &CompilerTemplate,
     cache: &mut ToolchainCache,
     dirty: &mut bool,
-) -> Option<DetectedCompiler> {
+) -> Vec<DetectedCompiler> {
     if !host_supported(template) {
-        return None;
+        return vec![];
     }
-    let path = which(&template.binary)?;
-    if !requirements_met(template, &path) {
-        return None;
+    let paths = which_all(&template.binary);
+    if paths.is_empty() {
+        return vec![];
     }
-    let version = if let Some(v) = cache.get_version(&path) {
-        v.to_string()
-    } else {
-        let v = query_version(template, &path).unwrap_or_else(|| "unknown".into());
-        cache.set_version(&path, &v);
-        *dirty = true;
-        v
-    };
-    if !min_version_met(template, &version) {
-        return None;
-    }
-    // Only query CPU extensions for primary compilers — guest compilers
-    // (nvcc, nasm, hipcc, …) delegate machine code to the host toolchain.
-    let cpu_extensions = if template.requires_toolchain.is_empty() {
-        if let Some(exts) = cache.get_extensions(&path) {
-            exts.to_vec()
-        } else {
-            let exts = query_cpu_extensions(&path);
-            cache.set_extensions(&path, exts.clone());
-            *dirty = true;
-            exts
+    let mut result = Vec::new();
+    for path in paths {
+        if !requirements_met(template, &path) {
+            continue;
         }
-    } else {
-        vec![]
-    };
-    Some(DetectedCompiler { template: template.clone(), version, path, cpu_extensions })
+        let version = if let Some(v) = cache.get_version(&path) {
+            v.to_string()
+        } else {
+            let v = query_version(template, &path).unwrap_or_else(|| "unknown".into());
+            cache.set_version(&path, &v);
+            *dirty = true;
+            v
+        };
+        if !min_version_met(template, &version) {
+            continue;
+        }
+        // Only query CPU extensions for primary compilers — guest compilers
+        // (nvcc, nasm, hipcc, …) delegate machine code to the host toolchain.
+        let cpu_extensions = if template.requires_toolchain.is_empty() {
+            if let Some(exts) = cache.get_extensions(&path) {
+                exts.to_vec()
+            } else {
+                let exts = query_cpu_extensions(&path);
+                cache.set_extensions(&path, exts.clone());
+                *dirty = true;
+                exts
+            }
+        } else {
+            vec![]
+        };
+        result.push(DetectedCompiler { template: template.clone(), version, path, cpu_extensions });
+    }
+    result
 }
 
 fn host_supported(template: &CompilerTemplate) -> bool {
@@ -375,24 +414,31 @@ fn filter_by_toolchain_deps(detected: Vec<DetectedCompiler>) -> Vec<DetectedComp
         .collect()
 }
 
-fn probe(template: &CompilerTemplate) -> Option<DetectedCompiler> {
+fn probe_all(template: &CompilerTemplate) -> Vec<DetectedCompiler> {
     if !host_supported(template) {
-        return None;
+        return vec![];
     }
-    let path = which(&template.binary)?;
-    if !requirements_met(template, &path) {
-        return None;
+    let paths = which_all(&template.binary);
+    if paths.is_empty() {
+        return vec![];
     }
-    let version = query_version(template, &path).unwrap_or_else(|| "unknown".into());
-    if !min_version_met(template, &version) {
-        return None;
+    let mut result = Vec::new();
+    for path in paths {
+        if !requirements_met(template, &path) {
+            continue;
+        }
+        let version = query_version(template, &path).unwrap_or_else(|| "unknown".into());
+        if !min_version_met(template, &version) {
+            continue;
+        }
+        let cpu_extensions = if template.requires_toolchain.is_empty() {
+            query_cpu_extensions(&path)
+        } else {
+            vec![]
+        };
+        result.push(DetectedCompiler { template: template.clone(), version, path, cpu_extensions });
     }
-    let cpu_extensions = if template.requires_toolchain.is_empty() {
-        query_cpu_extensions(&path)
-    } else {
-        vec![]
-    };
-    Some(DetectedCompiler { template: template.clone(), version, path, cpu_extensions })
+    result
 }
 
 /// Query the compiler for supported CPU extensions via `-Q --help=target`.
@@ -424,28 +470,92 @@ fn query_cpu_extensions(path: &Path) -> Vec<String> {
     exts
 }
 
-/// Resolve a binary name to its full path by searching PATH.
+/// Resolve a binary name to its full path by searching PATH (first match only).
+/// Used for required-tool lookups; for compiler discovery use [`which_all`].
 fn which(binary: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
+    which_all(binary).into_iter().next()
+}
+
+/// Find all installed variants of `binary` in PATH:
+///   • the unversioned name (`gcc`)
+///   • major-versioned suffixes (`gcc-12`, `gcc-13`, `gcc-14`)
+///
+/// Results are deduplicated by canonical path so symlinks (e.g. `gcc → gcc-14`)
+/// are not reported twice. Within each PATH directory, the unversioned binary is
+/// considered before versioned ones; versioned names are sorted descending so
+/// the newest appears first.
+fn which_all(binary: &str) -> Vec<PathBuf> {
+    let Some(path_var) = std::env::var_os("PATH") else { return vec![] };
+    let base_name = executable_name(binary);
+    let versioned_prefix = format!("{binary}-");
+
+    let mut result: Vec<PathBuf> = Vec::new();
+    let mut canonical_seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
     for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(binary);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        // On some systems the binary might not have an extension check needed
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if candidate.exists() {
-                if let Ok(meta) = candidate.metadata() {
-                    if meta.permissions().mode() & 0o111 != 0 {
-                        return Some(candidate);
-                    }
+        // Check the unversioned binary first.
+        let base = dir.join(&base_name);
+        try_add_executable(&base, &mut result, &mut canonical_seen);
+
+        // Scan directory for versioned variants: `{binary}-{N}` where N is a
+        // non-empty sequence of ASCII digits (e.g. gcc-12, clang-17).
+        let mut versioned: Vec<(u64, PathBuf)> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let fname = entry.file_name();
+                let name = fname.to_string_lossy();
+
+                let Some(suffix) = name.strip_prefix(&versioned_prefix) else { continue };
+                // On Windows the suffix may include the .exe extension.
+                #[cfg(windows)]
+                let suffix = suffix.strip_suffix(".exe").unwrap_or(suffix);
+
+                if suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                let major: u64 = suffix.parse().unwrap_or(0);
+                let path = entry.path();
+                if is_executable_file(&path) {
+                    versioned.push((major, path));
                 }
             }
         }
+        // Add versioned variants newest-first.
+        versioned.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, path) in versioned {
+            try_add_executable(&path, &mut result, &mut canonical_seen);
+        }
     }
-    None
+
+    result
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if path.is_file() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = path.metadata() {
+            return meta.permissions().mode() & 0o111 != 0;
+        }
+    }
+    false
+}
+
+fn try_add_executable(
+    path: &Path,
+    result: &mut Vec<PathBuf>,
+    canonical_seen: &mut std::collections::HashSet<PathBuf>,
+) {
+    if !is_executable_file(path) {
+        return;
+    }
+    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if canonical_seen.insert(canon) {
+        result.push(path.to_path_buf());
+    }
 }
 
 fn query_version(template: &CompilerTemplate, path: &Path) -> Option<String> {
@@ -757,6 +867,123 @@ mod tests {
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("unknown toolchain"));
     }
+
+    // ── which_all ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn which_all_finds_versioned_binaries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let make_exec = |name: &str| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, "#!/bin/sh").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+
+        let _base = make_exec("mycc");
+        let _v12  = make_exec("mycc-12");
+        let _v13  = make_exec("mycc-13");
+        let _v14  = make_exec("mycc-14");
+        // Should not be picked up (not a plain integer suffix).
+        let _skip = make_exec("mycc-old");
+
+        let orig_path = std::env::var_os("PATH").unwrap_or_default();
+        let new_path = std::env::join_paths(
+            std::iter::once(dir.path().to_path_buf())
+                .chain(std::env::split_paths(&orig_path))
+        ).unwrap();
+        std::env::set_var("PATH", &new_path);
+
+        let found = which_all("mycc");
+        std::env::set_var("PATH", &orig_path);
+
+        let names: Vec<String> = found.iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"mycc".to_string()),    "base binary must be found");
+        assert!(names.contains(&"mycc-12".to_string()), "mycc-12 must be found");
+        assert!(names.contains(&"mycc-13".to_string()), "mycc-13 must be found");
+        assert!(names.contains(&"mycc-14".to_string()), "mycc-14 must be found");
+        assert!(!names.contains(&"mycc-old".to_string()), "non-numeric suffix must be ignored");
+    }
+
+    #[test]
+    fn which_all_deduplicates_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let real = dir.path().join("mycc-14");
+        std::fs::write(&real, "#!/bin/sh").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Create a symlink: mycc → mycc-14
+        std::os::unix::fs::symlink(&real, dir.path().join("mycc")).unwrap();
+
+        let orig_path = std::env::var_os("PATH").unwrap_or_default();
+        let new_path = std::env::join_paths(
+            std::iter::once(dir.path().to_path_buf())
+                .chain(std::env::split_paths(&orig_path))
+        ).unwrap();
+        std::env::set_var("PATH", &new_path);
+
+        let found = which_all("mycc");
+        std::env::set_var("PATH", &orig_path);
+
+        // The symlink and real binary resolve to the same canonical path,
+        // so we should get exactly one entry.
+        assert_eq!(found.len(), 1, "symlink and target must be deduplicated; got: {found:?}");
+    }
+
+    // ── parse_versioned_name / backend_matches ────────────────────────────────
+
+    #[test]
+    fn parse_versioned_name_parses_correctly() {
+        assert_eq!(parse_versioned_name("gnu-14"), Some(("gnu", 14)));
+        assert_eq!(parse_versioned_name("llvm-18"), Some(("llvm", 18)));
+        assert_eq!(parse_versioned_name("gnu"),     None);
+        assert_eq!(parse_versioned_name("gnu-old"), None);
+        assert_eq!(parse_versioned_name("-14"),     None);
+        assert_eq!(parse_versioned_name(""),        None);
+    }
+
+    #[test]
+    fn backend_matches_family_and_versioned() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let gcc = templates.iter().find(|t| t.name == "gcc").expect("gcc template");
+        let detected = DetectedCompiler {
+            template: gcc.clone(),
+            version: "14.2.0".into(),
+            path: PathBuf::from("/usr/bin/gcc-14"),
+            cpu_extensions: vec![],
+        };
+
+        assert!(backend_matches(&detected, "gcc"),    "exact name match");
+        assert!(backend_matches(&detected, "gnu"),    "family match");
+        assert!(backend_matches(&detected, "gnu-14"), "version-pinned match");
+        assert!(!backend_matches(&detected, "gnu-13"), "wrong major version");
+        assert!(!backend_matches(&detected, "llvm"),   "wrong family");
+    }
+
+    #[test]
+    fn toolchain_use_accepts_versioned_family_names() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        // "gnu-14" means family "gnu" with major version 14 — valid because "gnu" is a known family.
+        let result = super::super::super::toolchain::toolchain_use("gnu-14", &templates);
+        if let Err(e) = result {
+            assert!(
+                !format!("{e}").contains("unknown toolchain"),
+                "versioned family 'gnu-14' should be accepted, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn toolchain_use_rejects_versioned_unknown_family() {
+        let templates = load_templates(Path::new(TEMPLATES_DIR));
+        let result = super::super::super::toolchain::toolchain_use("nofamily-14", &templates);
+        assert!(result.is_err(), "'nofamily-14' (unknown family) should be rejected");
+    }
 }
 
 /// Resolve the compiler templates directory.
@@ -819,9 +1046,14 @@ pub fn toolchain_add(rhai_path: &Path) -> Result<PathBuf, FreightError> {
 
 /// Set the global default compiler backend, stored in `~/.freight/config.toml`.
 ///
-/// `name` must be a family name (e.g. `"gnu"`, `"llvm"`) or the name of a standalone
-/// compiler with no family (e.g. `"nasm"`, `"msvc"`). Prints a warning if no compiler
-/// in that toolchain is currently on PATH, but still saves the preference.
+/// `name` accepts:
+/// - a family name (e.g. `"gnu"`, `"llvm"`)
+/// - a version-pinned family name (e.g. `"gnu-14"`, `"llvm-18"`)
+/// - a standalone compiler name (e.g. `"tcc"`, `"msvc"`)
+///
+/// Version-pinned names activate the specific installed version of that family.
+/// Prints a warning when the requested toolchain is not currently on PATH, but
+/// still saves the preference so it applies once the compiler is installed.
 pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), FreightError> {
     // Build the set of valid toolchain names: distinct non-empty family names +
     // individual names for templates that have no family.
@@ -840,9 +1072,16 @@ pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), F
         .map(|t| t.name.as_str())
         .collect();
 
-    if !families.contains(&name) && !standalone.contains(&name) {
-        let mut known = families.clone();
-        known.extend_from_slice(&standalone);
+    // Accept plain family/standalone names and version-pinned variants "{family}-{N}".
+    let valid = families.contains(&name)
+        || standalone.contains(&name)
+        || parse_versioned_name(name)
+            .map(|(family, _)| families.contains(&family))
+            .unwrap_or(false);
+
+    if !valid {
+        let mut known: Vec<String> = families.iter().map(|s| s.to_string()).collect();
+        known.extend(standalone.iter().map(|s| s.to_string()));
         known.sort_unstable();
         return Err(FreightError::TemplateError(format!(
             "unknown toolchain {:?}; known toolchains: {}",
@@ -855,6 +1094,46 @@ pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), F
     config.default_backend = Some(name.to_string());
     config.save()?;
     Ok(())
+}
+
+/// Parse a version-pinned toolchain name like `"gnu-14"` into `("gnu", 14)`.
+/// Returns `None` when the name doesn't match the `{family}-{major}` pattern.
+pub fn parse_versioned_name(name: &str) -> Option<(&str, u64)> {
+    let (family, major_str) = name.rsplit_once('-')?;
+    if family.is_empty() || major_str.is_empty() {
+        return None;
+    }
+    if !major_str.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let major: u64 = major_str.parse().ok()?;
+    Some((family, major))
+}
+
+/// Returns true when `detected` matches the backend `name`.
+///
+/// Matches on:
+/// - exact template name (`"gcc"`)
+/// - family name (`"gnu"`)
+/// - version-pinned family name (`"gnu-14"` ↔ a gnu-family compiler at major version 14)
+pub fn backend_matches(detected: &DetectedCompiler, name: &str) -> bool {
+    if detected.template.name == name {
+        return true;
+    }
+    let effective_family = if detected.template.family.is_empty() {
+        detected.template.name.as_str()
+    } else {
+        detected.template.family.as_str()
+    };
+    if effective_family == name {
+        return true;
+    }
+    if let Some((family, major)) = parse_versioned_name(name) {
+        if effective_family == family && version_major(&detected.version) == major {
+            return true;
+        }
+    }
+    false
 }
 
 /// Checks (in order):

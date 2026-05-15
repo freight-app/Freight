@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use freight_core::toolchain::{
-    detect_all_cached, detect_debuggers, group_into_toolchains, load_all_templates,
+    backend_matches, detect_all_cached, detect_debuggers, group_into_toolchains, load_all_templates,
     load_debugger_templates, toolchain_add, toolchain_use, user_templates_dir,
 };
 
@@ -118,14 +118,14 @@ pub fn cmd_toolchain_use(name: &str) {
     match toolchain_use(name, &templates) {
         Ok(()) => {
             let detected = detect_all_cached(&templates);
-            let groups = group_into_toolchains(detected);
-            if !groups.toolchains.iter().any(|tc| tc.name == name) {
+            let on_path = detected.iter().any(|d| backend_matches(d, name));
+            if on_path {
+                print_success(&format!("{name} set as default toolchain"));
+            } else {
                 print_warning(&format!(
                     "{name} is not currently detected on PATH; \
                      preference saved and will apply once it is installed"
                 ));
-            } else {
-                print_success(&format!("{name} set as default toolchain"));
             }
         }
         Err(e) => print_error(&format!("failed to set default toolchain: {e}")),

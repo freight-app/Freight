@@ -29,7 +29,7 @@ use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::validate::{validate, validate_dep_compat};
 use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
-use crate::toolchain::{CompilerTemplate, DetectedCompiler, GlobalConfig, check_manifest_version_bounds, detect_all_cached, load_templates, templates_dir};
+use crate::toolchain::{CompilerTemplate, DetectedCompiler, GlobalConfig, backend_matches, check_manifest_version_bounds, detect_all_cached, load_templates, templates_dir};
 use crate::manifest::types::Backend;
 
 // ── Public results ────────────────────────────────────────────────────────────
@@ -1103,10 +1103,7 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
     // the build doesn't fail for compilers that aren't installed (e.g. a global
     // `default_backend = "tcc"` set on a machine that doesn't have TCC).
     let effective_backend = if configured_backend.is_auto()
-        || detected.iter().any(|d| {
-            d.template.name == configured_backend.name()
-                || d.template.family == configured_backend.name()
-        })
+        || detected.iter().any(|d| backend_matches(d, configured_backend.name()))
     {
         configured_backend
     } else {
