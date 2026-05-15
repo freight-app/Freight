@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item, Table, Value, value};
 
 use crate::build::deps::resolve_dep_graph;
 use crate::error::FreightError;
-use crate::fetch::git;
+use crate::fetch::{self, git};
 use crate::lock::LockFile;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest};
@@ -156,6 +156,9 @@ pub fn fetch_git_deps(project_dir: &Path) -> Result<Vec<GitDepOutcome>, FreightE
             d.tag.as_deref(),
             d.rev.as_deref(),
         )?;
+        if !d.patches.is_empty() {
+            fetch::apply_patches(&dest, &d.patches, project_dir)?;
+        }
         outcomes.push(GitDepOutcome { name: name.clone(), action: GitDepAction::Cloned });
     }
 
@@ -213,7 +216,10 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
 
         let already = project_dir.join(".deps").join(name).join(".freight-fetched").exists();
         if !already {
-            http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir, &progress)?;
+            let dep_dir = http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir, &progress)?;
+            if !d.patches.is_empty() {
+                fetch::apply_patches(&dep_dir, &d.patches, project_dir)?;
+            }
         }
         outcomes.push((name.clone(), already));
     }

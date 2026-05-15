@@ -525,6 +525,11 @@ pub struct DetailedDep {
     /// Recommended for `url` deps; `freight fetch` rejects archives with a mismatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// Patch files to apply to the dep source after fetching, in order.
+    /// Paths are relative to the project root. Applied with `patch -p1`.
+    /// Example: `patches = ["patches/fix-cmake.patch"]`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<String>,
     /// Explicit resolver to use for this version dep.
     /// Accepted values: `"conan"`, `"vcpkg"`, `"system"`.
     /// When omitted, freight tries `pkg-config → conan → vcpkg` in order.
