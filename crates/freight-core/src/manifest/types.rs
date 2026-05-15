@@ -36,9 +36,9 @@ pub struct Manifest {
     pub lib: Option<LibTarget>,
     #[serde(rename = "bin", default)]
     pub bins: Vec<BinTarget>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_dep_map")]
     pub dependencies: HashMap<String, Dependency>,
-    #[serde(rename = "dev-dependencies", default)]
+    #[serde(rename = "dev-dependencies", default, deserialize_with = "deserialize_dep_map")]
     pub dev_dependencies: HashMap<String, Dependency>,
     #[serde(default)]
     pub compiler: CompilerConfig,
@@ -543,6 +543,57 @@ pub struct DetailedDep {
 }
 
 fn default_true() -> bool { true }
+
+/// Deserialize a `[dependencies]` or `[dev-dependencies]` map, expanding
+/// `@registry/name` shorthand keys into `name = { ..., repo = "registry" }`.
+///
+/// TOML bare keys cannot contain `@` or `/`, so users must quote them:
+/// ```toml
+/// [dependencies]
+/// "@myregistry/mylib" = "1.0.0"
+/// ```
+/// This is equivalent to:
+/// ```toml
+/// [dependencies]
+/// mylib = { version = "1.0.0", repo = "myregistry" }
+/// ```
+fn deserialize_dep_map<'de, D>(d: D) -> Result<HashMap<String, Dependency>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw: HashMap<String, Dependency> = HashMap::deserialize(d)?;
+    let mut result = HashMap::with_capacity(raw.len());
+    for (key, dep) in raw {
+        if let Some(rest) = key.strip_prefix('@') {
+            let (registry, name) = rest.split_once('/').ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "dep key `@{rest}` must be in the form `@registry/name`"
+                ))
+            })?;
+            let detailed = match dep {
+                Dependency::Simple(version) => DetailedDep {
+                    version: Some(version),
+                    repo: Some(registry.to_string()),
+                    ..Default::default()
+                },
+                Dependency::Detailed(mut d) => {
+                    if d.repo.is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "dep `@{rest}`: `repo` is already set; the @registry/ prefix sets it implicitly"
+                        )));
+                    }
+                    d.repo = Some(registry.to_string());
+                    d
+                }
+            };
+            result.insert(name.to_string(), Dependency::Detailed(detailed));
+        } else {
+            result.insert(key, dep);
+        }
+    }
+    Ok(result)
+}
 
 /// Deserialize a required field that accepts either a bare string or an array of strings.
 fn deserialize_string_or_vec<'de, D>(d: D) -> Result<Vec<String>, D::Error>
@@ -1093,6 +1144,56 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
             !m.effective_dependencies().contains_key("mylib"),
             "dep for different target should be excluded"
         );
+    }
+
+    // ── @registry/name shorthand ──────────────────────────────────────────────
+
+    fn at_registry_manifest(dep_line: &str) -> String {
+        format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[[bin]]
+name = "p"
+src = "src/main.c"
+[dependencies]
+{dep_line}
+"#
+        )
+    }
+
+    #[test]
+    fn at_registry_simple_string_expands() {
+        let src = at_registry_manifest(r#""@myregistry/mylib" = "1.0.0""#);
+        let m = load_manifest_str(&src).unwrap();
+        let dep = m.dependencies.get("mylib").expect("key is 'mylib'");
+        let Dependency::Detailed(d) = dep else { panic!("expected Detailed") };
+        assert_eq!(d.version.as_deref(), Some("1.0.0"));
+        assert_eq!(d.repo.as_deref(), Some("myregistry"));
+        assert!(!m.dependencies.contains_key("@myregistry/mylib"), "original key removed");
+    }
+
+    #[test]
+    fn at_registry_detailed_table_expands() {
+        let src = at_registry_manifest(r#""@myregistry/mylib" = { version = "2.0.0" }"#);
+        let m = load_manifest_str(&src).unwrap();
+        let dep = m.dependencies.get("mylib").expect("key is 'mylib'");
+        let Dependency::Detailed(d) = dep else { panic!("expected Detailed") };
+        assert_eq!(d.version.as_deref(), Some("2.0.0"));
+        assert_eq!(d.repo.as_deref(), Some("myregistry"));
+    }
+
+    #[test]
+    fn at_registry_conflict_with_explicit_repo_errors() {
+        let src = at_registry_manifest(r#""@myregistry/mylib" = { version = "1.0.0", repo = "other" }"#);
+        assert!(load_manifest_str(&src).is_err(), "explicit repo conflicts with @registry prefix");
+    }
+
+    #[test]
+    fn at_registry_missing_slash_errors() {
+        let src = at_registry_manifest(r#""@badkey" = "1.0.0""#);
+        assert!(load_manifest_str(&src).is_err(), "key without slash should fail");
     }
 
     #[test]

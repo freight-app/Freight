@@ -120,3 +120,10 @@ C++20 named-module projects skip unity (modules have their own dependency orderi
 `freight build -p mylib --features tls` — build/test/bench/run a single workspace
 member and pass features to it. `freight run -p myapp` runs a member's binary.
 Remaining: workspace-level `[patch]` overrides, `freight workspace graph` visualisation.
+
+### S16 — `@registry/name` shorthand in `freight.toml` ✓ done
+Quoted TOML keys of the form `"@registry/name" = "1.0.0"` are expanded at parse time
+to `name = { version = "1.0.0", repo = "registry" }`. The `@registry/` prefix sets
+the `repo` field (which `freight fetch` uses to select the named registry). Manifest
+validation accepts any non-empty `repo` value (not just `"system"`); build-time
+resolution falls back to pkg-config for named-registry deps (same as unscoped deps).

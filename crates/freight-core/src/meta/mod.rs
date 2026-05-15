@@ -205,9 +205,12 @@ fn resolve_version_dep(
                 None,
             )))
         }
-        Some(other) => Err(FreightError::ManifestParse(format!(
-            "unknown repo '{other}' for dep '{name}'; accepted: system"
-        ))),
+        Some(_registry_name) => {
+            // Named registry dep (`repo = "myregistry"` or `@registry/name` shorthand):
+            // fetched by `freight fetch`; resolve at build time the same as a plain
+            // version dep — pkg-config first, then system-lib stubs.
+            resolve_version_dep(name, query, version, None, optional, _project_dir, progress)
+        }
         None => {
             // Default chain: pkg-config → system-lib stubs → .deps/ cache (freight fetch).
             progress(BuildEvent::ResolvingDep { name: name.to_string(), via: query.to_string() });
