@@ -244,6 +244,15 @@ freight fetch                         download all git and url deps
 freight tree                          print dependency tree
 freight debug [<binary>] [--debugger <name>] [-- <args>]
 freight compile-commands [--release]  generate compile_commands.json
+freight register [--registry URL] [--username NAME] [--email EMAIL]
+                                      create a new registry account
+freight login [--registry URL] [--token TOKEN]
+                                      save an API token to credentials.toml
+freight search <query> [--repo NAME]  search the registry
+freight info [<name>] [--repo NAME]   show package metadata (or current project)
+freight publish [--dry-run] [--repo NAME]  upload this package to a registry
+freight yank <name@version> [--undo] [--repo NAME]
+                                      yank (or unyank) a published version
 freight doc                           browse installed dependency docs in a TUI
 freight doc --format md|json|msgpack|all  generate extracted API docs
 freight doc --man [--out-dir DIR]     generate man pages

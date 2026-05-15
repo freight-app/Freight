@@ -4,8 +4,11 @@
 > own standalone repository (`freight-registry`). The actual implementation uses **SQLite** (via
 > sqlx) rather than the flat JSON-file index described in this document, and stores user accounts,
 > tokens, and package ownership in the database rather than in `tokens.toml`. The HTTP API shape
-> and wire protocol match this document. Client-side integration (fetch, semver resolution, CLI
-> stubs) remains in progress.
+> and wire protocol match this document, with the addition of `POST /api/v1/users/register` for
+> HTTP account creation (not in this plan). All publisher/consumer CLI commands are implemented:
+> `freight search`, `freight info`, `freight login`, `freight publish`, `freight yank`, and
+> `freight register`. Remaining: `freight fetch` registry dep download and semver resolution in
+> `freight add`.
 
 ## Overview
 

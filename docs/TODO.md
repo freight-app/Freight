@@ -5,14 +5,13 @@
 ## Big tasks
 
 ### B1 — Registry client integration
-The `freight-registry` server lives in a separate repository and is fully operational (Axum +
-SQLite, user accounts, Argon2id auth, ownership, rate limiting, audit log). Multiple-registry
-client support is done: `PackageRepo` trait, `registries_in_order()`, `--repo <name>`, bearer
-token headers, and `[[registry]]` config.
+The `freight-registry` server lives in a separate repository and is fully operational. Multiple-registry
+client support is done. All publisher/consumer CLI commands are wired to real HTTP calls:
+`freight search`, `freight info`, `freight login`, `freight publish`, `freight yank`, `freight register`.
 
-Remaining: wire the CLI stubs (`freight search`, `freight info`, `freight login`,
-`freight publish`, `freight yank`) to real HTTP calls, implement `freight fetch` for registry
-version deps, and add semver resolution + lockfile pinning to `freight add`.
+Remaining: implement `freight fetch` for registry version deps (download tarballs to `.deps/` and
+record `source = "registry+<url>"` + checksum in `freight.lock`), and add semver resolution +
+lockfile pinning to `freight add` so `version = "1.2"` deps work end-to-end.
 Blocks: registry-backed `version = "x.y"` resolution in `freight build`.
 
 ### B2 — VS Code extension

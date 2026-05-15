@@ -187,9 +187,14 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `--repo <name>` in `freight add` selects a named registry; without `--repo` all registries are tried in order
 - [x] Bearer token auth — `Authorization: Bearer <token>` header in all outbound HTTP requests
 - [x] `[[registry]]` config in `~/.freight/config.toml` — `name`, `url`, `token` fields; local config prepends and deduplicates
-- [ ] `freight fetch` — download version deps from freight.dev
-- [ ] `freight add` — resolve + lock exact version from freight.dev
-- [ ] `freight search / info / login / publish / yank` — stubs pending client HTTP integration
+- [x] `freight search [--repo]` — tabular results table from registry
+- [x] `freight info [<name>] [--repo]` — version list + description from registry (or current project)
+- [x] `freight login [--registry] [--token]` — interactive token prompt; saves to `~/.freight/credentials.toml`
+- [x] `freight publish [--dry-run] [--repo]` — tar bundle + cargo binary wire upload
+- [x] `freight yank <name@version> [--undo] [--repo]` — yank / unyank via registry API
+- [x] `freight register [--registry] [--username] [--email]` — create registry account; auto-saves returned token
+- [ ] `freight fetch` — download version deps from freight.dev (registry dep lockfile support)
+- [ ] `freight add` — resolve + lock exact version from freight.dev (semver resolution)
 
 **Server (`freight-registry` — standalone repository)**
 > Extracted to its own repo. Implements the full cargo-compatible registry wire protocol over Axum + SQLite.
@@ -203,6 +208,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `DELETE/PUT /api/v1/packages/{name}/{version}/yank` — yank / unyank
 - [x] `GET/PUT/DELETE /api/v1/packages/{name}/owners` — multi-owner management; last-owner removal guard
 - [x] `POST /api/v1/users/login` — Argon2id password verification, creates token (90-day default)
+- [x] `POST /api/v1/users/register` — open HTTP registration; creates user + 90-day token in one round-trip
 - [x] `GET /api/v1/me` — authenticated user info
 - [x] User accounts — Argon2id password hashing; `user add/list/remove` CLI
 - [x] API tokens — SHA-256 stored in DB; optional expiry; last-used tracking; `token add/list/revoke` CLI
