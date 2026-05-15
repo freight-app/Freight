@@ -923,8 +923,8 @@ pub fn cmd_register(
             print_error("passwords do not match");
             return;
         }
-        if p1.is_empty() {
-            print_error("password cannot be empty");
+        if p1.len() < 8 {
+            print_error("password must be at least 8 characters");
             return;
         }
         p1

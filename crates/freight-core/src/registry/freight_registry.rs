@@ -200,6 +200,10 @@ impl FreightRegistry {
     }
 
     /// Register a new user account. Returns `(user_id, token)`.
+    ///
+    /// The password is SHA-256 hashed before transmission so the plaintext
+    /// never leaves the client. The server stores Argon2id(SHA-256(password)).
+    /// Any future login-with-password call must hash the password the same way.
     pub fn register_user(
         &self,
         username: &str,
@@ -207,9 +211,10 @@ impl FreightRegistry {
         email: Option<&str>,
         token_name: Option<&str>,
     ) -> Result<(i64, String), FreightError> {
+        let pw_hash = sha256_hex(password);
         let body = serde_json::json!({
             "username":   username,
-            "password":   password,
+            "password":   pw_hash,
             "email":      email,
             "token_name": token_name,
         });
@@ -498,6 +503,15 @@ fn http_delete(url: &str, token: &str) -> Result<String, FreightError> {
         404 => Err(FreightError::RegistryNotFound(url.to_string())),
         _   => Err(FreightError::RegistryError(format!("HTTP {code}: {body_str}"))),
     }
+}
+
+/// SHA-256 hex digest of a string — used to pre-hash passwords before transmission.
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(s.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn url_encode(s: &str) -> String {
