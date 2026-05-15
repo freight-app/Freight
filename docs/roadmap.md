@@ -173,10 +173,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] 4 bundled formatter templates: `clang-format`, `astyle`, `uncrustify`, `fprettify`
 - [x] 4 bundled linter templates: `clang-tidy`, `cppcheck`, `cpplint`, `flawfinder`
 
-### Registry (in progress — `feature/registry-lockfile`, `feature/registry-server`)
-The registry spans two concerns that depend on each other: the client-side
-lockfile + CLI stubs (`freight add`, `freight fetch`, …) and the server that
-backs them. Server implementation unblocks the remaining client stubs.
+### Registry (in progress)
 
 **Client (freight-core)**
 - [x] `freight.lock` read/write — deterministic dep pinning (version 1 format, sha256 checksums)
@@ -185,22 +182,38 @@ backs them. Server implementation unblocks the remaining client stubs.
 - [x] `freight add` / `freight remove` — manifest mutation + lock update
 - [x] `freight update [package]` — refreshes lockfile checksums for path deps
 - [x] `freight fetch` — verifies path deps exist
-- [x] `freight search / info / login / publish / yank` — stubs pending freight.dev
+- [x] `PackageRepo` trait — `repo_key()`, `lookup()`, `search()`; multiple registry support
+- [x] `registries_in_order()` — tries configured registries in declaration order; first hit wins; default freight.dev appended if no entry named `"freight"` is present
+- [x] `--repo <name>` in `freight add` selects a named registry; without `--repo` all registries are tried in order
+- [x] Bearer token auth — `Authorization: Bearer <token>` header in all outbound HTTP requests
+- [x] `[[registry]]` config in `~/.freight/config.toml` — `name`, `url`, `token` fields; local config prepends and deduplicates
 - [ ] `freight fetch` — download version deps from freight.dev
 - [ ] `freight add` — resolve + lock exact version from freight.dev
+- [ ] `freight search / info / login / publish / yank` — stubs pending client HTTP integration
 
-**Server (crates/freight-registry/)**
-- [ ] Axum-based HTTP server (`FREIGHT_REGISTRY_ADDR`, default `0.0.0.0:8080`)
-- [ ] Filesystem layout: `registry-data/index/<name>.json` + `registry-data/packages/<name>/<version>.tar.gz`
-- [ ] `GET /api/v1/packages/{name}` — versions + metadata
-- [ ] `GET /api/v1/packages/{name}/{version}/download`
-- [ ] `GET /api/v1/search?q=<query>`
-- [ ] `POST /api/v1/publish` (bearer auth)
-- [ ] `POST /api/v1/yank` (bearer auth)
-- [ ] Static bearer tokens in `registry-data/tokens.toml` for v1
-- [ ] `FREIGHT_REGISTRY_URL` env var; credentials at `~/.freight/credentials.toml`
-- [ ] Wire CLI stubs to the real HTTP API
-- [ ] Integration tests: spin up on an ephemeral port, publish → fetch → build
+**Server (`freight-registry` — standalone repository)**
+> Extracted to its own repo. Implements the full cargo-compatible registry wire protocol over Axum + SQLite.
+
+- [x] Axum 0.7 HTTP server — `--bind` (default `0.0.0.0:7878`) and `--base-url` flags
+- [x] SQLite via sqlx 0.8 — WAL mode, foreign keys, startup schema migration
+- [x] `GET /api/v1/packages/{name}` — versions + metadata JSON
+- [x] `GET /api/v1/packages/{name}/{version}/download` — tarball stream + `X-Checksum-SHA256` header
+- [x] `GET /api/v1/search?q=<query>` — substring search over name and description
+- [x] `PUT /api/v1/packages` — publish (cargo binary wire format: `[u32 JSON len][JSON][u32 tar len][tar]`)
+- [x] `DELETE/PUT /api/v1/packages/{name}/{version}/yank` — yank / unyank
+- [x] `GET/PUT/DELETE /api/v1/packages/{name}/owners` — multi-owner management; last-owner removal guard
+- [x] `POST /api/v1/users/login` — Argon2id password verification, creates token (90-day default)
+- [x] `GET /api/v1/me` — authenticated user info
+- [x] User accounts — Argon2id password hashing; `user add/list/remove` CLI
+- [x] API tokens — SHA-256 stored in DB; optional expiry; last-used tracking; `token add/list/revoke` CLI
+- [x] Package ownership — first publisher auto-claims; `user_owns_package` guards all writes
+- [x] Per-IP rate limiting via `governor` — 120 req/min read, 10 req/min write
+- [x] Upload size cap — `DefaultBodyLimit`; `--max-upload-mb` flag (default 50 MB)
+- [x] Input validation — package names, semver versions, usernames, passwords (`validate.rs`)
+- [x] Audit log — fire-and-forget async inserts for login, publish, yank, unyank
+- [ ] Token scopes, email verification, TOTP/2FA — see `freight-registry/TODO.md`
+- [ ] S3-compatible storage backend, PostgreSQL option
+- [ ] Proper versioned sqlx migrations, web UI, Docker image, mirror/proxy mode
 
 ### Language Server (in progress — `feature/lsp-server`)
 - [x] Crate scaffold: `crates/freight-lsp/` (lib + bin), `tower-lsp 0.20`, stdio transport

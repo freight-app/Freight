@@ -4,12 +4,16 @@
 
 ## Big tasks
 
-### B1 — Registry server (`freight-registry` crate)
-Stand up the `freight.dev` registry — package publish, search, yank, and version resolution.
-Includes JWT/OAuth auth (GitHub OAuth or OIDC), a `FREIGHT_REGISTRY_URL` env override for
-private registries, and credential storage in `~/.freight/credentials.toml`.
-Blocks: `freight publish`, `freight search`, `freight info`, `freight login`, registry-backed
-`version = "x.y"` resolution.
+### B1 — Registry client integration
+The `freight-registry` server lives in a separate repository and is fully operational (Axum +
+SQLite, user accounts, Argon2id auth, ownership, rate limiting, audit log). Multiple-registry
+client support is done: `PackageRepo` trait, `registries_in_order()`, `--repo <name>`, bearer
+token headers, and `[[registry]]` config.
+
+Remaining: wire the CLI stubs (`freight search`, `freight info`, `freight login`,
+`freight publish`, `freight yank`) to real HTTP calls, implement `freight fetch` for registry
+version deps, and add semver resolution + lockfile pinning to `freight add`.
+Blocks: registry-backed `version = "x.y"` resolution in `freight build`.
 
 ### B2 — VS Code extension
 Activate on `freight.toml`, delegate to `freight lsp` for diagnostics, completions, and

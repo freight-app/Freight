@@ -1,5 +1,12 @@
 # freight.dev Registry — Implementation Plan
 
+> **Status (2026-05-15):** The server described here has been implemented and extracted to its
+> own standalone repository (`freight-registry`). The actual implementation uses **SQLite** (via
+> sqlx) rather than the flat JSON-file index described in this document, and stores user accounts,
+> tokens, and package ownership in the database rather than in `tokens.toml`. The HTTP API shape
+> and wire protocol match this document. Client-side integration (fetch, semver resolution, CLI
+> stubs) remains in progress.
+
 ## Overview
 
 freight.dev is the official package registry for freight. It stores and serves source archives.
@@ -7,9 +14,9 @@ Publishers upload a tarball; consumers download it and build locally — freight
 source-based package manager (like Cargo), not a binary distribution.
 
 This document covers:
-- **Server** (`crates/freight-registry/`) — the Axum HTTP service
+- **Server** (`freight-registry` standalone repo) — the Axum HTTP service
 - **Client** (`freight-core`) — download, resolve, fetch
-- **CLI** (`freight`) — wiring the Phase 9 stubs to the real API
+- **CLI** (`freight`) — wiring the stubs to the real API
 
 ---
 

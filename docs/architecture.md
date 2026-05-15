@@ -57,6 +57,14 @@ freight/
 │   │       │   ├── markdown.rs # math protection + Markdown conversion helpers
 │   │       │   ├── render_md.rs  # Markdown renderer (GFM, cross-document links)
 │   │       │   └── render_json.rs # JSON + MessagePack renderers for tooling/doc apps
+│   │       ├── registry/       # package registry client
+│   │       │   ├── mod.rs      # PackageRepo trait, PackageInfo/PackageVersion types, DEFAULT_REGISTRY_URL
+│   │       │   ├── freight_registry.rs  # FreightRegistry: HTTP lookup + search over /api/v1/
+│   │       │   └── repos.rs    # repo_by_name(), registries_in_order() — multi-registry dispatch
+│   │       ├── fetch/          # low-level download helpers
+│   │       │   ├── mod.rs
+│   │       │   ├── git.rs      # git clone / fetch for git = "..." deps
+│   │       │   └── http.rs     # curl-based download + SHA-256 verify for url = "..." deps
 │   │       ├── build/          # compilation + linking orchestration
 │   │       │   ├── mod.rs      # build_project, clean_project, test_project (pub functions)
 │   │       │   ├── compile.rs  # source → object, parallel via rayon
