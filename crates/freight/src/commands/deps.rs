@@ -7,7 +7,8 @@ use freight_core::dep_cmds::{
 };
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::registry::repos::repo_by_name;
+use freight_core::registry::repos::{repo_by_name, registries_in_order};
+use freight_core::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 use owo_colors::OwoColorize;
@@ -177,39 +178,77 @@ pub fn cmd_add(
             ..Default::default()
         })
     } else {
-        // Repo-backed dependency: use the specified repo (or freight default).
-        let repo_name = repo.unwrap_or("freight");
-        let repo_impl = match repo_by_name(repo_name) {
-            Ok(r) => r,
-            Err(e) => { print_error(&e.to_string()); return; }
+        // Registry-backed dependency.
+        let config = {
+            let mut cfg = GlobalConfig::load();
+            if let Some(local) = GlobalConfig::load_local(&project_dir) {
+                cfg.apply_local(local);
+            }
+            cfg
         };
-        let repo_key = repo_impl.repo_key().to_string();
 
-        let ver = if let Some(pinned) = pinned_version {
-            pinned.to_string()
+        let (ver, repo_key) = if let Some(rname) = repo {
+            // Explicit --repo: use that registry only.
+            let repo_impl = match repo_by_name(rname, &config) {
+                Ok(r) => r,
+                Err(e) => { print_error(&e.to_string()); return; }
+            };
+            let key = repo_impl.repo_key().to_string();
+            let v = if let Some(pinned) = pinned_version {
+                pinned.to_string()
+            } else {
+                print_status("registry", &format!("looking up `{dep_name}` via {rname}…"));
+                match repo_impl.lookup(dep_name) {
+                    Ok(Some(info)) => {
+                        print_status("resolved", &format!("`{dep_name}` → {}", info.latest));
+                        info.latest
+                    }
+                    Ok(None) => {
+                        print_error(&format!("`{dep_name}` not found in the {rname} registry"));
+                        return;
+                    }
+                    Err(e) => {
+                        print_warning(&format!("repo unreachable ({e}); adding with version \"*\""));
+                        "*".to_string()
+                    }
+                }
+            };
+            (v, key)
+        } else if let Some(pinned) = pinned_version {
+            // Pinned version, no explicit repo: use the default registry.
+            (pinned.to_string(), String::new())
         } else {
-            print_status("registry", &format!("looking up `{dep_name}` via {repo_name}…"));
-            match repo_impl.lookup(dep_name) {
-                Ok(Some(info)) => {
-                    print_status("resolved", &format!("`{dep_name}` → {}", info.latest));
-                    info.latest
+            // No repo, no pinned version: try each registry in order, first hit wins.
+            print_status("registry", &format!("looking up `{dep_name}`…"));
+            let all_repos = registries_in_order(&config);
+            let mut found: Option<(String, String)> = None;
+            for r in &all_repos {
+                let display = if r.repo_key().is_empty() { "freight.dev" } else { r.repo_key() };
+                match r.lookup(dep_name) {
+                    Ok(Some(info)) => {
+                        print_status("resolved", &format!("`{dep_name}` → {} (via {display})", info.latest));
+                        found = Some((info.latest, r.repo_key().to_string()));
+                        break;
+                    }
+                    Ok(None) => continue,
+                    Err(e) => {
+                        print_warning(&format!("{display} unreachable ({e}), trying next…"));
+                        continue;
+                    }
                 }
-                Ok(None) => {
-                    print_error(&format!("`{dep_name}` not found in the {repo_name} registry"));
+            }
+            match found {
+                Some(pair) => pair,
+                None => {
+                    print_error(&format!("`{dep_name}` not found in any configured registry"));
                     return;
-                }
-                Err(e) => {
-                    print_warning(&format!("repo unreachable ({e}); adding with version \"*\""));
-                    "*".to_string()
                 }
             }
         };
 
         if repo_key.is_empty() {
-            // Freight (default) registry: store as a plain version string.
             Dependency::Simple(ver)
         } else {
-            // Named repo: store with repo = "<key>" so build-time resolver picks the right backend.
             Dependency::Detailed(DetailedDep {
                 version: Some(ver),
                 repo: Some(repo_key),

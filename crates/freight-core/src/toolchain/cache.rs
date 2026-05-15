@@ -97,6 +97,22 @@ fn cache_path() -> Option<PathBuf> {
 
 // ── Global config ─────────────────────────────────────────────────────────────
 
+/// One registry entry under `[[registry]]` in a config file.
+///
+/// Registries are tried in the order they appear. The first one that returns
+/// a result for a given package name wins. The built-in `freight.dev` registry
+/// is appended after any configured entries if no entry named `"freight"` exists.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RegistryConfig {
+    /// Identifier used in `repo = "…"` dep fields and `--repo` CLI flag.
+    pub name: String,
+    /// Base URL of the registry HTTP API.
+    pub url: String,
+    /// Optional bearer token for private registries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
 /// Persistent global config stored at `~/.freight/config.toml`.
 ///
 /// Developer settings that apply across all projects on the machine.
@@ -113,10 +129,12 @@ pub struct GlobalConfig {
     /// Whether freight derives CPU tuning flags from the configured target/sysroot.
     #[serde(default, rename = "auto-cpu-tuning", alias = "auto_cpu_tuning")]
     pub auto_cpu_tuning: Option<bool>,
-    /// Override the freight registry URL. Useful for pointing at an internal mirror.
-    /// Takes precedence over the `FREIGHT_REGISTRY_URL` environment variable.
-    #[serde(default, rename = "registry-url", alias = "registry_url")]
-    pub registry_url: Option<String>,
+    /// Ordered list of package registries to search.
+    /// Tried in declaration order; first hit wins.
+    /// The public `freight.dev` registry is always appended last unless an entry
+    /// named `"freight"` is already present.
+    #[serde(default)]
+    pub registries: Vec<RegistryConfig>,
     /// Developer debugger preferences, keyed by debugger name under `[debugger.<name>]`.
     #[serde(default)]
     pub debugger: DebuggerConfig,
@@ -169,7 +187,17 @@ impl GlobalConfig {
         if local.target.is_some()          { self.target          = local.target; }
         if local.sysroot.is_some()         { self.sysroot         = local.sysroot; }
         if local.auto_cpu_tuning.is_some() { self.auto_cpu_tuning = local.auto_cpu_tuning; }
-        if local.registry_url.is_some()    { self.registry_url    = local.registry_url; }
+        // Local registries take priority: prepend them, keeping base registries that
+        // aren't shadowed by name.
+        if !local.registries.is_empty() {
+            let mut merged = local.registries;
+            for base in self.registries.drain(..) {
+                if !merged.iter().any(|r| r.name == base.name) {
+                    merged.push(base);
+                }
+            }
+            self.registries = merged;
+        }
         for (name, local_inst) in local.debugger.debuggers {
             let inst = self.debugger.debuggers.entry(name).or_default();
             inst.args.extend(local_inst.args);

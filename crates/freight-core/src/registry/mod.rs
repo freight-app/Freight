@@ -8,7 +8,7 @@ pub mod freight_registry;
 pub mod repos;
 
 pub use freight_registry::FreightRegistry;
-pub use repos::{repo_by_name, default_repo};
+pub use repos::{repo_by_name, default_repo, registries_in_order};
 
 use crate::error::FreightError;
 
