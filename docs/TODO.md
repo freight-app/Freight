@@ -37,8 +37,12 @@ Remaining: internal system cache registry (index on first install; skip probing 
 `bench` profile (release + debug, no strip), run binaries matching `bench_*` or in `benches/`,
 print a timing table. Optional Criterion integration via a flag.
 
-### B7 — Support multiple compiler versions
-The toolchain currently doesnt expect multiple versions of the same compiler. Since some systems dont support newer versions of compilers, older versions are required to be installed sometimes for compatibillity. The toolchains must thus show every version of a compiler that is available on the system, so the user can choose which one is needed.
+### B7 — Support multiple compiler versions ✓ done
+`which_all()` scans PATH for both the unversioned binary (`gcc`) and major-versioned variants
+(`gcc-12`, `gcc-13`, `gcc-14`), deduplicating by canonical path so symlinks are not double-counted.
+`probe_all()` / `probe_all_cached()` return one `DetectedCompiler` per installed variant; results
+sorted newest-first within the same template. `toolchain_use` and `freight toolchain use` now accept
+version-pinned names (`gnu-14`); `backend_matches()` ensures builds honour the pinned version.
 
 ---
 
