@@ -11,7 +11,7 @@ use curl::easy::Easy;
 use serde::Deserialize;
 
 use crate::error::FreightError;
-use super::{DEFAULT_REGISTRY_URL, PackageInfo, PackageVersion, Registry};
+use super::{DEFAULT_REGISTRY_URL, PackageInfo, PackageVersion, PackageRepo};
 
 // ── Public client ─────────────────────────────────────────────────────────────
 
@@ -27,7 +27,11 @@ impl FreightRegistry {
     }
 }
 
-impl Registry for FreightRegistry {
+impl PackageRepo for FreightRegistry {
+    fn repo_key(&self) -> &str {
+        ""
+    }
+
     fn lookup(&self, name: &str) -> Result<Option<PackageInfo>, FreightError> {
         let url = format!("{}/api/v1/packages/{}", self.base_url, name);
         match http_get_json::<ApiPackage>(&url) {

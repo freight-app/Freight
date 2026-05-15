@@ -5,8 +5,14 @@
 //! is separate — the registry is only consulted at `freight add` time.
 
 pub mod freight_registry;
+pub mod vcpkg;
+pub mod conan;
+pub mod repos;
 
 pub use freight_registry::FreightRegistry;
+pub use vcpkg::VcpkgRepo;
+pub use conan::ConanRepo;
+pub use repos::{repo_by_name, default_repo};
 
 use crate::error::FreightError;
 
@@ -34,11 +40,19 @@ pub struct PackageInfo {
     pub versions: Vec<PackageVersion>,
 }
 
-/// A registry that can resolve and search packages by name.
-pub trait Registry {
+/// A package repository that can resolve and search packages by name.
+pub trait PackageRepo: Send + Sync {
+    /// Identifier used in `repo = "..."` in freight.toml.
+    /// Empty string for the freight registry (the default).
+    fn repo_key(&self) -> &str;
+
     /// Look up a package by name. Returns `Ok(None)` when not found (404).
     fn lookup(&self, name: &str) -> Result<Option<PackageInfo>, FreightError>;
 
     /// Search for packages matching `query`.
     fn search(&self, query: &str) -> Result<Vec<PackageInfo>, FreightError>;
 }
+
+/// Backward-compatibility alias. Prefer [`PackageRepo`].
+#[deprecated(since = "0.0.0", note = "use PackageRepo instead")]
+pub trait Registry: PackageRepo {}

@@ -159,7 +159,7 @@ enum Commands {
     /// Add a dependency
     Add {
         /// Package name, optionally with version: `name` or `name@1.0`.
-        /// Omit to browse interactively (freight registry or vcpkg with --vcpkg).
+        /// Omit to browse interactively (vcpkg browser available with --repo vcpkg).
         #[arg(value_name = "NAME[@VERSION]")]
         package: Option<String>,
         /// Add as a path dependency pointing to a local freight project
@@ -180,9 +180,9 @@ enum Commands {
         /// Add as a system (linker) dependency
         #[arg(long)]
         system: bool,
-        /// Resolve via vcpkg instead of the freight registry
-        #[arg(long)]
-        vcpkg: bool,
+        /// Package repository to use (default: freight registry). Known: freight, vcpkg, conan.
+        #[arg(long, value_name = "REPO")]
+        repo: Option<String>,
         /// Add to [dev-dependencies] instead of [dependencies]
         #[arg(long)]
         dev: bool,
@@ -383,7 +383,7 @@ fn main() -> Result<()> {
             tag,
             rev,
             system,
-            vcpkg,
+            repo,
             dev,
         } => {
             if let Some(package) = package {
@@ -395,11 +395,11 @@ fn main() -> Result<()> {
                     tag.as_deref(),
                     rev.as_deref(),
                     system,
-                    vcpkg,
+                    repo.as_deref(),
                     dev,
                 );
             } else {
-                cmd_add_interactive(vcpkg, dev);
+                cmd_add_interactive(repo.as_deref(), dev);
             }
         }
         Commands::Remove { package } => cmd_remove(&package),

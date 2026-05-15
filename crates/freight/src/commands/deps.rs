@@ -7,7 +7,7 @@ use freight_core::dep_cmds::{
 };
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::registry::{FreightRegistry, Registry};
+use freight_core::registry::repos::repo_by_name;
 
 use crate::commands::add_tui::select_vcpkg_packages;
 use crate::output::{print_error, print_status, print_success, print_warning};
@@ -126,7 +126,7 @@ pub fn cmd_add(
     tag: Option<&str>,
     rev: Option<&str>,
     system: bool,
-    vcpkg: bool,
+    repo: Option<&str>,
     dev: bool,
 ) {
     let cwd = match std::env::current_dir() {
@@ -177,22 +177,49 @@ pub fn cmd_add(
             system: Some(dep_name.to_string()),
             ..Default::default()
         })
-    } else if vcpkg {
-        // vcpkg dep: stored with repo = "vcpkg" so the build-time resolver
-        // knows to use vcpkg explicitly.
-        let ver = pinned_version.unwrap_or("*").to_string();
-        Dependency::Detailed(DetailedDep {
-            version: Some(ver),
-            repo: Some("vcpkg".to_string()),
-            ..Default::default()
-        })
     } else {
-        // Freight registry: resolve the version then store as a plain version string.
-        let ver = match resolve_registry_version(dep_name, pinned_version) {
-            Some(v) => v,
-            None => return,
+        // Repo-backed dependency: use the specified repo (or freight default).
+        let repo_name = repo.unwrap_or("freight");
+        let repo_impl = match repo_by_name(repo_name) {
+            Ok(r) => r,
+            Err(e) => { print_error(&e.to_string()); return; }
         };
-        Dependency::Simple(ver)
+        let repo_key = repo_impl.repo_key().to_string();
+
+        let ver = if let Some(pinned) = pinned_version {
+            pinned.to_string()
+        } else {
+            print_status("registry", &format!("looking up `{dep_name}` via {repo_name}…"));
+            match repo_impl.lookup(dep_name) {
+                Ok(Some(info)) => {
+                    print_status("resolved", &format!("`{dep_name}` → {}", info.latest));
+                    info.latest
+                }
+                Ok(None) => {
+                    print_error(&format!(
+                        "`{dep_name}` not found in the {repo_name} repo\n\
+                         hint: use `freight add {dep_name} --repo vcpkg` to search vcpkg instead"
+                    ));
+                    return;
+                }
+                Err(e) => {
+                    print_warning(&format!("repo unreachable ({e}); adding with version \"*\""));
+                    "*".to_string()
+                }
+            }
+        };
+
+        if repo_key.is_empty() {
+            // Freight (default) registry: store as a plain version string.
+            Dependency::Simple(ver)
+        } else {
+            // Named repo: store with repo = "<key>" so build-time resolver picks the right backend.
+            Dependency::Detailed(DetailedDep {
+                version: Some(ver),
+                repo: Some(repo_key),
+                ..Default::default()
+            })
+        }
     };
 
     if let Err(e) = manifest_add_dep(&project_dir.join("freight.toml"), dep_name, &dep, dev) {
@@ -225,41 +252,15 @@ pub fn cmd_add(
     refresh_lock(&project_dir);
 }
 
-/// Resolve a package name to a version string via the freight registry.
-/// If `pinned` is given it is validated against the registry; otherwise the
-/// latest version is used. Prints an error and returns `None` on failure.
-fn resolve_registry_version(name: &str, pinned: Option<&str>) -> Option<String> {
-    let registry = FreightRegistry::new();
-    print_status("registry", &format!("looking up `{name}`…"));
-    match registry.lookup(name) {
-        Ok(Some(info)) => {
-            let ver = pinned.unwrap_or(&info.latest).to_string();
-            print_status("resolved", &format!("`{name}` → {ver}"));
-            Some(ver)
-        }
-        Ok(None) => {
-            print_error(&format!(
-                "`{name}` not found in the freight registry\n\
-                 hint: use `freight add {name} --vcpkg` to search vcpkg instead"
-            ));
-            None
-        }
-        Err(e) => {
-            print_warning(&format!("registry unreachable ({e}); adding with version \"*\""));
-            Some(pinned.unwrap_or("*").to_string())
-        }
-    }
-}
-
 /// Interactive `freight add` (no package name given).
-/// `--vcpkg` opens the vcpkg browser TUI; otherwise opens the freight registry search.
-pub fn cmd_add_interactive(vcpkg: bool, dev: bool) {
-    if vcpkg {
+/// `--repo vcpkg` opens the vcpkg browser TUI; otherwise shows a not-yet-available warning.
+pub fn cmd_add_interactive(repo: Option<&str>, dev: bool) {
+    if repo == Some("vcpkg") {
         match select_vcpkg_packages() {
             Ok(packages) if packages.is_empty() => print_status("cancel", "no dependency added"),
             Ok(packages) => {
                 for package in packages {
-                    cmd_add(&package, None, None, None, None, None, false, true, dev);
+                    cmd_add(&package, None, None, None, None, None, false, Some("vcpkg"), dev);
                 }
             }
             Err(e) => print_error(&e.to_string()),
