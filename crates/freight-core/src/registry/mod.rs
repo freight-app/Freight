@@ -5,13 +5,9 @@
 //! is separate — the registry is only consulted at `freight add` time.
 
 pub mod freight_registry;
-pub mod vcpkg;
-pub mod conan;
 pub mod repos;
 
 pub use freight_registry::FreightRegistry;
-pub use vcpkg::VcpkgRepo;
-pub use conan::ConanRepo;
 pub use repos::{repo_by_name, default_repo};
 
 use crate::error::FreightError;

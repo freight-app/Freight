@@ -7,7 +7,6 @@
 pub mod autotools;
 pub mod bazel;
 pub mod cmake;
-pub mod conan;
 pub mod make;
 pub mod meson;
 pub mod pkg_config;
@@ -179,44 +178,21 @@ fn package_query(name: &str, version: &str) -> String {
 /// is optional and not found, or `Err` when the dep is required and all
 /// resolvers fail.
 ///
-/// Default chain (no explicit `repo`): pkg-config → conan → vcpkg
-/// If all fail and a system PM is detectable, a helpful install hint is emitted
-/// as a `BuildEvent::Warning` before returning the error.
+/// Default chain (no explicit `repo`): pkg-config → system-lib stubs → .deps cache.
 fn resolve_version_dep(
     name: &str,
     query: &str,
     version: &str,
     repo: Option<&str>,
     optional: bool,
-    project_dir: &Path,
+    _project_dir: &Path,
     progress: &Progress,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
+    // Suppress unused warning; version may be used by future resolvers.
+    let _ = version;
+
     match repo {
-        Some("conan") => {
-            match conan::resolve_conan_dep(name, name, version, project_dir, progress) {
-                Ok(built) => Ok(Some((built, None))),
-                Err(e) if optional => {
-                    progress(BuildEvent::Warning(format!("'{name}' not found via conan (optional, skipping): {e}")));
-                    Ok(None)
-                }
-                Err(e) => Err(e),
-            }
-        }
-        Some("vcpkg") => {
-            match crate::fetch::vcpkg::resolve_vcpkg_dep(name, name, None, project_dir, progress) {
-                Ok(v) => Ok(Some((
-                    ForeignBuilt { name: name.to_string(), libs: v.libs, include_dirs: v.include_dirs, raw_link_flags: v.raw_link_flags },
-                    None,
-                ))),
-                Err(e) if optional => {
-                    progress(BuildEvent::Warning(format!("'{name}' not found via vcpkg (optional, skipping): {e}")));
-                    Ok(None)
-                }
-                Err(e) => Err(e),
-            }
-        }
         Some("system") => {
-            // Bypass all resolvers and link the library directly.
             let stubs = load_system_lib_stubs();
             let link_flag = if let Some(stub) = find_stub(name, &stubs) {
                 format!("-l{}", stub.link_name)
@@ -230,13 +206,10 @@ fn resolve_version_dep(
             )))
         }
         Some(other) => Err(FreightError::ManifestParse(format!(
-            "unknown repo '{other}' for dep '{name}'; accepted: conan, vcpkg, system"
+            "unknown repo '{other}' for dep '{name}'; accepted: system"
         ))),
         None => {
-            // Default build-time chain: pkg-config → conan → system-lib stubs.
-            // vcpkg is only used when repo = "vcpkg" is explicit; it is not
-            // tried automatically so that the freight registry remains the
-            // canonical source of truth for package resolution.
+            // Default chain: pkg-config → system-lib stubs → .deps/ cache (freight fetch).
             progress(BuildEvent::ResolvingDep { name: name.to_string(), via: query.to_string() });
             if let Ok(pc) = pkg_config_query(query) {
                 let ver = pkg_config_version(query);
@@ -245,12 +218,7 @@ fn resolve_version_dep(
                     Some(ResolvedPkgConfig { name: name.to_string(), found: true, version: ver, include_dirs: pc.include_dirs }),
                 )));
             }
-            if conan::is_conan_available() {
-                if let Ok(built) = conan::resolve_conan_dep(name, name, version, project_dir, progress) {
-                    return Ok(Some((built, None)));
-                }
-            }
-            // Final fallback: built-in system-lib stubs (e.g. pthread, ws2_32).
+            // Built-in system-lib stubs (e.g. pthread, ws2_32).
             let stubs = load_system_lib_stubs();
             if let Some(stub) = find_stub(name, &stubs) {
                 let link_flag = format!("-l{}", stub.link_name);
@@ -271,8 +239,8 @@ fn resolve_version_dep(
                 Ok(None)
             } else {
                 Err(FreightError::ManifestParse(format!(
-                    "dep '{name}' not found via pkg-config, conan, or system stubs; \
-                     run `freight fetch` to download it first"
+                    "dep '{name}' not found via pkg-config or system stubs; \
+                     run `freight fetch` to download it from the registry first"
                 )))
             }
         }

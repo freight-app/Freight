@@ -107,7 +107,7 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
         let ctx = format!("[dependencies.{name}]");
 
         if let Some(repo) = &d.repo {
-            const KNOWN_REPOS: &[&str] = &["conan", "vcpkg", "system"];
+            const KNOWN_REPOS: &[&str] = &["system"];
             if !KNOWN_REPOS.contains(&repo.as_str()) {
                 errors.push(ValidationError::new(
                     &ctx,

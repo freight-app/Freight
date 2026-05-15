@@ -9,7 +9,6 @@ use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 use freight_core::registry::repos::repo_by_name;
 
-use crate::commands::add_tui::select_vcpkg_packages;
 use crate::output::{print_error, print_status, print_success, print_warning};
 use owo_colors::OwoColorize;
 
@@ -196,10 +195,7 @@ pub fn cmd_add(
                     info.latest
                 }
                 Ok(None) => {
-                    print_error(&format!(
-                        "`{dep_name}` not found in the {repo_name} repo\n\
-                         hint: use `freight add {dep_name} --repo vcpkg` to search vcpkg instead"
-                    ));
+                    print_error(&format!("`{dep_name}` not found in the {repo_name} registry"));
                     return;
                 }
                 Err(e) => {
@@ -253,25 +249,12 @@ pub fn cmd_add(
 }
 
 /// Interactive `freight add` (no package name given).
-/// `--repo vcpkg` opens the vcpkg browser TUI; otherwise shows a not-yet-available warning.
-pub fn cmd_add_interactive(repo: Option<&str>, dev: bool) {
-    if repo == Some("vcpkg") {
-        match select_vcpkg_packages() {
-            Ok(packages) if packages.is_empty() => print_status("cancel", "no dependency added"),
-            Ok(packages) => {
-                for package in packages {
-                    cmd_add(&package, None, None, None, None, None, false, Some("vcpkg"), dev);
-                }
-            }
-            Err(e) => print_error(&e.to_string()),
-        }
-    } else {
-        // TODO: freight registry interactive search TUI
-        print_warning(
-            "interactive registry search is not yet available — \
-             use `freight add <name>` to add by name or `freight search <query>` to search"
-        );
-    }
+/// TODO: freight registry interactive search TUI.
+pub fn cmd_add_interactive(_repo: Option<&str>, _dev: bool) {
+    print_warning(
+        "interactive registry search is not yet available — \
+         use `freight add <name>` to add by name or `freight search <query>` to search"
+    );
 }
 
 // ── freight remove ─────────────────────────────────────────────────────────────

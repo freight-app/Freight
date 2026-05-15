@@ -159,7 +159,7 @@ enum Commands {
     /// Add a dependency
     Add {
         /// Package name, optionally with version: `name` or `name@1.0`.
-        /// Omit to browse interactively (vcpkg browser available with --repo vcpkg).
+        /// Omit to get an interactive prompt.
         #[arg(value_name = "NAME[@VERSION]")]
         package: Option<String>,
         /// Add as a path dependency pointing to a local freight project
@@ -180,7 +180,7 @@ enum Commands {
         /// Add as a system (linker) dependency
         #[arg(long)]
         system: bool,
-        /// Package repository to use (default: freight registry). Known: freight, vcpkg, conan.
+        /// Package repository to use (default: freight registry).
         #[arg(long, value_name = "REPO")]
         repo: Option<String>,
         /// Add to [dev-dependencies] instead of [dependencies]
