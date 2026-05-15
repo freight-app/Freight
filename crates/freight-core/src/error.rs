@@ -56,6 +56,12 @@ pub enum FreightError {
     #[error("install failed: {0}")]
     InstallFailed(String),
 
+    #[error("registry error: {0}")]
+    RegistryError(String),
+
+    #[error("package not found in registry: {0}")]
+    RegistryNotFound(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

@@ -233,7 +233,10 @@ fn resolve_version_dep(
             "unknown repo '{other}' for dep '{name}'; accepted: conan, vcpkg, system"
         ))),
         None => {
-            // Default chain: pkg-config → conan (if available) → vcpkg → system hint
+            // Default build-time chain: pkg-config → conan → system-lib stubs.
+            // vcpkg is only used when repo = "vcpkg" is explicit; it is not
+            // tried automatically so that the freight registry remains the
+            // canonical source of truth for package resolution.
             progress(BuildEvent::ResolvingDep { name: name.to_string(), via: query.to_string() });
             if let Ok(pc) = pkg_config_query(query) {
                 let ver = pkg_config_version(query);
@@ -247,35 +250,30 @@ fn resolve_version_dep(
                     return Ok(Some((built, None)));
                 }
             }
-            match crate::fetch::vcpkg::resolve_vcpkg_dep(name, name, None, project_dir, progress) {
-                Ok(v) => Ok(Some((
-                    ForeignBuilt { name: name.to_string(), libs: v.libs, include_dirs: v.include_dirs, raw_link_flags: v.raw_link_flags },
+            // Final fallback: built-in system-lib stubs (e.g. pthread, ws2_32).
+            let stubs = load_system_lib_stubs();
+            if let Some(stub) = find_stub(name, &stubs) {
+                let link_flag = format!("-l{}", stub.link_name);
+                progress(BuildEvent::ResolvingDep { name: name.to_string(), via: "system-lib stub".to_string() });
+                return Ok(Some((
+                    ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs: vec![], raw_link_flags: vec![link_flag] },
                     None,
-                ))),
-                Err(vcpkg_err) => {
-                    // Final fallback: built-in system-lib stubs (e.g. pthread, ws2_32).
-                    let stubs = load_system_lib_stubs();
-                    if let Some(stub) = find_stub(name, &stubs) {
-                        let link_flag = format!("-l{}", stub.link_name);
-                        progress(BuildEvent::ResolvingDep { name: name.to_string(), via: "system-lib stub".to_string() });
-                        return Ok(Some((
-                            ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs: vec![], raw_link_flags: vec![link_flag] },
-                            None,
-                        )));
-                    }
-                    if let Some(pm) = system_pm::detect() {
-                        progress(BuildEvent::Warning(format!(
-                            "hint: try `{}` to install the system package",
-                            pm.install_hint(name),
-                        )));
-                    }
-                    if optional {
-                        progress(BuildEvent::Warning(format!("'{name}' not found (optional, skipping): {vcpkg_err}")));
-                        Ok(None)
-                    } else {
-                        Err(vcpkg_err)
-                    }
-                }
+                )));
+            }
+            if let Some(pm) = system_pm::detect() {
+                progress(BuildEvent::Warning(format!(
+                    "hint: try `{}` to install the system package",
+                    pm.install_hint(name),
+                )));
+            }
+            if optional {
+                progress(BuildEvent::Warning(format!("'{name}' not found at build time (optional, skipping)")));
+                Ok(None)
+            } else {
+                Err(FreightError::ManifestParse(format!(
+                    "dep '{name}' not found via pkg-config, conan, or system stubs; \
+                     run `freight fetch` to download it first"
+                )))
             }
         }
     }

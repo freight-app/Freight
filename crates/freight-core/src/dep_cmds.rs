@@ -227,6 +227,7 @@ pub enum PackageDepAction {
     SystemPresent,
     Fetched,
     AlreadyPresent,
+    Missing,
 }
 
 pub struct PackageDepOutcome {
@@ -235,8 +236,6 @@ pub struct PackageDepOutcome {
 }
 
 pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, FreightError> {
-    use crate::event::silent;
-    use crate::fetch::vcpkg;
     use crate::meta::pkg_config_query;
 
     let manifest = load_manifest(project_dir)?;
@@ -251,19 +250,14 @@ pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, 
             continue;
         }
 
-        let triplet = vcpkg::default_triplet();
-        let already = vcpkg::installed_root(project_dir)
-            .join(".freight")
-            .join(format!("{name}.{triplet}.fetched"))
-            .exists();
-        if !already {
-            vcpkg::fetch_vcpkg_dep(name, name, Some(&triplet), project_dir, &silent())?;
+        // Registry-fetched deps are expected to already be present in .deps/
+        // after `freight fetch`. Report presence or warn if missing.
+        let dep_dir = project_dir.join(".deps").join(name);
+        if dep_dir.exists() {
+            outcomes.push(PackageDepOutcome { name: name.clone(), action: PackageDepAction::AlreadyPresent });
+        } else {
+            outcomes.push(PackageDepOutcome { name: name.clone(), action: PackageDepAction::Missing });
         }
-
-        outcomes.push(PackageDepOutcome {
-            name: name.clone(),
-            action: if already { PackageDepAction::AlreadyPresent } else { PackageDepAction::Fetched },
-        });
     }
 
     Ok(outcomes)
