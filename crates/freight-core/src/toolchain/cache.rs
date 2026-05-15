@@ -113,17 +113,44 @@ pub struct GlobalConfig {
     /// Whether freight derives CPU tuning flags from the configured target/sysroot.
     #[serde(default, rename = "auto-cpu-tuning", alias = "auto_cpu_tuning")]
     pub auto_cpu_tuning: Option<bool>,
+    /// Override the freight registry URL. Useful for pointing at an internal mirror.
+    /// Takes precedence over the `FREIGHT_REGISTRY_URL` environment variable.
+    #[serde(default, rename = "registry-url", alias = "registry_url")]
+    pub registry_url: Option<String>,
     /// Developer debugger preferences, keyed by debugger name under `[debugger.<name>]`.
     #[serde(default)]
     pub debugger: DebuggerConfig,
 }
 
 impl GlobalConfig {
-    /// Load the global config from `~/.freight/config.toml`.
-    /// Returns defaults on any error.
+    /// Load the effective global config by merging all config layers in order:
+    ///
+    /// 1. `/etc/freight/config.toml`  — system-wide defaults (lowest priority)
+    /// 2. `~/.freight/config.toml`    — user overrides
+    ///
+    /// Each layer is applied with [`apply_local`] so absent fields fall through
+    /// to the layer below. Returns defaults when no config files are found.
+    ///
+    /// The system config path can be overridden with `FREIGHT_SYSTEM_CONFIG`.
     pub fn load() -> Self {
-        let Some(path) = Self::path() else { return Self::default() };
-        let Ok(data) = std::fs::read_to_string(&path) else { return Self::default() };
+        let mut config = Self::load_system();
+        if let Some(path) = Self::path() {
+            if let Ok(data) = std::fs::read_to_string(path) {
+                if let Ok(user) = toml_edit::de::from_str::<Self>(&data) {
+                    config.apply_local(user);
+                }
+            }
+        }
+        config
+    }
+
+    /// Load the system-wide config from `/etc/freight/config.toml`
+    /// (or `$FREIGHT_SYSTEM_CONFIG` if set).
+    fn load_system() -> Self {
+        let path = std::env::var_os("FREIGHT_SYSTEM_CONFIG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/etc/freight/config.toml"));
+        let Ok(data) = std::fs::read_to_string(path) else { return Self::default() };
         toml_edit::de::from_str(&data).unwrap_or_default()
     }
 
@@ -142,6 +169,7 @@ impl GlobalConfig {
         if local.target.is_some()          { self.target          = local.target; }
         if local.sysroot.is_some()         { self.sysroot         = local.sysroot; }
         if local.auto_cpu_tuning.is_some() { self.auto_cpu_tuning = local.auto_cpu_tuning; }
+        if local.registry_url.is_some()    { self.registry_url    = local.registry_url; }
         for (name, local_inst) in local.debugger.debuggers {
             let inst = self.debugger.debuggers.entry(name).or_default();
             inst.args.extend(local_inst.args);

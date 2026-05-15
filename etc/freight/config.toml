@@ -1,0 +1,39 @@
+# /etc/freight/config.toml — system-wide freight configuration
+#
+# Applied as the lowest-priority layer. User settings (~/.freight/config.toml)
+# and project settings (.freight/config.toml) override these values.
+#
+# Override this file's path with FREIGHT_SYSTEM_CONFIG=/path/to/config.toml.
+
+# ── Compiler ──────────────────────────────────────────────────────────────────
+
+# Pin the default compiler backend for all users on this machine.
+# Accepted values: "gcc", "clang", "auto" (default — picks first detected).
+# default-backend = "clang"
+
+# ── Cross-compilation ─────────────────────────────────────────────────────────
+
+# System-wide cross-compilation target triple.
+# Useful on dedicated build machines (e.g. an aarch64 cross-compile host).
+# target = "aarch64-linux-gnu"
+
+# Path to the cross-compilation sysroot.
+# sysroot = "/opt/sysroots/aarch64-linux-gnu"
+
+# Disable automatic CPU extension detection from the target/sysroot.
+# auto-cpu-tuning = false
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+
+# Point all users at an internal registry mirror instead of freight.dev.
+# Takes precedence over the FREIGHT_REGISTRY_URL environment variable.
+# registry-url = "https://freight.internal.example.com"
+
+# ── Debugger ─────────────────────────────────────────────────────────────────
+
+# System-wide debugger defaults. Merged with (not replaced by) user settings.
+# [debugger.gdb]
+# args = ["--quiet"]
+
+# [debugger.lldb]
+# args = []

@@ -21,8 +21,11 @@ pub struct FreightRegistry {
 
 impl FreightRegistry {
     pub fn new() -> Self {
-        let base_url = std::env::var("FREIGHT_REGISTRY_URL")
-            .unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string());
+        // Priority: config file (system/user) > FREIGHT_REGISTRY_URL env var > built-in default.
+        let base_url = crate::toolchain::cache::GlobalConfig::load()
+            .registry_url
+            .or_else(|| std::env::var("FREIGHT_REGISTRY_URL").ok())
+            .unwrap_or_else(|| DEFAULT_REGISTRY_URL.to_string());
         Self { base_url: base_url.trim_end_matches('/').to_string() }
     }
 }
