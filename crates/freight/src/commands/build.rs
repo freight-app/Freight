@@ -6,13 +6,16 @@ use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
+use std::collections::{BTreeSet, HashMap};
+
 use freight_core::build::{
     bench_project_with, bench_workspace_with,
     build_project_at, build_project_with, build_workspace_with, clean_project, clean_workspace,
     emit_asm_project_with, test_project_with, test_workspace_with,
+    resolve_dep_graph, ResolvedDep,
 };
 use freight_core::event::{BuildEvent, Progress};
-use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
+use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
@@ -295,6 +298,183 @@ fn find_workspace_member_dir(pkg: &str) -> Option<PathBuf> {
         let dir = ws_dir.join(m.trim_end_matches('/'));
         if dir.file_name().and_then(|n| n.to_str()) == Some(pkg) { Some(dir) } else { None }
     })
+}
+
+// ── freight build --graph ──────────────────────────────────���──────────────────
+
+pub fn cmd_build_graph(release: bool, _package: Option<&str>, features: &[String], _use_defaults: bool) {
+    use owo_colors::OwoColorize;
+
+    let profile = if release { "release" } else { "dev" };
+
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => { print_error(&format!("cannot read cwd: {e}")); return; }
+    };
+    let project_dir = match find_manifest_dir(&cwd) {
+        Some(d) => d,
+        None => { print_error("no freight.toml found"); return; }
+    };
+    let manifest = match load_manifest(&project_dir) {
+        Ok(m) => m,
+        Err(e) => { print_error(&format!("failed to load manifest: {e}")); return; }
+    };
+
+    let activated: BTreeSet<String> = features.iter().cloned().collect();
+
+    let resolved = match resolve_dep_graph(&project_dir, &manifest, false, &activated) {
+        Ok(r) => r,
+        Err(e) => { print_error(&format!("dependency resolution failed: {e}")); return; }
+    };
+
+    // Assign a build stage to every resolved dep.
+    // resolved is already in topological order (leaves first), so we can
+    // compute stage[dep] = max(stage[freight_dep]) + 1 in a single pass.
+    let mut stage_of: HashMap<String, usize> = HashMap::new();
+    for dep in &resolved {
+        // Stage = one above the highest stage of any freight dep this dep needs.
+        let max_dep_stage = dep.manifest.dependencies.keys()
+            .filter_map(|n| stage_of.get(n).copied())
+            .max();
+        stage_of.insert(dep.name.clone(), max_dep_stage.map_or(0, |s| s + 1));
+    }
+
+    // Group by stage.
+    let max_stage = stage_of.values().copied().max().unwrap_or(0);
+    let mut stages: Vec<Vec<&ResolvedDep>> = vec![vec![]; max_stage + 1];
+    for dep in &resolved {
+        let s = stage_of[&dep.name];
+        stages[s].push(dep);
+    }
+
+    // Print header.
+    println!(
+        "{} {}  {}",
+        manifest.package.name.bold().bright_blue(),
+        manifest.package.version.bright_black(),
+        format!("[{profile}]").bright_black()
+    );
+
+    let rule = "─".repeat(48).bright_black().to_string();
+
+    // Print each dep stage.
+    for (stage_idx, stage_deps) in stages.iter().enumerate() {
+        if stage_deps.is_empty() { continue; }
+
+        println!();
+        let needs: Vec<String> = stage_deps.iter()
+            .flat_map(|d| d.manifest.dependencies.keys()
+                .filter(|n| stage_of.get(*n).copied().unwrap_or(usize::MAX) < stage_idx)
+                .cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter().collect();
+
+        let label = if needs.is_empty() {
+            format!("Stage {stage_idx}  (parallel)")
+        } else {
+            format!("Stage {stage_idx}  (parallel · needs: {})", needs.join(", "))
+        };
+        println!("{rule}");
+        println!("{}", label.bold());
+
+        for (di, dep) in stage_deps.iter().enumerate() {
+            let is_last_dep = di == stage_deps.len() - 1;
+            let dep_conn  = if is_last_dep { "└── " } else { "├── " };
+            let src_prefix = if is_last_dep { "    " } else { "│   " };
+
+            let origin = dep.dir.strip_prefix(&project_dir)
+                .map(|p| format!("({})", p.display()))
+                .unwrap_or_else(|_| format!("({})", dep.dir.display()));
+
+            println!(
+                "{}{}  {}  {}",
+                dep_conn.bright_black(),
+                dep.name.bold().bright_blue(),
+                dep.manifest.package.version.bright_black(),
+                origin.yellow()
+            );
+
+            // Collect and print source files for this dep.
+            let src_dir = dep.dir.join("src");
+            let srcs = collect_graph_sources(&src_dir);
+            for (si, src) in srcs.iter().enumerate() {
+                let is_last_src = si == srcs.len() - 1;
+                let src_conn = if is_last_src { "└── " } else { "├── " };
+                let rel = src.strip_prefix(&dep.dir).unwrap_or(src);
+                println!("{}{}{}", src_prefix.bright_black(), src_conn.bright_black(), rel.display().to_string().bright_black());
+            }
+        }
+    }
+
+    // Root project sources (final compile stage).
+    let root_src_dir = project_dir.join("src");
+    let root_srcs = collect_graph_sources(&root_src_dir);
+    if !root_srcs.is_empty() {
+        println!();
+        println!("{rule}");
+        println!("{}", format!("Stage {}  (root)", max_stage + 1).bold());
+        for (i, src) in root_srcs.iter().enumerate() {
+            let is_last = i == root_srcs.len() - 1;
+            let conn = if is_last { "└── " } else { "├── " };
+            let rel = src.strip_prefix(&project_dir).unwrap_or(src);
+            println!("{}{}", conn.bright_black(), rel.display());
+        }
+    }
+
+    // Link step.
+    println!();
+    println!("{rule}");
+    println!("{}", "Link".bold());
+    let target_dir = project_dir.join("target").join(profile);
+
+    // Binaries from [[bin]] targets.
+    let bins: Vec<String> = manifest.bins.iter()
+        .map(|b| b.name.clone())
+        .collect();
+    let bin_names = if bins.is_empty() {
+        vec![manifest.package.name.clone()]
+    } else {
+        bins
+    };
+
+    for bin in &bin_names {
+        let exe = target_dir.join(bin);
+        println!("└── {}", exe.display().to_string().bright_blue().bold());
+    }
+
+    // List dep libs.
+    if !resolved.is_empty() {
+        let libs: Vec<String> = resolved.iter()
+            .map(|d| format!("lib{}.a", d.name))
+            .collect();
+        println!("    {}", libs.join("  ").bright_black());
+    }
+
+    println!("{rule}");
+}
+
+fn collect_graph_sources(src_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "cu", "hip", "m", "mm"];
+    let mut files = Vec::new();
+    collect_graph_sources_rec(src_dir, SOURCE_EXTS, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_graph_sources_rec(dir: &std::path::Path, exts: &[&str], out: &mut Vec<std::path::PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_graph_sources_rec(&path, exts, out);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if exts.contains(&ext) {
+                out.push(path);
+            }
+        }
+    }
 }
 
 pub fn cmd_clean() {

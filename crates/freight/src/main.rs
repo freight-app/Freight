@@ -9,13 +9,14 @@ use crate::completion::{
     print_completion, print_completion_candidates, CompletionContext, CompletionShell,
 };
 
-use crate::commands::build::{cmd_bench, cmd_build, cmd_clean, cmd_run, cmd_test, cmd_watch};
+use crate::commands::build::{cmd_bench, cmd_build, cmd_build_graph, cmd_clean, cmd_run, cmd_test, cmd_watch};
 use crate::commands::check::cmd_check;
 use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::debug::cmd_debug;
 use crate::commands::deps::{
-    cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_outdated, cmd_publish,
-    cmd_publish_prebuilt, cmd_register, cmd_remove, cmd_search, cmd_tree, cmd_update, cmd_yank,
+    cmd_add, cmd_add_interactive, cmd_fetch, cmd_includes, cmd_info, cmd_login, cmd_outdated,
+    cmd_publish, cmd_publish_prebuilt, cmd_register, cmd_remove, cmd_search, cmd_tree, cmd_update,
+    cmd_yank,
 };
 use crate::commands::doc::cmd_doc;
 use crate::commands::fmt::cmd_fmt;
@@ -81,6 +82,9 @@ enum Commands {
         /// Print a per-file compilation time table sorted by slowest first.
         #[arg(long)]
         time_passes: bool,
+        /// Print the build graph (compilation stages and link step) instead of building.
+        #[arg(long)]
+        graph: bool,
     },
     /// Build and run the default binary
     Run {
@@ -197,8 +201,15 @@ enum Commands {
         #[arg(long, short = 's')]
         source: bool,
     },
-    /// Print the dependency tree
-    Tree,
+    /// Print the dependency tree, or the source/header include tree with --sources
+    Tree {
+        /// Show the include graph for source and header files instead of the dependency tree
+        #[arg(long, short = 's')]
+        sources: bool,
+        /// Also show system headers (#include <...>) when using --sources
+        #[arg(long, short = 'a', requires = "sources")]
+        all: bool,
+    },
     /// Show outdated registry dependencies
     Outdated {
         /// Registry to query (default: all configured registries in order)
@@ -382,8 +393,13 @@ fn main() -> Result<()> {
             package,
             emit,
             time_passes,
+            graph,
         } => {
-            cmd_build(release, package.as_deref(), &features, !no_default_features, &sanitize, &emit, time_passes);
+            if graph {
+                cmd_build_graph(release, package.as_deref(), &features, !no_default_features);
+            } else {
+                cmd_build(release, package.as_deref(), &features, !no_default_features, &sanitize, &emit, time_passes);
+            }
         }
         Commands::Run {
             release,
@@ -468,7 +484,9 @@ fn main() -> Result<()> {
         Commands::Remove { package } => cmd_remove(&package),
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Fetch { source } => cmd_fetch(source),
-        Commands::Tree => cmd_tree(),
+        Commands::Tree { sources, all } => {
+            if sources { cmd_includes(all) } else { cmd_tree() }
+        }
         Commands::Outdated { repo } => cmd_outdated(repo.as_deref()),
         Commands::Info { package, repo } => cmd_info(package.as_deref(), repo.as_deref()),
         Commands::Search { query, repo } => cmd_search(&query, repo.as_deref()),

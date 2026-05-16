@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use freight_core::dep_cmds::{
     locate_project, manifest_add_dep, manifest_remove_dep, regen_lock,
@@ -117,6 +118,195 @@ fn print_system_dep(branch: &str, name: &str, _dep: &DetailedDep) {
         name.bold().bright_blue(),
         "(system)".cyan()
     );
+}
+
+// ── freight includes ──────────────────────────────────────────────────────────
+
+pub fn cmd_includes(show_system: bool) {
+    let (project_dir, manifest) = match locate_project() {
+        Ok(p) => p,
+        Err(e) => { print_error(&e.to_string()); return; }
+    };
+
+    // Collect include search dirs: inc/ and src/ (for sibling-relative includes).
+    let mut include_dirs: Vec<PathBuf> = Vec::new();
+    let inc = project_dir.join("inc");
+    let src = project_dir.join("src");
+    if inc.is_dir() { include_dirs.push(inc); }
+    if src.is_dir() { include_dirs.push(src.clone()); }
+
+    // Extra include dirs declared in manifest [compiler] includes.
+    for d in &manifest.compiler.includes {
+        let p = project_dir.join(d);
+        if p.is_dir() { include_dirs.push(p); }
+    }
+
+    // Gather source files.
+    let source_files = collect_source_files(&src);
+    if source_files.is_empty() {
+        println!("no source files found in {}", src.display());
+        return;
+    }
+
+    println!(
+        "{} {}",
+        manifest.package.name.bold().bright_blue(),
+        manifest.package.version.bright_black()
+    );
+
+    let mut globally_seen: HashSet<PathBuf> = HashSet::new();
+
+    for (i, sf) in source_files.iter().enumerate() {
+        let is_last = i == source_files.len() - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let child_prefix = if is_last { "    " } else { "│   " };
+
+        let rel = sf.strip_prefix(&project_dir).unwrap_or(sf);
+        println!("{}{}", connector.bright_black(), rel.display().to_string().yellow());
+
+        print_include_tree(
+            sf,
+            &project_dir,
+            &include_dirs,
+            child_prefix,
+            &mut globally_seen,
+            &mut HashSet::new(),
+            show_system,
+        );
+    }
+}
+
+/// Walk `src/` and return all C/C++/CUDA source files (not headers).
+fn collect_source_files(src_dir: &Path) -> Vec<PathBuf> {
+    const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "cu", "hip", "m", "mm"];
+    let mut files = Vec::new();
+    if !src_dir.is_dir() { return files; }
+    collect_files_recursive(src_dir, SOURCE_EXTS, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_files_recursive(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, exts, out);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if exts.contains(&ext) {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// Parse `#include "..."` and optionally `#include <...>` from a file.
+fn parse_includes(path: &Path) -> Vec<(String, bool)> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let mut result = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with('#') { continue; }
+        let rest = line[1..].trim_start();
+        if !rest.starts_with("include") { continue; }
+        let rest = rest[7..].trim_start();
+        if let Some(inner) = rest.strip_prefix('"').and_then(|s| s.split('"').next()) {
+            result.push((inner.to_string(), false));
+        } else if let Some(inner) = rest.strip_prefix('<').and_then(|s| s.split('>').next()) {
+            result.push((inner.to_string(), true));
+        }
+    }
+    result
+}
+
+/// Resolve an include path to an absolute file path, or `None` if not found.
+fn resolve_include(include: &str, from_file: &Path, include_dirs: &[PathBuf]) -> Option<PathBuf> {
+    // 1. Relative to the file containing the #include.
+    if let Some(parent) = from_file.parent() {
+        let candidate = parent.join(include);
+        if candidate.is_file() { return Some(candidate); }
+    }
+    // 2. Each include dir in order.
+    for dir in include_dirs {
+        let candidate = dir.join(include);
+        if candidate.is_file() { return Some(candidate); }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_include_tree(
+    file: &Path,
+    project_dir: &Path,
+    include_dirs: &[PathBuf],
+    prefix: &str,
+    globally_seen: &mut HashSet<PathBuf>,
+    in_stack: &mut HashSet<PathBuf>,
+    show_system: bool,
+) {
+    let includes = parse_includes(file);
+    let visible: Vec<_> = includes.iter()
+        .filter(|(_, sys)| show_system || !sys)
+        .collect();
+
+    for (i, (inc, is_system)) in visible.iter().enumerate() {
+        let is_last = i == visible.len() - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+        let branch = format!("{prefix}{connector}").bright_black().to_string();
+
+        if *is_system {
+            println!("{}{}", branch, format!("<{inc}>").cyan());
+            continue;
+        }
+
+        match resolve_include(inc, file, include_dirs) {
+            None => {
+                println!("{}{} {}", branch, format!("\"{inc}\"").yellow(), "[not found]".red());
+            }
+            Some(resolved) => {
+                let rel = resolved.strip_prefix(project_dir).unwrap_or(&resolved);
+
+                if in_stack.contains(&resolved) {
+                    println!(
+                        "{}{} {} {}",
+                        branch,
+                        format!("\"{inc}\"").yellow(),
+                        rel.display().to_string().bright_black(),
+                        "(cycle)".red().bold()
+                    );
+                    continue;
+                }
+
+                if globally_seen.contains(&resolved) {
+                    println!(
+                        "{}{} {} {}",
+                        branch,
+                        format!("\"{inc}\"").yellow(),
+                        rel.display().to_string().bright_black(),
+                        "(see above)".bright_black()
+                    );
+                    continue;
+                }
+
+                println!("{}{} {}", branch, format!("\"{inc}\"").yellow(), rel.display().to_string().bright_black());
+                globally_seen.insert(resolved.clone());
+                in_stack.insert(resolved.clone());
+                print_include_tree(
+                    &resolved,
+                    project_dir,
+                    include_dirs,
+                    &child_prefix,
+                    globally_seen,
+                    in_stack,
+                    show_system,
+                );
+                in_stack.remove(&resolved);
+            }
+        }
+    }
 }
 
 // ── freight add ────────────────────────────────────────────────────────────────
