@@ -84,7 +84,7 @@ Freight merges templates from two locations at startup:
 
 User scripts with the same `name` as a bundled script take precedence. Files starting with `_`
 are shared includes — they are never loaded as standalone templates. The bundled directory is
-found via `CRANE_TEMPLATES_DIR`, `<binary-dir>/toolchains/`, or the cargo-development layout.
+found via `FREIGHT_TEMPLATES_DIR`, `<binary-dir>/toolchains/`, or the cargo-development layout.
 
 Compiler templates that do **not** register runtime option callbacks are cached in
 `~/.freight/template-cache.msgpack`. The cache key includes the template contents and directly

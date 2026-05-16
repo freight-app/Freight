@@ -8,7 +8,7 @@
 //!
 //! The strategy used here:
 //! 1. **`protect_math`** — scan the raw text and replace every math region with
-//!    an opaque ASCII placeholder (`@CRANEMATHn@`).  The original delimiters
+//!    an opaque ASCII placeholder (`@FREIGHTMATHn@`).  The original delimiters
 //!    and content are stored in a side-list.
 //! 2. Run the placeholder-substituted text through the target renderer
 //!    (pulldown-cmark for HTML, a custom event loop for LaTeX).
@@ -26,7 +26,7 @@ pub struct MathRegion {
     pub raw: String, // original text including delimiters
 }
 
-/// Extract all math regions from `text`, replacing each with `@CRANEMATHn@`.
+/// Extract all math regions from `text`, replacing each with `@FREIGHTMATHn@`.
 ///
 /// Recognised forms (in priority order):
 /// - `$$...$$`   — display math (may span multiple lines)
@@ -106,7 +106,7 @@ pub fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
 
 fn push_region(out: &mut String, regions: &mut Vec<MathRegion>, chars: &[char]) {
     let raw: String = chars.iter().collect();
-    let placeholder = format!("@CRANEMATH{}@", regions.len());
+    let placeholder = format!("@FREIGHTMATH{}@", regions.len());
     regions.push(MathRegion { placeholder: placeholder.clone(), raw });
     out.push_str(&placeholder);
 }
@@ -271,7 +271,7 @@ fn md_events_to_latex(text: &str) -> String {
 /// Escape LaTeX special characters in body text.
 ///
 /// **Does not touch math regions** — those are protected as placeholders before
-/// this function sees the text, so `@CRANEMATHn@` passes through unchanged
+/// this function sees the text, so `@FREIGHTMATHn@` passes through unchanged
 /// (`@` is not a LaTeX special character in text mode).
 pub fn tex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -310,28 +310,28 @@ mod tests {
     #[test]
     fn protect_inline_dollar() {
         let (out, regions) = protect_math("Use $x^2$ here");
-        assert_eq!(out, "Use @CRANEMATH0@ here");
+        assert_eq!(out, "Use @FREIGHTMATH0@ here");
         assert_eq!(regions[0].raw, "$x^2$");
     }
 
     #[test]
     fn protect_display_dollar() {
         let (out, regions) = protect_math("See:\n$$E = mc^2$$\nEnd");
-        assert_eq!(out, "See:\n@CRANEMATH0@\nEnd");
+        assert_eq!(out, "See:\n@FREIGHTMATH0@\nEnd");
         assert_eq!(regions[0].raw, "$$E = mc^2$$");
     }
 
     #[test]
     fn protect_backslash_bracket() {
         let (out, regions) = protect_math(r"\[x + y\]");
-        assert_eq!(out, "@CRANEMATH0@");
+        assert_eq!(out, "@FREIGHTMATH0@");
         assert_eq!(regions[0].raw, r"\[x + y\]");
     }
 
     #[test]
     fn protect_backslash_paren() {
         let (out, regions) = protect_math(r"See \(f(x)\)");
-        assert_eq!(out, "See @CRANEMATH0@");
+        assert_eq!(out, "See @FREIGHTMATH0@");
         assert_eq!(regions[0].raw, r"\(f(x)\)");
     }
 
@@ -350,8 +350,8 @@ mod tests {
     fn protect_multiple_regions() {
         let (out, regions) = protect_math("$a$ and $$b$$");
         assert_eq!(regions.len(), 2);
-        assert!(out.contains("@CRANEMATH0@"));
-        assert!(out.contains("@CRANEMATH1@"));
+        assert!(out.contains("@FREIGHTMATH0@"));
+        assert!(out.contains("@FREIGHTMATH1@"));
     }
 
     // ── restore_math ─────────────────────────────────────────────────────────
