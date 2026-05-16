@@ -9,10 +9,10 @@ go-to-definition. LSP is implemented; remaining work:
 - Inlay hints for dep versions and feature flags
 - `freight.toml` schema validation (JSON Schema or custom)
 
-### B5 — System lib cache registry (remaining)
-`pkg-config → conan → vcpkg → system-lib stub` chain is done.
-Remaining: build an internal system cache registry — index discovered libs on first install,
-skip probing on subsequent rebuilds (avoids repeated `pkg-config` / `conan search` calls).
+### B5 — System lib cache (remaining)
+Resolution chain is `pkg-config → system stubs → registry`. Conan and vcpkg dropped.
+Remaining: cache discovered lib flags on first probe so subsequent rebuilds skip
+re-running `pkg-config` on every invocation.
 
 ### S15 — Workspace improvements (remaining)
 Per-member `freight build -p` / `freight run -p` is done.

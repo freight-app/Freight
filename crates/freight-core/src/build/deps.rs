@@ -19,7 +19,7 @@ pub struct ResolvedDep {
 /// Walk the dependency tree of `root_manifest` and return all compilable deps
 /// in topological build order (leaves — packages with no deps of their own — first).
 ///
-/// - Version deps (`name = "0.3"`) → resolved as system packages or vcpkg fallback
+/// - Version deps (`name = "0.3"`) → resolved via pkg-config, system stubs, or registry
 /// - Path deps (`path = "..."`) → resolved from that path
 /// - System deps (`system = "..."`) → skipped (linked by name, no source)
 /// - Git deps → resolved from `.deps/{name}/` after `freight fetch`
@@ -227,7 +227,7 @@ fn direct_compilable_deps(
 fn compilable_dep_dir(root_dir: &Path, declaring_dir: &Path, name: &str, dep: &Dependency) -> Option<PathBuf> {
     match dep {
         Dependency::Simple(_) => {
-            // Version dep → resolved by foreign package lookup (system first, vcpkg fallback).
+            // Version dep → resolved by foreign package lookup (pkg-config → system stubs → registry).
             None
         }
         Dependency::Detailed(d) => {

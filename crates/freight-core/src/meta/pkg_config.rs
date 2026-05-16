@@ -54,8 +54,8 @@ pub fn pkg_config_query_for_target(
 
 /// Like [`pkg_config_query`] but prepends `extra_paths` to `PKG_CONFIG_PATH`.
 ///
-/// Used by the conan resolver to query `.pc` files generated in a project-local
-/// output directory without polluting the process environment permanently.
+/// Queries `.pc` files in a project-local output directory without polluting
+/// the process environment permanently.
 pub fn pkg_config_query_with_path(
     query: &str,
     extra_paths: &[PathBuf],

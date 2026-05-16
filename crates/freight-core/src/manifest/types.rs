@@ -531,8 +531,8 @@ pub struct DetailedDep {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<String>,
     /// Explicit resolver to use for this version dep.
-    /// Accepted values: `"conan"`, `"vcpkg"`, `"system"`.
-    /// When omitted, freight tries `pkg-config → conan → vcpkg` in order.
+    /// Accepted values: `"system"`, `"pkg-config"`, or a named registry.
+    /// When omitted, freight tries `pkg-config → system stubs → registry` in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     /// Override the dep's own `[compiler] unity` setting.

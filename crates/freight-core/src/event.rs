@@ -21,7 +21,7 @@ pub enum BuildEvent {
     Archiving { name: String },
     /// Running (or skipping cached) `build.freight` script.
     RunningScript { cached: bool },
-    /// Fetching a git/http/vcpkg dep.
+    /// Fetching a git/http/registry dep.
     FetchingDep { name: String, source: String },
     /// Resolving a version dep via a specific resolver.
     ResolvingDep { name: String, via: String },

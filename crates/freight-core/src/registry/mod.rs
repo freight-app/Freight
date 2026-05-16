@@ -1,7 +1,7 @@
 //! Freight package registry client.
 //!
 //! The registry is queried during `freight add` to resolve a package name to a
-//! concrete version. Build-time resolution (pkg-config → conan → system stubs)
+//! concrete version. Build-time resolution (pkg-config → system stubs → registry)
 //! is separate — the registry is only consulted at `freight add` time.
 
 pub mod freight_registry;

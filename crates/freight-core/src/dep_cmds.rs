@@ -232,8 +232,7 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
     Ok(outcomes)
 }
 
-/// Resolve version-only package deps by preferring system packages and falling
-/// back to the project-local vcpkg install tree.
+/// Resolve version-only package deps via pkg-config, system stubs, or registry.
 /// Action taken for a registry-fetched version dep.
 #[derive(Debug)]
 pub enum RegistryDepAction {
