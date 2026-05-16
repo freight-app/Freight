@@ -239,6 +239,26 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     let activated_deps = resolution.activated_deps;
 
     ensure_git_deps_fetched(project_dir, manifest, progress)?;
+
+    // Auto-fetch any registry deps not yet in .deps/ — same as `freight fetch`
+    // but implicit, so `freight add` + `freight build` is the only workflow needed.
+    {
+        let mut cfg = GlobalConfig::load();
+        if let Some(local) = GlobalConfig::load_local(project_dir) {
+            cfg.apply_local(local);
+        }
+        if let Ok(outcomes) = crate::dep_cmds::fetch_registry_deps(project_dir, &cfg) {
+            for o in outcomes {
+                if matches!(o.action, crate::dep_cmds::RegistryDepAction::Downloaded) {
+                    progress(BuildEvent::FetchingDep {
+                        name:   o.name.clone(),
+                        source: format!("registry@{}", o.version),
+                    });
+                }
+            }
+        }
+    }
+
     let existing_lock = LockFile::load(project_dir);
     if let Some(ref lock) = existing_lock {
         verify_git_dep_shas(project_dir, manifest, lock, progress);
