@@ -1,0 +1,21 @@
+[package]
+name = "freight-vcpkg-import"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Import vcpkg packages into a freight registry"
+
+[[bin]]
+name = "freight-vcpkg-import"
+path = "src/main.rs"
+
+[dependencies]
+clap        = { workspace = true, features = ["env"] }
+anyhow      = { workspace = true }
+serde_json  = { workspace = true }
+flate2      = { workspace = true }
+tar         = { workspace = true }
+sha2        = { workspace = true }
+reqwest     = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+tempfile    = "3"
+hex         = "0.4"

@@ -3,6 +3,7 @@ members = [
     "crates/freight",
     "crates/freight-core",
     "crates/freight-doc",
+    "crates/freight-vcpkg-import",
 ]
 resolver = "2"
 
