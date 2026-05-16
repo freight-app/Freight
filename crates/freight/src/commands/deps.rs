@@ -1245,6 +1245,10 @@ pub fn cmd_info(package: Option<&str>, repo: Option<&str>) {
                     if let Some(desc) = &info.description {
                         println!("  {desc}");
                     }
+                    if let Some(readme) = r.fetch_readme(&info.name) {
+                        println!();
+                        print_readme_excerpt(&readme);
+                    }
                     println!();
                     println!("  {:<16}  {}", "version".bold(), "status".bold());
                     println!("  {}", "─".repeat(30).bright_black());
@@ -1285,6 +1289,80 @@ pub fn cmd_info(package: Option<&str>, repo: Option<&str>) {
     };
 
     print_current_package_info(&project_dir, &manifest);
+}
+
+/// Print the first prose section of a README, with markdown formatting stripped.
+/// Stops at the second `##` heading or after ~500 chars of content.
+fn print_readme_excerpt(readme: &str) {
+    let mut output = String::new();
+    let mut h2_count = 0;
+
+    for line in readme.lines() {
+        // Stop before second ## section
+        if line.starts_with("## ") || line.starts_with("## ") {
+            h2_count += 1;
+            if h2_count > 1 { break; }
+            // Print first ## as a bold header
+            let title = line.trim_start_matches('#').trim();
+            output.push_str(&format!("  {}\n", title.bold()));
+            continue;
+        }
+        // Skip top-level # title (already shown as package name)
+        if line.starts_with("# ") { continue; }
+        // Skip HTML tags, badges, shields
+        if line.trim_start().starts_with('<') || line.contains("shields.io") || line.contains("badge") { continue; }
+        // Skip pure horizontal rules
+        if line.chars().all(|c| c == '-' || c == '=' || c == '*' || c.is_whitespace()) && !line.is_empty() { continue; }
+
+        // Strip inline markdown
+        let stripped = strip_inline_md(line);
+        output.push_str(&format!("  {stripped}\n"));
+
+        if output.len() > 500 {
+            output.push_str("  …\n");
+            break;
+        }
+    }
+
+    let trimmed = output.trim_end();
+    if !trimmed.is_empty() {
+        println!("{trimmed}");
+    }
+}
+
+fn strip_inline_md(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // Bold/italic: **, *, __
+            '*' | '_' => {
+                if chars.peek() == Some(&c) { chars.next(); }
+            }
+            // Inline code: `...`
+            '`' => {
+                while chars.peek().map(|&x| x != '`').unwrap_or(false) {
+                    out.push(chars.next().unwrap());
+                }
+                chars.next(); // closing `
+            }
+            // Links: [text](url) → just text
+            '[' => {
+                while let Some(&ch) = chars.peek() {
+                    if ch == ']' { chars.next(); break; }
+                    out.push(chars.next().unwrap());
+                }
+                // consume (url)
+                if chars.peek() == Some(&'(') {
+                    chars.next();
+                    while chars.peek().map(|&x| x != ')').unwrap_or(false) { chars.next(); }
+                    chars.next();
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn print_current_package_info(project_dir: &Path, manifest: &Manifest) {

@@ -52,6 +52,9 @@ pub trait PackageRepo: Send + Sync {
 
     /// Search for packages matching `query`.
     fn search(&self, query: &str) -> Result<Vec<PackageInfo>, FreightError>;
+
+    /// Fetch the README for a package. Returns `None` if not available.
+    fn fetch_readme(&self, name: &str) -> Option<String>;
 }
 
 /// Backward-compatibility alias. Prefer [`PackageRepo`].

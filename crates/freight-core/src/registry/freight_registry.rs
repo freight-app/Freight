@@ -79,6 +79,11 @@ impl PackageRepo for FreightRegistry {
         let result = http_get_json::<ApiSearchResult>(&url, self.token.as_deref())?;
         Ok(result.packages.into_iter().map(Into::into).collect())
     }
+
+    fn fetch_readme(&self, name: &str) -> Option<String> {
+        let url = format!("{}/api/v1/packages/{}/readme", self.base_url, name);
+        http_get(&url, self.token.as_deref()).ok()
+    }
 }
 
 // ── Write API (publish / yank / download) ────────────────────────────────────
