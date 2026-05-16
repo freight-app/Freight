@@ -297,9 +297,9 @@ impl GlobalConfig {
     }
 }
 
-/// The freight home directory: `$CRANE_HOME` or `~/.freight`.
+/// The freight home directory: `$FREIGHT_HOME` or `~/.freight`.
 pub fn freight_home() -> Option<PathBuf> {
-    if let Ok(h) = std::env::var("CRANE_HOME") {
+    if let Ok(h) = std::env::var("FREIGHT_HOME") {
         let p = PathBuf::from(h);
         if p.parent().map(|pp| pp.exists()).unwrap_or(false) {
             return Some(p);
@@ -382,7 +382,7 @@ mod tests {
         fs::write(&bin, "fake").unwrap();
 
         // Use temp dir as cache home
-        std::env::set_var("CRANE_HOME", dir.path());
+        std::env::set_var("FREIGHT_HOME", dir.path());
 
         let mut cache = ToolchainCache::default();
         cache.set_version(&bin, "15.0.0");
@@ -391,6 +391,6 @@ mod tests {
         let reloaded = ToolchainCache::load();
         assert_eq!(reloaded.get_version(&bin), Some("15.0.0"));
 
-        std::env::remove_var("CRANE_HOME");
+        std::env::remove_var("FREIGHT_HOME");
     }
 }

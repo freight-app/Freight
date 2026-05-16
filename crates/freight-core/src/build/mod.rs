@@ -1106,7 +1106,7 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
 
     let tdir = templates_dir()
         .ok_or_else(|| FreightError::CompilerNotFound(
-            "toolchains directory not found; set CRANE_TEMPLATES_DIR".into(),
+            "toolchains directory not found; set FREIGHT_TEMPLATES_DIR".into(),
         ))?;
     let templates = load_templates(&tdir);
 

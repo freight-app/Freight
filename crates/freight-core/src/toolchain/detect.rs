@@ -1137,11 +1137,11 @@ pub fn backend_matches(detected: &DetectedCompiler, name: &str) -> bool {
 }
 
 /// Checks (in order):
-///   1. `CRANE_TEMPLATES_DIR` env var
+///   1. `FREIGHT_TEMPLATES_DIR` env var
 ///   2. `{binary_dir}/toolchains/`
 ///   3. `{binary_dir}/../../toolchains/`  (cargo dev layout)
 pub fn templates_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("CRANE_TEMPLATES_DIR") {
+    if let Ok(dir) = std::env::var("FREIGHT_TEMPLATES_DIR") {
         let p = PathBuf::from(dir);
         if p.is_dir() {
             return Some(p);
