@@ -4,6 +4,7 @@ use freight_core::toolchain::{
     backend_matches, detect_all_cached, detect_debuggers, group_into_toolchains, load_all_templates,
     load_debugger_templates, toolchain_add, toolchain_use, user_templates_dir,
 };
+use freight_core::toolchain::detect::DetectedCompiler;
 
 use crate::output::{print_error, print_success, print_warning};
 
@@ -20,36 +21,46 @@ pub fn cmd_toolchain_list() {
     } else {
         let groups = group_into_toolchains(detected);
 
-        let toolchain_rows: Vec<Vec<String>> = groups
-            .toolchains
-            .iter()
-            .map(|tc| {
-                let compilers: Vec<String> = tc
-                    .compilers
+        // One row per (family, version) — compilers sharing a version are merged.
+        let mut toolchain_rows: Vec<Vec<String>> = Vec::new();
+        for tc in &groups.toolchains {
+            // Collect unique versions in the order they first appear.
+            let mut versions: Vec<&str> = Vec::new();
+            for c in &tc.compilers {
+                if !versions.contains(&c.version.as_str()) {
+                    versions.push(&c.version);
+                }
+            }
+            for ver in versions {
+                let same_ver: Vec<&DetectedCompiler> = tc.compilers
                     .iter()
-                    .map(|c| format!("{} {}", c.template.name, c.version))
+                    .filter(|c| c.version == ver)
                     .collect();
-                let cpu_extensions = tc
-                    .compilers
-                    .iter()
-                    .flat_map(|c| c.cpu_extensions.iter().map(String::as_str))
+
+                // Primary name: prefer the C compiler, then shortest non-++ name.
+                let primary = same_ver.iter()
+                    .filter(|c| !c.template.name.ends_with("++") && c.template.linking.contains_key("c"))
+                    .min_by_key(|c| c.template.name.len())
+                    .or_else(|| same_ver.iter()
+                        .filter(|c| !c.template.name.ends_with("++"))
+                        .min_by_key(|c| c.template.name.len()))
+                    .map(|c| c.template.name.as_str())
+                    .unwrap_or(&tc.name);
+
+                let major = ver.split('.').next().unwrap_or(ver);
+                let label = format!("{primary}-{major}");
+
+                let mut langs: Vec<&str> = same_ver.iter()
+                    .flat_map(|c| c.template.linking.keys().map(String::as_str))
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect();
+                langs.sort_unstable();
 
-                vec![
-                    tc.name.clone(),
-                    tc.languages.join(", "),
-                    compilers.join(", "),
-                    display_or_dash(cpu_extensions),
-                ]
-            })
-            .collect();
-        print_table(
-            &["Toolchain", "Languages", "Compilers", "CPU Extensions"],
-            &toolchain_rows,
-        );
+                toolchain_rows.push(vec![label, ver.to_string(), langs.join(", ")]);
+            }
+        }
+        print_table(&["Compiler", "Version", "Languages"], &toolchain_rows);
 
         if !groups.guests.is_empty() {
             println!();
@@ -129,14 +140,6 @@ pub fn cmd_toolchain_use(name: &str) {
             }
         }
         Err(e) => print_error(&format!("failed to set default toolchain: {e}")),
-    }
-}
-
-fn display_or_dash(value: String) -> String {
-    if value.is_empty() {
-        "—".to_string()
-    } else {
-        value
     }
 }
 

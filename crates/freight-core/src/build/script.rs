@@ -97,6 +97,7 @@
 //! // build.freight itself) has changed.  changed_files() uses the same stamp
 //! // as its reference time.
 //! rerun_if("CMakeLists.txt");
+//! rerun_if_env_changed("MY_FEATURE_FLAG"); // re-run when this env var changes
 //! ```
 
 use std::cell::RefCell;
@@ -183,6 +184,7 @@ struct RhaiToolchain {
 struct ScriptState {
     output:     ScriptOutput,
     rerun_deps: Vec<PathBuf>,
+    env_deps:   Vec<String>,
 }
 
 thread_local! {
@@ -206,8 +208,10 @@ struct StampEntry {
 
 #[derive(Serialize, Deserialize)]
 struct ScriptStamp {
-    deps:   Vec<StampEntry>,
-    output: ScriptOutput,
+    deps:       Vec<StampEntry>,
+    #[serde(default)]
+    env_stamps: Vec<(String, String)>,
+    output:     ScriptOutput,
 }
 
 fn stamp_path(project_dir: &Path, profile: &str) -> PathBuf {
@@ -225,8 +229,8 @@ fn file_mtime(path: &Path) -> Option<(u64, u32)> {
 fn load_stamp_if_current(project_dir: &Path, profile: &str, script_path: &Path) -> Option<ScriptOutput> {
     let bytes = std::fs::read(stamp_path(project_dir, profile)).ok()?;
     let stamp: ScriptStamp = serde_json::from_slice(&bytes).ok()?;
-    // No deps → script never called rerun_if → always re-run.
-    if stamp.deps.is_empty() { return None; }
+    // No deps at all → script never called rerun_if / rerun_if_env_changed → always re-run.
+    if stamp.deps.is_empty() && stamp.env_stamps.is_empty() { return None; }
     for entry in &stamp.deps {
         let (secs, nanos) = file_mtime(&entry.path)?;
         if secs != entry.modified_secs || nanos != entry.modified_nanos {
@@ -242,10 +246,17 @@ fn load_stamp_if_current(project_dir: &Path, profile: &str, script_path: &Path) 
             }
         }
     }
+    // Check env vars recorded at stamp time.
+    for (name, saved_val) in &stamp.env_stamps {
+        let current = std::env::var(name).unwrap_or_default();
+        if current != *saved_val {
+            return None;
+        }
+    }
     Some(stamp.output)
 }
 
-fn save_stamp(project_dir: &Path, profile: &str, script_path: &Path, deps: &[PathBuf], output: &ScriptOutput) {
+fn save_stamp(project_dir: &Path, profile: &str, script_path: &Path, deps: &[PathBuf], env_deps: &[String], output: &ScriptOutput) {
     // Always include build.freight in the dep list.
     let mut all: Vec<&Path> = deps.iter().map(PathBuf::as_path).collect();
     if !all.contains(&script_path) {
@@ -257,7 +268,10 @@ fn save_stamp(project_dir: &Path, profile: &str, script_path: &Path, deps: &[Pat
             Some(StampEntry { path: p.to_path_buf(), modified_secs: secs, modified_nanos: nanos })
         })
         .collect();
-    let stamp = ScriptStamp { deps: entries, output: output.clone() };
+    let env_stamps: Vec<(String, String)> = env_deps.iter()
+        .map(|name| (name.clone(), std::env::var(name).unwrap_or_default()))
+        .collect();
+    let stamp = ScriptStamp { deps: entries, env_stamps, output: output.clone() };
     if let Ok(json) = serde_json::to_string_pretty(&stamp) {
         let _ = std::fs::write(stamp_path(project_dir, profile), json);
     }
@@ -308,6 +322,7 @@ pub fn run_build_script(
     STATE.with(|c| *c.borrow_mut() = Some(ScriptState {
         output:     ScriptOutput::default(),
         rerun_deps: Vec::new(),
+        env_deps:   Vec::new(),
     }));
 
     // ── Toolchain info ────────────────────────────────────────────────────────
@@ -395,6 +410,9 @@ pub fn run_build_script(
 
     engine.register_fn("rerun_if", |path: String| {
         with_state(|s| s.rerun_deps.push(PathBuf::from(path)));
+    });
+    engine.register_fn("rerun_if_env_changed", |var: String| {
+        with_state(|s| s.env_deps.push(var));
     });
 
     // ── File generation ───────────────────────────────────────────────────────
@@ -586,11 +604,12 @@ pub fn run_build_script(
     })?;
 
     let state = STATE.with(|c| c.borrow_mut().take().unwrap_or_else(|| ScriptState {
-        output: ScriptOutput::default(), rerun_deps: vec![],
+        output: ScriptOutput::default(), rerun_deps: vec![], env_deps: vec![],
     }));
 
     let mut output  = state.output;
     let rerun_deps  = state.rerun_deps;
+    let env_deps    = state.env_deps;
 
     // out_dir is always on the include path so generated headers are found.
     let out_d = out_dir(project_dir, profile);
@@ -603,9 +622,9 @@ pub fn run_build_script(
         progress(BuildEvent::Warning(w.clone()));
     }
 
-    // Persist stamp when the script declared at least one rerun_if dep.
-    if !rerun_deps.is_empty() {
-        save_stamp(project_dir, profile, &script_path, &rerun_deps, &output);
+    // Persist stamp when the script declared at least one rerun_if / rerun_if_env_changed dep.
+    if !rerun_deps.is_empty() || !env_deps.is_empty() {
+        save_stamp(project_dir, profile, &script_path, &rerun_deps, &env_deps, &output);
     }
 
     Ok(output)

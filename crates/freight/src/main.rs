@@ -14,8 +14,8 @@ use crate::commands::check::cmd_check;
 use crate::commands::compile_commands::cmd_compile_commands;
 use crate::commands::debug::cmd_debug;
 use crate::commands::deps::{
-    cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_publish, cmd_register,
-    cmd_remove, cmd_search, cmd_tree, cmd_update, cmd_yank,
+    cmd_add, cmd_add_interactive, cmd_fetch, cmd_info, cmd_login, cmd_outdated, cmd_publish,
+    cmd_register, cmd_remove, cmd_search, cmd_tree, cmd_update, cmd_yank,
 };
 use crate::commands::doc::cmd_doc;
 use crate::commands::fmt::cmd_fmt;
@@ -195,6 +195,12 @@ enum Commands {
     Fetch,
     /// Print the dependency tree
     Tree,
+    /// Show outdated registry dependencies
+    Outdated {
+        /// Registry to query (default: all configured registries in order)
+        #[arg(long, value_name = "NAME")]
+        repo: Option<String>,
+    },
     /// Show package metadata (from registry when a name is given, or the current project)
     Info {
         package: Option<String>,
@@ -455,6 +461,7 @@ fn main() -> Result<()> {
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Fetch => cmd_fetch(),
         Commands::Tree => cmd_tree(),
+        Commands::Outdated { repo } => cmd_outdated(repo.as_deref()),
         Commands::Info { package, repo } => cmd_info(package.as_deref(), repo.as_deref()),
         Commands::Search { query, repo } => cmd_search(&query, repo.as_deref()),
         Commands::Check => cmd_check(),

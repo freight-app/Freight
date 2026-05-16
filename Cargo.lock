@@ -486,6 +486,7 @@ dependencies = [
  "owo-colors",
  "ratatui",
  "rayon",
+ "semver",
  "serde_json",
 ]
 

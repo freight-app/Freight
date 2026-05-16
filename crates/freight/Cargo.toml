@@ -16,6 +16,7 @@ owo-colors  = { workspace = true }
 rayon       = { workspace = true }
 serde_json  = { workspace = true }
 anyhow      = { workspace = true }
+semver      = { workspace = true }
 notify      = { workspace = true }
 ratatui     = { workspace = true }
 crossterm   = { workspace = true }

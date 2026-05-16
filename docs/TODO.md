@@ -53,9 +53,10 @@ Generate shell completions (bash, zsh, fish) for all subcommands and their optio
 When the user presses tab under `freight add`, offer known dep keys; under
 `freight toolchain use`, offer detected compiler names.
 
-### S2 — `freight outdated`
-Compare locked path-dep revs and registry versions against latest available.
-Print a coloured table. Analogous to `cargo outdated`.
+### S2 — `freight outdated` ✓ done
+Compare manifest registry dep versions against latest available in the registry.
+Print a coloured table (Name | Current | Latest | Status) with yellow/green highlighting.
+`--repo <name>` narrows to a specific registry. Semver-aware comparison with string fallback.
 
 ### S3 — Better compiler diagnostics ✓ done
 GCC/Clang column markers and MSVC error codes are parsed into concise
@@ -86,9 +87,10 @@ parent→child with child fields winning when `Some`/non-empty.
 `freight test --sanitize address,undefined` — `apply_sanitize_override` patches the
 active profile's sanitize list; `--sanitize` is wired through `build`, `test`, and `run`.
 
-### S9 — `rerun_if` in `build.freight`
+### S9 — `rerun_if` in `build.freight` ✓ done
 `rerun_if_changed("path")` and `rerun_if_env_changed("VAR")` — skip re-running
-the build script when declared inputs haven't changed.
+the build script when declared inputs haven't changed. `ScriptStamp` now tracks
+both file mtimes and env var values; stale env values trigger re-execution.
 
 ### S10 — `compile_commands.json` incremental update ✓ done
 Cache the previous output and source mtimes under `target/{profile}/`; only re-emit entries
