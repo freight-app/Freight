@@ -14,7 +14,10 @@ use freight_core::registry::repos::{repo_by_name, registries_in_order};
 use freight_core::registry::{host_triple, DEFAULT_REGISTRY_URL};
 use freight_core::toolchain::cache::{freight_home, GlobalConfig};
 
-use crate::output::{print_error, print_status, print_success, print_warning};
+use crate::output::{
+    print_error, print_status, print_success, print_warning,
+    GraphEdge, GraphFormat, render_mermaid_graph, render_dot_graph,
+};
 use owo_colors::OwoColorize;
 
 // ── freight tree ───────────────────────────────────────────────────────────────
@@ -122,32 +125,56 @@ fn print_system_dep(branch: &str, name: &str, _dep: &DetailedDep) {
 
 // ── freight includes ──────────────────────────────────────────────────────────
 
-pub fn cmd_includes(show_system: bool) {
+pub fn cmd_includes(show_system: bool, format: &str) {
+    let fmt = GraphFormat::parse(format);
+
     let (project_dir, manifest) = match locate_project() {
         Ok(p) => p,
         Err(e) => { print_error(&e.to_string()); return; }
     };
 
-    // Collect include search dirs: inc/ and src/ (for sibling-relative includes).
     let mut include_dirs: Vec<PathBuf> = Vec::new();
     let inc = project_dir.join("inc");
     let src = project_dir.join("src");
     if inc.is_dir() { include_dirs.push(inc); }
     if src.is_dir() { include_dirs.push(src.clone()); }
-
-    // Extra include dirs declared in manifest [compiler] includes.
     for d in &manifest.compiler.includes {
         let p = project_dir.join(d);
         if p.is_dir() { include_dirs.push(p); }
     }
 
-    // Gather source files.
     let source_files = collect_source_files(&src);
     if source_files.is_empty() {
         println!("no source files found in {}", src.display());
         return;
     }
 
+    if fmt != GraphFormat::Text {
+        // Collect all edges first, then render.
+        let mut all_edges: Vec<GraphEdge> = Vec::new();
+        let mut all_nodes: Vec<String> = Vec::new();
+        let mut seen_edges: HashSet<(String, String)> = HashSet::new();
+
+        for sf in &source_files {
+            let from = sf.strip_prefix(&project_dir).unwrap_or(sf)
+                .display().to_string();
+            all_nodes.push(from.clone());
+            collect_include_edges(
+                sf, &project_dir, &include_dirs, show_system,
+                &mut all_edges, &mut seen_edges, &mut HashSet::new(),
+            );
+        }
+
+        let title = format!("{} includes", manifest.package.name);
+        match fmt {
+            GraphFormat::Mermaid => render_mermaid_graph(&title, &[], &all_edges, &all_nodes),
+            GraphFormat::Dot     => render_dot_graph(&title, &[], &all_edges, &all_nodes),
+            GraphFormat::Text    => unreachable!(),
+        }
+        return;
+    }
+
+    // Text tree output.
     println!(
         "{} {}",
         manifest.package.name.bold().bright_blue(),
@@ -197,6 +224,43 @@ fn collect_files_recursive(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
         } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if exts.contains(&ext) {
                 out.push(path);
+            }
+        }
+    }
+}
+
+/// Recursively collect all include edges reachable from `file` into `edges`.
+fn collect_include_edges(
+    file: &Path,
+    project_dir: &Path,
+    include_dirs: &[PathBuf],
+    show_system: bool,
+    edges: &mut Vec<GraphEdge>,
+    seen_edges: &mut HashSet<(String, String)>,
+    in_stack: &mut HashSet<PathBuf>,
+) {
+    let from = file.strip_prefix(project_dir).unwrap_or(file).display().to_string();
+    for (inc, is_system) in parse_includes(file) {
+        if is_system && !show_system { continue; }
+        let to = if is_system {
+            format!("<{inc}>")
+        } else {
+            match resolve_include(&inc, file, include_dirs) {
+                Some(ref resolved) => resolved.strip_prefix(project_dir).unwrap_or(resolved).display().to_string(),
+                None => format!("\"{inc}\" (not found)"),
+            }
+        };
+        let key = (from.clone(), to.clone());
+        if seen_edges.insert(key) {
+            edges.push(GraphEdge { from: from.clone(), to: to.clone() });
+            if !is_system {
+                if let Some(resolved) = resolve_include(&inc, file, include_dirs) {
+                    if !in_stack.contains(&resolved) {
+                        in_stack.insert(resolved.clone());
+                        collect_include_edges(&resolved, project_dir, include_dirs, show_system, edges, seen_edges, in_stack);
+                        in_stack.remove(&resolved);
+                    }
+                }
             }
         }
     }

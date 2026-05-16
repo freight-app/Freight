@@ -85,6 +85,9 @@ enum Commands {
         /// Print the build graph (compilation stages and link step) instead of building.
         #[arg(long)]
         graph: bool,
+        /// Output format for --graph: text (default), mermaid, dot
+        #[arg(long, default_value = "text", value_name = "FORMAT", requires = "graph")]
+        graph_format: String,
     },
     /// Build and run the default binary
     Run {
@@ -209,6 +212,9 @@ enum Commands {
         /// Also show system headers (#include <...>) when using --sources
         #[arg(long, short = 'a', requires = "sources")]
         all: bool,
+        /// Output format: text (default), mermaid, dot
+        #[arg(long, short = 'f', default_value = "text", value_name = "FORMAT")]
+        format: String,
     },
     /// Show outdated registry dependencies
     Outdated {
@@ -394,9 +400,10 @@ fn main() -> Result<()> {
             emit,
             time_passes,
             graph,
+            graph_format,
         } => {
             if graph {
-                cmd_build_graph(release, package.as_deref(), &features, !no_default_features);
+                cmd_build_graph(release, package.as_deref(), &features, !no_default_features, &graph_format);
             } else {
                 cmd_build(release, package.as_deref(), &features, !no_default_features, &sanitize, &emit, time_passes);
             }
@@ -484,8 +491,8 @@ fn main() -> Result<()> {
         Commands::Remove { package } => cmd_remove(&package),
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Fetch { source } => cmd_fetch(source),
-        Commands::Tree { sources, all } => {
-            if sources { cmd_includes(all) } else { cmd_tree() }
+        Commands::Tree { sources, all, format } => {
+            if sources { cmd_includes(all, &format) } else { cmd_tree() }
         }
         Commands::Outdated { repo } => cmd_outdated(repo.as_deref()),
         Commands::Info { package, repo } => cmd_info(package.as_deref(), repo.as_deref()),

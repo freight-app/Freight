@@ -17,7 +17,10 @@ use freight_core::build::{
 use freight_core::event::{BuildEvent, Progress};
 use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 
-use crate::output::{print_error, print_status, print_success, print_warning};
+use crate::output::{
+    print_error, print_status, print_success, print_warning,
+    GraphEdge, GraphCluster, GraphFormat, render_mermaid_graph, render_dot_graph,
+};
 
 // ── Progress ──────────────────────────────────────────────────────────────────
 
@@ -302,7 +305,7 @@ fn find_workspace_member_dir(pkg: &str) -> Option<PathBuf> {
 
 // ── freight build --graph ──────────────────────────────────���──────────────────
 
-pub fn cmd_build_graph(release: bool, _package: Option<&str>, features: &[String], _use_defaults: bool) {
+pub fn cmd_build_graph(release: bool, _package: Option<&str>, features: &[String], _use_defaults: bool, format: &str) {
     use owo_colors::OwoColorize;
 
     let profile = if release { "release" } else { "dev" };
@@ -345,6 +348,64 @@ pub fn cmd_build_graph(release: bool, _package: Option<&str>, features: &[String
     for dep in &resolved {
         let s = stage_of[&dep.name];
         stages[s].push(dep);
+    }
+
+    let fmt = GraphFormat::parse(format);
+
+    if fmt != GraphFormat::Text {
+        // Build clusters (one per stage) and edges.
+        let mut clusters: Vec<GraphCluster> = Vec::new();
+        let mut edges: Vec<GraphEdge> = Vec::new();
+
+        for (stage_idx, stage_deps) in stages.iter().enumerate() {
+            let label = format!("Stage {stage_idx}");
+            let nodes = stage_deps.iter()
+                .map(|d| format!("{}\n{}", d.name, d.manifest.package.version))
+                .collect();
+            clusters.push(GraphCluster { id: format!("stage{stage_idx}"), label, nodes });
+
+            for dep in stage_deps.iter() {
+                for needed in dep.manifest.dependencies.keys() {
+                    if stage_of.contains_key(needed) {
+                        edges.push(GraphEdge {
+                            from: format!("{}\n{}", needed, resolved.iter().find(|r| &r.name == needed).map_or("", |r| &r.manifest.package.version)),
+                            to:   format!("{}\n{}", dep.name, dep.manifest.package.version),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Root project node and its edges.
+        let root_node = format!("{}\n{}", manifest.package.name, manifest.package.version);
+        let mut root_needs: Vec<String> = Vec::new();
+        for dep in &resolved {
+            if manifest.dependencies.contains_key(&dep.name) {
+                edges.push(GraphEdge {
+                    from: format!("{}\n{}", dep.name, dep.manifest.package.version),
+                    to:   root_node.clone(),
+                });
+                root_needs.push(dep.name.clone());
+            }
+        }
+
+        // Link node.
+        let bin_names: Vec<String> = if manifest.bins.is_empty() {
+            vec![manifest.package.name.clone()]
+        } else {
+            manifest.bins.iter().map(|b| b.name.clone()).collect()
+        };
+        let link_node = format!("link: {}", bin_names.join(", "));
+        edges.push(GraphEdge { from: root_node.clone(), to: link_node.clone() });
+
+        let ungrouped = vec![root_node, link_node];
+        let title = format!("{} build graph [{}]", manifest.package.name, profile);
+        match fmt {
+            GraphFormat::Mermaid => render_mermaid_graph(&title, &clusters, &edges, &ungrouped),
+            GraphFormat::Dot     => render_dot_graph(&title, &clusters, &edges, &ungrouped),
+            GraphFormat::Text    => unreachable!(),
+        }
+        return;
     }
 
     // Print header.
