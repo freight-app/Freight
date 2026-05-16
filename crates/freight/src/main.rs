@@ -167,8 +167,9 @@ enum Commands {
     /// Add a dependency
     Add {
         /// Package name, optionally with version: `name` or `name@1.0`.
-        /// Omit to get an interactive prompt.
-        #[arg(value_name = "NAME[@VERSION]")]
+        /// Pass a git URL (https://…) or archive URL (https://….tar.gz) to add
+        /// without `--git`/`--url` flags. Omit entirely for an interactive prompt.
+        #[arg(value_name = "NAME[@VERSION]|URL")]
         package: Option<String>,
         /// Add as a path dependency pointing to a local freight project
         #[arg(long, value_name = "PATH")]

@@ -12,7 +12,7 @@
 //!   PUT    /api/v1/packages/{name}/{ver}/prebuilt/{triple}         → upload prebuilt
 //!
 //! The default registry is `https://freight.dev`. Additional registries are
-//! configured via `[[registry]]` entries in the config file.
+//! configured via `[[registries]]` entries in `~/.freight/config.toml`.
 
 use std::path::Path;
 

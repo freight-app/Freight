@@ -60,8 +60,8 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] System dependency linking — `{ system = "..." }` → `-l{name}` (or `{name}.lib` for MSVC)
 - [x] `LibType::System` — no build artifact; injects `-l{link}` flag only
 - [x] 24 system-lib stubs in `toolchains/system-libs/` — pthread, libm, dl, rt, ws2_32, kernel32, d3d11, d3d12, bcrypt, and more; filtered by `supports` expression
-- [x] `repo = "system"` dep key — bypasses pkg-config/vcpkg, resolves via stubs
-- [x] Full resolver chain: `pkg-config → conan → vcpkg → system-lib stub`; `repo` pins one step
+- [x] `repo = "system"` dep key — bypasses pkg-config, resolves via stubs
+- [x] Resolver chain: `pkg-config → system-lib stubs → registry`; `repo` pins one step
 - [x] `supports.rs` — shared boolean platform-expression parser (`HostEnv`, `eval_supports()`) used by stubs and the `freight add` TUI
 - [x] Dependency graph with topological sort (Kahn's algorithm)
 - [x] Cycle detection with error
@@ -173,7 +173,20 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] 4 bundled formatter templates: `clang-format`, `astyle`, `uncrustify`, `fprettify`
 - [x] 4 bundled linter templates: `clang-tidy`, `cppcheck`, `cpplint`, `flawfinder`
 
-### Registry (in progress)
+### TUI Package Browser ✓ COMPLETE
+- [x] `freight add` (no args) opens a ratatui 0.29 / crossterm 0.28 interactive package browser
+- [x] Search box with 350 ms debounce — triggers a registry search while you type
+- [x] Scrollable package list with name, version, description columns
+- [x] Detail panel on the right: version list, dependencies, description
+- [x] Keyboard navigation: `↑`/`↓` / `j`/`k`, `PgUp`/`PgDn`, `g`/`G`, `Enter` to add, `Esc`/`q` to cancel
+- [x] Mouse support: scroll wheel, left-click row to select
+- [x] `--repo <name>` forwarded from `freight add` to scope the search to one registry
+- [x] On `Enter`, calls `cmd_add` with the selected name@version — identical to typing it
+- [x] `freight add <URL>` auto-detection — raw `https://`/`http://` URLs routed without flags:
+  - archive extensions (`.tar.gz`, `.zip`, …) → URL dep; name derived from last path segment
+  - all other HTTPS URLs → git dep; name derived from last path segment (`.git` stripped)
+
+### Registry ✓ COMPLETE
 
 **Client (freight-core)**
 - [x] `freight.lock` read/write — deterministic dep pinning (version 1 format, sha256 checksums)
@@ -182,44 +195,34 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `freight add` / `freight remove` — manifest mutation + lock update
 - [x] `freight update [package]` — refreshes lockfile checksums for path deps
 - [x] `freight fetch` — verifies path deps exist
-- [x] `PackageRepo` trait — `repo_key()`, `lookup()`, `search()`; multiple registry support
-- [x] `registries_in_order()` — tries configured registries in declaration order; first hit wins; default freight.dev appended if no entry named `"freight"` is present
+- [x] `PackageRepo` trait — `repo_key()`, `lookup()`, `search()`, `fetch_readme()`; multiple registry support
+- [x] `registries_in_order()` — tries configured registries in declaration order; first hit wins; freight.dev appended when no registries configured
 - [x] `--repo <name>` in `freight add` selects a named registry; without `--repo` all registries are tried in order
 - [x] Bearer token auth — `Authorization: Bearer <token>` header in all outbound HTTP requests
-- [x] `[[registry]]` config in `~/.freight/config.toml` — `name`, `url`, `token` fields; local config prepends and deduplicates
+- [x] `[[registries]]` config in `~/.freight/config.toml` — `name`, `url`, `token` fields; local config prepends and deduplicates
 - [x] `freight search [--repo]` — tabular results table from registry
-- [x] `freight info [<name>] [--repo]` — version list + description from registry (or current project)
+- [x] `freight info [<name>] [--repo]` — version list, dependencies, and README excerpt from registry (or current project)
 - [x] `freight login [--registry] [--token]` — interactive token prompt; saves to `~/.freight/credentials.toml`
-- [x] `freight publish [--dry-run] [--repo]` — tar bundle + cargo binary wire upload
+- [x] `freight publish [--dry-run] [--repo]` — tar bundle + cargo binary wire upload; extracts dependencies and README from tarball
 - [x] `freight yank <name@version> [--undo] [--repo]` — yank / unyank via registry API
 - [x] `freight register [--registry] [--username] [--email]` — create registry account; auto-saves returned token
-- [ ] `freight fetch` — download version deps from freight.dev (registry dep lockfile support)
-- [ ] `freight add` — resolve + lock exact version from freight.dev (semver resolution)
+- [x] 5 s connect / 30 s read timeouts on all outbound registry HTTP calls
 
 **Server (`freight-registry` — standalone repository)**
-> Extracted to its own repo. Implements the full cargo-compatible registry wire protocol over Axum + SQLite.
+> See `freight-registry` repo for the full implementation and its own TODO/docs.
 
-- [x] Axum 0.7 HTTP server — `--bind` (default `0.0.0.0:7878`) and `--base-url` flags
-- [x] SQLite via sqlx 0.8 — WAL mode, foreign keys, startup schema migration
-- [x] `GET /api/v1/packages/{name}` — versions + metadata JSON
-- [x] `GET /api/v1/packages/{name}/{version}/download` — tarball stream + `X-Checksum-SHA256` header
-- [x] `GET /api/v1/search?q=<query>` — substring search over name and description
-- [x] `PUT /api/v1/packages` — publish (cargo binary wire format: `[u32 JSON len][JSON][u32 tar len][tar]`)
-- [x] `DELETE/PUT /api/v1/packages/{name}/{version}/yank` — yank / unyank
-- [x] `GET/PUT/DELETE /api/v1/packages/{name}/owners` — multi-owner management; last-owner removal guard
-- [x] `POST /api/v1/users/login` — Argon2id password verification, creates token (90-day default)
-- [x] `POST /api/v1/users/register` — open HTTP registration; creates user + 90-day token in one round-trip
-- [x] `GET /api/v1/me` — authenticated user info
-- [x] User accounts — Argon2id password hashing; `user add/list/remove` CLI
-- [x] API tokens — SHA-256 stored in DB; optional expiry; last-used tracking; `token add/list/revoke` CLI
-- [x] Package ownership — first publisher auto-claims; `user_owns_package` guards all writes
-- [x] Per-IP rate limiting via `governor` — 120 req/min read, 10 req/min write
-- [x] Upload size cap — `DefaultBodyLimit`; `--max-upload-mb` flag (default 50 MB)
-- [x] Input validation — package names, semver versions, usernames, passwords (`validate.rs`)
-- [x] Audit log — fire-and-forget async inserts for login, publish, yank, unyank
-- [ ] Token scopes, email verification, TOTP/2FA — see `freight-registry/TODO.md`
-- [ ] S3-compatible storage backend, PostgreSQL option
-- [ ] Proper versioned sqlx migrations, web UI, Docker image, mirror/proxy mode
+- [x] Axum HTTP server, SQLite + PostgreSQL, versioned sqlx migrations
+- [x] Full package CRUD — publish, download, search, yank/unyank, delete (admin)
+- [x] Registry channels (`stable`, `experimental`, …) — `?channel=` on all package endpoints
+- [x] Prebuilt binary tarballs — upload/download by target triple; `?arch=&os=&backend=` filter on list
+- [x] Per-package README — extracted from tarball on publish, served at `GET /api/v1/packages/:name/readme`
+- [x] Per-version dependencies — extracted from `freight.toml` inside tarball, returned in package metadata
+- [x] User accounts, API tokens with scopes, TOTP/2FA, refresh tokens, email verification, password reset
+- [x] Package ownership, org/team accounts, multi-owner management
+- [x] Per-IP rate limiting, login lockout, audit log with TTL pruning
+- [x] S3-compatible storage backend, Prometheus metrics, health endpoint
+- [x] Dockerfile, Docker Compose, systemd unit file
+- [x] Mirror/proxy mode — transparent upstream fallback for unknown packages
 
 ### Language Server (in progress — `feature/lsp-server`)
 - [x] Crate scaffold: `crates/freight-lsp/` (lib + bin), `tower-lsp 0.20`, stdio transport

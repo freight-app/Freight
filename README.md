@@ -26,8 +26,9 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 - **Git dependencies** — `{ git = "url", branch = "main" }` with lock SHA enforcement and auto-fetch
 - **URL dependencies** — `{ url = "…", sha256 = "…" }` downloads and verifies source archives
 - **Patch support** — `patches = ["patches/fix.patch"]` applies `patch -p1` after fetch, before build
-- **freight registry** — `freight add <name>` resolves from [freight.dev](https://freight.dev); `--repo <name>` selects a named registry; multiple registries configured via `[[registry]]` in `~/.freight/config.toml` are tried in order
-- **self-hosted registry** — `freight-registry` is a standalone server (Axum + SQLite) with user accounts, token auth, package ownership, rate limiting, and an audit log; compatible with the same wire protocol as freight.dev
+- **freight registry** — `freight add <name>` resolves from [freight.dev](https://freight.dev); `--repo <name>` selects a named registry; multiple registries configured via `[[registries]]` in `~/.freight/config.toml` are tried in order
+- **self-hosted registry** — `freight-registry` is a standalone server (Axum + SQLite) with user accounts, token auth, package ownership, channels, prebuilt binaries, rate limiting, audit log, TOTP/2FA, org accounts, and S3/PostgreSQL backends; compatible with the same wire protocol as freight.dev
+- **Interactive package browser** — `freight add` (no args) opens a ratatui TUI: search box with debounce, scrollable package list, detail panel with versions and dependencies; Enter to add, Esc to cancel; mouse scroll and click supported
 - **Doc browser** — `freight doc` opens a terminal UI for installed local/global dependencies; `--format` extracts project doc comments as Markdown, JSON, or MessagePack
 
 ## Naming conventions
@@ -236,8 +237,10 @@ freight watch [--release]             watch for changes and rebuild
 freight clean                         wipe target/
 freight check                         validate freight.toml
 freight toolchain list                show detected compilers and their supported CPU extensions
-freight add <name[@version]> [--path P] [--git URL [--branch B] [--tag T] [--rev R]]
+freight add [<name[@version]|URL>] [--path P] [--git URL [--branch B] [--tag T] [--rev R]]
             [--system] [--repo <name>] [--dev]
+                                      (no args → interactive TUI package browser;
+                                       raw https:// URL auto-detected as git or archive dep)
 freight remove <package>
 freight update [<package>]
 freight fetch                         download all git and url deps

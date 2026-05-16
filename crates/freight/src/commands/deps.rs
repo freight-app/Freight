@@ -375,6 +375,56 @@ fn print_include_tree(
 
 // ── freight add ────────────────────────────────────────────────────────────────
 
+/// True when `package` looks like a git or archive URL that should be auto-routed.
+/// Matches:
+///   - https:// / http://          — HTTPS git repos and archives
+///   - ssh://                      — SSH git URLs
+///   - git@host:…                  — SCP-style SSH git URLs (git@github.com:user/repo.git)
+fn looks_like_url(s: &str) -> bool {
+    s.starts_with("https://")
+        || s.starts_with("http://")
+        || s.starts_with("ssh://")
+        || s.starts_with("git@")
+}
+
+/// True when `url` points to a downloadable archive rather than a git repo.
+/// SSH-style URLs are always git; HTTP URLs are archives only when the path ends
+/// with a known archive extension.
+fn url_is_archive(url: &str) -> bool {
+    // SSH URLs are never archives.
+    if url.starts_with("ssh://") || url.starts_with("git@") {
+        return false;
+    }
+    // Strip query string / fragment for extension detection.
+    let path = url.split('?').next().unwrap_or(url).split('#').next().unwrap_or(url);
+    const ARCHIVE_EXTS: &[&str] = &[
+        ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".tar.zst", ".zip", ".7z",
+        ".whl", ".gem", ".hpp", ".h", ".c",
+    ];
+    ARCHIVE_EXTS.iter().any(|ext| path.ends_with(ext))
+}
+
+/// Derive a dep name from a URL: take the last path segment, strip `.git` and archive extensions.
+/// Handles both slash-separated HTTP URLs and colon-separated SCP paths (`git@host:user/repo.git`).
+fn url_dep_name(url: &str) -> String {
+    // For SCP-style `git@host:path/to/repo.git`, split on `:` first.
+    let path_part = if url.starts_with("git@") {
+        url.splitn(2, ':').nth(1).unwrap_or(url)
+    } else {
+        url.split('?').next().unwrap_or(url).split('#').next().unwrap_or(url)
+    };
+    let last = path_part.rsplit('/').find(|s| !s.is_empty()).unwrap_or("dep");
+    const STRIP_SUFFIXES: &[&str] = &[
+        ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".tar.zst",
+        ".zip", ".7z", ".git", ".hpp", ".h", ".c",
+    ];
+    let mut name = last;
+    for suffix in STRIP_SUFFIXES {
+        if let Some(s) = name.strip_suffix(suffix) { name = s; break; }
+    }
+    name.to_string()
+}
+
 pub fn cmd_add(
     package: &str,
     path: Option<&str>,
@@ -394,6 +444,51 @@ pub fn cmd_add(
         Some(d) => d,
         None => { print_error("no freight.toml found"); return; }
     };
+
+    // Auto-detect git / URL archive when the package argument is a raw URL.
+    if looks_like_url(package) && path.is_none() && git.is_none() && !system
+    {
+        let dep_name = url_dep_name(package);
+        let dep = if url_is_archive(package) {
+            print_status("detected", &format!("URL archive dep → `{dep_name}`"));
+            Dependency::Detailed(DetailedDep {
+                url: Some(package.to_string()),
+                ..Default::default()
+            })
+        } else {
+            print_status("detected", &format!("git dep → `{dep_name}`"));
+            Dependency::Detailed(DetailedDep {
+                git: Some(package.to_string()),
+                branch: branch.map(str::to_string),
+                tag: tag.map(str::to_string),
+                rev: rev.map(str::to_string),
+                ..Default::default()
+            })
+        };
+        if let Err(e) = manifest_add_dep(&project_dir.join("freight.toml"), &dep_name, &dep, dev) {
+            print_error(&e.to_string());
+            return;
+        }
+        let section = if dev { "dev-dependencies" } else { "dependencies" };
+        print_success(&format!("added `{dep_name}` to [{section}]"));
+        if matches!(&dep, Dependency::Detailed(d) if d.git.is_some()) {
+            print_status("fetch", &format!("cloning `{dep_name}`…"));
+            match fetch_git_deps(&project_dir) {
+                Ok(outcomes) => {
+                    for o in outcomes {
+                        if o.name == dep_name {
+                            if matches!(o.action, GitDepAction::Cloned) {
+                                print_success(&format!("cloned `{dep_name}`"));
+                            }
+                        }
+                    }
+                }
+                Err(e) => print_error(&format!("fetch failed: {e}")),
+            }
+        }
+        refresh_lock(&project_dir);
+        return;
+    }
 
     // Parse "channel/name@version", "channel/name", "name@version", or just "name".
     let (channel_arg, name_and_ver) = if let Some(slash) = package.find('/') {

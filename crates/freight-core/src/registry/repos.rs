@@ -17,7 +17,7 @@ pub fn repo_by_name(name: &str, config: &GlobalConfig) -> Result<Box<dyn Package
     }
 
     Err(FreightError::RegistryError(format!(
-        "unknown repo '{name}'; add a [[registry]] entry with name = \"{name}\" to your config"
+        "unknown repo '{name}'; add a [[registries]] entry with name = \"{name}\" to your config"
     )))
 }
 

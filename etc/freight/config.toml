@@ -31,12 +31,12 @@
 # named "freight" is present.
 #
 # To replace freight.dev with an internal mirror for all users:
-# [[registry]]
+# [[registries]]
 # name  = "freight"
 # url   = "https://freight.internal.example.com"
 #
 # To add a private registry (tried before freight.dev):
-# [[registry]]
+# [[registries]]
 # name  = "acme"
 # url   = "https://packages.acme.example.com"
 # token = "s3cr3t"   # optional bearer token for private registries

@@ -97,7 +97,7 @@ fn cache_path() -> Option<PathBuf> {
 
 // ── Global config ─────────────────────────────────────────────────────────────
 
-/// One registry entry under `[[registry]]` in a config file.
+/// One registry entry under `[[registries]]` in a config file.
 ///
 /// Registries are tried in the order they appear. The first one that returns
 /// a result for a given package name wins. The built-in `freight.dev` registry
