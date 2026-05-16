@@ -425,6 +425,10 @@ fn http_get(url: &str, token: Option<&str>) -> Result<String, FreightError> {
         .map_err(|e| FreightError::RegistryError(format!("curl option: {e}")))?;
     easy.fail_on_error(false) // we check status ourselves
         .map_err(|e| FreightError::RegistryError(format!("curl option: {e}")))?;
+    easy.connect_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| FreightError::RegistryError(format!("curl option: {e}")))?;
+    easy.timeout(std::time::Duration::from_secs(30))
+        .map_err(|e| FreightError::RegistryError(format!("curl option: {e}")))?;
     easy.useragent(&format!("freight/{}", env!("CARGO_PKG_VERSION")))
         .map_err(|e| FreightError::RegistryError(format!("curl option: {e}")))?;
 
@@ -468,6 +472,10 @@ fn http_get_bytes(url: &str, token: Option<&str>) -> Result<(Vec<u8>, Option<Str
     easy.url(url).map_err(|e| FreightError::RegistryError(format!("curl url: {e}")))?;
     easy.follow_location(true).map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
     easy.fail_on_error(false).map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.connect_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.timeout(std::time::Duration::from_secs(30))
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
     easy.useragent(&format!("freight/{}", env!("CARGO_PKG_VERSION")))
         .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
 
