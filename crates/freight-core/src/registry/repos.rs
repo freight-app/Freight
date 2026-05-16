@@ -35,8 +35,9 @@ pub fn registries_in_order(config: &GlobalConfig) -> Vec<Box<dyn PackageRepo>> {
         .map(|cfg| -> Box<dyn PackageRepo> { Box::new(FreightRegistry::from_config(cfg)) })
         .collect();
 
-    let has_freight = config.registries.iter().any(|r| r.name == "freight");
-    if !has_freight {
+    // Only fall back to freight.dev when the user has configured no registries at all.
+    // An explicit [[registries]] entry means the user owns the full list.
+    if config.registries.is_empty() {
         repos.push(Box::new(FreightRegistry::default_registry()));
     }
 
