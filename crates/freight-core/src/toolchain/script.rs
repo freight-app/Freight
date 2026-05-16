@@ -39,7 +39,6 @@ pub(super) struct ToolchainDef {
     pub flags_lto:      HashMap<String, String>,
     pub flags_lto_link: HashMap<String, String>,
     pub flags_stdlib:   HashMap<String, String>,
-    pub flags_runtime:  HashMap<String, String>,
     pub sanitize:       String,
     pub cpu_ext:        String,
     /// structure key → template string
@@ -216,7 +215,7 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
     }
 
     // ── Per-category flag maps (plain Rhai Map — native indexer-set works) ─
-    for cat in &["opt", "dbg", "warnings", "lto", "lto_link", "stdlib", "runtime", "defaults"] {
+    for cat in &["opt", "dbg", "warnings", "lto", "lto_link", "stdlib", "defaults"] {
         scope.push(*cat, Map::new());
     }
     // sanitize and cpu_ext are single template strings, grouped near sanitizers.
@@ -289,7 +288,6 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
     def.flags_lto      = flag_map!("lto");
     def.flags_lto_link = flag_map!("lto_link");
     def.flags_stdlib   = flag_map!("stdlib");
-    def.flags_runtime  = flag_map!("runtime");
     def.defaults       = flag_map!("defaults");
     def.kind           = str!("kind");
 

@@ -10,9 +10,8 @@ standards["f2003"] = "-std=f2003";
 standards["f2008"] = "-std=f2008";
 standards["f2018"] = "-std=f2018";
 
-// Fortran does not use C++ stdlib or runtime flags.
+// Fortran does not use C++ stdlib flags.
 stdlib  = #{};
-runtime = #{};
 
 linking["fortran"] = #{
     abi:        "fortran",

@@ -482,8 +482,6 @@ pub struct CompilerTemplate {
     flags_cpu_extension: String,
     /// C++ stdlib flags: key is stdlib name (e.g. `"libc++"`) → flag string.
     pub flags_stdlib: HashMap<String, String>,
-    /// C runtime flags: key is runtime name (e.g. `"musl"`) → flag string.
-    pub flags_runtime: HashMap<String, String>,
 }
 
 impl CompilerTemplate {
@@ -576,7 +574,6 @@ impl CompilerTemplate {
             flags_sanitize: raw.flags.sanitize,
             flags_cpu_extension: raw.flags.cpu_extension,
             flags_stdlib: HashMap::new(),
-            flags_runtime: HashMap::new(),
         })
     }
 
@@ -747,7 +744,6 @@ impl CompilerTemplate {
             flags_sanitize:        def.sanitize,
             flags_cpu_extension:   def.cpu_ext,
             flags_stdlib:          def.flags_stdlib,
-            flags_runtime:         def.flags_runtime,
             defaults:              def.defaults,
             kind:                  def.kind,
         })

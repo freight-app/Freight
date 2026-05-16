@@ -50,11 +50,6 @@ stdlib["libc++"]    = "-stdlib=libc++";
 stdlib["libstdc++"] = "-stdlib=libstdc++";
 stdlib["none"]      = "-nostdlib";
 
-runtime["glibc"]  = "";
-runtime["musl"]   = "-static";
-runtime["bionic"] = "";
-runtime["none"]   = "-nostdlib -nodefaultlibs";
-
 // ── Structure ─────────────────────────────────────────────────────────────────
 
 include_dir  = "-I{path}";

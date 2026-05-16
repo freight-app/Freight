@@ -50,11 +50,6 @@ cpu_ext  = "-m{name}";
 stdlib["libstdc++"] = "";
 stdlib["none"]      = "-nostdlib";
 
-runtime["glibc"]  = "";
-runtime["musl"]   = "-static";
-runtime["bionic"] = "";
-runtime["none"]   = "-nostdlib -nodefaultlibs";
-
 // ── Structure ─────────────────────────────────────────────────────────────────
 
 include_dir  = "-I{path}";

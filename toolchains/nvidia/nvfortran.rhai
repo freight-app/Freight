@@ -8,9 +8,8 @@ sanitizer_options = ["address"];
 
 toolset["ld"] = "nvfortran";
 
-// Fortran doesn't use C++ stdlib or runtime flags.
+// Fortran doesn't use C++ stdlib flags.
 stdlib  = #{};
-runtime = #{};
 
 standards["f2003"] = "-Mstandard";
 standards["f2008"] = "-Mstandard";
