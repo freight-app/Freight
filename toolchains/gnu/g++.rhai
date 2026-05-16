@@ -2,6 +2,7 @@ include "_gnu-base";
 include "../languages/_cpp";
 
 name       = "g++";
+alias      = "gcc";
 homepage   = "https://gcc.gnu.org/";
 binary     = _gxx;
 

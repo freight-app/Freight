@@ -65,6 +65,9 @@ pub(super) struct ToolchainDef {
     pub min_version: Option<String>,
     pub requires_toolchain: Vec<String>,
     pub family: String,
+    /// Optional alias — another name this template responds to in `[compiler.<alias>]` sections.
+    /// E.g. `clang++` sets `alias = "clang"` so `[compiler.clang]` applies to both.
+    pub alias: Option<String>,
     pub sanitizer_options: Vec<String>,
     /// PCH params: "compile" flag, "use" template, "extension" (e.g. ".pch" / ".gch")
     pub pch: HashMap<String, String>,
@@ -256,6 +259,8 @@ pub(super) fn eval_script(src: &str, dir: Option<&Path>) -> Result<EvalResult, F
 
     def.name                = str!("name");
     def.family              = str!("family");
+    let alias_str = str!("alias");
+    def.alias = if alias_str.is_empty() { None } else { Some(alias_str) };
     def.binary              = str!("binary");
     def.version_arg         = str!("version_arg");
     def.version_regex       = str!("version_regex");

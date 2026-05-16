@@ -2,6 +2,7 @@ include "_llvm-base";
 include "../languages/_cpp";
 
 name       = "clang++";
+alias      = "clang";
 homepage   = "https://clang.llvm.org/";
 binary     = _cxx;
 sanitizer_options = ["address", "undefined", "thread", "memory", "leak", "hwaddress", "dataflow", "cfi", "safestack"];

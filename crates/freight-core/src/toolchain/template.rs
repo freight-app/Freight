@@ -403,6 +403,9 @@ pub struct CompilerTemplate {
     /// E.g. `"gnu"` for GCC/gfortran/gnat, `"llvm"` for Clang/flang, `"intel"` for icpx/ifx.
     /// Empty string = no family preference.
     pub family: String,
+    /// Optional alias: another name this template responds to in `[compiler.<alias>]` sections.
+    /// E.g. `clang++` sets `alias = "clang"` so `[compiler.clang]` applies to both.
+    pub alias: Option<String>,
     /// Sanitizer names this compiler supports (e.g. `"address"`, `"undefined"`).
     /// Empty = no declaration (don't validate — assume all pass through).
     pub sanitizer_options: Vec<String>,
@@ -515,6 +518,7 @@ impl CompilerTemplate {
         Ok(Self {
             name: raw.name,
             family: String::new(),
+            alias: None,
             sanitizer_options: vec![],
             binary: raw.binary,
             version_arg: raw.version_arg,
@@ -707,6 +711,7 @@ impl CompilerTemplate {
         Ok(Self {
             name:                  def.name,
             family:                def.family,
+            alias:                 def.alias,
             sanitizer_options:            def.sanitizer_options,
             binary,
             version_arg:           def.version_arg,

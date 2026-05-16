@@ -1204,15 +1204,35 @@ fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightEr
 
     let mut per_tool: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
         active_tool_names.iter().map(|name| (name.clone(), std::collections::HashMap::new())).collect();
-    per_tool.extend(ctx.manifest.compiler.per_tool.iter().map(|(k, v)| (k.clone(), v.options.clone())));
+
+    // Expand manifest [compiler.<key>] entries: exact name match wins; if the key matches a
+    // template's `alias` field, fan the options out to that template too (lower priority).
+    for (key, val) in &ctx.manifest.compiler.per_tool {
+        // Always apply to the exact-named tool (if detected).
+        per_tool.entry(key.clone()).or_default().extend(val.options.clone());
+
+        // Also apply to any detected compiler whose `alias` matches this key.
+        for d in &ctx.detected {
+            if d.template.alias.as_deref() == Some(key.as_str()) && d.template.name != *key {
+                // Alias match: insert first so exact-name entries can override below.
+                let slot = per_tool.entry(d.template.name.clone()).or_default();
+                for (k, v) in &val.options {
+                    slot.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+        }
+    }
 
     for (tool_name, options) in per_tool {
         let Some(compiler) = ctx.detected.iter().find(|d| d.template.name == tool_name) else {
             continue; // not detected — skip silently
         };
         let version = compiler.version.clone();
+        // Version requirement: prefer exact-name entry; fall back to the alias entry.
+        let alias_key = compiler.template.alias.as_deref();
         let version_req = ctx.manifest.compiler.per_tool
             .get(&tool_name)
+            .or_else(|| alias_key.and_then(|a| ctx.manifest.compiler.per_tool.get(a)))
             .and_then(|o| o.version.as_deref());
         check_manifest_version_bounds(&tool_name, &version, version_req)?;
         let flags = compiler.template.run_compiler_option_handlers(&options, &version, arch, os)?;
