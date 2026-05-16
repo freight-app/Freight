@@ -20,21 +20,14 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
   `compile_binary` would be `"zig cc"` for C and `"zig c++"` for C++. The linker invocation also
   needs `zig c++` rather than `zig` alone. May require a multi-word `compile_binary` in the template.
 
-### TCC (Tiny C Compiler)
-- **What**: Extremely fast single-pass compiler. Good for rapid iteration and scripting-style
-  C. Targets x86, x86-64, ARM.
-- **Template**: `-DFOO` defines, `-I` includes, `-o`, `-c` are standard. No `-MMD` dep files —
-  would need `dep_file = ""` and fall back to mtime-only dirty checking.
-- **Challenge**: No C++ support, limited standard library. Primarily useful for C-only projects.
+### TCC (Tiny C Compiler) ✓ template exists
+- Already present in `toolchains/tcc.rhai`. No `-MMD` dep file support — uses mtime-only dirty
+  checking. C-only; no C++ support.
 
-### MSVC (`cl.exe` / `clang-cl`)
-- **What**: Microsoft's compiler, required for Windows SDK integration and COM/ATL/MFC. `clang-cl`
-  is a Clang frontend with MSVC-compatible flags.
-- **Template**: completely different flag scheme (`/O2`, `/W4`, `/WX`, `/Zi`, `/MT`, `/MD`, etc.).
-  Include dirs use `/I{path}`, defines use `/D{name}`.
-- **Challenge [needs Rust]**: object files are `.obj` not `.o`; output archive format is `.lib`
-  not `.a`. Link command uses `link.exe` or `lld-link`. The build engine currently assumes Unix
-  conventions throughout. Windows support would be the largest cross-cutting change.
+### MSVC (`cl.exe` / `clang-cl`) ✓ template exists
+- Already present in `toolchains/msvc.rhai`. Full flag translation (`/O2`, `/W4`, `/Zi`, `/MT`,
+  `/MD`, …), `.obj`/`.lib` extensions, `/showIncludes` dep tracking, `link.exe` linker.
+  `clang-cl` uses the same template.
 
 ### Intel oneAPI C++ (`icpx`) ✓ template exists
 - Already present in `toolchains/intel/icpx.rhai`. May need updates as oneAPI releases progress.
@@ -64,18 +57,13 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 
 ## Fortran Compilers
 
-### Intel Fortran (`ifort` / `ifx`)
-- **What**: Intel's classic (`ifort`, now deprecated) and next-gen LLVM-based (`ifx`) Fortran
-  compilers. Widely used in HPC and scientific computing.
-- **Template**: GFortran-compatible for most flags. `-standard-semantics` for strict conformance.
-  `ifx` is the preferred target going forward.
-- **Notes**: Often paired with MKL. `ifx` accepts `-std=f2018` like gfortran.
+### Intel Fortran (`ifx`) ✓ template exists
+- Already present in `toolchains/intel/ifx.rhai`. `ifort` (legacy) is also covered.
+  Often paired with MKL; `-standard-semantics` for strict conformance.
 
-### Flang (LLVM Fortran)
-- **What**: The LLVM project's Fortran frontend. New-flang (`flang-new` or `flang`) is the
-  actively developed version aiming for full Fortran 2018.
-- **Template**: GFortran-compatible flag set with some differences. Module files use `.mod`.
-- **Challenge**: Still maturing; standard support varies significantly by release.
+### Flang (LLVM Fortran) ✓ template exists
+- Already present in `toolchains/llvm/flang.rhai`. Standard support still maturing upstream;
+  the template tracks `flang` / `flang-new` and uses GFortran-compatible flags where possible.
 
 ### NAG Fortran (`nagfor`)
 - **What**: Numerical Algorithms Group compiler, the strictest Fortran standard checker available.
@@ -209,19 +197,3 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 - Already detected via `dap.binaries = ["lldb-dap", "lldb-vscode"]` in `lldb.rhai`.
   No additional template needed; it surfaces automatically when installed.
 
----
-
-## Package Manager Integration
-
-### Conan
-- **What**: C/C++ package manager. Can generate build system integrations (`cmake`, `msbuild`,
-  `compiler_args`).
-- **Integration**: `conan install .` produces `conanbuildinfo.txt` or a `generators/` directory.
-  Freight could optionally read Conan-generated compiler/linker flags from `conanbuildinfo.args`.
-
-### vcpkg
-- **What**: Microsoft's C++ package manager for libraries. Installs to a `vcpkg_installed/`
-  directory with standard include/lib layout.
-- **Integration**: Version-only manifest dependencies now check system metadata first and fall
-  back to a project-local `.deps/vcpkg_installed/` install. Future work can add explicit
-  repository selection such as `repo = "vcpkg"` once more repositories are available.
