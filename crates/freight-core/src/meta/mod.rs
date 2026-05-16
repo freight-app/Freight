@@ -13,7 +13,7 @@ pub mod pkg_config;
 pub mod scons;
 pub mod system_pm;
 
-pub use pkg_config::{PkgConfigResult, ResolvedPkgConfig, pkg_config_query, pkg_config_version};
+pub use pkg_config::{PkgConfigResult, ResolvedPkgConfig, pkg_config_query, pkg_config_query_with_path, pkg_config_version};
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -185,7 +185,7 @@ fn resolve_version_dep(
     version: &str,
     repo: Option<&str>,
     optional: bool,
-    _project_dir: &Path,
+    project_dir: &Path,
     progress: &Progress,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
     // Suppress unused warning; version may be used by future resolvers.
@@ -209,7 +209,7 @@ fn resolve_version_dep(
             // Named registry dep (`repo = "myregistry"` or `@registry/name` shorthand):
             // fetched by `freight fetch`; resolve at build time the same as a plain
             // version dep — pkg-config first, then system-lib stubs.
-            resolve_version_dep(name, query, version, None, optional, _project_dir, progress)
+            resolve_version_dep(name, query, version, None, optional, project_dir, progress)
         }
         None => {
             // Default chain: pkg-config → system-lib stubs → .deps/ cache (freight fetch).
@@ -231,6 +231,54 @@ fn resolve_version_dep(
                     None,
                 )));
             }
+            // .deps/ cache — populated by `freight fetch` from the registry.
+            // Check for a .pc file first; fall back to bare include/ + lib/ layout.
+            let dep_dir = project_dir.join(".deps").join(name);
+            if dep_dir.join(".freight-fetched").exists() {
+                progress(BuildEvent::ResolvingDep { name: name.to_string(), via: ".deps (registry fetch)".to_string() });
+
+                // Try pkg-config if the dep ships a .pc file.
+                let pc_dir = dep_dir.join("lib").join("pkgconfig");
+                if pc_dir.is_dir() {
+                    if let Ok(pc) = pkg_config_query_with_path(query, &[pc_dir]) {
+                        let ver = pkg_config_version(query);
+                        return Ok(Some((
+                            ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs: pc.include_dirs.clone(), raw_link_flags: pc.link_flags },
+                            Some(ResolvedPkgConfig { name: name.to_string(), found: true, version: ver, include_dirs: pc.include_dirs }),
+                        )));
+                    }
+                }
+
+                // No .pc file — collect include/ and lib/ dirs directly.
+                let mut include_dirs: Vec<PathBuf> = Vec::new();
+                for candidate in &["include", "inc"] {
+                    let d = dep_dir.join(candidate);
+                    if d.is_dir() { include_dirs.push(d); }
+                }
+                let mut link_flags: Vec<String> = Vec::new();
+                let lib_dir = dep_dir.join("lib");
+                if lib_dir.is_dir() {
+                    link_flags.push(format!("-L{}", lib_dir.display()));
+                    // Link any static archives or shared libs found there.
+                    if let Ok(entries) = std::fs::read_dir(&lib_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                            let ext  = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                            if matches!(ext, "a" | "so" | "dylib" | "lib") {
+                                let lname = stem.strip_prefix("lib").unwrap_or(stem);
+                                link_flags.push(format!("-l{lname}"));
+                            }
+                        }
+                    }
+                }
+
+                return Ok(Some((
+                    ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs, raw_link_flags: link_flags },
+                    None,
+                )));
+            }
+
             if let Some(pm) = system_pm::detect() {
                 progress(BuildEvent::Warning(format!(
                     "hint: try `{}` to install the system package",
