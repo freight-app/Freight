@@ -31,16 +31,14 @@ opt["3"] = "-O3";
 opt["s"] = "-Os";
 opt["z"] = "-Oz";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 warnings["none"]    = "";
 warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra -Wpedantic";
 warnings["error"]   = "-Wall -Wextra -Wpedantic -Werror";
 
-lto["true"]  = "-flto";
-lto["false"] = "";
+lto = "-flto";
 
 sanitize = "-fsanitize={values}";
 cpu_ext  = "-m{name}";

@@ -26,16 +26,14 @@ opt["3"] = "-O3";
 opt["s"] = "-Os";
 opt["z"] = "-Oz";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 warnings["none"]    = "";
 warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra";
 warnings["error"]   = "-Wall -Wextra -Werror";
 
-lto["true"]  = "";   // OpenCL kernel compilation has no host-side LTO equivalent.
-lto["false"] = "";
+lto = "";   // OpenCL kernel compilation has no host-side LTO equivalent.
 
 standards["CL1.0"] = "-cl-std=CL1.0";
 standards["CL1.1"] = "-cl-std=CL1.1";

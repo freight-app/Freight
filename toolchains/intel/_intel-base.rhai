@@ -19,8 +19,7 @@ opt["1"] = "-O1";
 opt["2"] = "-O2";
 opt["3"] = "-O3";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 include_dir  = "-I{path}";
 define       = "-D{name}";

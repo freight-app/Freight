@@ -33,8 +33,7 @@ opt["3"] = "/Ox";
 opt["s"] = "/O1 /Os";
 opt["z"] = "/O1 /Os";
 
-dbg["true"]  = "/Zi /FS";
-dbg["false"] = "";
+dbg = "/Zi /FS";
 
 warnings["none"]    = "/W0";
 warnings["default"] = "/W3";
@@ -42,12 +41,10 @@ warnings["all"]     = "/W4";
 warnings["error"]   = "/W4 /WX";
 
 // Compile-step LTO flag — link-step uses lto_link below
-lto["true"]  = "/GL";
-lto["false"] = "";
+lto = "/GL";
 
 // Link-step LTO flag (replaces lto at link time)
-lto_link["true"]  = "/LTCG";
-lto_link["false"] = "";
+lto_link = "/LTCG";
 
 
 sanitize = "/fsanitize={values}";

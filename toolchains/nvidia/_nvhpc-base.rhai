@@ -20,8 +20,7 @@ opt["3"] = "-O3";
 opt["s"] = "-O2";
 opt["z"] = "-O2";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 // NVHPC uses -Minform= for verbosity; -Werror is supported for many diagnostics.
 warnings["none"]    = "";
@@ -32,8 +31,7 @@ warnings["error"]   = "-Minform=warn -Werror";
 // NVHPC LTO (IPA) requires a two-stage build: compile with -Mipa, then link with -Mipa.
 // A single-flag mapping would inject -Mipa at compile time but not at link time, which
 // produces incorrect output. Use [compiler.nvc++] always_flags for manual IPA setup.
-lto["true"]  = "";
-lto["false"] = "";
+lto = "";
 
 cpu_ext = "-m{name}";
 

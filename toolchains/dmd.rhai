@@ -24,16 +24,14 @@ opt["3"] = "-O -release";
 opt["s"] = "-O -release";
 opt["z"] = "-O -release";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 warnings["none"]    = "";
 warnings["default"] = "";
 warnings["all"]     = "-wi";
 warnings["error"]   = "-w";
 
-lto["true"]  = "";
-lto["false"] = "";
+lto = "";
 
 include_dir  = "-I{path}";
 define       = "-version={name}";

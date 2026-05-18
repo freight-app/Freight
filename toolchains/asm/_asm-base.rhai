@@ -19,15 +19,14 @@ opt["3"] = "";
 opt["s"] = "";
 opt["z"] = "";
 
-dbg["false"] = "";
+dbg = "";
 
 warnings["none"]    = "";
 warnings["default"] = "";
 warnings["all"]     = "-w+all";
 // warnings["error"] is assembler-specific: set in nasm.rhai / yasm.rhai.
 
-lto["true"]  = "";
-lto["false"] = "";
+lto = "";
 
 include_dir  = "-I{path}";
 define       = "-D{name}";

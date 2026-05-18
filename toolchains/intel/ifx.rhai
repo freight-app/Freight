@@ -23,8 +23,7 @@ warnings["all"]     = "-warn all";
 warnings["error"]   = "-warn all -warn errors";
 
 // -ipo = inter-procedural optimisation (Intel's LTO).
-lto["true"]  = "-ipo";
-lto["false"] = "";
+lto = "-ipo";
 
 // -cpp enables the C preprocessor; -MMD/-MF generate Makefile dep files.
 dep_file = "-cpp -MMD -MF {path}";

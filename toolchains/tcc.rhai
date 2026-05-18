@@ -26,16 +26,14 @@ opt["3"] = "";
 opt["s"] = "";
 opt["z"] = "";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 warnings["none"]    = "";
 warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall";
 warnings["error"]   = "-Wall -Werror";
 
-lto["true"]  = "";
-lto["false"] = "";
+lto = "";
 
 
 standards["c99"] = "-std=c99";

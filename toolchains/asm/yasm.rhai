@@ -10,7 +10,7 @@ version_regex = "yasm (\\d+\\.\\d+\\.\\d+)";
 
 toolset["as"] = "yasm";
 
-dbg["true"] = "-g dwarf2";
+dbg = "-g dwarf2";
 
 warnings["error"] = "-w+all -Werror";
 

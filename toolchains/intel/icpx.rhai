@@ -21,8 +21,7 @@ warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra";
 warnings["error"]   = "-Wall -Wextra -Werror";
 
-lto["true"]  = "-flto";
-lto["false"] = "";
+lto = "-flto";
 
 sanitize = "-fsanitize={values}";
 

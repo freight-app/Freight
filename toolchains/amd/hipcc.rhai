@@ -28,16 +28,14 @@ opt["3"] = "-O3";
 opt["s"] = "-Os";
 opt["z"] = "-Oz";
 
-dbg["true"]  = "-g -ggdb";
-dbg["false"] = "";
+dbg = "-g -ggdb";
 
 warnings["none"]    = "";
 warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra";
 warnings["error"]   = "-Wall -Wextra -Werror";
 
-lto["true"]  = "-flto";   // hipcc wraps clang; -flto is supported.
-lto["false"] = "";
+lto = "-flto";   // hipcc wraps clang; -flto is supported.
 
 standards["c++14"] = "-std=c++14";
 standards["c++17"] = "-std=c++17";

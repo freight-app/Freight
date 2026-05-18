@@ -26,16 +26,14 @@ opt["3"] = "-O3";
 opt["s"] = "-O2";
 opt["z"] = "-O2";
 
-dbg["true"]  = "-g";
-dbg["false"] = "";
+dbg = "-g";
 
 warnings["none"]    = "--woff";
 warnings["default"] = "";
 warnings["all"]     = "";
 warnings["error"]   = "--werror";
 
-lto["true"]  = "";   // ISPC performs whole-program optimisation internally; no separate LTO pass.
-lto["false"] = "";
+lto = "";   // ISPC performs whole-program optimisation internally; no separate LTO pass.
 
 include_dir  = "-I{path}";
 define       = "-D{name}";

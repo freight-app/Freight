@@ -29,16 +29,14 @@ opt["3"] = "-O3";
 opt["s"] = "-O2";
 opt["z"] = "-O2";
 
-dbg["true"]  = "-g -G";
-dbg["false"] = "";
+dbg = "-g -G";
 
 warnings["none"]    = "";
 warnings["default"] = "-Wall";
 warnings["all"]     = "-Wall -Wextra";
 warnings["error"]   = "-Wall -Wextra -Werror";
 
-lto["true"]  = "";
-lto["false"] = "";
+lto = "";
 
 standards["c++17"] = "-std=c++17";
 standards["c++20"] = "-std=c++20";

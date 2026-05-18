@@ -9,7 +9,7 @@ version_regex = "NASM version (\\d+\\.\\d+(?:\\.\\d+)?)";
 
 toolset["as"] = "nasm";
 
-dbg["true"] = "-g -F dwarf";
+dbg = "-g -F dwarf";
 
 warnings["error"] = "-w+all -w+error";   // NASM: -w+error, not -Werror
 

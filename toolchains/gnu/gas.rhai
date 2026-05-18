@@ -23,16 +23,14 @@ opt["3"] = "";
 opt["s"] = "";
 opt["z"] = "";
 
-dbg["true"]  = "--gdwarf-2";
-dbg["false"] = "";
+dbg = "--gdwarf-2";
 
 warnings["none"]    = "--no-warn";
 warnings["default"] = "";
 warnings["all"]     = "--warn";
 warnings["error"]   = "--warn --fatal-warnings";
 
-lto["true"]  = "";   // GAS assembles individual files; LTO is a linker concern.
-lto["false"] = "";
+lto = "";   // GAS assembles individual files; LTO is a linker concern.
 
 include_dir  = "-I{path}";
 // `as` uses --defsym for symbol definitions; no C preprocessor available.

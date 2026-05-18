@@ -16,8 +16,7 @@ warnings["default"] = "";
 warnings["all"]     = "-wi";
 warnings["error"]   = "-w";
 
-lto["true"]  = "-flto=full";
-lto["false"] = "";
+lto = "-flto=full";
 sanitize = "-fsanitize={values}";
 
 include_dir   = "-I{path}";
