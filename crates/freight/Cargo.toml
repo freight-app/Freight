@@ -17,9 +17,17 @@ owo-colors  = { workspace = true }
 rayon       = { workspace = true }
 serde_json  = { workspace = true }
 anyhow      = { workspace = true }
-semver      = { workspace = true }
+semver         = { workspace = true }
+pulldown-cmark = { workspace = true }
 flate2      = { workspace = true }
 tar         = { workspace = true }
 notify      = { workspace = true }
-ratatui     = { workspace = true }
-crossterm   = { workspace = true }
+ratatui        = { workspace = true }
+crossterm      = { workspace = true }
+ratatui-image  = { version = "11", default-features = false, features = ["image-defaults"], optional = true }
+image          = { version = "0.25", optional = true }
+mathjax-svg-rs = { version = "0.4", optional = true }
+resvg          = { version = "0.47", optional = true }
+
+[features]
+rich-math = ["dep:ratatui-image", "dep:image", "dep:mathjax-svg-rs", "dep:resvg"]

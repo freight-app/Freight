@@ -45,6 +45,16 @@ double clamp(double v, double lo, double hi);
 /// @return   GCD(a, b).
 unsigned int gcd(unsigned int a, unsigned int b);
 
+/*!
+ * @brief Linear interpolation between two values.
+ *
+ * @param a  Start value (t == 0).
+ * @param b  End value (t == 1).
+ * @param t  Interpolation parameter in [0, 1].
+ * @return   a + t * (b - a)
+ */
+double lerp(double a, double b, double t);
+
 /**
  * @brief Fixed-size 2-D vector.
  *

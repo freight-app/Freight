@@ -7,6 +7,17 @@ module linalg
     !> Double-precision alias for clarity.
     integer, parameter :: dp = kind(1.0d0)
 
+    !> Mathematical constant pi (double precision).
+    real(dp), parameter :: pi = 3.141592653589793_dp
+
+    !> Default leading dimension used for allocatable matrix layouts.
+    !! Increase this when working with very wide matrices to avoid
+    !! cache-line aliasing on AVX-512 systems.
+    integer, parameter :: default_lda = 64
+
+    !> Absolute tolerance used by `solve2` to detect singular matrices.
+    real(dp), parameter :: singular_tol = 1.0e-14_dp
+
 contains
 
     !> Compute the dot product of two real vectors.

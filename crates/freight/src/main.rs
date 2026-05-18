@@ -249,7 +249,7 @@ enum Commands {
     },
     /// Open the dependency documentation browser, or generate API docs / man pages
     Doc {
-        /// Output format: md | json | msgpack | all
+        /// Generate Markdown docs for this project (output format: md)
         #[arg(long, short, value_name = "FORMAT")]
         format: Option<String>,
         /// Generate man pages for all freight subcommands

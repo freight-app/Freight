@@ -44,3 +44,8 @@ double vec2_length(Vec2 v) {
 Vec2 vec2_add(Vec2 a, Vec2 b) {
     return (Vec2){ a.x + b.x, a.y + b.y };
 }
+
+/// Linear interpolation: a + t*(b-a).
+double lerp(double a, double b, double t) {
+    return a + t * (b - a);
+}

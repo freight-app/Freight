@@ -77,6 +77,25 @@ pub struct DocTag {
     pub text: String,
 }
 
+/// Access level of a class / struct member.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Access { Public, Protected, Private }
+
+/// Structured metadata populated by language-aware extractors (libclang, etc.).
+/// Defaults to empty so heuristic extractors compile without changes.
+#[derive(Debug, Clone, Default)]
+pub struct DocMeta {
+    /// Template parameter list, e.g. `["typename T", "int N"]`.
+    pub template_params: Vec<String>,
+    /// Access specifier for class/struct members.
+    pub access: Option<Access>,
+    /// Qualified name of the enclosing class or struct, if any.
+    pub parent: Option<String>,
+    /// Semantic attributes: `"const"`, `"virtual"`, `"override"`, `"noexcept"`,
+    /// `"pure"`, `"constructor"`, `"destructor"`, `"operator"`.
+    pub attrs: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DocItem {
     pub name: String,
@@ -93,6 +112,8 @@ pub struct DocItem {
     /// The first non-blank source line following the doc comment (declaration / signature).
     /// Empty when no following line was found or when the language parser couldn't read it.
     pub signature: String,
+    /// Structured metadata populated by accurate extractors; empty for heuristic extraction.
+    pub meta: DocMeta,
 }
 
 pub struct DocSet {
@@ -125,6 +146,18 @@ pub fn extract_file(path: &Path) -> Vec<DocItem> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let lang = lang_from_ext(ext);
     if lang == DocLanguage::Unknown { return vec![]; }
+    #[cfg(feature = "clang")]
+    if matches!(lang, DocLanguage::C | DocLanguage::Cpp) {
+        return crate::extract_clang::extract_file_clang(path);
+    }
+    extract_file_heuristic(path)
+}
+
+/// Heuristic C/C++ extractor used as a fallback when libclang is unavailable.
+pub(crate) fn extract_file_heuristic(path: &Path) -> Vec<DocItem> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let lang = lang_from_ext(ext);
+    if lang == DocLanguage::Unknown { return vec![]; }
     let Ok(src) = std::fs::read_to_string(path) else { return vec![]; };
     from_str(&src, path, &lang)
 }
@@ -143,7 +176,24 @@ pub fn extract_dir(dir: &Path) -> DocSet {
             items.extend(extract_file(entry.path()));
         }
     }
-    DocSet { items, source_root: dir.to_path_buf() }
+    // Deduplicate: when the same qualified name appears in both a header and
+    // an implementation file, keep whichever has richer doc content.
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut deduped: Vec<DocItem> = Vec::new();
+    for item in items {
+        let score = item.tags.len() * 10 + item.brief.len() + item.body.len();
+        match seen.get(&item.name).copied() {
+            Some(idx) => {
+                let prev = deduped[idx].tags.len() * 10 + deduped[idx].brief.len() + deduped[idx].body.len();
+                if score > prev { deduped[idx] = item; }
+            }
+            None => {
+                seen.insert(item.name.clone(), deduped.len());
+                deduped.push(item);
+            }
+        }
+    }
+    DocSet { items: deduped, source_root: dir.to_path_buf() }
 }
 
 fn from_str(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
@@ -173,44 +223,101 @@ fn extract_c_style(src: &str, file: &Path, lang: &DocLanguage) -> Vec<DocItem> {
     let mut items = Vec::new();
     let mut i = 0;
 
+    // Namespace scope tracking.
+    // Each entry: (brace_depth_after_open, fully_qualified_path).
+    let mut brace_depth: usize = 0;
+    let mut ns_stack: Vec<(usize, String)> = Vec::new();
+    // `namespace X` was seen on the last line without a `{` on the same line.
+    let mut pending_ns: Option<String> = None;
+
     while i < lines.len() {
         let t = lines[i].trim();
 
-        // Block comment openers: /** or /*!
-        if (t.starts_with("/**") && !t.starts_with("/***/"))
-            || t.starts_with("/*!")
-        {
+        // ── Doc comment blocks — collect, qualify, advance ────────────────────
+        if (t.starts_with("/**") && !t.starts_with("/***/")) || t.starts_with("/*!") {
             let (block, end) = collect_c_block(&lines, i);
-            let sym = next_non_blank(&lines, end + 1);
-            if is_c_conditional_directive(sym) {
-                i = end + 1;
-                continue;
+            let sym = next_decl_sym(&lines, end + 1);
+            if !is_c_conditional_directive(sym) {
+                let (name, kind) = detect_c_symbol(sym);
+                let ns  = ns_stack.last().map(|(_, p)| p.as_str()).unwrap_or("");
+                let item = build_item(block, qualify_name(&name, ns), kind, file, i + 1, lang.clone(), sym.to_string());
+                if item_has_content(&item) { items.push(item); }
             }
-            let (name, kind) = detect_c_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, lang.clone(), sym.to_string());
-            if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
         }
 
-        // Line comment: /// (but not ////)
         if t.starts_with("///") && !t.starts_with("////") {
             let (block, end) = collect_line_block(&lines, i, "///");
-            let sym = next_non_blank(&lines, end + 1);
-            if is_c_conditional_directive(sym) {
-                i = end + 1;
-                continue;
+            let sym = next_decl_sym(&lines, end + 1);
+            if !is_c_conditional_directive(sym) {
+                let (name, kind) = detect_c_symbol(sym);
+                let ns  = ns_stack.last().map(|(_, p)| p.as_str()).unwrap_or("");
+                let item = build_item(block, qualify_name(&name, ns), kind, file, i + 1, lang.clone(), sym.to_string());
+                if item_has_content(&item) { items.push(item); }
             }
-            let (name, kind) = detect_c_symbol(sym);
-            let item = build_item(block, name, kind, file, i + 1, lang.clone(), sym.to_string());
-            if item_has_content(&item) { items.push(item); }
             i = end + 1;
             continue;
+        }
+
+        // ── Namespace / brace tracking (non-comment, non-doc lines) ──────────
+        if !t.starts_with("//") && !t.starts_with("/*") && !t.starts_with('*') {
+            // Detect `namespace X` or `namespace X {`
+            if let Some(rest) = t.strip_prefix("namespace") {
+                let rest_ok = rest.is_empty()
+                    || rest.starts_with(|c: char| c.is_whitespace() || c == '{');
+                if rest_ok {
+                    let name = first_ident(rest.trim_start());
+                    if !name.is_empty() {
+                        let path = match ns_stack.last() {
+                            Some((_, p)) => format!("{p}::{name}"),
+                            None         => name,
+                        };
+                        if t.contains('{') {
+                            let opens  = t.chars().filter(|&c| c == '{').count();
+                            let closes = t.chars().filter(|&c| c == '}').count();
+                            brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
+                            ns_stack.push((brace_depth, path));
+                        } else {
+                            pending_ns = Some(path);
+                        }
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // Commit a deferred namespace when its opening `{` appears.
+            if pending_ns.is_some() && t.contains('{') {
+                let path   = pending_ns.take().unwrap();
+                let opens  = t.chars().filter(|&c| c == '{').count();
+                let closes = t.chars().filter(|&c| c == '}').count();
+                brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
+                ns_stack.push((brace_depth, path));
+                while ns_stack.last().map_or(false, |&(d, _)| brace_depth < d) {
+                    ns_stack.pop();
+                }
+                i += 1;
+                continue;
+            }
+
+            // Generic brace counting for all other code lines.
+            let opens  = t.chars().filter(|&c| c == '{').count();
+            let closes = t.chars().filter(|&c| c == '}').count();
+            brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
+            while ns_stack.last().map_or(false, |&(d, _)| brace_depth < d) {
+                ns_stack.pop();
+            }
         }
 
         i += 1;
     }
     items
+}
+
+/// Prefix `name` with `ns::` when both are non-empty.
+fn qualify_name(name: &str, ns: &str) -> String {
+    if name.is_empty() || ns.is_empty() { name.to_string() } else { format!("{ns}::{name}") }
 }
 
 fn collect_c_block(lines: &[&str], start: usize) -> (Vec<String>, usize) {
@@ -270,6 +377,19 @@ fn next_non_blank<'a>(lines: &[&'a str], from: usize) -> &'a str {
         .find(|l| !l.trim().is_empty())
         .copied()
         .unwrap_or("")
+}
+
+/// Like `next_non_blank` but skips past `template<…>` header lines so that
+/// `detect_c_symbol` sees the actual struct/class/function declaration.
+fn next_decl_sym<'a>(lines: &[&'a str], from: usize) -> &'a str {
+    let mut i = from;
+    loop {
+        let Some(&l) = lines.get(i) else { return "" };
+        let t = l.trim();
+        if t.is_empty() { i += 1; continue; }
+        if t.starts_with("template") { i += 1; continue; }
+        return t;
+    }
 }
 
 fn is_c_conditional_directive(line: &str) -> bool {
@@ -458,11 +578,42 @@ fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
     let mut items = Vec::new();
     let mut i = 0;
 
+    // Track whether we are inside a MODULE block so variable declarations can
+    // be treated as documented module-level variables.
+    let mut in_module = false;
+
     while i < lines.len() {
-        if lines[i].trim().starts_with("!>") {
+        let t = lines[i].trim();
+        let up = t.to_ascii_uppercase();
+
+        // Track MODULE / END MODULE scope.
+        if up.starts_with("MODULE ")
+            && !up.starts_with("MODULE SUBROUTINE ")
+            && !up.starts_with("MODULE FUNCTION ")
+            && !up.starts_with("MODULE PROCEDURE ")
+        {
+            in_module = true;
+        } else if up.starts_with("END MODULE") || up == "END MODULE" {
+            in_module = false;
+        }
+
+        if t.starts_with("!>") {
             let (block, end) = collect_fortran_block(&lines, i);
             let sym = next_non_blank(&lines, end + 1);
             let (name, kind) = detect_fortran_symbol(sym);
+
+            // When inside a module and the symbol could not be identified as a
+            // procedure/type, try reading it as a variable declaration.
+            let (name, kind) = if kind == DocKind::Unknown && in_module {
+                if let Some(var_name) = detect_fortran_variable(sym) {
+                    (var_name, DocKind::Variable)
+                } else {
+                    (name, kind)
+                }
+            } else {
+                (name, kind)
+            };
+
             let item = build_item(block, name, kind, file, i + 1, DocLanguage::Fortran, sym.to_string());
             if item_has_content(&item) { items.push(item); }
             i = end + 1;
@@ -471,6 +622,21 @@ fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
         i += 1;
     }
     items
+}
+
+/// Detect a Fortran module-level variable declaration of the form:
+/// `TYPE_KW [, attrs] :: name [= init]`
+fn detect_fortran_variable(line: &str) -> Option<String> {
+    let up = line.trim_start().to_ascii_uppercase();
+    let is_type = ["INTEGER", "REAL", "DOUBLE PRECISION", "COMPLEX",
+                   "LOGICAL", "CHARACTER", "TYPE("]
+        .iter().any(|k| up.starts_with(k));
+    if !is_type { return None; }
+    // Extract the declared name: the first identifier after `::`.
+    let name = line.find("::")
+        .map(|p| first_ident(line[p + 2..].trim_start()))
+        .filter(|n| !n.is_empty())?;
+    Some(name)
 }
 
 fn collect_fortran_block(lines: &[&str], start: usize) -> (Vec<String>, usize) {
@@ -519,9 +685,14 @@ fn detect_fortran_symbol(line: &str) -> (String, DocKind) {
         return (ci_ident_after(t, "module "), DocKind::Module);
     }
     if up.contains("::") {
-        // TYPE :: Foo  or  TYPE(kind) :: Foo
-        if let Some(after) = t.split("::").nth(1) {
-            return (first_ident(after.trim()), DocKind::Struct);
+        // Only bare `TYPE :: TypeName` is a derived-type definition.
+        // All other `:: ` declarations (INTEGER, REAL, etc.) are variables;
+        // return Unknown so detect_fortran_variable can handle them.
+        let before = &up[..up.find("::").unwrap()];
+        if before.trim() == "TYPE" {
+            if let Some(after) = t.split("::").nth(1) {
+                return (first_ident(after.trim()), DocKind::Struct);
+            }
         }
     }
     (String::new(), DocKind::Unknown)
@@ -687,11 +858,11 @@ fn detect_ada_symbol(line: &str) -> (String, DocKind) {
 
 // ── Tag parsing + item construction ──────────────────────────────────────────
 
-fn item_has_content(item: &DocItem) -> bool {
+pub(crate) fn item_has_content(item: &DocItem) -> bool {
     !item.brief.is_empty() || !item.body.is_empty() || !item.tags.is_empty()
 }
 
-fn build_item(
+pub(crate) fn build_item(
     raw_lines: Vec<String>,
     name: String,
     kind: DocKind,
@@ -737,7 +908,7 @@ fn build_item(
         (None, None) => (String::new(), String::new()),
     };
 
-    DocItem { name, kind, brief, body, tags, file: file.to_path_buf(), line, lang, signature: signature.trim().to_string() }
+    DocItem { name, kind, brief, body, tags, file: file.to_path_buf(), line, lang, signature: signature.trim().to_string(), meta: DocMeta::default() }
 }
 
 /// Recognise a Doxygen/Javadoc tag at the start of a trimmed comment line.
@@ -974,5 +1145,205 @@ void sort(int *arr, size_t len);"#;
         assert_eq!(lang_from_ext("d"),   DocLanguage::D);
         assert_eq!(lang_from_ext("ads"), DocLanguage::Ada);
         assert_eq!(lang_from_ext("toml"), DocLanguage::Unknown);
+    }
+
+    // ── C++ declarations ──────────────────────────────────────────────────────
+
+    #[test]
+    fn cpp_namespace_class() {
+        let src = r#"/**
+ * @brief 2-D point type.
+ */
+class Point {
+    int x, y;
+};"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "Point");
+        assert!(matches!(got[0].kind, DocKind::Class));
+        assert_eq!(got[0].brief, "2-D point type.");
+    }
+
+    #[test]
+    fn cpp_template_class() {
+        let src = r#"/**
+ * @brief Generic stack container.
+ * @tparam T Element type.
+ */
+template<typename T>
+class Stack {};
+"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].brief, "Generic stack container.");
+        // Template names are currently Unknown kind (no full template parser).
+        // What matters is the comment is captured.
+        assert!(!got[0].brief.is_empty());
+    }
+
+    #[test]
+    fn cpp_typedef_struct() {
+        let src = "/** Opaque handle type. */\ntypedef struct _Handle Handle;";
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].brief, "Opaque handle type.");
+        assert!(matches!(got[0].kind, DocKind::Typedef));
+        assert_eq!(got[0].name, "Handle");
+    }
+
+    #[test]
+    fn cpp_using_alias() {
+        // `using` type aliases look like variable declarations to our heuristic;
+        // we just verify the comment is extracted, not that the kind is perfect.
+        let src = "/** Convenience alias for a string map. */\nusing StringMap = std::map<std::string, std::string>;";
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].brief, "Convenience alias for a string map.");
+    }
+
+    #[test]
+    fn cpp_enum_class() {
+        let src = r#"/** Colour channels. */
+enum class Channel { R, G, B, A };"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "Channel");
+        assert!(matches!(got[0].kind, DocKind::Enum));
+    }
+
+    #[test]
+    fn cpp_static_member_function() {
+        let src = r#"/** Create from polar coordinates.
+ * @param r Radius.
+ * @param theta Angle in radians.
+ * @return New point.
+ */
+static Point from_polar(double r, double theta);"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "from_polar");
+        assert!(matches!(got[0].kind, DocKind::Function));
+        let params: Vec<_> = got[0].tags.iter().filter(|t| t.kind == TagKind::Param).collect();
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name.as_deref(), Some("r"));
+        assert_eq!(params[1].name.as_deref(), Some("theta"));
+    }
+
+    #[test]
+    fn cpp_inline_variable_doc() {
+        // Doc comment on a const variable.
+        let src = "/** Maximum buffer size in bytes. */\nconst size_t MAX_BUF = 4096;";
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].brief, "Maximum buffer size in bytes.");
+        // `const size_t MAX_BUF` — func_name_before_paren returns None (no paren),
+        // so kind is Unknown. The comment is still captured.
+        assert!(!got[0].brief.is_empty());
+    }
+
+    #[test]
+    fn cpp_namespace_free_function() {
+        let src = r#"namespace math {
+/** @brief Clamp x to [lo, hi]. */
+double clamp(double x, double lo, double hi);
+} // namespace math"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "math::clamp");
+        assert_eq!(got[0].brief, "Clamp x to [lo, hi].");
+    }
+
+    #[test]
+    fn cpp_nested_namespace() {
+        let src = r#"namespace outer {
+namespace inner {
+/** @brief Nested function. */
+void nested();
+} // namespace inner
+} // namespace outer"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "outer::inner::nested");
+    }
+
+    #[test]
+    fn cpp_multiline_param_continuation() {
+        // A @param description that spans two comment lines.
+        let src = r#"/**
+ * @brief Multiply matrix.
+ * @param A Input matrix; must be square and
+ *   stored in row-major order.
+ * @param n Dimension.
+ */
+void matmul(double *A, int n);"#;
+        let got = items(src, &DocLanguage::Cpp);
+        assert_eq!(got.len(), 1);
+        let params: Vec<_> = got[0].tags.iter().filter(|t| t.kind == TagKind::Param).collect();
+        assert_eq!(params.len(), 2);
+        // The continuation line should be joined into the param text.
+        assert!(params[0].text.contains("row-major"), "expected continuation line in param text");
+    }
+
+    // ── Clang integration ────────────────────────────────────────────────────
+
+    #[cfg(feature = "clang")]
+    #[test]
+    fn clang_extracts_namespace_items() {
+        let src = r#"namespace math {
+/**
+ * @brief Clamp x to [lo, hi].
+ * @param x  Value to clamp.
+ * @param lo Lower bound.
+ * @param hi Upper bound.
+ * @return   Clamped value.
+ */
+double clamp(double x, double lo, double hi);
+} // namespace math
+"#;
+        // Write to a temp .hpp file (unambiguously C++) so libclang parses it as C++.
+        let dir = std::env::temp_dir();
+        let path = dir.join("clang_test_clamp.hpp");
+        std::fs::write(&path, src).unwrap();
+        let got = crate::extract_clang::extract_file_clang(&path);
+        std::fs::remove_file(&path).ok();
+
+        assert!(!got.is_empty(), "clang extractor should find at least one item");
+        let clamp = got.iter().find(|i| i.name.contains("clamp"))
+            .expect("should find 'math::clamp'");
+        assert_eq!(clamp.name, "math::clamp");
+        assert!(clamp.brief.contains("Clamp"));
+    }
+
+    #[cfg(feature = "clang")]
+    #[test]
+    fn clang_extracts_class_members() {
+        let src = r#"namespace stats {
+/**
+ * @brief Container of order statistics.
+ */
+class OrderStatistics {
+public:
+    /**
+     * @brief Median of the sample.
+     * @return Median value.
+     */
+    double median() const;
+};
+} // namespace stats
+"#;
+        let dir  = std::env::temp_dir();
+        let path = dir.join("clang_test_order_stats.hpp");
+        std::fs::write(&path, src).unwrap();
+        let got  = crate::extract_clang::extract_file_clang(&path);
+        std::fs::remove_file(&path).ok();
+
+        let class = got.iter().find(|i| i.name.contains("OrderStatistics"))
+            .expect("should extract the class");
+        assert_eq!(class.name, "stats::OrderStatistics");
+
+        let median = got.iter().find(|i| i.name.contains("median"))
+            .expect("should extract median()");
+        assert_eq!(median.name, "stats::OrderStatistics::median");
+        assert!(median.meta.parent.as_deref() == Some("OrderStatistics"));
     }
 }

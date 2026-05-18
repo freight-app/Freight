@@ -31,8 +31,12 @@ int main() {
 
   printf("\n=== stats ===\n");
   std::vector<double> xs = {2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0};
-  show("mean:", mean(xs));
-  show("stddev:", stddev(xs));
+  std::vector<double> ys = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0};
+  show("mean:", stats::mean(xs));
+  show("stddev:", stats::stddev(xs));
+  auto [slope, intercept] = stats::algo::linreg(xs, ys);
+  show("linreg slope:", slope);
+  show("linreg intercept:", intercept);
 
   return 0;
 }

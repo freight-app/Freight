@@ -12,10 +12,12 @@ path = "src/lib.rs"
 name = "freight-doc"
 path = "src/main.rs"
 
+[features]
+clang     = ["dep:clang"]
+rich-math = []
+
 [dependencies]
 walkdir        = { workspace = true }
 pulldown-cmark = { workspace = true }
 clap           = { workspace = true }
-serde          = { workspace = true }
-serde_json     = { workspace = true }
-rmp-serde      = { workspace = true }
+clang          = { version = "2", optional = true, features = ["runtime"] }
