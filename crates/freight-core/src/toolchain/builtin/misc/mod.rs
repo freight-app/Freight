@@ -1,354 +1,214 @@
-use crate::toolchain::template::{CompilerTemplate, ToolchainDef, LinkingParams};
+use crate::toolchain::template::{CompilerTemplate, LinkDef, OptionHandlerFn, TemplateDef, EMPTY};
+
+fn dip1000_h(v: &str, _: &str, _: &str, _: &str, _: &str) -> Result<Vec<String>, String> {
+    if v == "true" { Ok(vec!["-preview=dip1000".into()]) } else { Ok(vec![]) }
+}
 
 // ── TCC ───────────────────────────────────────────────────────────────────────
 
 pub fn tcc() -> CompilerTemplate {
-    let mut d = ToolchainDef {
-        name: "tcc".into(),
-        binary: "tcc".into(),
-        family: "".into(),
-        version_arg: "-v".into(),
-        version_regex: r"version (\d+\.\d+\.\d+)".into(),
-        extensions: vec![".c".into()],
-        flags_debug: "-g".into(),
-        flags_lto: "".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "".into());
-    d.flags_opt.insert("1".into(), "".into());
-    d.flags_opt.insert("2".into(), "".into());
-    d.flags_opt.insert("3".into(), "".into());
-    d.flags_opt.insert("s".into(), "".into());
-    d.flags_opt.insert("z".into(), "".into());
-    d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "-Wall".into());
-    d.flags_warnings.insert("all".into(), "-Wall".into());
-    d.flags_warnings.insert("error".into(), "-Wall -Werror".into());
-    d.standards.insert("c99".into(), "-std=c99".into());
-    d.standards.insert("c11".into(), "-std=c11".into());
-    d.standards.insert("c17".into(), "-std=c17".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.toolset.insert("cc".into(), "tcc".into());
-    d.toolset.insert("ld".into(), "tcc".into());
-    d.toolset.insert("ar".into(), "tcc".into());
-    d.linking.push(("c".into(), LinkingParams {
-        abi: "c".into(),
-        compatible: vec![],
-        compile_binary: Some("tcc".into()),
-        linker: "".into(),
-        extensions: vec![".c".into()],
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "tcc", binary: "tcc",
+        version_arg:   "-v",
+        version_regex: r"version (\d+\.\d+\.\d+)",
+        extensions: &[".c"],
+        debug: "-g",
+        opt_flags: &[("0",""),("1",""),("2",""),("3",""),("s",""),("z","")],
+        warning_flags: &[("none",""),("default","-Wall"),("all","-Wall"),("error","-Wall -Werror")],
+        standards: &[("c99","-std=c99"),("c11","-std=c11"),("c17","-std=c17")],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),
+        ],
+        toolset: &[("cc","tcc"),("ld","tcc"),("ar","tcc")],
+        linking: &[LinkDef {
+            lang: "c", abi: "c", compatible: &[],
+            extensions: &[".c"], linker: "", compile_binary: Some("tcc"),
+        }],
+        ..EMPTY
+    }.build(&[], &[])
 }
 
 // ── DMD ───────────────────────────────────────────────────────────────────────
 
 pub fn dmd() -> CompilerTemplate {
-    use crate::toolchain::template::OptionHandler;
-    fn dip1000_h(v: &str, _: &str, _: &str, _: &str, _: &str) -> Result<Vec<String>, String> {
-        if v == "true" { Ok(vec!["-preview=dip1000".into()]) } else { Ok(vec![]) }
-    }
-
-    let mut d = ToolchainDef {
-        name: "dmd".into(),
-        binary: "dmd".into(),
-        family: "".into(),
-        version_arg: "--version".into(),
-        version_regex: r"v(\d+\.\d+\.\d+)".into(),
-        extensions: vec![".d".into()],
-        flags_debug: "-g".into(),
-        flags_lto: "".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "".into());
-    d.flags_opt.insert("1".into(), "-O".into());
-    d.flags_opt.insert("2".into(), "-O".into());
-    d.flags_opt.insert("3".into(), "-O -release".into());
-    d.flags_opt.insert("s".into(), "-O -release".into());
-    d.flags_opt.insert("z".into(), "-O -release".into());
-    d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "".into());
-    d.flags_warnings.insert("all".into(), "-wi".into());
-    d.flags_warnings.insert("error".into(), "-w".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-version={name}".into());
-    d.structure.insert("define_value".into(), "-version={name}".into());
-    d.structure.insert("output".into(), "-of{path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file_mode".into(), "none".into());
-    d.structure.insert("system_lib".into(), "-L-l{name}".into());
-    d.toolset.insert("ld".into(), "dmd".into());
-    d.toolset.insert("ar".into(), "ar".into());
-    d.toolset.insert("strip".into(), "strip".into());
-    d.linking.push(("d".into(), LinkingParams {
-        abi: "d".into(),
-        compatible: vec!["c".into()],
-        linker: "".into(),
-        extensions: vec![".d".into()],
-        compile_binary: None,
-    }));
-    d.compiler_option_handlers.insert("dip1000".into(), OptionHandler {
-        default_value: Some("false".into()),
-        callback: dip1000_h,
-    });
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "dmd", binary: "dmd",
+        version_regex: r"v(\d+\.\d+\.\d+)",
+        extensions: &[".d"],
+        debug: "-g",
+        opt_flags: &[("0",""),("1","-O"),("2","-O"),("3","-O -release"),("s","-O -release"),("z","-O -release")],
+        warning_flags: &[("none",""),("default",""),("all","-wi"),("error","-w")],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-version={name}"),("define_value","-version={name}"),
+            ("output","-of{path}"),("compile_only","-c"),("dep_file_mode","none"),("system_lib","-L-l{name}"),
+        ],
+        toolset: &[("ld","dmd"),("ar","ar"),("strip","strip")],
+        linking: &[LinkDef {
+            lang: "d", abi: "d", compatible: &["c"],
+            extensions: &[".d"], linker: "", compile_binary: None,
+        }],
+        ..EMPTY
+    }.build(&[("dip1000", dip1000_h as OptionHandlerFn, Some("false"))], &[])
 }
 
 // ── OpenCL ────────────────────────────────────────────────────────────────────
 
 pub fn opencl() -> CompilerTemplate {
-    let mut d = ToolchainDef {
-        name: "opencl".into(),
-        binary: "clang".into(),
-        family: "".into(),
-        version_arg: "--version".into(),
-        version_regex: r"\b(\d+\.\d+\.\d+)\b".into(),
-        extensions: vec![".cl".into()],
-        always_flags: vec!["-x".into(), "cl".into()],
-        requires_toolchain: vec!["cpp".into()],
-        flags_debug: "-g".into(),
-        flags_lto: "".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O3".into());
-    d.flags_opt.insert("s".into(), "-Os".into());
-    d.flags_opt.insert("z".into(), "-Oz".into());
-    d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "-Wall".into());
-    d.flags_warnings.insert("all".into(), "-Wall -Wextra".into());
-    d.flags_warnings.insert("error".into(), "-Wall -Wextra -Werror".into());
-    d.standards.insert("CL1.0".into(), "-cl-std=CL1.0".into());
-    d.standards.insert("CL1.1".into(), "-cl-std=CL1.1".into());
-    d.standards.insert("CL1.2".into(), "-cl-std=CL1.2".into());
-    d.standards.insert("CL2.0".into(), "-cl-std=CL2.0".into());
-    d.standards.insert("CL3.0".into(), "-cl-std=CL3.0".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file".into(), "-MMD -MF {path}".into());
-    d.toolset.insert("ld".into(), "clang".into());
-    d.linking.push(("opencl".into(), LinkingParams {
-        abi: "opencl".into(),
-        compatible: vec!["c++".into(), "c".into()],
-        linker: "c++".into(),
-        extensions: vec![".cl".into()],
-        compile_binary: None,
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "opencl", binary: "clang",
+        version_regex: r"\b(\d+\.\d+\.\d+)\b",
+        extensions: &[".cl"],
+        always_flags: &["-x","cl"],
+        requires_toolchain: &["cpp"],
+        debug: "-g",
+        opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O3"),("s","-Os"),("z","-Oz")],
+        warning_flags: &[
+            ("none",""),("default","-Wall"),
+            ("all","-Wall -Wextra"),("error","-Wall -Wextra -Werror"),
+        ],
+        standards: &[
+            ("CL1.0","-cl-std=CL1.0"),("CL1.1","-cl-std=CL1.1"),("CL1.2","-cl-std=CL1.2"),
+            ("CL2.0","-cl-std=CL2.0"),("CL3.0","-cl-std=CL3.0"),
+        ],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),("dep_file","-MMD -MF {path}"),
+        ],
+        toolset: &[("ld","clang")],
+        linking: &[LinkDef {
+            lang: "opencl", abi: "opencl", compatible: &["c++","c"],
+            extensions: &[".cl"], linker: "c++", compile_binary: None,
+        }],
+        ..EMPTY
+    }.build(&[], &[])
 }
 
 // ── Circle ────────────────────────────────────────────────────────────────────
 
-/// `circle` — experimental C++20+ compiler with compile-time metaprogramming
-/// extensions. Drop-in Clang-compatible flag set.
 pub fn circle() -> CompilerTemplate {
-    let mut d = ToolchainDef {
-        name: "circle".into(),
-        binary: "circle".into(),
-        family: "llvm".into(),
-        version_arg: "--version".into(),
-        // "circle version 183" → capture the build number as version
-        version_regex: r"version (\d+)".into(),
-        extensions: vec![".cpp".into(), ".cc".into(), ".cxx".into(), ".c++".into()],
-        flags_debug: "-g".into(),
-        flags_lto: "-flto".into(),
-        sanitize: "-fsanitize={values}".into(),
-        sanitizer_options: vec!["address".into(), "undefined".into()],
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O3".into());
-    d.flags_opt.insert("s".into(), "-Os".into());
-    d.flags_opt.insert("z".into(), "-Oz".into());
-    d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "-Wall".into());
-    d.flags_warnings.insert("all".into(), "-Wall -Wextra".into());
-    d.flags_warnings.insert("error".into(), "-Wall -Wextra -Werror".into());
-    d.standards.insert("c++20".into(), "-std=c++20".into());
-    d.standards.insert("c++23".into(), "-std=c++23".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file".into(), "-MMD -MF {path}".into());
-    d.structure.insert("target".into(), "--target={triple}".into());
-    d.toolset.insert("ld".into(), "circle".into());
-    d.toolset.insert("ar".into(), "ar".into());
-    d.linking.push(("cpp".into(), LinkingParams {
-        abi: "c++".into(),
-        compatible: vec!["c".into()],
-        linker: "".into(),
-        extensions: vec![".cpp".into(), ".cc".into(), ".cxx".into(), ".c++".into()],
-        compile_binary: None,
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "circle", binary: "circle",
+        family: "llvm",
+        version_regex: r"version (\d+)",
+        extensions: &[".cpp",".cc",".cxx",".c++"],
+        debug:    "-g",
+        lto:      "-flto",
+        sanitize: "-fsanitize={values}",
+        sanitizer_options: &["address","undefined"],
+        opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O3"),("s","-Os"),("z","-Oz")],
+        warning_flags: &[
+            ("none",""),("default","-Wall"),
+            ("all","-Wall -Wextra"),("error","-Wall -Wextra -Werror"),
+        ],
+        standards: &[("c++20","-std=c++20"),("c++23","-std=c++23")],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),("dep_file","-MMD -MF {path}"),
+            ("target","--target={triple}"),
+        ],
+        toolset: &[("ld","circle"),("ar","ar")],
+        linking: &[LinkDef {
+            lang: "cpp", abi: "c++", compatible: &["c"],
+            extensions: &[".cpp",".cc",".cxx",".c++"], linker: "", compile_binary: None,
+        }],
+        ..EMPTY
+    }.build(&[], &[])
 }
 
 // ── NAG Fortran ───────────────────────────────────────────────────────────────
 
-/// `nagfor` — Numerical Algorithms Group Fortran compiler. The strictest
-/// Fortran standard checker available; popular in academic HPC environments.
 pub fn nagfor() -> CompilerTemplate {
-    let mut d = ToolchainDef {
-        name: "nagfor".into(),
-        binary: "nagfor".into(),
-        family: "".into(),
-        version_arg: "-V".into(),
+    const F_EXTS: &[&str] = &[".f90",".f95",".f03",".f08",".f",".F90"];
+    TemplateDef {
+        name: "nagfor", binary: "nagfor",
+        version_arg:   "-V",
         // "NAG Fortran Compiler Release 7.2(Morzine) Build 7202"
-        version_regex: r"Release (\d+\.\d+)".into(),
-        extensions: vec![
-            ".f90".into(), ".f95".into(), ".f03".into(), ".f08".into(),
-            ".f".into(), ".F90".into(),
+        version_regex: r"Release (\d+\.\d+)",
+        extensions: F_EXTS,
+        debug: "-g",
+        opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O4"),("s","-O2"),("z","-O2")],
+        warning_flags: &[
+            ("none","-w=all -quiet"),("default",""),
+            ("all","-w=obs -w=unused -w=undef"),
+            ("error","-w=obs -w=unused -w=undef -halt=error"),
         ],
-        flags_debug: "-g".into(),
-        flags_lto: "".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O4".into()); // NAG uses -O4 for full opt
-    d.flags_opt.insert("s".into(), "-O2".into());
-    d.flags_opt.insert("z".into(), "-O2".into());
-    // NAG uses -w=obs etc.; -w suppresses all, -w=all enables all
-    d.flags_warnings.insert("none".into(), "-w=all -quiet".into());
-    d.flags_warnings.insert("default".into(), "".into());
-    d.flags_warnings.insert("all".into(), "-w=obs -w=unused -w=undef".into());
-    // -halt=error turns any warning into a fatal error
-    d.flags_warnings.insert("error".into(), "-w=obs -w=unused -w=undef -halt=error".into());
-    d.standards.insert("f95".into(), "-f95".into());
-    d.standards.insert("f2003".into(), "-f2003".into());
-    d.standards.insert("f2008".into(), "-f2008".into());
-    d.standards.insert("f2018".into(), "-f2018".into());
-    // -ieee=full enables strict IEEE floating-point; useful for numerical code
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file_mode".into(), "none".into());
-    d.toolset.insert("ld".into(), "nagfor".into());
-    d.toolset.insert("ar".into(), "ar".into());
-    d.linking.push(("fortran".into(), LinkingParams {
-        abi: "fortran".into(),
-        compatible: vec!["c".into()],
-        linker: "".into(),
-        extensions: vec![
-            ".f90".into(), ".f95".into(), ".f03".into(), ".f08".into(),
-            ".f".into(), ".F90".into(),
+        standards: &[("f95","-f95"),("f2003","-f2003"),("f2008","-f2008"),("f2018","-f2018")],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),("dep_file_mode","none"),
         ],
-        compile_binary: None,
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+        toolset: &[("ld","nagfor"),("ar","ar")],
+        linking: &[LinkDef {
+            lang: "fortran", abi: "fortran", compatible: &["c"],
+            extensions: F_EXTS, linker: "", compile_binary: None,
+        }],
+        ..EMPTY
+    }.build(&[], &[])
 }
 
 // ── GNAT (Ada) ────────────────────────────────────────────────────────────────
 
-/// `gnat` — GNU Ada Translator (GNAT), part of GCC. Compiles `.adb` (body) and
-/// `.ads` (spec) Ada source files. Requires GCC with Ada language support.
 pub fn gnat() -> CompilerTemplate {
-    let mut d = ToolchainDef {
-        name: "gnat".into(),
-        binary: "gnat".into(),
-        family: "gnu".into(),
-        version_arg: "--version".into(),
+    TemplateDef {
+        name: "gnat", binary: "gnat",
+        family: "gnu",
         // "GNAT Community Edition 2021 (20210519-103)" or "GNAT 13.2.0"
-        version_regex: r"(?:GNAT.*?(\d{4})|GNAT \w+ (\d+\.\d+))".into(),
-        extensions: vec![".adb".into(), ".ads".into()],
-        flags_debug: "-g".into(),
-        flags_lto: "-flto".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O3".into());
-    d.flags_opt.insert("s".into(), "-Os".into());
-    d.flags_opt.insert("z".into(), "-Os".into());
-    // GNAT uses -gnatw flags for warnings
-    d.flags_warnings.insert("none".into(), "-gnatws".into());   // suppress all
-    d.flags_warnings.insert("default".into(), "".into());
-    d.flags_warnings.insert("all".into(), "-gnatwa".into());    // all warnings
-    d.flags_warnings.insert("error".into(), "-gnatwa -gnatwe".into()); // warnings as errors
-    d.standards.insert("ada83".into(), "-gnat83".into());
-    d.standards.insert("ada95".into(), "-gnat95".into());
-    d.standards.insert("ada2005".into(), "-gnat2005".into());
-    d.standards.insert("ada2012".into(), "-gnat2012".into());
-    d.standards.insert("ada2022".into(), "-gnat2022".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    // GNAT compile invocation: `gnat compile` or `gcc -c` with .adb
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file_mode".into(), "none".into());
-    d.toolset.insert("ld".into(), "gnat".into());
-    d.toolset.insert("ar".into(), "ar".into());
-    d.linking.push(("ada".into(), LinkingParams {
-        abi: "ada".into(),
-        compatible: vec!["c".into()],
-        linker: "".into(),
-        extensions: vec![".adb".into(), ".ads".into()],
-        compile_binary: Some("gnat".into()),
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+        version_regex: r"(?:GNAT.*?(\d{4})|GNAT \w+ (\d+\.\d+))",
+        extensions: &[".adb",".ads"],
+        debug: "-g",
+        lto:   "-flto",
+        opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O3"),("s","-Os"),("z","-Os")],
+        warning_flags: &[
+            ("none","-gnatws"),("default",""),
+            ("all","-gnatwa"),("error","-gnatwa -gnatwe"),
+        ],
+        standards: &[
+            ("ada83","-gnat83"),("ada95","-gnat95"),("ada2005","-gnat2005"),
+            ("ada2012","-gnat2012"),("ada2022","-gnat2022"),
+        ],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),("dep_file_mode","none"),
+        ],
+        toolset: &[("ld","gnat"),("ar","ar")],
+        linking: &[LinkDef {
+            lang: "ada", abi: "ada", compatible: &["c"],
+            extensions: &[".adb",".ads"], linker: "", compile_binary: Some("gnat"),
+        }],
+        ..EMPTY
+    }.build(&[], &[])
 }
 
 // ── Swift ─────────────────────────────────────────────────────────────────────
 
-/// `swiftc` — Apple Swift compiler. Produces object files linkable with C.
-/// Swift has its own module system (`.swiftmodule`); inter-module dependencies
-/// are not yet tracked by freight's module DAG.
 pub fn swiftc() -> CompilerTemplate {
-    let mut d = ToolchainDef {
-        name: "swiftc".into(),
-        binary: "swiftc".into(),
-        family: "".into(),
-        version_arg: "--version".into(),
+    TemplateDef {
+        name: "swiftc", binary: "swiftc",
         // "Swift version 5.10.1 (swift-5.10.1-RELEASE)"
-        version_regex: r"Swift version (\d+\.\d+(?:\.\d+)?)".into(),
-        extensions: vec![".swift".into()],
-        flags_debug: "-g".into(),
-        flags_lto: "-lto=llvm-full".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-Onone".into());
-    d.flags_opt.insert("1".into(), "-O".into());
-    d.flags_opt.insert("2".into(), "-O".into());
-    d.flags_opt.insert("3".into(), "-O -whole-module-optimization".into());
-    d.flags_opt.insert("s".into(), "-Osize".into());
-    d.flags_opt.insert("z".into(), "-Osize".into());
-    d.flags_warnings.insert("none".into(), "-suppress-warnings".into());
-    d.flags_warnings.insert("default".into(), "".into());
-    d.flags_warnings.insert("all".into(), "-warnings-as-notes".into());
-    d.flags_warnings.insert("error".into(), "-warnings-as-errors".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file_mode".into(), "none".into());
-    d.toolset.insert("ld".into(), "swiftc".into());
-    d.linking.push(("swift".into(), LinkingParams {
-        abi: "swift".into(),
-        compatible: vec!["c".into()],
-        linker: "".into(),
-        extensions: vec![".swift".into()],
-        compile_binary: None,
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+        version_regex: r"Swift version (\d+\.\d+(?:\.\d+)?)",
+        extensions: &[".swift"],
+        debug: "-g",
+        lto:   "-lto=llvm-full",
+        opt_flags: &[
+            ("0","-Onone"),("1","-O"),("2","-O"),
+            ("3","-O -whole-module-optimization"),("s","-Osize"),("z","-Osize"),
+        ],
+        warning_flags: &[
+            ("none","-suppress-warnings"),("default",""),
+            ("all","-warnings-as-notes"),("error","-warnings-as-errors"),
+        ],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),("dep_file_mode","none"),
+        ],
+        toolset: &[("ld","swiftc")],
+        linking: &[LinkDef {
+            lang: "swift", abi: "swift", compatible: &["c"],
+            extensions: &[".swift"], linker: "", compile_binary: None,
+        }],
+        ..EMPTY
+    }.build(&[], &[])
 }
 
 pub fn templates() -> Vec<CompilerTemplate> {

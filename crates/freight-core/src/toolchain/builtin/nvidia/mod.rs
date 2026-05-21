@@ -1,161 +1,121 @@
-use crate::toolchain::template::{CompilerTemplate, OptionHandler, ToolchainDef, LinkingParams};
+use crate::toolchain::template::{CompilerTemplate, LinkDef, OptionHandlerFn, TemplateDef, EMPTY};
 
-fn nvhpc_base(name: &str, binary: &str) -> ToolchainDef {
-    let mut d = ToolchainDef {
-        name: name.into(),
-        binary: binary.into(),
-        family: "nvidia".into(),
-        version_arg: "--version".into(),
-        version_regex: r"(\d+\.\d+)".into(),
-        flags_debug: "-g".into(),
-        flags_lto: "".into(),
-        cpu_ext: "-m{name}".into(),
-        supported_archs: vec!["x86_64".into(), "aarch64".into()],
-        supported_os: vec!["linux".into()],
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O3".into());
-    d.flags_opt.insert("s".into(), "-O2".into());
-    d.flags_opt.insert("z".into(), "-O2".into());
-    d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "".into());
-    d.flags_warnings.insert("all".into(), "-Minform=warn".into());
-    d.flags_warnings.insert("error".into(), "-Minform=warn -Werror".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file".into(), "-MMD -MF {path}".into());
-    d.toolset.insert("ar".into(), "ar".into());
-    d
+const BASE_NVHPC: TemplateDef = TemplateDef {
+    family:        "nvidia",
+    version_regex: r"(\d+\.\d+)",
+    debug:  "-g",
+    cpu_ext: "-m{name}",
+    supported_archs: &["x86_64","aarch64"],
+    supported_os:    &["linux"],
+    opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O3"),("s","-O2"),("z","-O2")],
+    warning_flags: &[
+        ("none",""),("default",""),
+        ("all","-Minform=warn"),("error","-Minform=warn -Werror"),
+    ],
+    structure: &[
+        ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+        ("output","-o {path}"),("compile_only","-c"),("dep_file","-MMD -MF {path}"),
+    ],
+    toolset: &[("ar","ar")],
+    ..EMPTY
+};
+
+const CPP_EXTS: &[&str] = &[".cpp",".cc",".cxx",".c++"];
+const F_EXTS:   &[&str] = &[".f90",".f95",".f",".F90"];
+
+fn sm_arch_h(v: &str, _: &str, _: &str, _: &str, _: &str) -> Result<Vec<String>, String> {
+    if !v.is_empty() { Ok(vec![format!("--gpu-architecture={v}")]) } else { Ok(vec![]) }
+}
+
+fn lang_arch_h(v: &str, _: &str, arch: &str, _: &str, _: &str) -> Result<Vec<String>, String> {
+    if !v.is_empty() && arch != v {
+        Err(format!("nvcc requires arch '{v}' but the effective target is '{arch}'"))
+    } else {
+        Ok(vec![])
+    }
 }
 
 pub fn nvcc() -> CompilerTemplate {
-    fn sm_arch_h(v: &str, _: &str, _: &str, _: &str, _: &str) -> Result<Vec<String>, String> {
-        if !v.is_empty() { Ok(vec![format!("--gpu-architecture={v}")]) } else { Ok(vec![]) }
-    }
-    fn lang_arch_h(v: &str, _: &str, arch: &str, _: &str, _: &str) -> Result<Vec<String>, String> {
-        if !v.is_empty() && arch != v {
-            Err(format!("nvcc requires arch '{v}' but the effective target is '{arch}'"))
-        } else {
-            Ok(vec![])
-        }
-    }
-
-    let mut d = ToolchainDef {
-        name: "nvcc".into(),
-        binary: "nvcc".into(),
-        family: "".into(),
-        version_arg: "--version".into(),
-        version_regex: r"release (\d+\.\d+)".into(),
-        extensions: vec![".cu".into(), ".cuh".into()],
+    TemplateDef {
+        name: "nvcc", binary: "nvcc",
+        version_regex: r"release (\d+\.\d+)",
+        extensions: &[".cu",".cuh"],
         passthrough_enabled: true,
-        passthrough_prefix: "-Xcompiler".into(),
-        always_flags: vec!["--expt-relaxed-constexpr".into(), "--extended-lambda".into()],
-        supported_archs: vec!["x86_64".into(), "aarch64".into()],
-        supported_os: vec!["linux".into(), "windows".into()],
-        required_tools: vec!["ptxas".into(), "fatbinary".into()],
-        requires_toolchain: vec!["cpp".into()],
-        flags_debug: "-g -G".into(),
-        flags_lto: "".into(),
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O3".into());
-    d.flags_opt.insert("s".into(), "-O2".into());
-    d.flags_opt.insert("z".into(), "-O2".into());
-    // Host-code warnings go through -Xcompiler; device-code warnings use --Werror.
-    d.flags_warnings.insert("none".into(), "--diag-suppress all".into());
-    d.flags_warnings.insert("default".into(), "-Xcompiler -Wall".into());
-    d.flags_warnings.insert("all".into(), "-Xcompiler -Wall,-Wextra --Werror cross-execution-space-call,reorder".into());
-    d.flags_warnings.insert("error".into(), "-Xcompiler -Wall,-Wextra,-Werror --Werror all-warnings".into());
-    d.standards.insert("c++17".into(), "-std=c++17".into());
-    d.standards.insert("c++20".into(), "-std=c++20".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file".into(), "-MD -MF {path}".into());
-    d.toolset.insert("ld".into(), "nvcc".into());
-    d.linking.push(("cuda".into(), LinkingParams {
-        abi: "cuda".into(),
-        compatible: vec!["c++".into(), "c".into(), "fortran".into()],
-        linker: "cuda".into(),
-        extensions: vec![".cu".into(), ".cuh".into()],
-        compile_binary: None,
-    }));
-    d.compiler_option_handlers.insert("sm_arch".into(), OptionHandler {
-        default_value: None,
-        callback: sm_arch_h,
-    });
-    d.language_option_handlers.insert("arch".into(), OptionHandler {
-        default_value: None,
-        callback: lang_arch_h,
-    });
-    CompilerTemplate::from_def(d).unwrap()
+        passthrough_prefix:  "-Xcompiler",
+        always_flags: &["--expt-relaxed-constexpr","--extended-lambda"],
+        supported_archs: &["x86_64","aarch64"],
+        supported_os:    &["linux","windows"],
+        required_tools:  &["ptxas","fatbinary"],
+        requires_toolchain: &["cpp"],
+        debug: "-g -G",
+        opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O3"),("s","-O2"),("z","-O2")],
+        warning_flags: &[
+            ("none","--diag-suppress all"),
+            ("default","-Xcompiler -Wall"),
+            ("all","-Xcompiler -Wall,-Wextra --Werror cross-execution-space-call,reorder"),
+            ("error","-Xcompiler -Wall,-Wextra,-Werror --Werror all-warnings"),
+        ],
+        standards: &[("c++17","-std=c++17"),("c++20","-std=c++20")],
+        structure: &[
+            ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+            ("output","-o {path}"),("compile_only","-c"),("dep_file","-MD -MF {path}"),
+        ],
+        toolset: &[("ld","nvcc")],
+        linking: &[LinkDef {
+            lang: "cuda", abi: "cuda", compatible: &["c++","c","fortran"],
+            extensions: &[".cu",".cuh"], linker: "cuda", compile_binary: None,
+        }],
+        ..EMPTY
+    }.build(
+        &[("sm_arch", sm_arch_h as OptionHandlerFn, None)],
+        &[("arch",    lang_arch_h as OptionHandlerFn, None)],
+    )
 }
 
 pub fn nvcpp() -> CompilerTemplate {
-    let mut d = nvhpc_base("nvc++", "nvc++");
-    d.extensions = vec![".cpp".into(), ".cc".into(), ".cxx".into(), ".c++".into()];
-    d.sanitizer_options = vec!["address".into()];
-    d.standards.insert("c++17".into(), "-std=c++17".into());
-    d.standards.insert("c++20".into(), "-std=c++20".into());
-    d.toolset.insert("cc".into(), "nvc".into());
-    d.toolset.insert("cxx".into(), "nvc++".into());
-    d.toolset.insert("ld".into(), "nvc++".into());
-    d.linking.push(("cpp".into(), LinkingParams {
-        abi: "c++".into(),
-        compatible: vec!["c".into(), "fortran".into()],
-        linker: "".into(),
-        extensions: vec![".cpp".into(), ".cc".into(), ".cxx".into(), ".c++".into()],
-        compile_binary: None,
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "nvc++", binary: "nvc++",
+        extensions: CPP_EXTS,
+        sanitizer_options: &["address"],
+        standards: &[("c++17","-std=c++17"),("c++20","-std=c++20")],
+        toolset: &[("ar","ar"),("cc","nvc"),("cxx","nvc++"),("ld","nvc++")],
+        linking: &[LinkDef {
+            lang: "cpp", abi: "c++", compatible: &["c","fortran"],
+            extensions: CPP_EXTS, linker: "", compile_binary: None,
+        }],
+        ..BASE_NVHPC
+    }.build(&[], &[])
 }
 
 pub fn nvc() -> CompilerTemplate {
-    let mut d = nvhpc_base("nvc", "nvc");
-    d.extensions = vec![".c".into()];
-    d.sanitizer_options = vec!["address".into()];
-    d.standards.insert("c11".into(), "-std=c11".into());
-    d.standards.insert("c17".into(), "-std=c17".into());
-    d.toolset.insert("cc".into(), "nvc".into());
-    d.toolset.insert("ld".into(), "nvc".into());
-    d.linking.push(("c".into(), LinkingParams {
-        abi: "c".into(),
-        compatible: vec!["fortran".into()],
-        compile_binary: Some("nvc".into()),
-        linker: "".into(),
-        extensions: vec![".c".into()],
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "nvc", binary: "nvc",
+        extensions: &[".c"],
+        sanitizer_options: &["address"],
+        standards: &[("c11","-std=c11"),("c17","-std=c17")],
+        toolset: &[("ar","ar"),("cc","nvc"),("ld","nvc")],
+        linking: &[LinkDef {
+            lang: "c", abi: "c", compatible: &["fortran"],
+            extensions: &[".c"], linker: "", compile_binary: Some("nvc"),
+        }],
+        ..BASE_NVHPC
+    }.build(&[], &[])
 }
 
 pub fn nvfortran() -> CompilerTemplate {
-    let mut d = nvhpc_base("nvfortran", "nvfortran");
-    d.extensions = vec![".f90".into(), ".f95".into(), ".f".into(), ".F90".into()];
-    d.sanitizer_options = vec!["address".into()];
-    d.flags_stdlib.clear();
-    d.standards.insert("f2003".into(), "-Mstandard".into());
-    d.standards.insert("f2008".into(), "-Mstandard".into());
-    d.standards.insert("f2018".into(), "-Mstandard".into());
-    d.toolset.insert("ld".into(), "nvfortran".into());
-    d.linking.push(("fortran".into(), LinkingParams {
-        abi: "fortran".into(),
-        compatible: vec!["c".into()],
-        compile_binary: Some("nvfortran".into()),
-        linker: "".into(),
-        extensions: vec![".f90".into(), ".f95".into(), ".f".into(), ".F90".into()],
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "nvfortran", binary: "nvfortran",
+        extensions: F_EXTS,
+        sanitizer_options: &["address"],
+        stdlib_flags: &[],
+        standards: &[("f2003","-Mstandard"),("f2008","-Mstandard"),("f2018","-Mstandard")],
+        toolset: &[("ar","ar"),("ld","nvfortran")],
+        linking: &[LinkDef {
+            lang: "fortran", abi: "fortran", compatible: &["c"],
+            extensions: F_EXTS, linker: "", compile_binary: Some("nvfortran"),
+        }],
+        ..BASE_NVHPC
+    }.build(&[], &[])
 }
 
 pub fn templates() -> Vec<CompilerTemplate> {

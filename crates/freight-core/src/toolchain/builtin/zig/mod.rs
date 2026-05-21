@@ -1,87 +1,58 @@
-use crate::toolchain::template::{CompilerTemplate, ToolchainDef, LinkingParams};
+use crate::toolchain::template::{CompilerTemplate, LinkDef, TemplateDef, EMPTY};
 
-fn zig_base(name: &str, subcommand: &str) -> ToolchainDef {
-    let mut d = ToolchainDef {
-        name: name.into(),
-        binary: "zig".into(),
-        family: "".into(),
-        // `zig version` prints just "0.14.0"
-        version_arg: "version".into(),
-        version_regex: r"(\d+\.\d+\.\d+)".into(),
-        subcommand: Some(subcommand.into()),
-        flags_debug: "-g".into(),
-        flags_lto: "-flto".into(),
-        sanitize: "-fsanitize={values}".into(),
-        sanitizer_options: vec!["address".into(), "undefined".into(), "thread".into()],
-        ..Default::default()
-    };
-    d.flags_opt.insert("0".into(), "-O0".into());
-    d.flags_opt.insert("1".into(), "-O1".into());
-    d.flags_opt.insert("2".into(), "-O2".into());
-    d.flags_opt.insert("3".into(), "-O3".into());
-    d.flags_opt.insert("s".into(), "-Os".into());
-    d.flags_opt.insert("z".into(), "-Oz".into());
-    d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "-Wall".into());
-    d.flags_warnings.insert("all".into(), "-Wall -Wextra -Wpedantic".into());
-    d.flags_warnings.insert("error".into(), "-Wall -Wextra -Wpedantic -Werror".into());
-    d.flags_stdlib.insert("libc++".into(), "-stdlib=libc++".into());
-    d.flags_stdlib.insert("libstdc++".into(), "-stdlib=libstdc++".into());
-    d.flags_stdlib.insert("none".into(), "-nostdlib".into());
-    d.structure.insert("include_dir".into(), "-I{path}".into());
-    d.structure.insert("define".into(), "-D{name}".into());
-    d.structure.insert("define_value".into(), "-D{name}={value}".into());
-    d.structure.insert("output".into(), "-o {path}".into());
-    d.structure.insert("compile_only".into(), "-c".into());
-    d.structure.insert("dep_file".into(), "-MMD -MF {path}".into());
-    // zig cc accepts --target=<triple> for cross-compilation
-    d.structure.insert("target".into(), "--target={triple}".into());
-    d.toolset.insert("ar".into(), "zig ar".into());
-    d.toolset.insert("strip".into(), "strip".into());
-    d
-}
+const BASE_ZIG: TemplateDef = TemplateDef {
+    binary:        "zig",
+    version_arg:   "version",
+    version_regex: r"(\d+\.\d+\.\d+)",
+    debug:    "-g",
+    lto:      "-flto",
+    sanitize: "-fsanitize={values}",
+    sanitizer_options: &["address","undefined","thread"],
+    opt_flags: &[("0","-O0"),("1","-O1"),("2","-O2"),("3","-O3"),("s","-Os"),("z","-Oz")],
+    warning_flags: &[
+        ("none",""),("default","-Wall"),
+        ("all","-Wall -Wextra -Wpedantic"),("error","-Wall -Wextra -Wpedantic -Werror"),
+    ],
+    stdlib_flags: &[("libc++","-stdlib=libc++"),("libstdc++","-stdlib=libstdc++"),("none","-nostdlib")],
+    structure: &[
+        ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+        ("output","-o {path}"),("compile_only","-c"),("dep_file","-MMD -MF {path}"),
+        ("target","--target={triple}"),
+    ],
+    toolset: &[("ar","zig ar"),("strip","strip")],
+    ..EMPTY
+};
 
-/// `zig cc` — Zig's bundled Clang used as a drop-in C compiler.
-/// Excellent for cross-compilation: a single `zig` binary can target any triple.
 pub fn zig_c() -> CompilerTemplate {
-    let mut d = zig_base("zig-c", "cc");
-    d.extensions = vec![".c".into(), ".s".into(), ".S".into()];
-    d.defaults.insert("std".into(), "c11".into());
-    d.standards.insert("c11".into(), "-std=c11".into());
-    d.standards.insert("c17".into(), "-std=c17".into());
-    d.standards.insert("c23".into(), "-std=c23".into());
-    d.toolset.insert("cc".into(), "zig cc".into());
-    d.toolset.insert("cxx".into(), "zig c++".into());
-    d.toolset.insert("ld".into(), "zig c++".into());
-    d.linking.push(("c".into(), LinkingParams {
-        abi: "c".into(),
-        compatible: vec!["asm".into()],
-        compile_binary: None,
-        linker: "".into(),
-        extensions: vec![".c".into(), ".s".into(), ".S".into()],
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "zig-c",
+        subcommand: Some("cc"),
+        extensions: &[".c",".s",".S"],
+        standards: &[("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23")],
+        defaults: &[("std","c11")],
+        toolset: &[("ar","zig ar"),("strip","strip"),("cc","zig cc"),("cxx","zig c++"),("ld","zig c++")],
+        linking: &[LinkDef {
+            lang: "c", abi: "c", compatible: &["asm"],
+            extensions: &[".c",".s",".S"], linker: "", compile_binary: None,
+        }],
+        ..BASE_ZIG
+    }.build(&[], &[])
 }
 
-/// `zig c++` — Zig's bundled Clang used as a drop-in C++ compiler.
 pub fn zig_cxx() -> CompilerTemplate {
-    let mut d = zig_base("zig-c++", "c++");
-    d.extensions = vec![".cpp".into(), ".cc".into(), ".cxx".into(), ".c++".into()];
-    d.defaults.insert("std".into(), "c++17".into());
-    d.standards.insert("c++17".into(), "-std=c++17".into());
-    d.standards.insert("c++20".into(), "-std=c++20".into());
-    d.standards.insert("c++23".into(), "-std=c++23".into());
-    d.toolset.insert("cc".into(), "zig cc".into());
-    d.toolset.insert("cxx".into(), "zig c++".into());
-    d.toolset.insert("ld".into(), "zig c++".into());
-    d.linking.push(("cpp".into(), LinkingParams {
-        abi: "c++".into(),
-        compatible: vec!["c".into()],
-        linker: "".into(),
-        extensions: vec![".cpp".into(), ".cc".into(), ".cxx".into(), ".c++".into()],
-        compile_binary: None,
-    }));
-    CompilerTemplate::from_def(d).unwrap()
+    TemplateDef {
+        name: "zig-c++",
+        subcommand: Some("c++"),
+        extensions: &[".cpp",".cc",".cxx",".c++"],
+        standards: &[("c++17","-std=c++17"),("c++20","-std=c++20"),("c++23","-std=c++23")],
+        defaults: &[("std","c++17")],
+        toolset: &[("ar","zig ar"),("strip","strip"),("cc","zig cc"),("cxx","zig c++"),("ld","zig c++")],
+        linking: &[LinkDef {
+            lang: "cpp", abi: "c++", compatible: &["c"],
+            extensions: &[".cpp",".cc",".cxx",".c++"], linker: "", compile_binary: None,
+        }],
+        ..BASE_ZIG
+    }.build(&[], &[])
 }
 
 pub fn templates() -> Vec<CompilerTemplate> {
