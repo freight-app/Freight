@@ -71,9 +71,9 @@ pub fn nvcc() -> CompilerTemplate {
     d.flags_opt.insert("s".into(), "-O2".into());
     d.flags_opt.insert("z".into(), "-O2".into());
     d.flags_warnings.insert("none".into(), "".into());
-    d.flags_warnings.insert("default".into(), "-Wall".into());
-    d.flags_warnings.insert("all".into(), "-Wall -Wextra".into());
-    d.flags_warnings.insert("error".into(), "-Wall -Wextra -Werror".into());
+    d.flags_warnings.insert("default".into(), "-Xcompiler -Wall".into());
+    d.flags_warnings.insert("all".into(), "-Xcompiler -Wall,-Wextra".into());
+    d.flags_warnings.insert("error".into(), "-Xcompiler -Wall,-Wextra,-Werror".into());
     d.standards.insert("c++17".into(), "-std=c++17".into());
     d.standards.insert("c++20".into(), "-std=c++20".into());
     d.structure.insert("include_dir".into(), "-I{path}".into());
@@ -86,7 +86,7 @@ pub fn nvcc() -> CompilerTemplate {
     d.linking.push(("cuda".into(), LinkingParams {
         abi: "cuda".into(),
         compatible: vec!["c++".into(), "c".into(), "fortran".into()],
-        linker: "c++".into(),
+        linker: "cuda".into(),
         extensions: vec![".cu".into(), ".cuh".into()],
         compile_binary: None,
     }));
