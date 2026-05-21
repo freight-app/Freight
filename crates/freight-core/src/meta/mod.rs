@@ -10,18 +10,50 @@ pub mod cmake;
 pub mod make;
 pub mod meson;
 pub mod pkg_config;
+pub mod pkg_config_cache;
 pub mod scons;
 pub mod system_pm;
 
 pub use pkg_config::{PkgConfigResult, ResolvedPkgConfig, pkg_config_query, pkg_config_query_with_path, pkg_config_version};
+pub use pkg_config_cache::PkgConfigCache;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
-use crate::manifest::types::{Dependency, Manifest};
-use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs};
+use crate::manifest::types::{Dependency, DetailedDep, Manifest};
+use crate::supports::eval_supports;
+use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs, SystemLibStub};
+
+// ── OS-family pseudo-deps ─────────────────────────────────────────────────────
+
+/// Dep names that are treated as OS-family selectors rather than real packages.
+/// `windows = { features = ["ws2_32", "kernel32"] }` → link those libs on Windows.
+const OS_FAMILIES: &[&str] = &[
+    "windows", "linux", "macos", "osx", "unix", "bsd",
+    "freebsd", "openbsd", "netbsd", "dragonfly",
+    "android", "ios", "solaris", "illumos",
+];
+
+fn expand_os_family_dep(name: &str, d: &DetailedDep, all_stubs: &[SystemLibStub]) -> Vec<ForeignBuilt> {
+    if !eval_supports(name) {
+        return vec![];
+    }
+    d.features.iter().map(|feat| {
+        let link_flag = if let Some(stub) = find_stub(feat, all_stubs) {
+            format!("-l{}", stub.link_name)
+        } else {
+            format!("-l{feat}")
+        };
+        ForeignBuilt {
+            name: feat.clone(),
+            libs: vec![],
+            include_dirs: vec![],
+            raw_link_flags: vec![link_flag],
+        }
+    }).collect()
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -46,13 +78,24 @@ pub fn build_foreign_deps(
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>), FreightError> {
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
+    let mut pc_cache = PkgConfigCache::load(project_dir);
+
+    let all_stubs = load_system_lib_stubs();
 
     for (name, dep) in &manifest.dependencies {
+        // OS-family pseudo-dep: `windows = { features = ["ws2_32", "kernel32"] }`
+        if OS_FAMILIES.contains(&name.as_str()) {
+            if let Dependency::Detailed(d) = dep {
+                results.extend(expand_os_family_dep(name, d, &all_stubs));
+            }
+            continue;
+        }
+
         if let Some(version) = package_dep_version(dep) {
             let query    = package_query(name, version);
             let repo     = dep_repo(dep);
             let optional = package_dep_optional(dep);
-            match resolve_version_dep(name, &query, version, repo, optional, project_dir, progress)? {
+            match resolve_version_dep(name, &query, version, repo, optional, project_dir, progress, &mut pc_cache)? {
                 Some((built, maybe_pc)) => {
                     if let Some(pc) = maybe_pc { pkg_results.push(pc); }
                     results.push(built);
@@ -133,6 +176,7 @@ pub fn build_foreign_deps(
         });
     }
 
+    pc_cache.save(project_dir);
     Ok((results, pkg_results))
 }
 
@@ -187,6 +231,7 @@ fn resolve_version_dep(
     optional: bool,
     project_dir: &Path,
     progress: &Progress,
+    pc_cache: &mut PkgConfigCache,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
     // Suppress unused warning; version may be used by future resolvers.
     let _ = version;
@@ -209,13 +254,12 @@ fn resolve_version_dep(
             // Named registry dep (`repo = "myregistry"` or `@registry/name` shorthand):
             // fetched by `freight fetch`; resolve at build time the same as a plain
             // version dep — pkg-config first, then system-lib stubs.
-            resolve_version_dep(name, query, version, None, optional, project_dir, progress)
+            resolve_version_dep(name, query, version, None, optional, project_dir, progress, pc_cache)
         }
         None => {
-            // Default chain: pkg-config → system-lib stubs → .deps/ cache (freight fetch).
+            // Default chain: pkg-config (cached) → system-lib stubs → .deps/ cache.
             progress(BuildEvent::ResolvingDep { name: name.to_string(), via: query.to_string() });
-            if let Ok(pc) = pkg_config_query(query) {
-                let ver = pkg_config_version(query);
+            if let Ok((pc, ver)) = pc_cache.query(query) {
                 return Ok(Some((
                     ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs: pc.include_dirs.clone(), raw_link_flags: pc.link_flags },
                     Some(ResolvedPkgConfig { name: name.to_string(), found: true, version: ver, include_dirs: pc.include_dirs }),
@@ -240,8 +284,7 @@ fn resolve_version_dep(
                 // Try pkg-config if the dep ships a .pc file.
                 let pc_dir = dep_dir.join("lib").join("pkgconfig");
                 if pc_dir.is_dir() {
-                    if let Ok(pc) = pkg_config_query_with_path(query, &[pc_dir]) {
-                        let ver = pkg_config_version(query);
+                    if let Ok((pc, ver)) = pc_cache.query_with_path(query, &[pc_dir]) {
                         return Ok(Some((
                             ForeignBuilt { name: name.to_string(), libs: vec![], include_dirs: pc.include_dirs.clone(), raw_link_flags: pc.link_flags },
                             Some(ResolvedPkgConfig { name: name.to_string(), found: true, version: ver, include_dirs: pc.include_dirs }),

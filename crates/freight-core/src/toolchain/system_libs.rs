@@ -1,16 +1,9 @@
-//! Loader for built-in system-library stubs (`toolchains/system-libs/*.toml`).
+//! Built-in system-library stubs.
 //!
-//! Each stub is a minimal `freight.toml`-compatible manifest that describes a
-//! well-known OS library (pthread, ws2_32, …). Freight uses these as the final
-//! step in `resolve_version_dep` when pkg-config fails.
-
-use std::path::Path;
-
-use serde::Deserialize;
+//! Each stub describes a well-known OS library (pthread, ws2_32, …). Freight
+//! uses these as the final step in `resolve_version_dep` when pkg-config fails.
 
 use crate::supports::eval_supports;
-
-use super::detect::templates_dir;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -20,49 +13,175 @@ pub struct SystemLibStub {
     pub name: String,
     /// Linker flag: `-l<link_name>`.
     pub link_name: String,
-    /// Header filenames that users should `#include` (display / TUI only).
+    /// Header filenames (display / TUI only).
     pub headers: Vec<String>,
 }
 
-// ── Loader ────────────────────────────────────────────────────────────────────
+// ── Hardcoded stubs ───────────────────────────────────────────────────────────
 
-/// Load all system-lib stubs from `toolchains/system-libs/` that match the
-/// current host platform (via their `supports` expression).
-pub fn load_system_lib_stubs() -> Vec<SystemLibStub> {
-    let Some(toolchains) = templates_dir() else { return vec![] };
-    load_from(&toolchains.join("system-libs"))
+struct RawStub {
+    name:     &'static str,
+    link:     &'static str,
+    supports: &'static str,
+    hdrs:     &'static [&'static str],
 }
 
-pub fn load_from(dir: &Path) -> Vec<SystemLibStub> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return vec![] };
-    let mut stubs = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            continue;
-        }
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        let Ok(raw) = toml_edit::de::from_str::<RawStub>(&src) else { continue };
-        // Skip stubs whose platform expression doesn't match the current host.
-        if let Some(expr) = &raw.package.supports {
-            if !eval_supports(expr) {
-                continue;
-            }
-        }
-        let link_name = raw.lib.as_ref()
-            .and_then(|l| l.link.clone())
-            .unwrap_or_else(|| raw.package.name.clone());
-        let headers = raw.lib.as_ref()
-            .map(|l| l.hdrs.clone())
-            .unwrap_or_default();
-        stubs.push(SystemLibStub {
-            name: raw.package.name,
-            link_name,
-            headers,
-        });
-    }
-    stubs.sort_by(|a, b| a.name.cmp(&b.name));
-    stubs
+const STUBS: &[RawStub] = &[
+    // ── Cross-platform ────────────────────────────────────────────────────────
+    RawStub {
+        name: "m", link: "m",
+        supports: "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos | android",
+        hdrs: &["math.h", "complex.h", "tgmath.h", "fenv.h"],
+    },
+
+    // ── Unix / POSIX ──────────────────────────────────────────────────────────
+    RawStub {
+        name: "pthread", link: "pthread",
+        supports: "unix",
+        hdrs: &["pthread.h", "semaphore.h", "sched.h"],
+    },
+    RawStub {
+        name: "dl", link: "dl",
+        supports: "linux | android | freebsd | netbsd | openbsd | dragonfly | solaris | illumos",
+        hdrs: &["dlfcn.h"],
+    },
+    RawStub {
+        name: "rt", link: "rt",
+        supports: "linux | android | solaris | illumos",
+        hdrs: &["time.h", "mqueue.h", "aio.h"],
+    },
+    RawStub {
+        name: "resolv", link: "resolv",
+        supports: "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos",
+        hdrs: &["resolv.h", "arpa/nameser.h"],
+    },
+    RawStub {
+        name: "execinfo", link: "execinfo",
+        supports: "freebsd | openbsd | netbsd | dragonfly",
+        hdrs: &["execinfo.h"],
+    },
+
+    // ── Windows ───────────────────────────────────────────────────────────────
+    RawStub {
+        name: "kernel32", link: "kernel32",
+        supports: "windows",
+        hdrs: &["windows.h"],
+    },
+    RawStub {
+        name: "user32", link: "user32",
+        supports: "windows",
+        hdrs: &["windows.h", "winuser.h"],
+    },
+    RawStub {
+        name: "gdi32", link: "gdi32",
+        supports: "windows",
+        hdrs: &["windows.h", "wingdi.h"],
+    },
+    RawStub {
+        name: "shell32", link: "shell32",
+        supports: "windows",
+        hdrs: &["shlobj.h", "shellapi.h"],
+    },
+    RawStub {
+        name: "ole32", link: "ole32",
+        supports: "windows",
+        hdrs: &["objbase.h", "combaseapi.h"],
+    },
+    RawStub {
+        name: "oleaut32", link: "oleaut32",
+        supports: "windows",
+        hdrs: &["oaidl.h", "oleauto.h"],
+    },
+    RawStub {
+        name: "advapi32", link: "advapi32",
+        supports: "windows",
+        hdrs: &["windows.h", "wincrypt.h", "aclapi.h"],
+    },
+    RawStub {
+        name: "ws2_32", link: "ws2_32",
+        supports: "windows",
+        hdrs: &["winsock2.h", "ws2tcpip.h", "mswsock.h"],
+    },
+    RawStub {
+        name: "iphlpapi", link: "iphlpapi",
+        supports: "windows",
+        hdrs: &["iphlpapi.h", "iptypes.h"],
+    },
+    RawStub {
+        name: "ntdll", link: "ntdll",
+        supports: "windows",
+        hdrs: &["winternl.h"],
+    },
+    RawStub {
+        name: "dbghelp", link: "dbghelp",
+        supports: "windows",
+        hdrs: &["dbghelp.h"],
+    },
+    RawStub {
+        name: "psapi", link: "psapi",
+        supports: "windows",
+        hdrs: &["psapi.h"],
+    },
+    RawStub {
+        name: "winmm", link: "winmm",
+        supports: "windows",
+        hdrs: &["mmsystem.h", "timeapi.h"],
+    },
+    RawStub {
+        name: "setupapi", link: "setupapi",
+        supports: "windows",
+        hdrs: &["setupapi.h", "devguid.h"],
+    },
+    RawStub {
+        name: "comctl32", link: "comctl32",
+        supports: "windows",
+        hdrs: &["commctrl.h"],
+    },
+    RawStub {
+        name: "comdlg32", link: "comdlg32",
+        supports: "windows",
+        hdrs: &["commdlg.h"],
+    },
+    RawStub {
+        name: "bcrypt", link: "bcrypt",
+        supports: "windows",
+        hdrs: &["bcrypt.h"],
+    },
+    RawStub {
+        name: "uuid", link: "uuid",
+        supports: "windows",
+        hdrs: &["guiddef.h", "basetyps.h"],
+    },
+    // ── Direct3D / DXGI ───────────────────────────────────────────────────────
+    RawStub {
+        name: "d3d11", link: "d3d11",
+        supports: "windows",
+        hdrs: &["d3d11.h", "d3dcommon.h"],
+    },
+    RawStub {
+        name: "d3d12", link: "d3d12",
+        supports: "windows",
+        hdrs: &["d3d12.h", "d3d12sdklayers.h"],
+    },
+    RawStub {
+        name: "dxgi", link: "dxgi",
+        supports: "windows",
+        hdrs: &["dxgi.h", "dxgi1_2.h", "dxgi1_6.h"],
+    },
+];
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Return all built-in system-lib stubs that match the current host platform.
+pub fn load_system_lib_stubs() -> Vec<SystemLibStub> {
+    STUBS.iter()
+        .filter(|s| eval_supports(s.supports))
+        .map(|s| SystemLibStub {
+            name:      s.name.to_string(),
+            link_name: s.link.to_string(),
+            headers:   s.hdrs.iter().map(|h| h.to_string()).collect(),
+        })
+        .collect()
 }
 
 /// Find the stub for `name` from a pre-loaded slice (case-insensitive).
@@ -70,63 +189,36 @@ pub fn find_stub<'a>(name: &str, stubs: &'a [SystemLibStub]) -> Option<&'a Syste
     stubs.iter().find(|s| s.name.eq_ignore_ascii_case(name))
 }
 
-// ── Deserialisation helpers (minimal subset of freight.toml) ─────────────────
-
-#[derive(Deserialize)]
-struct RawStub {
-    package: RawPackage,
-    #[serde(rename = "lib")]
-    lib: Option<RawLib>,
-}
-
-#[derive(Deserialize)]
-struct RawPackage {
-    name: String,
-    #[serde(default)]
-    supports: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RawLib {
-    #[serde(default)]
-    link: Option<String>,
-    #[serde(default)]
-    hdrs: Vec<String>,
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
-    fn write_stub(dir: &Path, filename: &str, content: &str) {
-        let mut f = std::fs::File::create(dir.join(filename)).unwrap();
-        f.write_all(content.as_bytes()).unwrap();
+    #[test]
+    fn pthread_loaded_on_unix() {
+        if cfg!(unix) {
+            let stubs = load_system_lib_stubs();
+            let s = find_stub("pthread", &stubs).expect("pthread should be present on unix");
+            assert_eq!(s.link_name, "pthread");
+            assert!(s.headers.contains(&"pthread.h".to_string()));
+        }
     }
 
     #[test]
-    fn loads_matching_stub() {
-        let dir = tempfile::tempdir().unwrap();
-        let os = std::env::consts::OS;
-        write_stub(dir.path(), "testlib.toml", &format!(
-            "[package]\nname = \"testlib\"\nsupports = \"{os}\"\n\n[lib]\nlink = \"testlink\"\nhdrs = [\"test.h\"]\n"
-        ));
-        let stubs = load_from(dir.path());
-        assert_eq!(stubs.len(), 1);
-        assert_eq!(stubs[0].link_name, "testlink");
-        assert_eq!(stubs[0].headers, vec!["test.h"]);
+    fn windows_stubs_not_loaded_on_unix() {
+        if cfg!(unix) {
+            let stubs = load_system_lib_stubs();
+            assert!(find_stub("ws2_32", &stubs).is_none());
+            assert!(find_stub("kernel32", &stubs).is_none());
+        }
     }
 
     #[test]
-    fn skips_non_matching_stub() {
-        let dir = tempfile::tempdir().unwrap();
-        // Use a definitely-wrong platform expression.
-        write_stub(dir.path(), "nowhere.toml",
-            "[package]\nname = \"nowhere\"\nsupports = \"!linux & !windows & !macos & !freebsd\"\n"
-        );
-        let stubs = load_from(dir.path());
-        assert!(stubs.is_empty());
+    fn find_stub_case_insensitive() {
+        let stubs = load_system_lib_stubs();
+        if let Some(s) = stubs.first() {
+            assert!(find_stub(&s.name.to_uppercase(), &stubs).is_some());
+        }
     }
 }
