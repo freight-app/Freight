@@ -70,10 +70,11 @@ pub fn nvcc() -> CompilerTemplate {
     d.flags_opt.insert("3".into(), "-O3".into());
     d.flags_opt.insert("s".into(), "-O2".into());
     d.flags_opt.insert("z".into(), "-O2".into());
-    d.flags_warnings.insert("none".into(), "".into());
+    // Host-code warnings go through -Xcompiler; device-code warnings use --Werror.
+    d.flags_warnings.insert("none".into(), "--diag-suppress all".into());
     d.flags_warnings.insert("default".into(), "-Xcompiler -Wall".into());
-    d.flags_warnings.insert("all".into(), "-Xcompiler -Wall,-Wextra".into());
-    d.flags_warnings.insert("error".into(), "-Xcompiler -Wall,-Wextra,-Werror".into());
+    d.flags_warnings.insert("all".into(), "-Xcompiler -Wall,-Wextra --Werror cross-execution-space-call,reorder".into());
+    d.flags_warnings.insert("error".into(), "-Xcompiler -Wall,-Wextra,-Werror --Werror all-warnings".into());
     d.standards.insert("c++17".into(), "-std=c++17".into());
     d.standards.insert("c++20".into(), "-std=c++20".into());
     d.structure.insert("include_dir".into(), "-I{path}".into());
