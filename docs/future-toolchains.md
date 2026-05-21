@@ -4,71 +4,59 @@ This document lists compilers, assemblers, debuggers, and language extensions wo
 templates for. Each entry includes what makes it interesting, what a template would require,
 and any known technical challenges.
 
-Freight's Rhai-driven template system means most of these require zero Rust changes — just a new
-`.rhai` file in `toolchains/`. Items marked **[needs Rust]** require changes to `freight-core`.
-See `docs/compiler-templates.md` for the full script API including `family` and `requires_toolchain`.
+All templates are now hardcoded Rust in `crates/freight-core/src/toolchain/builtin/`.
+Items marked **[needs Rust]** require changes beyond a new template file.
 
 ---
 
 ## C / C++ Compilers
 
-### `zig cc` / `zig c++`
-- **What**: Zig ships a bundled Clang that acts as a drop-in `cc`/`c++` replacement. Excellent
-  for cross-compilation — a single `zig` binary can target any supported triple.
-- **Template**: straightforward Clang-compatible flags; `target = "-target {triple}"` for cross.
-- **Challenge**: `binary = "zig"` but invocations need `zig cc` / `zig c++` subcommands.
-  `compile_binary` would be `"zig cc"` for C and `"zig c++"` for C++. The linker invocation also
-  needs `zig c++` rather than `zig` alone. May require a multi-word `compile_binary` in the template.
+### `zig cc` / `zig c++` ✓ template exists
+- `builtin/zig/mod.rs` — `zig-c` and `zig-c++` templates.
+- Uses the new `subcommand` field on `CompilerTemplate`: binary=`zig`, subcommand=`cc`/`c++`.
+  The subcommand is inserted as the first argument after the binary in both compile and link steps.
+- Cross-compilation via `--target={triple}`.
 
 ### TCC (Tiny C Compiler) ✓ template exists
-- Already present in `toolchains/tcc.rhai`. No `-MMD` dep file support — uses mtime-only dirty
-  checking. C-only; no C++ support.
+- `builtin/misc/mod.rs` — C-only; no `-MMD` dep file support (mtime-only dirty checking).
 
-### MSVC (`cl.exe` / `clang-cl`) ✓ template exists
-- Already present in `toolchains/msvc.rhai`. Full flag translation (`/O2`, `/W4`, `/Zi`, `/MT`,
-  `/MD`, …), `.obj`/`.lib` extensions, `/showIncludes` dep tracking, `link.exe` linker.
-  `clang-cl` uses the same template.
+### MSVC (`cl.exe`) ✓ template exists
+- `builtin/windows/mod.rs` — full `/O`/`/W`/`/Zi` flag translation, `/showIncludes` dep tracking, `link.exe` linker.
+
+### `clang-cl` ✓ template exists
+- `builtin/windows/mod.rs` — Clang with MSVC-compatible flags; `llvm` family, `lld-link`/`llvm-lib` toolset.
 
 ### Intel oneAPI C++ (`icpx`) ✓ template exists
-- Already present in `toolchains/intel/icpx.rhai`. May need updates as oneAPI releases progress.
+- `builtin/intel/mod.rs` — includes SYCL support (`-fsycl` always-flag, `.sycl` extension).
 
 ### PGI / NVHPC (`nvc++`) ✓ template exists
-- Already present in `toolchains/nvidia/nvhpc.rhai`. Family `"nvidia"`, handles C, C++, Fortran, CUDA.
+- `builtin/nvidia/mod.rs` — `nvc`, `nvc++`, `nvfortran`; family `"nvidia"`.
 
-### Circle (`circle`)
-- **What**: An experimental C++20+ compiler with metaprogramming extensions (compile-time
-  Python-like introspection). Drop-in Clang-compatible.
-- **Template**: Clang-compatible flags; reuse most of `clang.rhai` with `binary = "circle"`.
+### Circle (`circle`) ✓ template exists
+- `builtin/misc/mod.rs` — Clang-compatible flags, version parsed from `circle --version` build number.
 
-### Emscripten (`emcc`)
-- **What**: LLVM/Clang-based C/C++ to WebAssembly/JavaScript compiler. Required for building
-  WASM modules from C/C++ source.
-- **Template**: mostly GCC-compatible flags; output is `.wasm` + `.js`. `target` is implicit
-  (always wasm32).
-- **Challenge [needs Rust]**: output file extensions differ (`.wasm`); linking produces multiple
-  files. The linker stage would need an extension hook.
+### Emscripten (`emcc`) ✓ template exists
+- `builtin/emscripten/mod.rs` — `emcc` (C) and `em++` (C++) templates. GCC-compatible flags;
+  `emar` as archiver. Output extension limitations (`.wasm` vs `.js`) not yet handled — freight
+  treats output like a native binary.
 
-### wasi-sdk
-- **What**: WASI (WebAssembly System Interface) cross-compilation toolchain. Produces
-  standalone WASM binaries that run in WASI runtimes (Wasmtime, WasmEdge).
-- **Template**: Clang-based with `--target=wasm32-wasi`. Very similar to Emscripten template.
+### wasi-sdk ✓ template exists
+- `builtin/emscripten/mod.rs` — `wasi-clang` template with `always_flags = ["--target=wasm32-wasi"]`.
+  Alias responds to `wasi-clang++`.
 
 ---
 
 ## Fortran Compilers
 
 ### Intel Fortran (`ifx`) ✓ template exists
-- Already present in `toolchains/intel/ifx.rhai`. `ifort` (legacy) is also covered.
-  Often paired with MKL; `-standard-semantics` for strict conformance.
+- `builtin/intel/mod.rs` — `-warn all/errors`, `-ipo` LTO, `-cpp -MMD -MF` dep tracking.
 
 ### Flang (LLVM Fortran) ✓ template exists
-- Already present in `toolchains/llvm/flang.rhai`. Standard support still maturing upstream;
-  the template tracks `flang` / `flang-new` and uses GFortran-compatible flags where possible.
+- `builtin/llvm/mod.rs` — tracks `flang` / `flang-new` binary names via version regex.
 
-### NAG Fortran (`nagfor`)
-- **What**: Numerical Algorithms Group compiler, the strictest Fortran standard checker available.
-  Popular in academic environments for validation.
-- **Template**: Different flag scheme (`-O2`, `-g`, `-I` are the same but standard flags differ).
+### NAG Fortran (`nagfor`) ✓ template exists
+- `builtin/misc/mod.rs` — `-gnatw`-style warning flags, `-halt=error` for warnings-as-errors,
+  standard flags `-f95`/`-f2003`/`-f2008`/`-f2018`.
 
 ---
 
@@ -84,10 +72,9 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 - **Challenge**: FASM's output format is specified inside the source file (`format ELF64`), not
   via a command-line flag — the `[arch_flags]` approach doesn't map cleanly.
 
-### MASM (`ml` / `ml64`) — Windows only
-- **What**: Microsoft Macro Assembler. Required for Windows kernel and driver development.
-- **Template**: `/c`, `/Fo {path}`, `/I{path}` flag conventions.
-- **Challenge**: Windows-only; depends on MSVC platform support.
+### MASM (`ml` / `ml64`) ✓ template exists
+- `builtin/windows/mod.rs` — `masm` template, Windows-only, `.asm`/`.masm` extensions,
+  `/I{path}` includes, `/Fo {path}` output, guest compiler (`requires_toolchain = ["cpp"]`).
 
 ### GNU ARM Assembler (via `arm-none-eabi-gcc`)
 - **What**: GAS targeting bare-metal ARM Cortex-M / Cortex-A. Used in embedded development.
@@ -109,9 +96,9 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 - Already present in `toolchains/nvidia/nvcc.rhai`. `family = ""`, `requires_toolchain = ["cpp"]` — guest extension.
   May benefit from `arch_flags` for `-gencode` per SM architecture.
 
-### Intel DPC++ (`dpcpp` / `icpx -fsycl`)
-- **What**: Intel's SYCL compiler for heterogeneous CPU/GPU/FPGA programming. Part of oneAPI.
-- **Template**: Extend `icpx.rhai` with a `sycl` language key and `-fsycl` flag.
+### Intel DPC++ (`dpcpp` / `icpx -fsycl`) ✓ template exists
+- Covered by `builtin/intel/mod.rs` `icpx` template — `always_flags = ["-fsycl"]`,
+  `.sycl` extension, `sycl` language key with compatible `["c++", "c", "fortran"]`.
 
 ### OpenCL kernel compiler (`clang -x cl`) ✓ template exists
 - Already present in `toolchains/opencl.rhai`. `requires_toolchain = ["cpp"]` — guest extension.
@@ -142,20 +129,21 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 - **ABI compatibility**: D's ABI is compatible with C (`extern(C)`) but not C++ by default.
   The `linking["d"]` ABI key handles this.
 
-### Ada (`gnat`)
-- **Planned**: a GNAT template is still needed, ideally with `gprbuild`-style multi-unit handling rather than a simple one-file compiler invocation.
+### Ada (`gnat`) ✓ template exists
+- `builtin/misc/mod.rs` — `.adb`/`.ads` extensions, `-gnatwa`/`-gnatwe` warning flags,
+  `-gnat83` through `-gnat2022` standards. Single-file compilation only; `gprbuild`-style
+  multi-unit projects are not yet handled.
 
 ### Objective-C / Objective-C++ (via Clang) ✓ template support exists
 - **What**: Clang compiles `.m` and `.mm` files natively.
 - **Template**: `clang.rhai` claims `.m` as `objc`; `clang++.rhai` claims `.mm` as `objcpp`.
   Platform frameworks such as `-framework Foundation` can be supplied through manifest linker flags or a build script.
 
-### Swift (`swiftc`)
-- **What**: Apple's Swift compiler. Produces object files linkable with C.
-- **Template**: Different flag scheme (`-O` for release, `-g` for debug, `-I{path}` for includes).
-  Module output is `.swiftmodule`.
-- **Challenge [needs Rust]**: Swift uses its own module system incompatible with the C++20 module
-  pipeline. Inter-module dependencies would need a dedicated scanner.
+### Swift (`swiftc`) ✓ template exists
+- `builtin/misc/mod.rs` — `-Onone`/`-O`/`-Osize` opt levels, `-suppress-warnings`/`-warnings-as-errors`,
+  `-lto=llvm-full`. Produces object files linkable with C.
+- **Limitation**: Swift module inter-dependencies (`.swiftmodule`) are not tracked; only
+  single-translation-unit or pre-built module use cases work today.
 
 ### Zig (`zig build-lib` / `zig build-exe`)
 - **What**: Zig's native compiler. Output is linkable with C. Zig has its own build system but
@@ -172,18 +160,14 @@ See `docs/compiler-templates.md` for the full script API including `family` and 
 
 ## Debuggers
 
-### `rr` (Mozilla Record & Replay)
-- **What**: Records a program's execution and allows deterministic replay. Invaluable for
-  hard-to-reproduce bugs. Linux only, x86-64.
-- **Template addition**: `toolchains/debuggers/rr.rhai` with `binary = "rr"`,
-  `separator = ""` (rr takes the program as first arg), no DAP support yet.
-- **CLI**: `freight debug --debugger rr` would record; a separate `freight debug --replay` command
-  could re-attach.
+### `rr` (Mozilla Record & Replay) ✓ template exists
+- `debugger.rs` — `separator = "replay"` (rr's subcommand), `chaos` and `no_syscall_buffer`
+  settings. No DAP support. `freight debug --debugger rr` selects it; a dedicated
+  `--record`/`--replay` CLI split is still pending.
 
-### WinDbg / CDB (Windows)
-- **What**: Microsoft's debuggers for Windows user and kernel debugging.
-- **Template addition**: `toolchains/debuggers/cdb.rhai` or `windbg.rhai`.
-- **Challenge**: No standard DAP support; WinDbg Preview has some DAP support in preview.
+### WinDbg / CDB (Windows) ✓ template exists
+- `debugger.rs` — `cdb` (console, `-nologo` default arg) and `windbg` templates.
+  Neither has DAP support; WinDbg Preview DAP can be added when it stabilises.
 
 ### OpenOCD + GDB (Embedded)
 - **What**: Open On-Chip Debugger connects to embedded targets (JTAG/SWD). Works with GDB as
