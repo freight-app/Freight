@@ -8,7 +8,7 @@ use freight_core::dep_cmds::{
     DetailedDep, GitDepAction, PackageDepAction, RegistryDepAction, RegenLockOutcome,
 };
 use freight_core::manifest::types::{Dependency, Manifest};
-use freight_core::manifest::{find_manifest_dir, load_manifest};
+use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 use freight_core::registry::freight_registry::FreightRegistry;
 use freight_core::registry::repos::{repo_by_name, registries_in_order};
 use freight_core::registry::{host_triple, DEFAULT_REGISTRY_URL};
@@ -23,6 +23,31 @@ use owo_colors::OwoColorize;
 // ── freight tree ───────────────────────────────────────────────────────────────
 
 pub fn cmd_tree() {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => { print_error(&format!("cannot read cwd: {e}")); return; }
+    };
+
+    if let Some(ws) = load_workspace_manifest(&cwd) {
+        for (i, member) in ws.members.iter().enumerate() {
+            if i > 0 { println!(); }
+            let member_dir = cwd.join(member);
+            match load_manifest(&member_dir) {
+                Ok(manifest) => {
+                    println!(
+                        "{} {} {}",
+                        manifest.package.name.bold().bright_blue(),
+                        manifest.package.version.bright_black(),
+                        format!("({})", member).bright_black()
+                    );
+                    print_dep_tree(&manifest, &member_dir, "");
+                }
+                Err(e) => print_error(&format!("{member}: {e}")),
+            }
+        }
+        return;
+    }
+
     let (project_dir, manifest) = match locate_project() {
         Ok(p) => p,
         Err(e) => { print_error(&e.to_string()); return; }
@@ -128,11 +153,35 @@ fn print_system_dep(branch: &str, name: &str, _dep: &DetailedDep) {
 pub fn cmd_includes(show_system: bool, format: &str) {
     let fmt = GraphFormat::parse(format);
 
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => { print_error(&format!("cannot read cwd: {e}")); return; }
+    };
+
+    if let Some(ws) = load_workspace_manifest(&cwd) {
+        for (i, member) in ws.members.iter().enumerate() {
+            if i > 0 { println!(); }
+            let member_dir = cwd.join(member);
+            match load_manifest(&member_dir) {
+                Ok(manifest) => {
+                    use owo_colors::OwoColorize;
+                    println!("  {} {}", "member".bright_black(), member.bold());
+                    print_includes_for(&member_dir, &manifest, show_system, fmt);
+                }
+                Err(e) => print_error(&format!("{member}: {e}")),
+            }
+        }
+        return;
+    }
+
     let (project_dir, manifest) = match locate_project() {
         Ok(p) => p,
         Err(e) => { print_error(&e.to_string()); return; }
     };
+    print_includes_for(&project_dir, &manifest, show_system, fmt);
+}
 
+fn print_includes_for(project_dir: &std::path::Path, manifest: &Manifest, show_system: bool, fmt: GraphFormat) {
     let mut include_dirs: Vec<PathBuf> = Vec::new();
     let inc = project_dir.join("inc");
     let src = project_dir.join("src");

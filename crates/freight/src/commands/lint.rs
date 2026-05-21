@@ -1,6 +1,9 @@
 //! `freight lint` — run the project linter over all source files.
 
-use freight_core::manifest::{find_manifest_dir, load_manifest};
+use std::path::Path;
+
+use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
+use freight_core::manifest::types::Manifest;
 use freight_core::toolchain::{
     DetectedTool, collect_sources, detect_tools, load_linter_templates, select_linter,
 };
@@ -23,26 +26,9 @@ fn print_settings_ref(tool: &DetectedTool) {
     }
 }
 
-pub fn cmd_lint(fix: bool) {
-    let cwd = match std::env::current_dir() {
-        Ok(d) => d,
-        Err(e) => { print_error(&format!("cannot read cwd: {e}")); return; }
-    };
-    let project_dir = match find_manifest_dir(&cwd) {
-        Some(d) => d,
-        None => { print_error("no freight.toml found"); return; }
-    };
-    let manifest = match load_manifest(&project_dir) {
-        Ok(m) => m,
-        Err(e) => { print_error(&e.to_string()); return; }
-    };
-
+/// Lint a single project. Returns `true` on success.
+fn lint_project(project_dir: &Path, manifest: &Manifest, fix: bool) -> bool {
     let templates = load_linter_templates();
-    if templates.is_empty() {
-        print_warning("no linter templates found in toolchains/");
-        return;
-    }
-
     let detected = detect_tools(&templates);
     let linter = match select_linter(&detected, &manifest.linter) {
         Some(l) => l,
@@ -52,7 +38,7 @@ pub fn cmd_lint(fix: bool) {
             } else {
                 print_error("no linter found on PATH — install clang-tidy or another linter");
             }
-            return;
+            return false;
         }
     };
 
@@ -63,8 +49,8 @@ pub fn cmd_lint(fix: bool) {
     let src_dir = project_dir.join("src");
     let files = collect_sources(&src_dir, &linter.template.extensions);
     if files.is_empty() {
-        print_warning("no source files found to lint");
-        return;
+        print_warning(&format!("no source files found to lint in {}", project_dir.display()));
+        return true;
     }
 
     let mode = if fix { "fix" } else { "check" };
@@ -78,25 +64,58 @@ pub fn cmd_lint(fix: bool) {
         linter.version,
     );
 
-    let status = linter
-        .command(&manifest.linter.settings, mode, &files)
-        .status();
+    match linter.command(&manifest.linter.settings, mode, &files).status() {
+        Ok(s) if s.success() => true,
+        Ok(_) => false,
+        Err(e) => { print_error(&format!("failed to run linter: {e}")); false }
+    }
+}
 
-    match status {
-        Ok(s) if s.success() => {
-            if fix {
-                print_success("fixes applied");
-            } else {
-                print_success("no issues found");
+pub fn cmd_lint(fix: bool) {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => { print_error(&format!("cannot read cwd: {e}")); return; }
+    };
+
+    if let Some(ws) = load_workspace_manifest(&cwd) {
+        let mut all_ok = true;
+        for member in &ws.members {
+            let member_dir = cwd.join(member);
+            let manifest = match load_manifest(&member_dir) {
+                Ok(m) => m,
+                Err(e) => { print_error(&format!("{member}: {e}")); all_ok = false; continue; }
+            };
+            use owo_colors::OwoColorize;
+            println!("  {} {}", "member".bright_black(), member.bold());
+            if !lint_project(&member_dir, &manifest, fix) {
+                all_ok = false;
             }
         }
-        Ok(_) => {
-            if fix {
-                print_error("linter exited with errors while applying fixes");
-            } else {
-                print_error("linting found issues — run `freight lint --fix` to apply safe fixes");
-            }
+        if all_ok {
+            if fix { print_success("fixes applied"); } else { print_success("no issues found"); }
+        } else if fix {
+            print_error("linter exited with errors while applying fixes");
+        } else {
+            print_error("linting found issues — run `freight lint --fix` to apply safe fixes");
         }
-        Err(e) => print_error(&format!("failed to run linter: {e}")),
+        return;
+    }
+
+    let project_dir = match find_manifest_dir(&cwd) {
+        Some(d) => d,
+        None => { print_error("no freight.toml found"); return; }
+    };
+    let manifest = match load_manifest(&project_dir) {
+        Ok(m) => m,
+        Err(e) => { print_error(&e.to_string()); return; }
+    };
+
+    let ok = lint_project(&project_dir, &manifest, fix);
+    if ok {
+        if fix { print_success("fixes applied"); } else { print_success("no issues found"); }
+    } else if fix {
+        print_error("linter exited with errors while applying fixes");
+    } else {
+        print_error("linting found issues — run `freight lint --fix` to apply safe fixes");
     }
 }

@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 
 use freight_core::install::{install_project, package_project, InstalledKind, InstallOptions};
-use freight_core::manifest::find_manifest_dir;
+use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
 pub fn cmd_install(prefix: Option<&str>, destdir: Option<&str>, release: bool, no_build: bool, target: Option<&str>) {
-    let cwd         = std::env::current_dir().expect("cannot read cwd");
-    let project_dir = find_manifest_dir(&cwd).unwrap_or(cwd);
+    let cwd = std::env::current_dir().expect("cannot read cwd");
 
     let opts = InstallOptions {
         prefix:   prefix.map(PathBuf::from).unwrap_or_else(|| {
@@ -24,6 +23,35 @@ pub fn cmd_install(prefix: Option<&str>, destdir: Option<&str>, release: bool, n
         .map(|d| format!("{} (destdir: {})", opts.prefix.display(), d.display()))
         .unwrap_or_else(|| opts.prefix.display().to_string());
 
+    if let Some(ws) = load_workspace_manifest(&cwd) {
+        let mut total = 0usize;
+        let mut any_error = false;
+        for member in &ws.members {
+            let member_dir = cwd.join(member);
+            use owo_colors::OwoColorize;
+            print_status("Installing", &format!("{} → {}", member.bold(), display_prefix));
+            match install_project(&member_dir, &opts) {
+                Ok(result) => {
+                    for item in &result.items {
+                        if !matches!(item.kind, InstalledKind::Symlink) {
+                            print_status(
+                                &format!("  {} ({})", "Install".to_string(), item.kind.label()),
+                                &item.dst.display().to_string(),
+                            );
+                        }
+                    }
+                    total += result.items.len();
+                }
+                Err(e) => { print_error(&format!("{member}: {e}")); any_error = true; }
+            }
+        }
+        if !any_error {
+            print_success(&format!("{total} file{} installed", if total == 1 { "" } else { "s" }));
+        }
+        return;
+    }
+
+    let project_dir = find_manifest_dir(&cwd).unwrap_or(cwd);
     print_status("Installing", &display_prefix);
 
     match install_project(&project_dir, &opts) {
