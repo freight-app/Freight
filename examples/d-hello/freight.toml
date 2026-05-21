@@ -1,0 +1,21 @@
+[package]
+name        = "d-hello"
+version     = "0.1.0"
+description = "Pure D binary — ranges, UFCS, structs, and C interop"
+
+[language.d]
+
+[[bin]]
+name = "d-hello"
+src  = "src/main.d"
+
+[compiler]
+warnings = "all"
+
+[profile.dev]
+opt-level = 1
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true

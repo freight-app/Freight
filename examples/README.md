@@ -62,6 +62,7 @@ those prerequisites when they matter.
 | [`multi-lang/`](multi-lang/) | C implementation linked into a C++ executable | `freight run`, `freight test` |
 | [`tri-lang/`](tri-lang/) | Fortran kernel, C timer, C++ orchestration | `freight run` |
 | [`asm-hello/`](asm-hello/) | C entry point calling NASM assembly | `freight run` |
+| [`d-hello/`](d-hello/) | Pure D binary: ranges, UFCS, operator overloading, C interop via `extern (C)` | `freight run` |
 | [`cpp-modules/`](cpp-modules/) | C++20 named module discovery and dependency ordering | `freight run` |
 | [`multi-bin/`](multi-bin/) | Multiple `[[bin]]` targets in one manifest | `freight run --bin encode`, `freight run --bin decode` |
 | [`features-demo/`](features-demo/) | `[features]`, defaults, transitive feature activation | `freight run --features tls`, `freight run --no-default-features` |
@@ -146,10 +147,14 @@ freight run
 
 cd ../asm-hello
 freight run
+
+cd ../d-hello
+freight run
 ```
 
 Freight classifies sources by extension and routes them to the matching compiler
-template. These examples show C + C++, Fortran + C + C++, and C + assembly.
+template. These examples show C + C++, Fortran + C + C++, C + assembly, and D
+with C interop via `extern (C)` / libc `qsort`.
 
 ### 6. Exercise dependency resolution
 
