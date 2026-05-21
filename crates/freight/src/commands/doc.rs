@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 use freight_core::toolchain::freight_home;
-use freight_doc::extract::{extract_dir, DocItem, DocSet};
-use freight_doc::render;
+use docify::extract::{extract_dir, DocItem, DocSet};
+use docify::render;
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
@@ -1152,7 +1152,7 @@ fn load_all_items(
         out_vlines.push(start_vline);
         out_line_map.insert(item_idx, start_vline);
 
-        let md = freight_doc::render_tui::items_to_markdown(std::slice::from_ref(item));
+        let md = docify::render_tui::items_to_markdown(std::slice::from_ref(item));
         let (item_blocks, item_links) = markdown_to_blocks(&md, 80, ctx);
         for (vl, target) in item_links {
             out_links.push((start_vline + vl, target));
@@ -1206,7 +1206,7 @@ fn extract_dep_items(dep: &DocDependency) -> Vec<DocItem> {
     let Some(dep_dir) = &dep.path else { return Vec::new(); };
     let src_dir  = dep_dir.join("src");
     let scan_dir = if src_dir.is_dir() { src_dir } else { dep_dir.clone() };
-    freight_doc::extract::extract_dir(&scan_dir).items
+    docify::extract::extract_dir(&scan_dir).items
 }
 
 /// Build API sub-tree nodes for one dependency's items.
@@ -1386,7 +1386,7 @@ fn word_wrap(text: &str, width: usize) -> Vec<String> {
 }
 
 fn math_inline(text: &str) -> String {
-    freight_doc::util::latex::render_math_block(text)
+    docify::util::latex::render_math_block(text)
 }
 
 // ── Markdown → TUI blocks ─────────────────────────────────────────────────────
@@ -1404,7 +1404,7 @@ fn emit_display_math(builder: &mut DocBlockBuilder, latex: &str, _ctx: &RenderCt
             }
         }
     }
-    let rendered = freight_doc::util::latex::render_math_block(latex);
+    let rendered = docify::util::latex::render_math_block(latex);
     builder.push(Line::from(vec![Span::raw("    ".to_owned()), Span::raw(rendered)]));
     builder.push(Line::raw(""));
 }
@@ -1998,7 +1998,7 @@ fn markdown_to_blocks(
 #[cfg(test)]
 mod tree_tests {
     use super::*;
-    use freight_doc::extract::{DocItem, DocKind, DocLanguage, DocMeta};
+    use docify::extract::{DocItem, DocKind, DocLanguage, DocMeta};
     use std::path::PathBuf;
 
     fn make_item(name: &str, kind: DocKind) -> DocItem {

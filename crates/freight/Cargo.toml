@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 freight-core     = { path = "../freight-core" }
-freight-doc      = { path = "../freight-doc" }
+docify           = { git = "https://github.com/TiniTinyTerminator/docify.git" }
 clap        = { workspace = true }
 clap_mangen = { workspace = true }
 owo-colors  = { workspace = true }

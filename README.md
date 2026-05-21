@@ -339,13 +339,6 @@ Recognised doc comment styles:
 
 Doc comment bodies are processed as Markdown. LaTeX math — `$...$`, `$$...$$`, `\(...\)`, `\[...\]` — is preserved verbatim in the generated Markdown and structured outputs.
 
-The `freight-doc` standalone binary works without a `freight.toml`:
-
-```sh
-freight-doc src/ --format all --out docs/api
-freight-doc src/ --dry-run       # list extracted items without writing
-```
-
 ## Documentation
 
 | Document | Contents |
