@@ -1113,16 +1113,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "freight"
+name = "freight-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "clap_mangen",
  "crossterm",
+ "curl",
  "docify",
  "flate2",
- "freight-core",
+ "git2",
+ "glob",
  "image",
  "mathjax-svg-rs",
  "notify",
@@ -1131,28 +1133,14 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "rayon",
- "resvg",
- "semver 1.0.28",
- "serde_json",
- "tar",
-]
-
-[[package]]
-name = "freight-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "curl",
- "git2",
- "glob",
- "owo-colors",
- "rayon",
  "regex",
+ "resvg",
  "rmp-serde",
  "semver 1.0.28",
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "thiserror 2.0.18",
  "toml_edit 0.22.27",
@@ -2187,9 +2175,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.114"
+version = "0.9.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13ce1245cd07fcc4cfdb438f7507b0c7e4f3849a69fd84d52374c66d83741bb6"
+checksum = "f28a22dc7140cda5f096e5e7724a6962ca81a7f8bfd2979f9b18c11af56318c4"
 dependencies = [
  "cc",
  "libc",
