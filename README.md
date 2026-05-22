@@ -207,6 +207,7 @@ injected by calling the global `add_flag(s)` function. See
 | Assembly (NASM) | `nasm` | nasm | `.asm` `.nasm` |
 | Assembly (YASM) | `yasm` | yasm | `.asm` `.yasm` |
 | D | `d` | dmd / ldc2 / gdc | `.d` |
+| Ada | `ada` | gnatmake / gnat | `.adb` `.ads` |
 | Objective-C | `objc` | clang | `.m` |
 | Objective-C++ | `objcpp` | clang++ | `.mm` |
 
