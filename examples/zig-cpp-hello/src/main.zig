@@ -1,19 +1,19 @@
 const std = @import("std");
 const print = std.debug.print;
 
-// ── C++ Vec3 bindings (pointer interface from vec3.cpp) ───────────────────────
-// Pointer params avoid SysV x86-64 MEMORY-class struct ABI ambiguity for
-// 24-byte structs across Zig ↔ C++ boundaries.
+// Zig 0.16 ABI note: Vec3 is 24 bytes (>16 → MEMORY class in SysV x86-64).
+// Vec3-only params can be passed by value (all MEMORY, no xmm aliasing).
+// When a Vec3 arg appears alongside a scalar (double), use *const Vec3 instead.
 
 const Vec3 = extern struct { x: f64, y: f64, z: f64 };
 
-extern fn vec3_add(a: *const Vec3, b: *const Vec3, out: *Vec3) void;
-extern fn vec3_sub(a: *const Vec3, b: *const Vec3, out: *Vec3) void;
-extern fn vec3_scale(v: *const Vec3, s: f64, out: *Vec3) void;
-extern fn vec3_dot(a: *const Vec3, b: *const Vec3) f64;
-extern fn vec3_cross(a: *const Vec3, b: *const Vec3, out: *Vec3) void;
+extern fn vec3_add(a: Vec3, b: Vec3) Vec3;
+extern fn vec3_sub(a: Vec3, b: Vec3) Vec3;
+extern fn vec3_scale(v: *const Vec3, s: f64) Vec3;
+extern fn vec3_dot(a: Vec3, b: Vec3) f64;
+extern fn vec3_cross(a: Vec3, b: Vec3) Vec3;
 extern fn vec3_length(v: *const Vec3) f64;
-extern fn vec3_normalize(v: *const Vec3, out: *Vec3) void;
+extern fn vec3_normalize(v: *const Vec3) Vec3;
 
 // ── Thin Zig wrapper with value-type methods ──────────────────────────────────
 
@@ -22,33 +22,13 @@ const V = struct {
 
     fn init(x: f64, y: f64, z: f64) V { return .{ .v = .{ .x = x, .y = y, .z = z } }; }
 
-    fn add(a: V, b: V) V {
-        var out: Vec3 = undefined;
-        vec3_add(&a.v, &b.v, &out);
-        return .{ .v = out };
-    }
-    fn sub(a: V, b: V) V {
-        var out: Vec3 = undefined;
-        vec3_sub(&a.v, &b.v, &out);
-        return .{ .v = out };
-    }
-    fn scale(a: V, s: f64) V {
-        var out: Vec3 = undefined;
-        vec3_scale(&a.v, s, &out);
-        return .{ .v = out };
-    }
-    fn cross(a: V, b: V) V {
-        var out: Vec3 = undefined;
-        vec3_cross(&a.v, &b.v, &out);
-        return .{ .v = out };
-    }
-    fn norm(a: V) V {
-        var out: Vec3 = undefined;
-        vec3_normalize(&a.v, &out);
-        return .{ .v = out };
-    }
-    fn dot(a: V, b: V) f64 { return vec3_dot(&a.v, &b.v); }
-    fn len(a: V)        f64 { return vec3_length(&a.v); }
+    fn add(a: V, b: V)     V   { return .{ .v = vec3_add(a.v, b.v) }; }
+    fn sub(a: V, b: V)     V   { return .{ .v = vec3_sub(a.v, b.v) }; }
+    fn scale(a: V, s: f64) V   { return .{ .v = vec3_scale(&a.v, s) }; }
+    fn cross(a: V, b: V)   V   { return .{ .v = vec3_cross(a.v, b.v) }; }
+    fn norm(a: V)          V   { return .{ .v = vec3_normalize(&a.v) }; }
+    fn dot(a: V, b: V)     f64 { return vec3_dot(a.v, b.v); }
+    fn len(a: V)           f64 { return vec3_length(&a.v); }
 };
 
 pub fn main() void {
