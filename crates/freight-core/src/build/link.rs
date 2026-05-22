@@ -147,7 +147,7 @@ pub fn select_linker<'a>(
     }
 
     const PRIORITY: &[&str] = &[
-        "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "opencl", "ispc",
+        "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "zig", "opencl", "ispc",
     ];
 
     // Non-auto backend: prefer a linker from the requested family first.
@@ -186,7 +186,9 @@ fn link_executable(
     extra_link_flags: &[String],
 ) -> Result<(), FreightError> {
     let mut cmd = Command::new(&linker.path);
-    if let Some(sub) = linker.template.subcommand.as_deref() { cmd.arg(sub); }
+    let link_sub = linker.template.link_subcommand.as_deref()
+        .or(linker.template.subcommand.as_deref());
+    if let Some(sub) = link_sub { cmd.arg(sub); }
     cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
     cmd.args(objects);
     cmd.args(dep_libs);
@@ -239,7 +241,9 @@ fn link_shared(
     let target_os = link_target_os(manifest);
     let shared_flag = if target_os == "macos" { "-dynamiclib" } else { "-shared" };
     let mut cmd = Command::new(&linker.path);
-    if let Some(sub) = linker.template.subcommand.as_deref() { cmd.arg(sub); }
+    let link_sub = linker.template.link_subcommand.as_deref()
+        .or(linker.template.subcommand.as_deref());
+    if let Some(sub) = link_sub { cmd.arg(sub); }
     cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
     cmd.arg(shared_flag);
     cmd.args(objects);

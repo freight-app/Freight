@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn load_templates_finds_all() {
         let templates = load_all_templates();
-        assert_eq!(templates.len(), 34,
+        assert_eq!(templates.len(), 35,
             "expected g++, gcc, gfortran, gdc, gas, \
              clang++, clang, flang, ldc2, \
              nvcc, nvc++, nvc, nvfortran, \
@@ -622,7 +622,7 @@ mod tests {
              hipcc, \
              nasm, yasm, \
              msvc, clang-cl, masm, \
-             zig-c, zig-c++, \
+             zig-c, zig-c++, zig, \
              emcc, em++, wasi-clang, \
              tcc, dmd, opencl, circle, nagfor, gnat, swiftc");
     }

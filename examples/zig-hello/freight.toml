@@ -1,0 +1,17 @@
+[package]
+name        = "zig-hello"
+version     = "0.1.0"
+description = "Native Zig binary — comptime, generics, tagged unions, and error handling"
+
+[language.zig]
+
+[[bin]]
+name = "zig-hello"
+src  = "src/main.zig"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+strip     = true

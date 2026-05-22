@@ -55,6 +55,40 @@ pub fn zig_cxx() -> CompilerTemplate {
     }.build(&[], &[])
 }
 
+pub fn zig_native() -> CompilerTemplate {
+    TemplateDef {
+        name: "zig",
+        family: "zig",
+        // compile: zig build-obj; link: zig build-exe
+        subcommand:      Some("build-obj"),
+        link_subcommand: Some("build-exe"),
+        extensions: &[".zig"],
+        // Zig doesn't use -g; debug info is included in Debug mode by default.
+        // LTO is implicit in ReleaseFast/ReleaseSmall.
+        debug: "",
+        lto:   "",
+        // Zig's optimization levels are named modes, not numeric.
+        opt_flags: &[
+            ("0","-O Debug"),("1","-O ReleaseSafe"),("2","-O ReleaseSafe"),
+            ("3","-O ReleaseFast"),("s","-O ReleaseSmall"),("z","-O ReleaseSmall"),
+        ],
+        // No C-style warning flags in Zig; warnings are compiler-controlled.
+        warning_flags: &[("none",""),("default",""),("all",""),("error","")],
+        structure: &[
+            ("output","-femit-bin={path}"),
+            // compile_only is empty because the subcommand (build-obj) IS the compile-only mode.
+            ("compile_only",""),
+            ("dep_file_mode","none"),
+        ],
+        linking: &[LinkDef {
+            // zig build-exe can link its own object files; no separate runtime needed.
+            lang: "zig", abi: "zig", compatible: &["c"],
+            extensions: &[".zig"], linker: "", compile_binary: None,
+        }],
+        ..BASE_ZIG
+    }.build(&[], &[])
+}
+
 pub fn templates() -> Vec<CompilerTemplate> {
-    vec![zig_c(), zig_cxx()]
+    vec![zig_c(), zig_cxx(), zig_native()]
 }

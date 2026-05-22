@@ -156,6 +156,7 @@ pub(super) struct TemplateDef {
     pub version_regex:   &'static str,
     pub alias:           Option<&'static str>,
     pub subcommand:      Option<&'static str>,
+    pub link_subcommand: Option<&'static str>,
     pub extensions:      &'static [&'static str],
     pub opt_flags:       &'static [(&'static str, &'static str)],
     pub debug:           &'static str,
@@ -202,7 +203,7 @@ pub(super) struct LinkDef {
 pub(super) const EMPTY: TemplateDef = TemplateDef {
     name: "", binary: "", family: "",
     version_arg: "--version", version_regex: "",
-    alias: None, subcommand: None,
+    alias: None, subcommand: None, link_subcommand: None,
     extensions: &[], opt_flags: &[],
     debug: "", warning_flags: &[], lto: "", lto_link: "", sanitize: "",
     sanitizer_options: &[], cpu_ext: "", stdlib_flags: &[],
@@ -321,6 +322,7 @@ impl TemplateDef {
             },
             always_flags:       vs(self.always_flags),
             subcommand:         self.subcommand.map(s),
+            link_subcommand:    self.link_subcommand.map(s),
             supported_archs:    vs(self.supported_archs),
             supported_os:       vs(self.supported_os),
             required_tools:     vs(self.required_tools),
@@ -524,6 +526,10 @@ pub struct CompilerTemplate {
     /// E.g. `zig` uses `subcommand = "cc"` / `"c++"` to dispatch to its embedded compiler.
     #[serde(default)]
     pub subcommand: Option<String>,
+    /// Sub-command to use during the link step instead of `subcommand`.
+    /// Zig uses `"build-obj"` for compile and `"build-exe"` for link.
+    #[serde(default)]
+    pub link_subcommand: Option<String>,
     /// Linking metadata keyed by the language key (e.g. `"cpp"`, `"c"`, `"cuda"`).
     /// A template may handle multiple language keys (e.g. gcc handles `"cpp"` and `"c"`).
     pub linking: HashMap<String, LinkingInfo>,
@@ -647,6 +653,7 @@ impl CompilerTemplate {
             },
             always_flags: raw.extra.always,
             subcommand: None,
+            link_subcommand: None,
             supported_archs: vec![],
             supported_os: vec![],
             required_tools: vec![],
