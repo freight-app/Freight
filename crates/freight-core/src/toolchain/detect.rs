@@ -563,7 +563,6 @@ fn query_version(template: &CompilerTemplate, path: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn required_tools_can_live_next_to_compiler() {
         let dir = tempfile::tempdir().expect("temp dir");

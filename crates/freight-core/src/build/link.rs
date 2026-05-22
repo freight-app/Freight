@@ -133,14 +133,14 @@ pub fn select_linker<'a>(
     manifest: &Manifest,
     backend: &Backend,
     detected: &'a [DetectedCompiler],
-    templates: &[CompilerTemplate],
+    _templates: &[CompilerTemplate],
 ) -> Option<&'a DetectedCompiler> {
     for (lang_key, _) in &manifest.language {
-        for template in templates {
-            if let Some(l) = template.linking.get(lang_key.as_str()) {
+        for d in detected {
+            if let Some(l) = d.template.linking.get(lang_key.as_str()) {
                 if l.linker.is_empty() { continue; }
                 let found = detected.iter()
-                    .find(|d| d.template.linking.values().any(|li| li.abi == l.linker));
+                    .find(|dd| dd.template.linking.values().any(|li| li.abi == l.linker));
                 if found.is_some() { return found; }
             }
         }
@@ -153,6 +153,15 @@ pub fn select_linker<'a>(
     // Non-auto backend: prefer a linker from the requested family first.
     if !backend.is_auto() {
         let family = backend.name();
+        // First: prefer a linker whose own lang_key matches the backend name (e.g. zig_native
+        // for backend="zig"). This ensures zig build-exe is preferred over zig c++ for
+        // zig+cpp projects, because zig build-exe handles startup correctly in both cases.
+        if let Some(own) = detected.iter()
+            .find(|d| d.template.linking.contains_key(family)
+                && (d.template.family == family || d.template.name == family))
+        {
+            return Some(own);
+        }
         for &lang in PRIORITY {
             if manifest.language.contains_key(lang) {
                 let found = detected.iter()

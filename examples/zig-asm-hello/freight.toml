@@ -1,0 +1,21 @@
+[package]
+name        = "zig-asm-hello"
+version     = "0.1.0"
+description = "Zig binary calling hand-written x86-64 assembly — POPCNT, BSWAP, GCD"
+
+[language.zig]
+[language.asm]
+
+[[bin]]
+name = "zig-asm-hello"
+src  = "src/main.zig"
+
+[compiler]
+backend = "zig"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+strip     = true

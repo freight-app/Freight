@@ -31,7 +31,7 @@ pub fn zig_c() -> CompilerTemplate {
         extensions: &[".c",".s",".S"],
         standards: &[("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23")],
         defaults: &[("std","c11")],
-        toolset: &[("ar","zig ar"),("strip","strip"),("cc","zig cc"),("cxx","zig c++"),("ld","zig c++")],
+        toolset: &[("ar","zig ar"),("strip","strip")],
         linking: &[LinkDef {
             lang: "c", abi: "c", compatible: &["asm"],
             extensions: &[".c",".s",".S"], linker: "", compile_binary: None,
@@ -48,7 +48,7 @@ pub fn zig_cxx() -> CompilerTemplate {
         extensions: &[".cpp",".cc",".cxx",".c++"],
         standards: &[("c++17","-std=c++17"),("c++20","-std=c++20"),("c++23","-std=c++23")],
         defaults: &[("std","c++17")],
-        toolset: &[("ar","zig ar"),("strip","strip"),("cc","zig cc"),("cxx","zig c++"),("ld","zig c++")],
+        toolset: &[("ar","zig ar"),("strip","strip")],
         linking: &[LinkDef {
             lang: "cpp", abi: "c++", compatible: &["c"],
             extensions: &[".cpp",".cc",".cxx",".c++"], linker: "", compile_binary: None,
