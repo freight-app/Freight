@@ -1,0 +1,27 @@
+[package]
+name        = "static-lib"
+version     = "0.1.0"
+description = "Static library (libstatic-lib.a) consumed by a C++ binary in the same manifest"
+
+[language.cpp]
+std = "c++17"
+
+[language.c]
+std = "c11"
+
+[lib]
+type = "static"
+srcs = ["src/stats.c"]
+hdrs = ["inc/stats.h"]
+
+[[bin]]
+name = "demo"
+src  = "src/main.cpp"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true

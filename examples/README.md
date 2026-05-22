@@ -60,10 +60,16 @@ those prerequisites when they matter.
 | [`c-simple/`](c-simple/) | Small pure-C binary, profiles, compiler warnings | `freight run`, `freight build --release` |
 | [`hello-cpp/`](hello-cpp/) | Multi-file C++ project with `inc/`, tests, and benchmarks | `freight test`, `freight bench bench_stats` |
 | [`multi-lang/`](multi-lang/) | C implementation linked into a C++ executable | `freight run`, `freight test` |
+| [`static-lib/`](static-lib/) | C static library (`libstatic-lib.a`) consumed by a C++ binary in the same manifest | `freight run` |
 | [`tri-lang/`](tri-lang/) | Fortran kernel, C timer, C++ orchestration | `freight run` |
+| [`fortran-hello/`](fortran-hello/) | Pure Fortran binary: derived types, array intrinsics, and elemental functions | `freight run` |
 | [`asm-hello/`](asm-hello/) | C entry point calling NASM assembly | `freight run` |
 | [`d-hello/`](d-hello/) | Pure D binary: ranges, UFCS, operator overloading, C interop via `extern (C)` | `freight run` |
 | [`cpp-modules/`](cpp-modules/) | C++20 named module discovery and dependency ordering | `freight run` |
+| [`zig-hello/`](zig-hello/) | Native Zig binary: comptime generics, tagged unions, error handling | `freight run` |
+| [`zig-cc-hello/`](zig-cc-hello/) | C compiled via `zig cc` — drop-in clang with Zig's cross-compilation support | `freight run` |
+| [`zig-cpp-hello/`](zig-cpp-hello/) | Zig binary calling a C++ library; documents the Zig 0.16 SysV ABI rules for >16-byte structs | `freight run` |
+| [`zig-asm-hello/`](zig-asm-hello/) | Zig binary calling hand-written x86-64 NASM assembly (POPCNT, BSWAP, GCD, BSR) | `freight run` |
 | [`multi-bin/`](multi-bin/) | Multiple `[[bin]]` targets in one manifest | `freight run --bin encode`, `freight run --bin decode` |
 | [`features-demo/`](features-demo/) | `[features]`, defaults, transitive feature activation | `freight run --features tls`, `freight run --no-default-features` |
 | [`platform-deps/`](platform-deps/) | `[os.*]` / `[arch.*]` defines and platform dependencies | `freight run`, `freight graph` |
