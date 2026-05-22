@@ -115,6 +115,15 @@ pub fn compile_sources(
                 }
             }
 
+            // Whole-program builders (e.g. gnatmake for Ada) handle compile+bind+link
+            // in a single invocation during the link step. Skip the separate compile
+            // step and record the source path itself so link_executable receives it.
+            if compiler.template.linking.get(src.lang_key.as_str())
+                .map_or(false, |l| l.whole_program)
+            {
+                return Ok((src_abs, true));
+            }
+
             let compile_bin = resolve_compile_binary(compiler, &src.lang_key);
 
             fs::create_dir_all(obj.parent().expect("obj path always has a parent"))?;
@@ -351,11 +360,23 @@ fn linker_family<'a>(manifest: &Manifest, backend: &Backend, detected: &'a [Dete
         "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c",
         "fortran", "ada", "d", "opencl", "ispc",
     ];
+    // A language is "active" if explicitly declared or inferred from source file extensions.
+    let has_lang = |lang: &str| -> bool {
+        if manifest.language.contains_key(lang) { return true; }
+        let exts: Vec<&str> = detected.iter()
+            .filter_map(|d| d.template.linking.get(lang))
+            .flat_map(|l| l.extensions.iter().map(String::as_str))
+            .collect();
+        if exts.is_empty() { return false; }
+        let has = |src: &str| exts.iter().any(|e| src.ends_with(*e));
+        manifest.bins.iter().any(|b| has(&b.src))
+            || manifest.lib.as_ref().map_or(false, |l| l.srcs.iter().any(|s| has(s)))
+    };
     // Non-auto backend: prefer linkers from the requested family (same as select_linker).
     if !backend.is_auto() {
         let family = backend.name();
         for &lang in PRIORITY {
-            if manifest.language.contains_key(lang) {
+            if has_lang(lang) {
                 if let Some(d) = detected.iter()
                     .find(|d| d.template.linking.contains_key(lang) && d.template.family == family)
                 {
@@ -365,7 +386,7 @@ fn linker_family<'a>(manifest: &Manifest, backend: &Backend, detected: &'a [Dete
         }
     }
     for &lang in PRIORITY {
-        if manifest.language.contains_key(lang) {
+        if has_lang(lang) {
             if let Some(d) = detected.iter().find(|d| d.template.linking.contains_key(lang)) {
                 if !d.template.family.is_empty() {
                     return Some(&d.template.family);

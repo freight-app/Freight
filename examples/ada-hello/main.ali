@@ -1,0 +1,116 @@
+V "GNAT Lib v16"
+M P W=b
+A -O0
+A -g
+A -gnatwa
+A -gnat2012
+P ZX
+
+RN
+RV NO_EXCEPTION_HANDLERS
+RV NO_EXCEPTIONS
+RV NO_FLOATING_POINT
+RV NO_IO
+RV NO_DYNAMIC_SIZED_OBJECTS
+
+U main%b		main.adb		af5ad016 NE OO SU
+W ada%s			ada.ads			ada.ali
+W ada.float_text_io%s	a-flteio.ads		a-flteio.ali
+W ada.numerics%s	a-numeri.ads		a-numeri.ali
+W ada.numerics.elementary_functions%s  a-nuelfu.ads  a-nuelfu.ali
+Z ada.strings.text_buffers%s  a-sttebu.adb	a-sttebu.ali
+W ada.text_io%s		a-textio.adb		a-textio.ali
+Z system.concat_3%s	s-conca3.adb		s-conca3.ali
+Z system.img_int%s	s-imgint.ads		s-imgint.ali
+
+D ada.ads		20260501130736 76789da1 ada%s
+D a-except.ads		20260501130736 8699d7ff ada.exceptions%s
+D a-flteio.ads		20260501130736 e18a47a0 ada.float_text_io%s
+D a-ioexce.ads		20260501130736 40018c65 ada.io_exceptions%s
+D a-numeri.ads		20260501130736 84bea7a3 ada.numerics%s
+D a-nuelfu.ads		20260501130736 03e83d1c ada.numerics.elementary_functions%s
+D a-ngelfu.ads		20260501130736 324808ac ada.numerics.generic_elementary_functions%s
+D a-stream.ads		20260501130736 cb01a8f8 ada.streams%s
+D a-string.ads		20260501130736 90ac6797 ada.strings%s
+D a-sttebu.ads		20260501130736 f1ad67a2 ada.strings.text_buffers%s
+D a-stuten.ads		20260501130736 c6ced0ae ada.strings.utf_encoding%s
+D a-tags.ads		20260501130736 2dbf449c ada.tags%s
+D a-textio.ads		20260501130736 34ef47de ada.text_io%s
+D a-tiflio.ads		20260501130736 48a0360d ada.text_io.float_io%s
+D a-unccon.ads		20260501130736 0e9b276f ada.unchecked_conversion%s
+D interfac.ads		20260501130736 9111f9c1 interfaces%s
+D i-cstrea.ads		20260501130736 ffd01b9d interfaces.c_streams%s
+D main.adb		20260522120518 79d7ed74 main%b
+D system.ads		20260501130736 e2b7c99d system%s
+D s-conca3.ads		20260501130736 8a7a19a2 system.concat_3%s
+D s-crtl.ads		20260501130736 823b6536 system.crtl%s
+D s-exctab.ads		20260501130736 91bef6ef system.exception_table%s
+D s-ficobl.ads		20260501130736 dc5161d4 system.file_control_block%s
+D s-imagei.ads		20260501130736 11a376a2 system.image_i%s
+D s-imgint.ads		20260501130736 86836590 system.img_int%s
+D s-parame.ads		20260501130736 a1aeab5c system.parameters%s
+D s-putima.ads		20260501130736 1b989439 system.put_images%s
+D s-secsta.ads		20260501130736 578279f5 system.secondary_stack%s
+D s-soflin.ads		20260501130736 5d88fdea system.soft_links%s
+D s-stache.ads		20260501130736 0b81c1fe system.stack_checking%s
+D s-stalib.ads		20260501130736 1c9580f6 system.standard_library%s
+D s-stoele.ads		20260501130736 ccded4e8 system.storage_elements%s
+D s-traent.ads		20260501130736 c81cbf8c system.traceback_entries%s
+D s-unstyp.ads		20260501130736 fa2a7f59 system.unsigned_types%s
+D s-wchcon.ads		20260501130736 d9032363 system.wch_con%s
+G a e
+G c Z b b [main standard 5 11 none]
+X 1 ada.ads
+18K9*Ada 22e8 18|1r6 2r6 3r6 7r8 8r8 9r8
+X 3 a-flteio.ads
+20K13*Float_Text_IO[14|46] 18|2w10 8r12
+X 5 a-numeri.ads
+20K13*Numerics 36e17 18|3r10 9r12
+X 6 a-nuelfu.ads
+18K22*Elementary_Functions[7|39] 18|3w19 9r21
+X 7 a-ngelfu.ads
+53V13*Sqrt{float} 18|35s14[6|18]
+X 13 a-textio.ads
+58K13*Text_IO 785e16 18|1w10 7r12
+89I12*Field{integer}
+284U14*New_Line 18|74s4 77s4 85s4 94s4
+515U14*Put 18|67s4 69s4 72s4 75s4 83s4
+565U14*Put_Line 18|71s4 90s4 101s7 105s10
+X 14 a-tiflio.ads
+88U14*Put 18|68s4[3|20] 70s4[3|20] 73s4[3|20] 76s4[3|20] 84s4[3|20] 92s7[3|20]
+90i7 Fore{13|89I12} 18|68r14[3|20] 70r14[3|20] 73r21[3|20] 76r22[3|20] 84r38[3|20]
+. 92r15[3|20]
+91i7 Aft{13|89I12} 18|68r25[3|20] 70r25[3|20] 73r32[3|20] 76r33[3|20] 84r49[3|20]
+. 92r26[3|20]
+92i7 Exp{13|89I12} 18|68r35[3|20] 70r35[3|20] 73r42[3|20] 76r43[3|20] 84r59[3|20]
+. 92r36[3|20]
+X 18 main.adb
+5U11*Main 5b11 108l5 108t9
+12R9 Vec2 14e14 23r25 23r38 28r25 33r26 55r14
+13f7 X{float} 25m15 25r22 25r28 30r16 30r22 35r22 64m10 65m10 68r11
+13f10 Y{float} 25m31 25r38 25r44 30r28 30r34 35r33 64m20 65m20 70r11
+17A9 Float_Arr(float)<integer> 39r32 56r23 58r14
+20I12 Score_Range{integer} 98r15
+23V13 Add{12R9} 23b13 23>18 23>21 26l8 26t11 66s9
+23r18 A{12R9} 25r20 25r36
+23r21 B{12R9} 25r26 25r42
+28V13 Dot{float} 28b13 28>18 28>21 31l8 31t11 73s9
+28r18 A{12R9} 30r14 30r26
+28r21 B{12R9} 30r20 30r32
+33V13 Vec_Len{float} 33b13 33>22 36l8 36t15 76s9
+33r22 V{12R9} 35r20 35r31
+39U14 Isort 39b14 39=21 52l8 52t13 89s4
+39a21 A{17A9} 43r16 43r31 44r17 46r21 46r44 47m13 47r26 50m10
+40f7 Key{float} 44m10 46r38 50r23
+41i7 J{integer} 45m10 46r16 46r47 47r16 47r29 48m13 48r26 50r13
+43i11 I{integer} 44r20 45r17
+55r4 A{12R9} 64m4 66r14 73r14 76r18
+55r7 B{12R9} 65m4 66r17 73r17
+55r10 C{12R9} 66m4 68r9 70r9
+56a4 Data{17A9} 80r13 84r24 88r14
+58a4 Sorted{17A9} 88m4 89m11 89r11 91r13
+59f4 Total{float} 81m7 81r16 84r9
+80f8 V=80:13{float} 81r24
+91f8 V=91:13{float} 92r12
+98i7 Score{20I12} 100m7 101r44 102m7
+

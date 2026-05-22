@@ -24,6 +24,7 @@ pub fn tcc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "c", abi: "c", compatible: &[],
             extensions: &[".c"], linker: "", compile_binary: Some("tcc"),
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])
@@ -47,6 +48,7 @@ pub fn dmd() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "d", abi: "d", compatible: &["c"],
             extensions: &[".d"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[("dip1000", dip1000_h as OptionHandlerFn, Some("false"))], &[])
@@ -79,6 +81,7 @@ pub fn opencl() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "opencl", abi: "opencl", compatible: &["c++","c"],
             extensions: &[".cl"], linker: "c++", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])
@@ -111,6 +114,7 @@ pub fn circle() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "cpp", abi: "c++", compatible: &["c"],
             extensions: &[".cpp",".cc",".cxx",".c++"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])
@@ -142,6 +146,7 @@ pub fn nagfor() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "fortran", abi: "fortran", compatible: &["c"],
             extensions: F_EXTS, linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])
@@ -176,6 +181,8 @@ pub fn gnat() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "ada", abi: "ada", compatible: &["c"],
             extensions: &[".adb",".ads"], linker: "", compile_binary: Some("gnatmake"),
+            // gnatmake handles compile + bind + link in one invocation.
+            whole_program: true,
         }],
         ..EMPTY
     }.build(&[], &[])
@@ -207,6 +214,7 @@ pub fn swiftc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "swift", abi: "swift", compatible: &["c"],
             extensions: &[".swift"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])

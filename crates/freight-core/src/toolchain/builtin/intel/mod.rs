@@ -40,6 +40,7 @@ pub fn icpx() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "sycl", abi: "sycl", compatible: &["c++","c","fortran"],
             extensions: &[".sycl",".cpp",".cc",".cxx"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_INTEL
     }.build(&[], &[])
@@ -66,6 +67,7 @@ pub fn ifx() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "fortran", abi: "fortran", compatible: &["c"],
             extensions: F_EXTS, linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_INTEL
     }.build(&[], &[])
@@ -89,6 +91,7 @@ pub fn ispc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "ispc", abi: "ispc", compatible: &["c++","c"],
             extensions: &[".ispc"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])

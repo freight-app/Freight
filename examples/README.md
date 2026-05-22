@@ -70,6 +70,8 @@ those prerequisites when they matter.
 | [`zig-cc-hello/`](zig-cc-hello/) | C compiled via `zig cc` — drop-in clang with Zig's cross-compilation support | `freight run` |
 | [`zig-cpp-hello/`](zig-cpp-hello/) | Zig binary calling a C++ library; documents the Zig 0.16 SysV ABI rules for >16-byte structs | `freight run` |
 | [`zig-asm-hello/`](zig-asm-hello/) | Zig binary calling hand-written x86-64 NASM assembly (POPCNT, BSWAP, GCD, BSR) | `freight run` |
+| [`ada-hello/`](ada-hello/) | Pure Ada binary: `Vec2` record, insertion sort, subtype constraints, exception handling | `freight run` |
+| [`cuda-hello/`](cuda-hello/) | CUDA `vec_add` and `vec_scale` kernels — requires a CUDA-capable GPU to run | `freight run` |
 | [`multi-bin/`](multi-bin/) | Multiple `[[bin]]` targets in one manifest | `freight run --bin encode`, `freight run --bin decode` |
 | [`features-demo/`](features-demo/) | `[features]`, defaults, transitive feature activation | `freight run --features tls`, `freight run --no-default-features` |
 | [`platform-deps/`](platform-deps/) | `[os.*]` / `[arch.*]` defines and platform dependencies | `freight run`, `freight graph` |

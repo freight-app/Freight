@@ -29,8 +29,8 @@ pub fn msvc() -> CompilerTemplate {
         structure: MSVC_STRUCTURE,
         toolset: &[("cc","cl.exe"),("cxx","cl.exe"),("ld","link.exe"),("ar","lib.exe"),("strip","")],
         linking: &[
-            LinkDef { lang: "c",   abi: "c",   compatible: &[],      extensions: &[".c"],   linker: "", compile_binary: Some("cl.exe") },
-            LinkDef { lang: "cpp", abi: "c++", compatible: &["c"],   extensions: CPP_EXTS,  linker: "", compile_binary: None },
+            LinkDef { lang: "c",   abi: "c",   compatible: &[],      extensions: &[".c"],   linker: "", compile_binary: Some("cl.exe") , whole_program: false },
+            LinkDef { lang: "cpp", abi: "c++", compatible: &["c"],   extensions: CPP_EXTS,  linker: "", compile_binary: None , whole_program: false },
         ],
         ..EMPTY
     }.build(&[], &[])
@@ -60,8 +60,8 @@ pub fn clang_cl() -> CompilerTemplate {
         structure: MSVC_STRUCTURE,
         toolset: &[("ld","lld-link"),("ar","llvm-lib")],
         linking: &[
-            LinkDef { lang: "c",   abi: "c",   compatible: &[],    extensions: &[".c"],  linker: "", compile_binary: Some("clang-cl") },
-            LinkDef { lang: "cpp", abi: "c++", compatible: &["c"], extensions: CPP_EXTS, linker: "", compile_binary: None },
+            LinkDef { lang: "c",   abi: "c",   compatible: &[],    extensions: &[".c"],  linker: "", compile_binary: Some("clang-cl") , whole_program: false },
+            LinkDef { lang: "cpp", abi: "c++", compatible: &["c"], extensions: CPP_EXTS, linker: "", compile_binary: None , whole_program: false },
         ],
         ..EMPTY
     }.build(&[], &[])
@@ -86,6 +86,7 @@ pub fn masm() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "asm", abi: "c", compatible: &["c","cpp"],
             extensions: &[".asm",".masm"], linker: "c++", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])

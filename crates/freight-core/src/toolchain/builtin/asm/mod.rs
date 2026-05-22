@@ -18,6 +18,7 @@ const BASE_ASM: TemplateDef = TemplateDef {
     linking: &[LinkDef {
         lang: "asm", abi: "c", compatible: &["c","cpp"],
         extensions: &[".asm",".nasm"], linker: "", compile_binary: None,
+        whole_program:  false,
     }],
     ..EMPTY
 };

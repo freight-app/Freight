@@ -121,6 +121,25 @@ pub fn link_static_lib(objects: &[PathBuf], out: &Path, ar_bin: &str) -> Result<
     link_static(out, objects, ar_bin)
 }
 
+/// Return true if `lang_key` is active in this manifest: either explicitly declared via
+/// `[language.X]`, or implicitly present because at least one source file has an extension
+/// handled by that language key.
+fn has_lang(manifest: &Manifest, lang_key: &str, detected: &[DetectedCompiler]) -> bool {
+    if manifest.language.contains_key(lang_key) {
+        return true;
+    }
+    let exts: Vec<&str> = detected.iter()
+        .filter_map(|d| d.template.linking.get(lang_key))
+        .flat_map(|l| l.extensions.iter().map(String::as_str))
+        .collect();
+    if exts.is_empty() {
+        return false;
+    }
+    let has = |src: &str| exts.iter().any(|e| src.ends_with(*e));
+    manifest.bins.iter().any(|b| has(&b.src))
+        || manifest.lib.as_ref().map_or(false, |l| l.srcs.iter().any(|s| has(s)))
+}
+
 /// Pick the compiler binary that drives the final link step.
 ///
 /// Priority order:
@@ -163,7 +182,7 @@ pub fn select_linker<'a>(
             return Some(own);
         }
         for &lang in PRIORITY {
-            if manifest.language.contains_key(lang) {
+            if has_lang(manifest, lang, detected) {
                 let found = detected.iter()
                     .find(|d| d.template.linking.contains_key(lang)
                         && (d.template.family == family || d.template.name == family));
@@ -173,7 +192,7 @@ pub fn select_linker<'a>(
     }
 
     for &lang in PRIORITY {
-        if manifest.language.contains_key(lang) {
+        if has_lang(manifest, lang, detected) {
             let found = detected.iter()
                 .find(|d| d.template.linking.contains_key(lang));
             if found.is_some() { return found; }
@@ -194,17 +213,31 @@ fn link_executable(
     dep_libs: &[PathBuf],
     extra_link_flags: &[String],
 ) -> Result<(), FreightError> {
+    // Whole-program builders (e.g. gnatmake for Ada) receive source file paths instead
+    // of object files and handle compile + bind + link themselves.
+    let is_whole_program = linker.template.linking.values().any(|l| l.whole_program);
+
     let mut cmd = Command::new(&linker.path);
-    let link_sub = linker.template.link_subcommand.as_deref()
-        .or(linker.template.subcommand.as_deref());
-    if let Some(sub) = link_sub { cmd.arg(sub); }
-    cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
-    cmd.args(objects);
-    cmd.args(dep_libs);
-    for flag in collect_system_lib_flags(manifest, &linker.template) {
-        cmd.arg(flag);
+
+    if is_whole_program {
+        cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
+        cmd.args(objects);
+        // Direct intermediate files (ALI, bind sources) into the obj tree.
+        let obj_dir = out.parent().map(|p| p.join("objs")).unwrap_or_default();
+        let _ = std::fs::create_dir_all(&obj_dir);
+        cmd.arg(format!("-D{}/", obj_dir.display()));
+    } else {
+        let link_sub = linker.template.link_subcommand.as_deref()
+            .or(linker.template.subcommand.as_deref());
+        if let Some(sub) = link_sub { cmd.arg(sub); }
+        cmd.args(linker.template.assemble_link_flags(&link_settings(manifest, profile)));
+        cmd.args(objects);
+        cmd.args(dep_libs);
+        for flag in collect_system_lib_flags(manifest, &linker.template) {
+            cmd.arg(flag);
+        }
+        cmd.args(extra_link_flags);
     }
-    cmd.args(extra_link_flags);
     cmd.args(linker.template.output_bin_flag(out));
     run_cmd(cmd, out)
 }

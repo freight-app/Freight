@@ -28,6 +28,7 @@ pub fn hipcc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "hip", abi: "hip", compatible: &["c++","c","fortran"],
             extensions: &[".hip"], linker: "c++", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])

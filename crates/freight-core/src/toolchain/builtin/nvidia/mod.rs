@@ -64,6 +64,7 @@ pub fn nvcc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "cuda", abi: "cuda", compatible: &["c++","c","fortran"],
             extensions: &[".cu",".cuh"], linker: "cuda", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(
@@ -82,6 +83,7 @@ pub fn nvcpp() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "cpp", abi: "c++", compatible: &["c","fortran"],
             extensions: CPP_EXTS, linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_NVHPC
     }.build(&[], &[])
@@ -97,6 +99,7 @@ pub fn nvc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "c", abi: "c", compatible: &["fortran"],
             extensions: &[".c"], linker: "", compile_binary: Some("nvc"),
+            whole_program:  false,
         }],
         ..BASE_NVHPC
     }.build(&[], &[])
@@ -113,6 +116,7 @@ pub fn nvfortran() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "fortran", abi: "fortran", compatible: &["c"],
             extensions: F_EXTS, linker: "", compile_binary: Some("nvfortran"),
+            whole_program:  false,
         }],
         ..BASE_NVHPC
     }.build(&[], &[])

@@ -127,6 +127,8 @@ struct RawLinking {
     /// E.g. `gcc.toml` has `binary = "g++"` for linking, but C files must be compiled with `gcc`.
     #[serde(default)]
     compile_binary: Option<String>,
+    #[serde(default)]
+    whole_program: bool,
 }
 
 
@@ -197,6 +199,10 @@ pub(super) struct LinkDef {
     pub extensions:     &'static [&'static str],
     pub linker:         &'static str,
     pub compile_binary: Option<&'static str>,
+    /// When true the compiler handles compile + bind + link in a single invocation
+    /// (e.g. gnatmake for Ada). The separate compile step is skipped; instead, the
+    /// source file paths are passed directly to the linker binary in the link step.
+    pub whole_program:  bool,
 }
 
 /// Zero-value `TemplateDef` — spread with `..EMPTY` and override only what you need.
@@ -292,6 +298,7 @@ impl TemplateDef {
                 linker:         s(ld.linker),
                 extensions:     vs(ld.extensions),
                 compile_binary: ld.compile_binary.map(s),
+                whole_program:  ld.whole_program,
             })
         }).collect();
 
@@ -371,6 +378,9 @@ pub struct LinkingInfo {
     /// Overrides the template's top-level `binary` for the compile step only.
     /// E.g. gcc.toml uses `g++` as the linker binary but `gcc` to compile `.c` files.
     pub compile_binary: Option<String>,
+    /// When true the compiler handles compile + bind + link in a single invocation.
+    /// See `LinkDef::whole_program`.
+    pub whole_program: bool,
 }
 
 /// Settings drawn from `freight.toml` (or a profile) used to produce compiler flags.
@@ -599,6 +609,7 @@ impl CompilerTemplate {
                 linker: l.linker,
                 extensions: l.extensions,
                 compile_binary: l.compile_binary,
+                whole_program: l.whole_program,
             })
         }).collect();
 
@@ -1227,6 +1238,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "cpp", abi: "c++", compatible: &["c","fortran"],
                 extensions: &[".cpp",".cxx",".cc"], linker: "", compile_binary: None,
+                whole_program:  false,
             }],
             ..EMPTY
         }.build(&[], &[])
@@ -1253,6 +1265,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "c", abi: "c", compatible: &[],
                 extensions: &[".c"], linker: "", compile_binary: Some("gcc"),
+                whole_program:  false,
             }],
             ..EMPTY
         }.build(&[], &[])
@@ -1286,8 +1299,8 @@ mod tests {
             ],
             toolset: &[("ar","ar"),("strip","strip")],
             linking: &[
-                LinkDef { lang: "cpp", abi: "c++", compatible: &["c","fortran"], extensions: &[".cpp"], linker: "", compile_binary: None },
-                LinkDef { lang: "c",   abi: "c",   compatible: &[],             extensions: &[".c"],   linker: "", compile_binary: None },
+                LinkDef { lang: "cpp", abi: "c++", compatible: &["c","fortran"], extensions: &[".cpp"], linker: "", compile_binary: None , whole_program: false },
+                LinkDef { lang: "c",   abi: "c",   compatible: &[],             extensions: &[".c"],   linker: "", compile_binary: None , whole_program: false },
             ],
             ..EMPTY
         }.build(&[], &[])
@@ -1310,6 +1323,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "cuda", abi: "cuda", compatible: &[],
                 extensions: &[".cu"], linker: "c++", compile_binary: None,
+                whole_program:  false,
             }],
             ..EMPTY
         }.build(&[], &[])
@@ -1332,6 +1346,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "cpp", abi: "c++", compatible: &["c"],
                 extensions: &[".cpp"], linker: "", compile_binary: None,
+                whole_program:  false,
             }],
             ..EMPTY
         }.build(&[], &[])
@@ -1356,6 +1371,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "fortran", abi: "fortran", compatible: &["c"],
                 extensions: &[".f90",".f95",".f03",".f08",".f"], linker: "", compile_binary: None,
+                whole_program:  false,
             }],
             ..EMPTY
         }.build(&[], &[])
@@ -1378,6 +1394,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "d", abi: "d", compatible: &["c"],
                 extensions: &[".d"], linker: "", compile_binary: None,
+                whole_program:  false,
             }],
             ..EMPTY
         }.build(&[], &[])
@@ -1404,6 +1421,7 @@ mod tests {
             linking: &[LinkDef {
                 lang: "asm", abi: "c", compatible: &["c","cpp"],
                 extensions: &[".asm",".nasm"], linker: "", compile_binary: None,
+                whole_program:  false,
             }],
             toolset: &[("as","nasm")],
             ..EMPTY

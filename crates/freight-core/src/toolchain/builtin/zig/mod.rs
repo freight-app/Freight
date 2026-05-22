@@ -35,6 +35,7 @@ pub fn zig_c() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "c", abi: "c", compatible: &["asm"],
             extensions: &[".c",".s",".S"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_ZIG
     }.build(&[], &[])
@@ -52,6 +53,7 @@ pub fn zig_cxx() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "cpp", abi: "c++", compatible: &["c"],
             extensions: &[".cpp",".cc",".cxx",".c++"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_ZIG
     }.build(&[], &[])
@@ -86,6 +88,7 @@ pub fn zig_native() -> CompilerTemplate {
             // zig build-exe can link its own object files; no separate runtime needed.
             lang: "zig", abi: "zig", compatible: &["c"],
             extensions: &[".zig"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_ZIG
     }.build(&[], &[])

@@ -1,0 +1,16 @@
+[package]
+name        = "cuda-hello"
+version     = "0.1.0"
+description = "CUDA vector-addition kernel — requires a CUDA-capable GPU to run"
+
+[[bin]]
+name = "cuda-hello"
+src  = "src/main.cu"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true

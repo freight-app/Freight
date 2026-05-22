@@ -164,9 +164,10 @@ fn glob_sources(project_dir: &Path, pattern: &str) -> Vec<PathBuf> {
 /// and `cpp` both handle `.cpp`) require an explicit `[language.<key>]` declaration
 /// in the manifest to activate, preventing accidental misclassification.
 pub(crate) fn build_ext_map(manifest: &Manifest, templates: &[CompilerTemplate]) -> HashMap<String, String> {
-    // Specialised lang_keys that share extensions with generic C/C++.
+    // Specialised lang_keys that share extensions with generic C/C++ (e.g. sycl/hip use .cpp).
     // These only override the default mapping when explicitly declared in the manifest.
-    const REQUIRES_DECLARATION: &[&str] = &["sycl", "hip", "cuda", "opencl", "ispc"];
+    // cuda/ispc are NOT listed here because .cu/.ispc are unique extensions with no conflict.
+    const REQUIRES_DECLARATION: &[&str] = &["sycl", "hip", "opencl"];
 
     // Priority order for resolving conflicts among always-active languages.
     // Higher index = higher priority (last write wins).

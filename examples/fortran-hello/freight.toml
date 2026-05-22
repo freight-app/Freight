@@ -3,8 +3,6 @@ name        = "fortran-hello"
 version     = "0.1.0"
 description = "Pure Fortran binary: array operations, derived types, and elemental functions"
 
-[language.fortran]
-
 [[bin]]
 name = "fortran-hello"
 src  = "src/main.f90"

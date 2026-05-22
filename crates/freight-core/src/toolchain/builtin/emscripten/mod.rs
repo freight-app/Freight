@@ -28,6 +28,7 @@ pub fn emcc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "c", abi: "c", compatible: &[],
             extensions: &[".c"], linker: "", compile_binary: Some("emcc"),
+            whole_program:  false,
         }],
         ..BASE_EMCC
     }.build(&[], &[])
@@ -44,6 +45,7 @@ pub fn empp() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "cpp", abi: "c++", compatible: &["c"],
             extensions: &[".cpp",".cc",".cxx",".c++"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_EMCC
     }.build(&[], &[])
@@ -74,8 +76,8 @@ pub fn wasi_clang() -> CompilerTemplate {
         ],
         toolset: &[("ar","wasi-ar")],
         linking: &[
-            LinkDef { lang: "c",   abi: "c",   compatible: &[],      extensions: &[".c"],                          linker: "", compile_binary: Some("wasi-clang") },
-            LinkDef { lang: "cpp", abi: "c++", compatible: &["c"],   extensions: &[".cpp",".cc",".cxx"],           linker: "", compile_binary: None },
+            LinkDef { lang: "c",   abi: "c",   compatible: &[],      extensions: &[".c"],                          linker: "", compile_binary: Some("wasi-clang") , whole_program: false },
+            LinkDef { lang: "cpp", abi: "c++", compatible: &["c"],   extensions: &[".cpp",".cc",".cxx"],           linker: "", compile_binary: None , whole_program: false },
         ],
         ..EMPTY
     }.build(&[], &[])

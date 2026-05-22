@@ -3,8 +3,6 @@ name        = "zig-cpp-hello"
 version     = "0.1.0"
 description = "Zig binary calling a C++ math library — cross-language linking"
 
-[language.zig]
-
 [language.cpp]
 std = "c++17"
 

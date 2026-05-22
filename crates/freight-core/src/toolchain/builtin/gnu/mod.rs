@@ -49,6 +49,7 @@ pub fn gpp() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "cpp", abi: "c++", compatible: &["c","fortran"],
             extensions: CPP_EXTS, linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_GNU
     }.build(&[], &[])
@@ -64,6 +65,7 @@ pub fn gcc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "c", abi: "c", compatible: &["fortran","asm"],
             extensions: C_EXTS, linker: "", compile_binary: Some("gcc"),
+            whole_program:  false,
         }],
         ..BASE_GNU
     }.build(&[], &[])
@@ -87,6 +89,7 @@ pub fn gfortran() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "fortran", abi: "fortran", compatible: &["c"],
             extensions: F_EXTS, linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_GNU
     }.build(&[], &[])
@@ -109,6 +112,7 @@ pub fn gdc() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "d", abi: "d", compatible: &["c"],
             extensions: &[".d"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_GNU
     }.build(&[], &[])
@@ -144,6 +148,7 @@ pub fn gas() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "gas", abi: "c", compatible: &["c","cpp"],
             extensions: &[".s",".S"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..EMPTY
     }.build(&[], &[])

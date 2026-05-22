@@ -63,8 +63,8 @@ pub fn clangpp() -> CompilerTemplate {
             ("extension",".pch"),("clangd_flag","-include {header_path}"),
         ],
         linking: &[
-            LinkDef { lang: "cpp",    abi: "c++", compatible: &["c","fortran"],  extensions: CPP_EXTS,    linker: "", compile_binary: None },
-            LinkDef { lang: "objcpp", abi: "c++", compatible: &["c","objc"],     extensions: &[".mm"],    linker: "", compile_binary: None },
+            LinkDef { lang: "cpp",    abi: "c++", compatible: &["c","fortran"],  extensions: CPP_EXTS,    linker: "", compile_binary: None , whole_program: false },
+            LinkDef { lang: "objcpp", abi: "c++", compatible: &["c","objc"],     extensions: &[".mm"],    linker: "", compile_binary: None , whole_program: false },
         ],
         ..BASE_LLVM
     }.build(&[("lto_mode", lto_mode_h as OptionHandlerFn, None)], &[])
@@ -79,8 +79,8 @@ pub fn clang() -> CompilerTemplate {
         defaults: &[("std","c11")],
         toolset: &[("ar","ar"),("strip","strip"),("cc","clang"),("cxx","clang++"),("ld","clang++")],
         linking: &[
-            LinkDef { lang: "c",    abi: "c",    compatible: &["fortran","asm"], extensions: C_EXTS,   linker: "", compile_binary: Some("clang") },
-            LinkDef { lang: "objc", abi: "objc", compatible: &["c"],             extensions: &[".m"],  linker: "", compile_binary: Some("clang") },
+            LinkDef { lang: "c",    abi: "c",    compatible: &["fortran","asm"], extensions: C_EXTS,   linker: "", compile_binary: Some("clang") , whole_program: false },
+            LinkDef { lang: "objc", abi: "objc", compatible: &["c"],             extensions: &[".m"],  linker: "", compile_binary: Some("clang") , whole_program: false },
         ],
         ..BASE_LLVM
     }.build(&[], &[])
@@ -104,6 +104,7 @@ pub fn flang() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "fortran", abi: "fortran", compatible: &["c"],
             extensions: F_EXTS, linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_LLVM
     }.build(&[], &[])
@@ -126,6 +127,7 @@ pub fn ldc2() -> CompilerTemplate {
         linking: &[LinkDef {
             lang: "d", abi: "d", compatible: &["c"],
             extensions: &[".d"], linker: "", compile_binary: None,
+            whole_program:  false,
         }],
         ..BASE_LLVM
     }.build(&[("dip1000", dip1000_h as OptionHandlerFn, Some("false"))], &[])

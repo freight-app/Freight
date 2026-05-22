@@ -1,0 +1,16 @@
+[package]
+name        = "ada-hello"
+version     = "0.1.0"
+description = "Pure Ada binary: records, subtype constraints, insertion sort, exception handling"
+
+[[bin]]
+name = "ada-hello"
+src  = "src/main.adb"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true
