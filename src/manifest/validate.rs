@@ -110,18 +110,14 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
             if repo.is_empty() {
                 errors.push(ValidationError::new(&ctx, "repo must not be empty"));
             }
-            // repo = "system" is a build-time resolver; any other value is treated as
-            // a named registry (used by `freight fetch`). Both require a version dep.
-            let version_optional = repo.as_str() == "system";
-            let is_version_dep = (d.version.is_some() || version_optional)
+            let is_version_dep = d.version.is_some()
                 && d.path.is_none()
-                && d.system.is_none()
                 && d.git.is_none()
                 && d.url.is_none();
             if !is_version_dep {
                 errors.push(ValidationError::new(
                     &ctx,
-                    "repo is only valid for version deps (no path, git, url, or system)",
+                    "repo is only valid for version deps (no path, git, or url)",
                 ));
             }
         }
@@ -1172,11 +1168,11 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.c"
 [dependencies]
-libpng = { system = "libpng", version = ">=1.6" }
+libpng = ">=1.6"
 "#;
         let manifest = load_manifest_str(s).unwrap();
         let errs = validate_dep_compat(&manifest, dir.path(), &test_templates());
-        assert!(errs.is_empty(), "system deps should not trigger compat check");
+        assert!(errs.is_empty(), "version deps should not trigger compat check");
     }
 
     #[test]
@@ -1189,9 +1185,9 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.cpp"
 [dependencies]
-pthread = { system = "pthread", os = "linux" }
-ws2_32  = { system = "ws2_32",  os = "windows" }
-sse_lib = { system = "sse_lib", arch = "x86_64" }
+linux   = { features = ["pthread"], os = "linux" }
+windows = { features = ["ws2_32"], os = "windows" }
+sse_lib = "1"
 "#;
         assert!(field_errors(s, "[dependencies.").is_empty(), "known os/arch should validate clean");
     }
@@ -1206,7 +1202,7 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.cpp"
 [dependencies]
-mylib = { system = "mylib", os = "beos" }
+mylib = { version = "1", os = "beos" }
 "#;
         let errs = field_errors(s, "[dependencies.mylib]");
         assert!(!errs.is_empty());
@@ -1223,7 +1219,7 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.cpp"
 [dependencies]
-mylib = { system = "mylib", arch = "pdp11" }
+mylib = { version = "1", arch = "pdp11" }
 "#;
         let errs = field_errors(s, "[dependencies.mylib]");
         assert!(!errs.is_empty());
@@ -1240,9 +1236,9 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.cpp"
 [os.linux.dependencies]
-dl = { system = "dl" }
+linux = { features = ["dl"] }
 [os.windows.dependencies]
-ws2_32 = { system = "ws2_32" }
+windows = { features = ["ws2_32"] }
 [os.unix]
 defines = ["UNIX_BUILD"]
 [arch.x86_64]
@@ -1262,7 +1258,7 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.cpp"
 [os.beos.dependencies]
-foo = { system = "foo" }
+foo = "1"
 "#;
         let errs = field_errors(s, "[os.beos]");
         assert!(!errs.is_empty());

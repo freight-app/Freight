@@ -124,8 +124,8 @@ pub fn build_foreign_deps(
 
         let Dependency::Detailed(d) = dep else { continue };
 
-        // ── Pure system dep — -l{name} handled by linker, nothing to build ───
-        if d.system.is_some() {
+        // ── Platform dep — link flags handled by linker, nothing to build ───
+        if crate::manifest::types::is_platform_dep(name) {
             continue;
         }
 
@@ -203,7 +203,6 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
         Dependency::Detailed(d)
             if d.version.is_some()
                 && d.path.is_none()
-                && d.system.is_none()
                 && d.git.is_none()
                 && d.url.is_none() => d.version.as_deref(),
         _ => None,

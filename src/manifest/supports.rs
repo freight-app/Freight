@@ -184,6 +184,7 @@ impl SupportEnv {
         let name = raw_name.to_ascii_lowercase();
         let result = match name.as_str() {
             "windows" => self.matches_os("windows", &["windows"]),
+            "mingw" => self.is_mingw(),
             "linux" => self.matches_os("linux", &["linux"]),
             "osx" | "macos" => self.matches_os("macos", &["darwin", "apple"]),
             "android" => self.matches_os("android", &["android"]),
@@ -216,6 +217,22 @@ impl SupportEnv {
             _ => return Err(format!("unknown supports identifier {:?}", raw_name)),
         };
         Ok(result)
+    }
+
+    fn is_mingw(&self) -> bool {
+        if let Some(target) = &self.target {
+            target.contains("mingw") || target.contains("windows-gnu")
+        } else {
+            // Native build: MSYSTEM is set by all MSYS2 subsystems (MINGW64, UCRT64, CLANG64 …)
+            self.os == "windows"
+                && std::env::var("MSYSTEM")
+                    .map(|m| {
+                        m.starts_with("MINGW")
+                            || m.starts_with("UCRT")
+                            || m.starts_with("CLANG")
+                    })
+                    .unwrap_or(false)
+        }
     }
 
     fn matches_os(&self, host_os: &str, target_needles: &[&str]) -> bool {
@@ -319,5 +336,18 @@ mod tests {
     fn supports_expr_reports_syntax_and_unknown_identifiers() {
         assert!(SupportsExpr::parse("windows &").is_err());
         assert!(eval("plan9", &env("linux", "x86_64", None)).is_err());
+    }
+
+    #[test]
+    fn supports_expr_distinguishes_mingw_from_msvc() {
+        let msvc = env("windows", "x86_64", Some("x86_64-pc-windows-msvc"));
+        let gnu  = env("windows", "x86_64", Some("x86_64-pc-windows-gnu"));
+        let mingw = env("windows", "x86_64", Some("x86_64-w64-mingw32"));
+        assert!(!eval("mingw", &msvc).unwrap());
+        assert!(eval("mingw", &gnu).unwrap());
+        assert!(eval("mingw", &mingw).unwrap());
+        // windows is true for all three
+        assert!(eval("windows", &msvc).unwrap());
+        assert!(eval("windows", &gnu).unwrap());
     }
 }

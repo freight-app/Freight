@@ -442,12 +442,37 @@ pub struct BinTarget {
 
 // ── Dependencies ──────────────────────────────────────────────────────────────
 
+/// Platform package names — deps whose `features` list OS-bundled libraries
+/// that ship *with* the operating system and require no separate fetch or build.
+///
+/// Only use platform packages for libraries that are part of the OS itself:
+/// - `linux`:   `pthread`, `dl`, `rt`, `m`, `resolv`  (glibc/musl)
+/// - `windows`: `ws2_32`, `kernel32`, `user32`, `crypt32`, `ole32`, `ntdll`  (Windows SDK)
+/// - `macos`:   `CoreFoundation`, `Security`, `AppKit`, `Foundation`  (Apple frameworks)
+///
+/// Third-party libraries — even if commonly available via `apt`/`pacman`/`brew`
+/// (e.g. `openssl`, `openblas`, `zlib`) — are regular deps resolved via
+/// pkg-config or the registry, not platform features.
+///
+/// Feature → link flag mapping:
+/// - macOS, leading uppercase → `-framework <Name>`
+/// - all others → toolchain `system_lib_flag` (`-l<name>` on GCC/Clang, `<name>.lib` on MSVC)
+pub const PLATFORM_PACKAGES: &[&str] = &[
+    "windows", "linux", "macos", "osx", "unix", "android", "ios",
+    "freebsd", "openbsd", "netbsd", "dragonfly",
+];
+
+pub fn is_platform_dep(name: &str) -> bool {
+    PLATFORM_PACKAGES.contains(&name)
+}
+
 /// A dependency can be either a bare version string or a detailed table.
 ///
 /// ```toml
-/// libfoo   = "0.3"                          # Simple
-/// openssl  = { system = "openssl", version = ">=3.0" }  # Detailed
-/// myutils  = { path = "../myutils" }        # Detailed
+/// libfoo  = "0.3"                           # Simple
+/// myutils = { path = "../myutils" }         # Detailed
+/// windows = { features = ["ws2_32"], os = "windows" }  # Platform dep
+/// linux   = { features = ["m", "pthread"], os = "linux" }
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -462,8 +487,6 @@ pub struct DetailedDep {
     pub version: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
-    #[serde(default)]
-    pub system: Option<String>,
     #[serde(default)]
     pub git: Option<String>,
     /// Features of this dep to activate (in addition to its defaults).
@@ -860,7 +883,7 @@ flags    = ["-DPLATFORM_FLAG"]
 includes = ["platform-include/"]
 
 [os.{host}.dependencies]
-hostlib = {{ system = "hostlib" }}
+hostlib = {{ version = "1" }}
 "#,
         )
     }
@@ -896,7 +919,7 @@ name = "p"
 src  = "src/main.c"
 
 [os.{other}.dependencies]
-shouldnotbe = {{ system = "shouldnotbe" }}
+shouldnotbe = {{ version = "1" }}
 "#
         );
         let m = load_manifest_str(&s).unwrap();
@@ -946,7 +969,7 @@ version = "0.1.0"
 name = "p"
 src  = "src/main.cpp"
 [dependencies]
-mylib = {{ system = "mylib"{os_line}{arch_line} }}
+mylib = {{ version = "1"{os_line}{arch_line} }}
 "#
         )
     }
@@ -1025,7 +1048,7 @@ version = "0.1.0"
 name = "p"
 src  = "src/main.cpp"
 [dependencies]
-mylib = {{ system = "mylib", os = ["{host}", "linux"] }}
+mylib = {{ version = "1", os = ["{host}", "linux"] }}
 "#
         );
         let m = load_manifest_str(&s).unwrap();

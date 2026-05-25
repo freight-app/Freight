@@ -231,7 +231,7 @@ fn compilable_dep_dir(root_dir: &Path, declaring_dir: &Path, name: &str, dep: &D
             None
         }
         Dependency::Detailed(d) => {
-            if d.system.is_some() { return None; }
+            if crate::manifest::types::is_platform_dep(name) { return None; }
             let dep_dir = if d.git.is_some() {
                 // Git dep → root .deps/{name}/ (flat pool)
                 root_dir.join(".deps").join(name)

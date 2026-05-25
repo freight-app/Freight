@@ -102,14 +102,14 @@ impl LockFile {
             });
         }
 
-        // System deps: recorded with source = "system", no version or checksum
+        // Platform deps: recorded with source = "platform", no version or checksum
         for (name, dep) in &root.dependencies {
-            if let Dependency::Detailed(d) = dep {
-                if d.system.is_some() {
+            if crate::manifest::types::is_platform_dep(name) {
+                if matches!(dep, Dependency::Detailed(_)) {
                     packages.push(LockPackage {
                         name: name.clone(),
                         version: String::new(),
-                        source: Some("system".to_string()),
+                        source: Some("platform".to_string()),
                         checksum: None,
                         dependencies: vec![],
                     });

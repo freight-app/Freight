@@ -78,8 +78,8 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str) {
             Dependency::Simple(ver) => {
                 print_package_dep(&branch, name, ver);
             }
-            Dependency::Detailed(d) if d.system.is_some() => {
-                print_system_dep(&branch, name, d);
+            Dependency::Detailed(d) if freight_core::manifest::types::is_platform_dep(name) => {
+                print_platform_dep(&branch, name, d);
             }
             Dependency::Detailed(d) if d.path.is_some() => {
                 let rel = d.path.as_deref().unwrap_or("?");
@@ -139,12 +139,18 @@ fn print_package_dep(branch: &str, name: &str, version: &str) {
     );
 }
 
-fn print_system_dep(branch: &str, name: &str, _dep: &DetailedDep) {
+fn print_platform_dep(branch: &str, name: &str, dep: &DetailedDep) {
+    let features = if dep.features.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", dep.features.join(", "))
+    };
     println!(
-        "{}{} {}",
+        "{}{} {}{}",
         branch,
         name.bold().bright_blue(),
-        "(system)".cyan()
+        "(platform)".cyan(),
+        features
     );
 }
 
@@ -481,7 +487,6 @@ pub fn cmd_add(
     branch: Option<&str>,
     tag: Option<&str>,
     rev: Option<&str>,
-    system: bool,
     repo: Option<&str>,
     dev: bool,
 ) {
@@ -495,8 +500,7 @@ pub fn cmd_add(
     };
 
     // Auto-detect git / URL archive when the package argument is a raw URL.
-    if looks_like_url(package) && path.is_none() && git.is_none() && !system
-    {
+    if looks_like_url(package) && path.is_none() && git.is_none() {
         let dep_name = url_dep_name(package);
         let dep = if url_is_archive(package) {
             print_status("detected", &format!("URL archive dep → `{dep_name}`"));
@@ -576,11 +580,6 @@ pub fn cmd_add(
             branch: branch.map(str::to_string),
             tag: tag.map(str::to_string),
             rev: rev.map(str::to_string),
-            ..Default::default()
-        })
-    } else if system {
-        Dependency::Detailed(DetailedDep {
-            system: Some(dep_name.to_string()),
             ..Default::default()
         })
     } else {
@@ -700,7 +699,7 @@ pub fn cmd_add_interactive(repo: Option<&str>, dev: bool) {
     match crate::tui::run_package_browser(repo) {
         Ok(Some(selection)) => {
             cmd_add(&format!("{}@{}", selection.name, selection.version),
-                None, None, None, None, None, false, repo, dev);
+                None, None, None, None, None, repo, dev);
         }
         Ok(None) => {} // user cancelled
         Err(e) => print_warning(&format!("TUI error: {e}")),
@@ -827,8 +826,8 @@ pub fn cmd_fetch(force_source: bool) {
     // Verify path deps.
     for (name, dep) in &manifest.dependencies {
         match dep {
-            Dependency::Detailed(d) if d.system.is_some() => {
-                print_status("skip", &format!("{name} (system)"));
+            Dependency::Detailed(_) if freight_core::manifest::types::is_platform_dep(name) => {
+                print_status("skip", &format!("{name} (platform)"));
             }
             Dependency::Detailed(d) if d.path.is_some() && d.backend.is_none() => {
                 any_work = true;
@@ -977,9 +976,9 @@ fn fetch_prebuilt_deps(
             Dependency::Detailed(d)
                 if d.version.is_some()
                     && d.path.is_none()
-                    && d.system.is_none()
                     && d.git.is_none()
-                    && d.url.is_none() =>
+                    && d.url.is_none()
+                    && !freight_core::manifest::types::is_platform_dep(name) =>
             {
                 (d.version.as_deref().unwrap(), d.repo.as_deref(), d.channel.as_deref())
             }
@@ -1184,9 +1183,9 @@ pub fn cmd_outdated(repo: Option<&str>) {
             Dependency::Detailed(d)
                 if d.version.is_some()
                     && d.path.is_none()
-                    && d.system.is_none()
                     && d.git.is_none()
-                    && d.url.is_none() =>
+                    && d.url.is_none()
+                    && !freight_core::manifest::types::is_platform_dep(name) =>
             {
                 let ver = d.version.as_deref().unwrap();
                 if ver.is_empty() || ver == "*" { continue; }

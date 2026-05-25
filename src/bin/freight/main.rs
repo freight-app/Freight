@@ -24,6 +24,7 @@ use crate::commands::fmt::cmd_fmt;
 use crate::commands::install::{cmd_install, cmd_package};
 use crate::commands::lint::cmd_lint;
 use crate::commands::new::{cmd_init, cmd_new};
+use crate::commands::migrate::{cmd_migrate_autotools, cmd_migrate_cmake, cmd_migrate_make};
 use crate::commands::toolchain::{cmd_toolchain_list, cmd_toolchain_use};
 
 /// Returns the top-level [`clap::Command`] for this binary.
@@ -186,9 +187,6 @@ enum Commands {
         /// Exact commit SHA to pin (requires --git)
         #[arg(long)]
         rev: Option<String>,
-        /// Add as a system (linker) dependency
-        #[arg(long)]
-        system: bool,
         /// Package repository to use (default: freight registry).
         #[arg(long, value_name = "REPO")]
         repo: Option<String>,
@@ -354,6 +352,11 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// Import a project from another build system into freight
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommands,
+    },
     /// Manage compiler toolchains
     Toolchain {
         #[command(subcommand)]
@@ -370,6 +373,43 @@ enum ToolchainCommands {
     List,
     /// Set the default compiler backend
     Use { name: String },
+}
+
+#[derive(Subcommand)]
+enum MigrateCommands {
+    /// Import a Make/Makefile project
+    Make {
+        /// Path to the project directory or Makefile
+        input: String,
+        /// Write generated freight.toml files here instead of next to the Makefile
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<String>,
+        /// Remove the Makefile(s) after successful import
+        #[arg(long)]
+        purge: bool,
+    },
+    /// Import a CMake project (CMakeLists.txt)
+    Cmake {
+        /// Path to the project directory or CMakeLists.txt
+        input: String,
+        /// Write generated freight.toml files here instead of next to CMakeLists.txt
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<String>,
+        /// Remove CMakeLists.txt and CMake artefacts after successful import
+        #[arg(long)]
+        purge: bool,
+    },
+    /// Import an Autotools project (configure.ac + Makefile.am)
+    Autotools {
+        /// Path to the project directory
+        input: String,
+        /// Write the generated freight.toml here instead of next to configure.ac
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<String>,
+        /// Remove autotools files after successful import
+        #[arg(long)]
+        purge: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -468,7 +508,6 @@ fn main() -> Result<()> {
             branch,
             tag,
             rev,
-            system,
             repo,
             dev,
         } => {
@@ -480,7 +519,6 @@ fn main() -> Result<()> {
                     branch.as_deref(),
                     tag.as_deref(),
                     rev.as_deref(),
-                    system,
                     repo.as_deref(),
                     dev,
                 );
@@ -535,6 +573,17 @@ fn main() -> Result<()> {
         Commands::Yank { version, undo, repo } => cmd_yank(&version, undo, repo.as_deref()),
         Commands::Fmt { check } => cmd_fmt(check),
         Commands::Lint { fix } => cmd_lint(fix),
+        Commands::Migrate { command } => match command {
+            MigrateCommands::Make { input, out_dir, purge } => {
+                cmd_migrate_make(&input, out_dir.as_deref(), purge);
+            }
+            MigrateCommands::Cmake { input, out_dir, purge } => {
+                cmd_migrate_cmake(&input, out_dir.as_deref(), purge);
+            }
+            MigrateCommands::Autotools { input, out_dir, purge } => {
+                cmd_migrate_autotools(&input, out_dir.as_deref(), purge);
+            }
+        },
         Commands::Toolchain { command } => match command {
             ToolchainCommands::List => cmd_toolchain_list(),
             ToolchainCommands::Use { name } => cmd_toolchain_use(&name),

@@ -52,9 +52,6 @@ pub fn manifest_add_dep(
             if let Some(p) = &d.path {
                 inline.insert("path", Value::from(p.as_str()));
             }
-            if let Some(s) = &d.system {
-                inline.insert("system", Value::from(s.as_str()));
-            }
             if let Some(g) = &d.git {
                 inline.insert("git", Value::from(g.as_str()));
             }
@@ -267,9 +264,9 @@ pub fn fetch_registry_deps(
             Dependency::Detailed(d)
                 if d.version.is_some()
                     && d.path.is_none()
-                    && d.system.is_none()
                     && d.git.is_none()
-                    && d.url.is_none() =>
+                    && d.url.is_none()
+                    && !crate::manifest::types::is_platform_dep(name) =>
             {
                 (d.version.as_deref().unwrap(), d.repo.as_deref(), d.channel.as_deref())
             }
@@ -440,7 +437,6 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
         Dependency::Detailed(d)
             if d.version.is_some()
                 && d.path.is_none()
-                && d.system.is_none()
                 && d.git.is_none()
                 && d.url.is_none() => d.version.as_deref(),
         _ => None,

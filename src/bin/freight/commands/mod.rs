@@ -11,4 +11,5 @@ pub mod fmt;
 pub mod install;
 pub mod lint;
 pub mod new;
+pub mod migrate;
 pub mod toolchain;

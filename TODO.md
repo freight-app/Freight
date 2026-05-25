@@ -45,10 +45,13 @@ Add `BuildEvent::Compiling` before the whole-program linker invocation.
 `migration/autotools.rs` warns when `Makefile.am` has `SUBDIRS` but does not walk
 subdirectories to produce workspace members. Should recurse into each subdir.
 
-### CMake migration: platform-conditional block handling
-The cmake migrator currently drops all `if` block contents. Once cmake-lossless adds
-an `if` condition evaluator, platform blocks (`if(WIN32)`, `if(APPLE)`) can be mapped
-to `[os.windows.dependencies]` / `[os.macos.dependencies]` instead of being lost.
+### ~~CMake migration: platform-conditional block handling~~
+Done. `cmake_lossless::eval::platform_condition` identifies `if(WIN32)`, `if(APPLE)`,
+`if(UNIX)`, etc. and routes their deps to `[os.windows.dependencies]`,
+`[os.macos.dependencies]`, `[os.unix.dependencies]` in the emitted `freight.toml`.
+`elseif` chains each get their own scope; `else` falls through to unconditional.
+Defines/includes inside platform blocks are still dropped (freight.toml has no
+per-platform define syntax).
 
 ---
 

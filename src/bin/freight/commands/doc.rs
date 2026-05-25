@@ -280,12 +280,11 @@ fn dependency_summary(
                 dir.exists().then_some(dir),
             )
         }
-        Dependency::Detailed(d) if d.system.is_some() => {
-            let source = d.system.as_deref().unwrap_or("system").to_string();
+        Dependency::Detailed(d) if freight_core::manifest::types::is_platform_dep(name) => {
             (
-                "system".to_string(),
+                "platform".to_string(),
                 d.version.clone().unwrap_or_else(|| "*".into()),
-                source,
+                name.to_string(),
                 None,
             )
         }

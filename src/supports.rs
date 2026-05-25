@@ -5,7 +5,7 @@
 //!
 //! Recognised identifiers (case-insensitive):
 //!
-//! OS:   linux, windows, macos, osx, freebsd, openbsd, netbsd, dragonfly,
+//! OS:   linux, windows, mingw, uwp, macos, osx, freebsd, openbsd, netbsd, dragonfly,
 //!       android, ios, solaris, illumos, unix (family), bsd (family)
 //! Arch: x86, x64, x86_64, arm, arm64, aarch64, wasm32, riscv64, powerpc64
 //!
@@ -195,6 +195,14 @@ impl HostEnv {
             }
             "windows" => {
                 tags.insert("win32".into());
+                // Detect MinGW/MSYS2 — MSYSTEM is set by all MSYS2 subsystems.
+                let msystem = std::env::var("MSYSTEM").unwrap_or_default();
+                if msystem.starts_with("MINGW")
+                    || msystem.starts_with("UCRT")
+                    || msystem.starts_with("CLANG")
+                {
+                    tags.insert("mingw".into());
+                }
             }
             _ => {}
         }

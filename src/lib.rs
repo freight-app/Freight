@@ -1,5 +1,6 @@
 pub mod build;
 pub mod dep_cmds;
+pub mod migration;
 pub mod error;
 pub mod event;
 pub mod supports;

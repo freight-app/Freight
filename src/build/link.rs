@@ -334,22 +334,30 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), FreightError> {
 
 // ── Dependency helpers ────────────────────────────────────────────────────────
 
-/// Collect system library link flags for every `system = "..."` dependency.
+/// Collect link flags for platform package dependencies (`windows`, `linux`, `macos`, …).
 ///
-/// The flag format is determined by `linker.system_lib_flag(name)` — GCC/Clang produce
-/// `-l{name}`, MSVC produces `{name}.lib`.
+/// Each feature of a platform dep maps to a link flag:
+/// - macOS: leading-uppercase feature → `-framework <Name>`; otherwise → `-l<name>`
+/// - All others: → toolchain `system_lib_flag(name)` (GCC/Clang: `-l<name>`, MSVC: `<name>.lib`)
 fn collect_system_lib_flags(manifest: &Manifest, linker: &CompilerTemplate) -> Vec<String> {
+    use crate::manifest::types::is_platform_dep;
     let effective = manifest.effective_dependencies();
-    effective.values()
-        .chain(manifest.dev_dependencies.values())
-        .filter_map(|dep| {
-            if let Dependency::Detailed(d) = dep {
-                d.system.as_deref()
-            } else {
-                None
-            }
+    let is_macos = std::env::consts::OS == "macos";
+    effective.iter()
+        .chain(manifest.dev_dependencies.iter())
+        .filter(|(name, dep)| {
+            is_platform_dep(name) && matches!(dep, Dependency::Detailed(_))
         })
-        .map(|name| linker.system_lib_flag(name))
+        .flat_map(|(_, dep)| {
+            let Dependency::Detailed(d) = dep else { return vec![]; };
+            d.features.iter().map(|feat| {
+                if is_macos && feat.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    format!("-framework {feat}")
+                } else {
+                    linker.system_lib_flag(feat)
+                }
+            }).collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -504,11 +512,12 @@ version = "0.1.0"
 name = "p"
 src  = "src/main.cpp"
 [dependencies]
-OpenBLAS = { system = "openblas" }
+linux = { features = ["pthread", "dl"] }
 "#;
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
         let flags = collect_system_lib_flags(&m, &gcc());
-        assert!(flags.contains(&"-lopenblas".to_string()));
+        assert!(flags.contains(&"-lpthread".to_string()));
+        assert!(flags.contains(&"-ldl".to_string()));
     }
 
     #[test]
@@ -528,11 +537,12 @@ version = "0.1.0"
 name = "p"
 src  = "src/main.cpp"
 [dependencies]
-OpenSSL = { system = "ssl" }
+windows = { features = ["ws2_32", "crypt32"] }
 "#;
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
         let flags = collect_system_lib_flags(&m, &msvc());
-        assert!(flags.contains(&"ssl.lib".to_string()), "MSVC should use {{name}}.lib, got: {flags:?}");
+        assert!(flags.contains(&"ws2_32.lib".to_string()), "MSVC should use {{name}}.lib, got: {flags:?}");
+        assert!(flags.contains(&"crypt32.lib".to_string()));
         assert!(!flags.iter().any(|f| f.starts_with("-l")), "MSVC must not emit -l flags");
     }
 
