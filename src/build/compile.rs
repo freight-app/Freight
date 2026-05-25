@@ -516,6 +516,15 @@ pub(crate) fn compile_one(
     settings: &BuildSettings,
     module_flags: &[String],
 ) -> Result<(), FreightError> {
+    // Reject unsupported standards before invoking the compiler.
+    let effective_std = settings.standard.as_deref()
+        .or_else(|| compiler.template.defaults.get("std").map(String::as_str));
+    if let Some(std) = effective_std {
+        if let Some(msg) = compiler.template.check_standard_floor(std, &compiler.version) {
+            return Err(FreightError::OptionError(msg));
+        }
+    }
+
     let dep_mode = compiler.template.dep_file_mode();
 
     let mut cmd = if let Some(wrapper) = cache_wrapper() {

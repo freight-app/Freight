@@ -32,7 +32,15 @@ pub fn gpp() -> CompilerTemplate {
         name: "g++", binary: "g++",
         alias: Some("gcc"),
         extensions: CPP_EXTS,
-        standards: &[("c++17","-std=c++17"),("c++20","-std=c++20"),("c++23","-std=c++23")],
+        standards: &[
+            ("c++11","-std=c++11"),("c++14","-std=c++14"),
+            ("c++17","-std=c++17"),("c++20","-std=c++20"),
+            ("c++23","-std=c++23"),("c++26","-std=c++26"),
+        ],
+        standard_min_versions: &[
+            ("c++11","4.8"),("c++14","5.0"),("c++17","7.0"),
+            ("c++20","10.0"),("c++23","12.0"),("c++26","14.0"),
+        ],
         defaults: &[("std","c++17")],
         toolset: &[("ar","ar"),("strip","strip"),("cc","gcc"),("cxx","g++"),("ld","g++")],
         module_style: "gcc",
@@ -59,7 +67,13 @@ pub fn gcc() -> CompilerTemplate {
     TemplateDef {
         name: "gcc", binary: "gcc",
         extensions: C_EXTS,
-        standards: &[("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23")],
+        standards: &[
+            ("c89","-std=c89"),("c99","-std=c99"),
+            ("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23"),
+        ],
+        standard_min_versions: &[
+            ("c99","3.4"),("c11","4.9"),("c17","8.0"),("c23","14.0"),
+        ],
         defaults: &[("std","c11")],
         toolset: &[("ar","ar"),("strip","strip"),("cc","gcc"),("cxx","g++"),("ld","g++")],
         linking: &[LinkDef {
@@ -75,7 +89,13 @@ pub fn gfortran() -> CompilerTemplate {
     TemplateDef {
         name: "gfortran", binary: "gfortran",
         extensions: F_EXTS,
-        standards: &[("f95","-std=f95"),("f2003","-std=f2003"),("f2008","-std=f2008"),("f2018","-std=f2018")],
+        standards: &[
+            ("f95","-std=f95"),("f2003","-std=f2003"),
+            ("f2008","-std=f2008"),("f2018","-std=f2018"),
+        ],
+        standard_min_versions: &[
+            ("f2003","4.4"),("f2008","4.6"),("f2018","8.0"),
+        ],
         defaults: &[("std","f2018")],
         sanitizer_options: &["address","undefined"],
         stdlib_flags: &[],

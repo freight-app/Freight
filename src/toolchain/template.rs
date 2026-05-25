@@ -169,7 +169,11 @@ pub(super) struct TemplateDef {
     pub sanitizer_options: &'static [&'static str],
     pub cpu_ext:         &'static str,
     pub stdlib_flags:    &'static [(&'static str, &'static str)],
-    pub standards:       &'static [(&'static str, &'static str)],
+    pub standards:           &'static [(&'static str, &'static str)],
+    /// Minimum compiler version required for each standard, e.g.
+    /// `&[("c++20", "10.0"), ("c++23", "12.0"), ("c++26", "14.0")]`.
+    /// Standards absent from this map are assumed supported by all versions.
+    pub standard_min_versions: &'static [(&'static str, &'static str)],
     pub defaults:        &'static [(&'static str, &'static str)],
     pub structure:       &'static [(&'static str, &'static str)],
     pub module_style:    &'static str,
@@ -213,7 +217,7 @@ pub(super) const EMPTY: TemplateDef = TemplateDef {
     extensions: &[], opt_flags: &[],
     debug: "", warning_flags: &[], lto: "", lto_link: "", sanitize: "",
     sanitizer_options: &[], cpu_ext: "", stdlib_flags: &[],
-    standards: &[], defaults: &[], structure: &[],
+    standards: &[], standard_min_versions: &[], defaults: &[], structure: &[],
     module_style: "", module_params: &[], pch: &[],
     passthrough_enabled: false, passthrough_prefix: "",
     always_flags: &[], linking: &[], arch_flags: &[], toolset: &[],
@@ -317,9 +321,10 @@ impl TemplateDef {
             binary,
             version_arg:        s(self.version_arg),
             version_regex:      s(self.version_regex),
-            extensions:         vs(self.extensions),
-            standards:          map(self.standards),
-            defaults:           map(self.defaults),
+            extensions:             vs(self.extensions),
+            standards:              map(self.standards),
+            standard_min_versions:  map(self.standard_min_versions),
+            defaults:               map(self.defaults),
             kind:               s(self.kind),
             structure,
             modules,
@@ -522,6 +527,8 @@ pub struct CompilerTemplate {
     pub version_regex: String,
     pub extensions: Vec<String>,
     pub standards: HashMap<String, String>,
+    /// Minimum compiler version required per standard. See [`TemplateDef::standard_min_versions`].
+    pub standard_min_versions: HashMap<String, String>,
     /// Fallback option values used when the manifest doesn't specify them.
     /// Keyed by option name (e.g. `"std"`, `"stdlib"`). Set in language files.
     pub defaults: HashMap<String, String>,
@@ -634,6 +641,7 @@ impl CompilerTemplate {
             version_regex: raw.version_regex,
             extensions: raw.extensions.handles,
             standards: raw.standards,
+            standard_min_versions: HashMap::new(),
             defaults: HashMap::new(),
             kind: String::new(),
             structure: StructureFlags {
@@ -686,6 +694,23 @@ impl CompilerTemplate {
             flags_cpu_extension: raw.flags.cpu_extension,
             flags_stdlib: HashMap::new(),
         })
+    }
+
+    /// Check whether this compiler's version satisfies the minimum required for `std`.
+    ///
+    /// Returns `Some(error_message)` when the compiler is too old; `None` when the
+    /// standard is supported or no floor is declared for it.
+    pub fn check_standard_floor(&self, std: &str, compiler_version: &str) -> Option<String> {
+        let min = self.standard_min_versions.get(std)?;
+        if !std_version_ge(compiler_version, min) {
+            Some(format!(
+                "compiler '{}' {compiler_version} is too old for '{std}' \
+                 (requires >= {min}); upgrade your compiler or use a lower `std` in freight.toml",
+                self.name
+            ))
+        } else {
+            None
+        }
     }
 
     /// Assemble a flat list of compiler flags from abstract build settings.
@@ -1169,6 +1194,26 @@ fn run_option_handlers(
         flags.extend(result);
     }
     Ok(flags)
+}
+
+/// Component-by-component version comparison: `a >= b`.
+/// Accepts dotted-integer strings like `"14.2.0"` or `"10"`.
+fn std_version_ge(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+    };
+    let av = parse(a);
+    let bv = parse(b);
+    for i in 0..av.len().max(bv.len()) {
+        let x = av.get(i).copied().unwrap_or(0);
+        let y = bv.get(i).copied().unwrap_or(0);
+        match x.cmp(&y) {
+            std::cmp::Ordering::Greater => return true,
+            std::cmp::Ordering::Less    => return false,
+            std::cmp::Ordering::Equal   => {}
+        }
+    }
+    true
 }
 
 fn push_flag_str(out: &mut Vec<String>, s: &str) {
@@ -2184,5 +2229,90 @@ mod tests {
             "CUDA requires a C++ linker for host code");
     }
 
+    fn versioned_gpp() -> CompilerTemplate {
+        TemplateDef {
+            name: "g++", binary: "g++", family: "gnu",
+            version_regex: r"(\d+\.\d+\.\d+)",
+            extensions: &[".cpp"],
+            standards: &[
+                ("c++17","-std=c++17"),("c++20","-std=c++20"),
+                ("c++23","-std=c++23"),("c++26","-std=c++26"),
+            ],
+            standard_min_versions: &[
+                ("c++17","7.0"),("c++20","10.0"),("c++23","12.0"),("c++26","14.0"),
+            ],
+            defaults: &[("std","c++17")],
+            debug: "-g", lto: "-flto",
+            opt_flags: &[("2","-O2")],
+            warning_flags: &[("all","-Wall")],
+            structure: &[
+                ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+                ("output","-o {path}"),("compile_only","-c"),("dep_file","-MMD -MF {path}"),
+            ],
+            linking: &[LinkDef {
+                lang: "cpp", abi: "c++", compatible: &["c"],
+                extensions: &[".cpp"], linker: "", compile_binary: None, whole_program: false,
+            }],
+            ..EMPTY
+        }.build(&[], &[])
+    }
 
+    fn versioned_gcc_c() -> CompilerTemplate {
+        TemplateDef {
+            name: "gcc", binary: "gcc", family: "gnu",
+            version_regex: r"(\d+\.\d+\.\d+)",
+            extensions: &[".c"],
+            standards: &[("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23")],
+            standard_min_versions: &[("c17","8.0"),("c23","14.0")],
+            defaults: &[("std","c11")],
+            debug: "-g", lto: "-flto",
+            opt_flags: &[("2","-O2")],
+            warning_flags: &[("all","-Wall")],
+            structure: &[
+                ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
+                ("output","-o {path}"),("compile_only","-c"),("dep_file","-MMD -MF {path}"),
+            ],
+            linking: &[LinkDef {
+                lang: "c", abi: "c", compatible: &[],
+                extensions: &[".c"], linker: "", compile_binary: None, whole_program: false,
+            }],
+            ..EMPTY
+        }.build(&[], &[])
+    }
+
+    #[test]
+    fn standard_floor_old_compiler_rejected() {
+        let t = versioned_gpp();
+        assert!(t.check_standard_floor("c++23", "11.4.0").is_some());
+        assert!(t.check_standard_floor("c++23", "12.0.0").is_none());
+    }
+
+    #[test]
+    fn standard_floor_cxx26_requires_gcc14() {
+        let t = versioned_gpp();
+        assert!(t.check_standard_floor("c++26", "13.3.0").is_some());
+        assert!(t.check_standard_floor("c++26", "14.0.0").is_none());
+    }
+
+    #[test]
+    fn standard_floor_no_entry_always_passes() {
+        let t = versioned_gpp();
+        // "c++17" floor is 7.0; GCC 7+ satisfies it.
+        assert!(t.check_standard_floor("c++17", "7.0.0").is_none());
+    }
+
+    #[test]
+    fn standard_floor_unknown_standard_passes() {
+        let t = versioned_gpp();
+        assert!(t.check_standard_floor("c++99", "14.0.0").is_none());
+    }
+
+    #[test]
+    fn standard_floor_c_standard_gcc() {
+        let t = versioned_gcc_c();
+        assert!(t.check_standard_floor("c23", "13.0.0").is_some());
+        assert!(t.check_standard_floor("c23", "14.0.0").is_none());
+        assert!(t.check_standard_floor("c17", "7.0.0").is_some());
+        assert!(t.check_standard_floor("c17", "8.0.0").is_none());
+    }
 }

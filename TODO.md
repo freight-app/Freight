@@ -11,15 +11,14 @@ This file covers items not tracked elsewhere.
 
 ## High priority
 
-### Compiler version gating for language standards
-`std = "c++26"` silently passes `-std=c++26` even on GCC 11, producing a confusing
-compiler error instead of a clear freight message.
+### ~~Compiler version gating for language standards~~
+Done. `TemplateDef` now has `standard_min_versions`; `CompilerTemplate::check_standard_floor`
+checks the floor; `compile_one` rejects unsupported standards with `FreightError::OptionError`
+before invoking the compiler.
 
-- Extend `TemplateDef::standards` entries to carry `min_compiler_version`.
-- Check detected version against the floor in `assemble_compile_flags`.
-- Emit `FreightError` (or `BuildEvent::Warning`) when the compiler is too old.
-- Known floors: `c++20` ≥ GCC 10 / Clang 10; `c++23` ≥ GCC 12 / Clang 14;  
-  `c++26` ≥ GCC 14 / Clang 17; `c17` ≥ GCC 8 / Clang 6; `f2018` ≥ gfortran 8.
+Floors set for GCC (g++/gcc/gfortran) and Clang (clang++/clang):
+- c++20 ≥ GCC 10 / Clang 10; c++23 ≥ GCC 12 / Clang 14; c++26 ≥ GCC 14 / Clang 17
+- c17 ≥ GCC 8 / Clang 6; c23 ≥ GCC 14 / Clang 17; f2018 ≥ gfortran 8
 
 ---
 

@@ -49,7 +49,15 @@ pub fn clangpp() -> CompilerTemplate {
         alias: Some("clang"),
         extensions: CPP_EXTS,
         sanitizer_options: &["address","undefined","thread","memory","leak","hwaddress","dataflow","cfi","safestack"],
-        standards: &[("c++17","-std=c++17"),("c++20","-std=c++20"),("c++23","-std=c++23")],
+        standards: &[
+            ("c++11","-std=c++11"),("c++14","-std=c++14"),
+            ("c++17","-std=c++17"),("c++20","-std=c++20"),
+            ("c++23","-std=c++23"),("c++26","-std=c++26"),
+        ],
+        standard_min_versions: &[
+            ("c++11","3.3"),("c++14","3.4"),("c++17","5.0"),
+            ("c++20","10.0"),("c++23","14.0"),("c++26","17.0"),
+        ],
         defaults: &[("std","c++17")],
         toolset: &[("ar","ar"),("strip","strip"),("cc","clang"),("cxx","clang++"),("ld","clang++")],
         module_style: "clang",
@@ -75,7 +83,13 @@ pub fn clang() -> CompilerTemplate {
         name: "clang", binary: "clang",
         extensions: C_EXTS,
         sanitizer_options: &["address","undefined","thread","memory","leak","hwaddress","dataflow","cfi","safestack"],
-        standards: &[("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23")],
+        standards: &[
+            ("c89","-std=c89"),("c99","-std=c99"),
+            ("c11","-std=c11"),("c17","-std=c17"),("c23","-std=c23"),
+        ],
+        standard_min_versions: &[
+            ("c99","3.1"),("c11","3.1"),("c17","6.0"),("c23","17.0"),
+        ],
         defaults: &[("std","c11")],
         toolset: &[("ar","ar"),("strip","strip"),("cc","clang"),("cxx","clang++"),("ld","clang++")],
         linking: &[
