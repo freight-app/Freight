@@ -62,8 +62,8 @@ pub fn build_autotools(
         }
     }
 
-    // Build step.
-    let jobs     = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    // Build step — cap at MAX_JOBS to avoid saturating all cores.
+    let jobs     = std::thread::available_parallelism().map(|n| n.get().min(super::MAX_JOBS)).unwrap_or(1);
     let jobs_str = jobs.to_string();
 
     if use_emscripten {

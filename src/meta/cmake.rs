@@ -54,7 +54,7 @@ pub fn build_cmake(
     run("cmake", &refs, dep_dir, "cmake configure")?;
 
     // Build step.
-    let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let jobs = std::thread::available_parallelism().map(|n| n.get().min(super::MAX_JOBS)).unwrap_or(1);
     let jobs_str = jobs.to_string();
     let cmake_ver = cmake_version();
     let parallel_ok = cmake_ver.map(|(maj, min)| (maj, min) >= (3, 12)).unwrap_or(false);
