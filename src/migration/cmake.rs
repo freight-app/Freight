@@ -684,13 +684,10 @@ fn emit_toml(name: &str, version: &str, ex: &Extracted, warnings: &[String]) -> 
         let mut bin_tbl = Table::new();
         bin_tbl.insert("name", value(tgt_name.as_str()));
         if !srcs.is_empty() {
-            if srcs.len() == 1 {
-                bin_tbl.insert("src", value(srcs[0].as_str()));
-            } else {
-                let mut arr = Array::new();
-                for s in srcs { arr.push(s.as_str()); }
-                bin_tbl.insert("srcs", Item::Value(arr.into()));
-            }
+            // Always emit `src` (entry point only). freight's source walker discovers
+            // the remaining files in src/ automatically; emitting a `srcs` array
+            // here would require BinTarget manifest support that doesn't yet exist.
+            bin_tbl.insert("src", value(srcs[0].as_str()));
         }
         let entry = doc.entry("bin").or_insert(Item::ArrayOfTables(Default::default()));
         if let Item::ArrayOfTables(aot) = entry { aot.push(bin_tbl); }
