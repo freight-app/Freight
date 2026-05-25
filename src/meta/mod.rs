@@ -19,6 +19,7 @@ pub use pkg_config_cache::PkgConfigCache;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use rayon::prelude::*;
 
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
@@ -70,6 +71,17 @@ pub struct ForeignBuilt {
 
 /// Build all foreign deps declared in `manifest` and return their link artifacts
 /// alongside the resolved pkg-config results.
+/// A foreign dep that needs a subprocess build (cmake, make, meson, …).
+/// Collected in the sequential pass then dispatched in parallel.
+struct BuildJob {
+    name:       String,
+    dep_dir:    PathBuf,
+    backend:    String,
+    cmake_args: Vec<String>,
+    include:    Vec<String>,
+    target:     Option<String>,
+}
+
 pub fn build_foreign_deps(
     project_dir: &Path,
     manifest: &Manifest,
@@ -79,12 +91,13 @@ pub fn build_foreign_deps(
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
-
     let all_stubs = load_system_lib_stubs();
 
-    // Collect OS-family deps first so we can deduplicate across families.
-    // e.g. `unix = { features = ["pthread"] }` + `linux = { features = ["pthread", "rt"] }`
-    // should only produce one -lpthread on Linux.
+    // ── Sequential pass: fast deps + build-job collection ────────────────────
+    // Slow deps (those that call into cmake/make/ninja) are staged in `jobs`
+    // and built concurrently in the parallel pass below.
+
+    // OS-family deps first — deduplicate link flags across families.
     let mut os_link_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (name, dep) in &manifest.dependencies {
         if OS_FAMILIES.contains(&name.as_str()) {
@@ -105,6 +118,8 @@ pub fn build_foreign_deps(
         }
     }
 
+    let mut jobs: Vec<BuildJob> = Vec::new();
+
     for (name, dep) in &manifest.dependencies {
         if OS_FAMILIES.contains(&name.as_str()) { continue; }
 
@@ -117,19 +132,15 @@ pub fn build_foreign_deps(
                     if let Some(pc) = maybe_pc { pkg_results.push(pc); }
                     results.push(built);
                 }
-                None => {} // optional, not found
+                None => {}
             }
             continue;
         }
 
         let Dependency::Detailed(d) = dep else { continue };
 
-        // ── Platform dep — link flags handled by linker, nothing to build ───
-        if crate::manifest::types::is_platform_dep(name) {
-            continue;
-        }
+        if crate::manifest::types::is_platform_dep(name) { continue; }
 
-        // ── Determine source directory ────────────────────────────────────────
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
         } else if d.git.is_some() {
@@ -137,7 +148,7 @@ pub fn build_foreign_deps(
         } else if let Some(url) = &d.url {
             crate::fetch::http::fetch_url_dep(name, url, d.sha256.as_deref(), project_dir, progress)?
         } else {
-            continue; // version dep — not a foreign build
+            continue;
         };
 
         if !dep_dir.exists() {
@@ -147,7 +158,6 @@ pub fn build_foreign_deps(
             )));
         }
 
-        // ── Resolve build system ──────────────────────────────────────────────
         let bs = match &d.backend {
             Some(bs) if bs == "none" => {
                 let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
@@ -169,8 +179,7 @@ pub fn build_foreign_deps(
                     Some(detected) => detected,
                     None => {
                         if !has_source_files(&dep_dir) {
-                            let include_dirs =
-                                collect_include_dirs(&dep_dir, &d.include, None);
+                            let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
                             if !include_dirs.is_empty() {
                                 results.push(ForeignBuilt {
                                     name: name.clone(), libs: vec![],
@@ -184,14 +193,37 @@ pub fn build_foreign_deps(
             }
         };
 
-        let build_dir = dep_dir.join(".freight-build");
-        let libs = invoke_build_system(&dep_dir, &build_dir, name, &bs, profile, &d.cmake_args, manifest.compiler.target.as_deref(), progress)?;
-        let include_dirs = collect_include_dirs(&dep_dir, &d.include, Some(&build_dir));
-
-        results.push(ForeignBuilt {
-            name: name.clone(), libs, include_dirs, raw_link_flags: vec![],
+        jobs.push(BuildJob {
+            name:       name.clone(),
+            dep_dir,
+            backend:    bs,
+            cmake_args: d.cmake_args.clone(),
+            include:    d.include.clone(),
+            target:     manifest.compiler.target.clone(),
         });
     }
+
+    // ── Parallel pass: invoke foreign build systems concurrently ─────────────
+    // progress is Arc<dyn Fn + Send + Sync> so it is safe to share across threads.
+    let built: Result<Vec<ForeignBuilt>, FreightError> = jobs
+        .into_par_iter()
+        .map(|job| {
+            let build_dir = job.dep_dir.join(".freight-build");
+            let libs = invoke_build_system(
+                &job.dep_dir, &build_dir, &job.name, &job.backend,
+                profile, &job.cmake_args, job.target.as_deref(), progress,
+            )?;
+            let include_dirs = collect_include_dirs(&job.dep_dir, &job.include, Some(&build_dir));
+            Ok(ForeignBuilt {
+                name: job.name,
+                libs,
+                include_dirs,
+                raw_link_flags: vec![],
+            })
+        })
+        .collect();
+
+    results.extend(built?);
 
     pc_cache.save(project_dir);
     Ok((results, pkg_results))
