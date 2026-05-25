@@ -62,9 +62,8 @@ pub fn build_autotools(
         }
     }
 
-    // Build step — cap at MAX_JOBS to avoid saturating all cores.
-    let jobs     = std::thread::available_parallelism().map(|n| n.get().min(super::MAX_JOBS)).unwrap_or(1);
-    let jobs_str = jobs.to_string();
+    // Build step — job count set by rayon thread pool (from -j flag or default min(cpus, 6)).
+    let jobs_str = rayon::current_num_threads().to_string();
 
     if use_emscripten {
         run("emmake", &["make", "-j", &jobs_str], dep_dir, "make")?;

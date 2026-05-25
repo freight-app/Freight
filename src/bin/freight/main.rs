@@ -421,12 +421,16 @@ fn main() -> Result<()> {
             std::env::set_var("FREIGHT_VERBOSE", "1");
         }
     }
-    if let Some(n) = cli.jobs {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build_global()
-            .ok();
-    }
+    // Always configure the rayon thread pool so foreign build systems (cmake,
+    // make, ninja, …) can read rayon::current_num_threads() as the job count.
+    // Default: min(logical CPUs, 6) — prevents saturating all cores.
+    let jobs = cli.jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6)
+    });
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build_global()
+        .ok();
 
     match cli.command {
         Commands::New { name, lang } => cmd_new(&name, &lang),

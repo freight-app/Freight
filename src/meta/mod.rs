@@ -26,10 +26,6 @@ use crate::manifest::types::{Dependency, DetailedDep, Manifest};
 use crate::supports::eval_supports;
 use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs, SystemLibStub};
 
-/// Hard cap on parallel jobs passed to foreign build systems (cmake, make, ninja, …).
-/// Prevents saturating all cores when building dependencies.
-pub(crate) const MAX_JOBS: usize = 6;
-
 // ── OS-family pseudo-deps ─────────────────────────────────────────────────────
 
 /// Dep names that are treated as OS-family selectors rather than real packages.
