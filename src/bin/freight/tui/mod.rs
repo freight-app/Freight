@@ -13,6 +13,7 @@
 pub mod browser;
 pub mod login;
 pub mod register;
+#[cfg(feature = "admin")]
 pub mod registry;
 
 pub use browser::run_package_browser;

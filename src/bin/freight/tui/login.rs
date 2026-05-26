@@ -22,7 +22,7 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
-use super::registry::client::Client;
+use sha2::{Digest, Sha256};
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -138,13 +138,9 @@ async fn event_loop(
                         form.status  = Status::Loading;
                         let tx2 = tx.clone();
                         tokio::spawn(async move {
-                            let client = Client::new(url.clone(), None);
-                            match client.login(&username, &password).await {
-                                Ok(resp) => {
-                                    tx2.send(Msg::Success {
-                                        username,
-                                        token: resp.token,
-                                    }).await.ok();
+                            match http_login(&url, &username, &password).await {
+                                Ok(token) => {
+                                    tx2.send(Msg::Success { username, token }).await.ok();
                                 }
                                 Err(e) => {
                                     tx2.send(Msg::Err(e.to_string())).await.ok();
@@ -261,4 +257,25 @@ fn center_rect(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     Rect { x, y, width: width.min(area.width), height: height.min(area.height) }
+}
+
+// ── HTTP helper (no dep on tui::registry) ────────────────────────────────────
+
+async fn http_login(url: &str, username: &str, password: &str) -> anyhow::Result<String> {
+    let pw_hash: String = Sha256::digest(password.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/v1/users/login"))
+        .json(&serde_json::json!({ "username": username, "password": pw_hash }))
+        .send()
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
+    if let Some(t) = body["token"].as_str() {
+        Ok(t.to_string())
+    } else {
+        let detail = body["errors"][0]["detail"].as_str().unwrap_or("login failed");
+        anyhow::bail!("{detail}")
+    }
 }

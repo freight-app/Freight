@@ -91,6 +91,7 @@ pub fn login_with_credentials(
     password:     Option<&str>,
 ) {
     use freight_core::toolchain::cache::GlobalConfig;
+    use sha2::{Digest, Sha256};
 
     let url  = resolve_registry_url(registry_url);
     let name = registry_name_for(&url);
@@ -123,13 +124,31 @@ pub fn login_with_credentials(
         std::process::exit(1);
     }
 
+    // SHA-256 pre-hash — registry stores Argon2id(SHA-256(plaintext))
+    let pw_hash: String = Sha256::digest(password.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+
     let rt = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => { crate::output::print_error(&e.to_string()); std::process::exit(1); }
     };
-    let client = crate::tui::registry::client::Client::new(url.clone(), None);
-    let token = match rt.block_on(client.login(&username, &password)) {
-        Ok(resp) => resp.token,
+    let token = match rt.block_on(async {
+        let resp = reqwest::Client::new()
+            .post(format!("{url}/api/v1/users/login"))
+            .json(&serde_json::json!({ "username": username, "password": pw_hash }))
+            .send()
+            .await?;
+        let body: serde_json::Value = resp.json().await?;
+        if let Some(t) = body["token"].as_str() {
+            anyhow::Ok(t.to_string())
+        } else {
+            let detail = body["errors"][0]["detail"].as_str().unwrap_or("login failed");
+            anyhow::bail!("{detail}")
+        }
+    }) {
+        Ok(t) => t,
         Err(e) => {
             crate::output::print_error(&format!("login failed: {e}"));
             std::process::exit(1);
