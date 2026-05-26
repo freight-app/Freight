@@ -99,10 +99,6 @@ pub fn group_into_toolchains(detected: Vec<DetectedCompiler>) -> ToolchainGroups
     ToolchainGroups { toolchains, guests }
 }
 
-/// Return all built-in compiler templates.
-pub fn load_templates(_templates_dir: &Path) -> Vec<CompilerTemplate> {
-    super::builtin::all_compiler_templates()
-}
 
 /// Probe PATH for every template's binary and return those that are present with their version.
 /// Each template may yield multiple entries when versioned variants (e.g. `gcc-12`, `gcc-13`)
@@ -1063,32 +1059,3 @@ pub fn backend_matches(detected: &DetectedCompiler, name: &str) -> bool {
     false
 }
 
-/// Checks (in order):
-///   1. `FREIGHT_TEMPLATES_DIR` env var
-///   2. `{binary_dir}/toolchains/`
-///   3. `{binary_dir}/../../toolchains/`  (cargo dev layout)
-pub fn templates_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("FREIGHT_TEMPLATES_DIR") {
-        let p = PathBuf::from(dir);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-
-    let exe = std::env::current_exe().ok()?;
-    let bin_dir = exe.parent()?;
-
-    let candidate1 = bin_dir.join("toolchains");
-    if candidate1.is_dir() {
-        return Some(candidate1);
-    }
-
-    // cargo dev layout: target/debug/freight → workspace root is two levels up
-    let candidate2 = bin_dir.join("..").join("..").join("toolchains");
-    let candidate2 = candidate2.canonicalize().ok()?;
-    if candidate2.is_dir() {
-        return Some(candidate2);
-    }
-
-    None
-}

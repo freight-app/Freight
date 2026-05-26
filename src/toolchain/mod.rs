@@ -14,7 +14,7 @@ pub use debugger::{
 pub use detect::{
     DetectedCompiler, DetectedToolchain, ToolchainGroups,
     detect_all, detect_all_cached, group_into_toolchains,
-    load_templates, load_all_templates, templates_dir, toolchain_use,
+    load_all_templates, toolchain_use,
     check_manifest_version_bounds, backend_matches, parse_versioned_name,
 };
 pub use template::{BuildSettings, CompilerTemplate, ModuleStyle};

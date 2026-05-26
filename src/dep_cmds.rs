@@ -14,7 +14,7 @@ use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest};
 use crate::registry::{FreightRegistry, PackageRepo};
 use crate::toolchain::cache::GlobalConfig;
-use crate::toolchain::{detect_all_cached, load_templates, templates_dir};
+use crate::toolchain::{detect_all_cached, load_all_templates};
 
 pub use crate::manifest::types::DetailedDep;
 
@@ -526,12 +526,7 @@ pub enum RegenLockOutcome {
 pub fn regen_lock(project_dir: &Path) -> Result<RegenLockOutcome, FreightError> {
     let manifest = load_manifest(project_dir)?;
 
-    let tdir = templates_dir().ok_or_else(|| {
-        FreightError::CompilerNotFound(
-            "toolchains directory not found; set FREIGHT_TEMPLATES_DIR".into(),
-        )
-    })?;
-    let templates = load_templates(&tdir);
+    let templates = load_all_templates();
     let _ = detect_all_cached(&templates); // warm the version cache as a side effect
 
     let empty = std::collections::BTreeSet::new();

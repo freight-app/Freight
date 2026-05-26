@@ -735,11 +735,8 @@ mod tests {
     use super::*;
     use crate::toolchain::CompilerTemplate;
 
-    const TEMPLATES_DIR: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
-
     fn templates() -> Vec<CompilerTemplate> {
-        crate::toolchain::load_templates(std::path::Path::new(TEMPLATES_DIR))
+        crate::toolchain::load_all_templates()
     }
 
     fn fake_detected(templates: &[CompilerTemplate]) -> Vec<DetectedCompiler> {

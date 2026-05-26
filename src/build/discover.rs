@@ -231,11 +231,8 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    const TEMPLATES_DIR: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../toolchains");
-
     fn templates() -> Vec<CompilerTemplate> {
-        crate::toolchain::load_templates(std::path::Path::new(TEMPLATES_DIR))
+        crate::toolchain::load_all_templates()
     }
 
     fn minimal_manifest(lang_key: &str) -> Manifest {

@@ -14,7 +14,7 @@ use freight_core::manifest::{
     find_manifest_dir, load_manifest, load_workspace_manifest, validate, validate_dep_compat,
     Manifest,
 };
-use freight_core::toolchain::{load_templates, templates_dir};
+use freight_core::toolchain::load_all_templates;
 
 use crate::output::{print_error, print_status, print_success};
 
@@ -35,7 +35,7 @@ pub fn cmd_check() {
     // Workspace root: validate each member.
     if let Some(ws) = load_workspace_manifest(&manifest_dir) {
         println!("Workspace with {} member(s):", ws.members.len());
-        let templates = templates_dir().map(|d| load_templates(&d)).unwrap_or_default();
+        let templates = load_all_templates();
         let mut all_ok = true;
         for member in &ws.members {
             let member_dir = manifest_dir.join(member.trim_end_matches('/'));
@@ -50,7 +50,7 @@ pub fn cmd_check() {
     }
 
     // Single project.
-    let templates = templates_dir().map(|d| load_templates(&d)).unwrap_or_default();
+    let templates = load_all_templates();
     check_one(&manifest_dir, &templates);
 }
 
