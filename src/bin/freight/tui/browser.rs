@@ -21,7 +21,6 @@ use freight_core::registry::repos::{repo_by_name, registries_in_order};
 use freight_core::toolchain::cache::GlobalConfig;
 
 use super::common::{enter_tui, leave_tui};
-use super::common::widgets::center_rect;
 
 const SEARCH_DEBOUNCE_MS: u64 = 350;
 const PAGE_SIZE: usize = 20;
@@ -75,10 +74,6 @@ impl App {
             error: None,
             list_area: Rect::default(),
         }
-    }
-
-    fn selected_index(&self) -> Option<usize> {
-        self.list_state.selected()
     }
 
     fn select(&mut self, idx: usize) {

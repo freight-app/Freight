@@ -8,6 +8,7 @@ use super::super::common::sha256_hex;
 // ── Response types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct PackageSummary {
     pub name:        String,
     pub description: Option<String>,
@@ -17,6 +18,7 @@ pub struct PackageSummary {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct VersionInfo {
     pub version:      String,
     pub yanked:       bool,
@@ -35,6 +37,7 @@ pub struct PackageDetail {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct OwnerEntry {
     pub login: String,
 }
@@ -48,6 +51,7 @@ pub struct UserInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct TokenInfo {
     pub id:         i64,
     pub name:       String,
@@ -58,6 +62,7 @@ pub struct TokenInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct AuditEntry {
     pub id:         i64,
     pub username:   Option<String>,
@@ -69,12 +74,14 @@ pub struct AuditEntry {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct LoginResp {
     pub token:         String,
     pub refresh_token: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct OrgSummary {
     pub id:          i64,
     pub name:        String,
@@ -103,10 +110,6 @@ impl Client {
             base_url,
             token,
         }
-    }
-
-    pub fn set_token(&mut self, token: String) {
-        self.token = Some(token);
     }
 
     pub fn has_token(&self) -> bool {
@@ -153,32 +156,6 @@ impl Client {
             .await?;
         let body = Self::check(resp).await?;
         Ok(serde_json::from_value(body)?)
-    }
-
-    /// Register a new account.  Returns the initial API token on success.
-    pub async fn register(
-        &self,
-        username:   &str,
-        password:   &str,
-        email:      Option<&str>,
-        token_name: Option<&str>,
-    ) -> Result<String> {
-        let resp = self
-            .inner
-            .post(self.url("/api/v1/users/register"))
-            .json(&json!({
-                "username":   username,
-                "password":   sha256_hex(password),
-                "email":      email,
-                "token_name": token_name,
-            }))
-            .send()
-            .await?;
-        let body = Self::check(resp).await?;
-        body["token"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow::anyhow!("server response missing token field"))
     }
 
     pub async fn me(&self) -> Result<(String, bool)> {

@@ -1,4 +1,3 @@
-use freight_core::manifest::load_manifest;
 use freight_core::registry::freight_registry::FreightRegistry;
 use freight_core::registry::DEFAULT_REGISTRY_URL;
 use freight_core::toolchain::cache::{freight_home, GlobalConfig, RegistryConfig};

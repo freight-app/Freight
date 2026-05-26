@@ -6,7 +6,7 @@ use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{load_manifest, load_workspace_manifest};
 
 use crate::output::{
-    print_error, print_status,
+    print_error,
     GraphEdge, GraphFormat, render_mermaid_graph, render_dot_graph,
 };
 use owo_colors::OwoColorize;

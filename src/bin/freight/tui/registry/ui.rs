@@ -220,7 +220,7 @@ fn draw_users(frame: &mut Frame, area: Rect, app: &mut App) {
     .header(header)
     .block(Block::default().borders(Borders::ALL)
         .title(format!(" Users ({}) ", app.users.len())))
-    .highlight_style(SELECTED_STYLE)
+    .row_highlight_style(SELECTED_STYLE)
     .highlight_symbol("► ");
 
     frame.render_stateful_widget(table, table_area, &mut app.usr_state);
@@ -264,7 +264,7 @@ fn draw_tokens(frame: &mut Frame, area: Rect, app: &mut App) {
     .header(header)
     .block(Block::default().borders(Borders::ALL)
         .title(format!(" My Tokens ({}) ", app.tokens.len())))
-    .highlight_style(SELECTED_STYLE)
+    .row_highlight_style(SELECTED_STYLE)
     .highlight_symbol("► ");
 
     frame.render_stateful_widget(table, table_area, &mut app.tok_state);
@@ -347,7 +347,7 @@ fn draw_org_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         .header(header)
         .block(Block::default().borders(Borders::ALL)
             .title(format!(" Members ({}) ", app.org_members.len())))
-        .highlight_style(SELECTED_STYLE)
+        .row_highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
 
     frame.render_stateful_widget(table, members_area, &mut app.org_mem_state);
@@ -406,7 +406,7 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
     .header(header)
     .block(Block::default().borders(Borders::ALL)
         .title(format!(" Audit Log ({}) ", app.audit.len())))
-    .highlight_style(SELECTED_STYLE)
+    .row_highlight_style(SELECTED_STYLE)
     .highlight_symbol("► ");
 
     frame.render_stateful_widget(table, table_area, &mut app.aud_state);

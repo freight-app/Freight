@@ -1,7 +1,7 @@
 //! Visual theme shared across all freight form TUIs.
 //!
-//! Defines the standard status lifecycle, consistent colour palette, and the
-//! active-field highlight helper used by login, register, and any future forms.
+//! Defines the standard status lifecycle and consistent colour palette used by
+//! login, register, and any future forms.
 use ratatui::style::{Color, Modifier, Style};
 
 // ── Colour palette ────────────────────────────────────────────────────────────
@@ -44,20 +44,6 @@ impl FormStatus {
     /// (i.e. not loading and not finished).
     pub fn is_interactive(&self) -> bool {
         matches!(self, FormStatus::Idle | FormStatus::Err(_))
-    }
-}
-
-// ── Field styling ─────────────────────────────────────────────────────────────
-
-/// Returns the border style for a labelled input field.
-///
-/// The active field (currently focused) gets a yellow highlight; all others
-/// use the default style. Fields are never highlighted while loading or done.
-pub fn field_style(field_idx: usize, active_idx: usize, status: &FormStatus) -> Style {
-    if field_idx == active_idx && status.is_interactive() {
-        Style::default().fg(COLOR_ACTIVE)
-    } else {
-        Style::default()
     }
 }
 

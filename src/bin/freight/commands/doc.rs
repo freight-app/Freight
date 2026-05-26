@@ -427,8 +427,8 @@ fn print_dependency_table(deps: &[DocDependency]) {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "not installed on disk".into());
         println!(
-            "- [{}] {} {} ({}) — {}",
-            dep.scope, dep.name, dep.version, dep.kind, location
+            "- [{}] {} {} ({}) — {} from {}",
+            dep.scope, dep.name, dep.version, dep.kind, location, dep.source
         );
     }
 }
@@ -1335,6 +1335,7 @@ fn render_pkg_meta(dep: &DocDependency) -> Vec<Line<'static>> {
     kv!("name",    &dep.name);
     kv!("version", &dep.version);
     kv!("kind",    &dep.kind);
+    kv!("source",  &dep.source);
 
     if let Some(root) = &dep.path {
         if let Ok(manifest) = load_manifest(root) {
