@@ -28,7 +28,7 @@ rayon         = "1"
 walkdir       = "2"
 glob          = "0.3"
 makefile-lossless = "0.1"
-cmake-lossless    = { path = "../cmake-lossless" }
+cmake-lossless    = { git = "https://github.com/TiniTinyTerminator/cmake-lossless.git" }
 regex         = "1"
 sha2          = "0.10"
 curl          = { version = "0.4", features = ["static-curl"] }
