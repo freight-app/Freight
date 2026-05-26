@@ -1624,7 +1624,7 @@ pub fn cmd_login(registry_url: Option<&str>, token_arg: Option<&str>) {
 
     if token.is_empty() {
         print_error("token cannot be empty");
-        return;
+        std::process::exit(1);
     }
 
     match GlobalConfig::save_credential(&url, &name, &token) {
@@ -1634,7 +1634,10 @@ pub fn cmd_login(registry_url: Option<&str>, token_arg: Option<&str>) {
                 .unwrap_or_else(|| "~/.freight/credentials.toml".into());
             print_success(&format!("token saved to {creds_path}"));
         }
-        Err(e) => print_error(&e.to_string()),
+        Err(e) => {
+            print_error(&e.to_string());
+            std::process::exit(1);
+        }
     }
 }
 
@@ -1789,7 +1792,7 @@ pub fn cmd_register(
 
     if username.is_empty() {
         print_error("username cannot be empty");
-        return;
+        std::process::exit(1);
     }
 
     let password = {
@@ -1808,11 +1811,11 @@ pub fn cmd_register(
 
         if p1 != p2 {
             print_error("passwords do not match");
-            return;
+            std::process::exit(1);
         }
         if p1.len() < 8 {
             print_error("password must be at least 8 characters");
-            return;
+            std::process::exit(1);
         }
         p1
     };
@@ -1838,12 +1841,16 @@ pub fn cmd_register(
                     ));
                 }
                 Err(e) => {
+                    // Account was created but token couldn't be saved locally — not fatal.
                     print_success(&format!("registered as `{username}`"));
                     print_warning(&format!("could not save token automatically: {e}"));
                 }
             }
         }
-        Err(e) => print_error(&e.to_string()),
+        Err(e) => {
+            print_error(&e.to_string());
+            std::process::exit(1);
+        }
     }
 }
 
