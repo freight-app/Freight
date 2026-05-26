@@ -159,6 +159,10 @@ impl FreightRegistry {
     /// Upload a new package version using the cargo binary wire format.
     ///
     /// Body layout: `[u32 LE json_len][json bytes][u32 LE tar_len][tar bytes]`
+    ///
+    /// For "metadata-only" packages (e.g. vcpkg stubs), pass `upstream_url` + `build_system`
+    /// and pass an empty `tarball` (`&[]`). The server skips the gzip check and stores only
+    /// the metadata; the `/download` endpoint will 302-redirect to `upstream_url`.
     pub fn publish_package(
         &self,
         name: &str,
@@ -167,6 +171,8 @@ impl FreightRegistry {
         description: Option<&str>,
         license: Option<&str>,
         tarball: &[u8],
+        upstream_url: Option<&str>,
+        build_system: Option<&str>,
     ) -> Result<(), FreightError> {
         let token = self.token.as_deref().ok_or_else(|| {
             FreightError::RegistryError(
@@ -180,6 +186,8 @@ impl FreightRegistry {
             "channel": channel,
             "description": description,
             "license": license,
+            "upstream_url": upstream_url,
+            "build_system": build_system,
         });
         let json_bytes = serde_json::to_vec(&meta)
             .map_err(|e| FreightError::RegistryError(format!("serialize metadata: {e}")))?;
@@ -387,6 +395,10 @@ struct ApiVersion {
     #[serde(default)]
     download_url: Option<String>,
     #[serde(default)]
+    upstream_url: Option<String>,
+    #[serde(default)]
+    build_system: Option<String>,
+    #[serde(default)]
     prebuilt_triples: Vec<String>,
     #[serde(default)]
     dependencies: std::collections::HashMap<String, String>,
@@ -407,6 +419,8 @@ impl From<ApiPackage> for PackageInfo {
                 version: v.version,
                 checksum: v.checksum,
                 download_url: v.download_url,
+                upstream_url: v.upstream_url,
+                build_system: v.build_system,
                 prebuilt_triples: v.prebuilt_triples,
                 dependencies: v.dependencies,
             }).collect(),

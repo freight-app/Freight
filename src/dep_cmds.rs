@@ -308,13 +308,16 @@ pub fn fetch_registry_deps(
             }
         };
 
-        // Resolve a version constraint (e.g. ">=1.3") to a concrete version
-        // by looking up available versions from the registry first.
+        // Always look up registry metadata: we need it both for constraint resolution
+        // and to detect metadata-only packages (those with upstream_url + build_system).
+        let pkg_info = match registry.lookup(name, channel) {
+            Ok(Some(info)) => Some(info),
+            _ => None,
+        };
+
+        // Resolve a version constraint (e.g. ">=1.3") to a concrete version.
         let resolved = if looks_like_constraint(version) {
-            match registry.lookup(name, channel) {
-                Ok(Some(info)) => resolve_constraint(&info.versions, version),
-                _ => None,
-            }
+            pkg_info.as_ref().and_then(|info| resolve_constraint(&info.versions, version))
         } else {
             Some(version.to_string())
         };
@@ -327,20 +330,56 @@ pub fn fetch_registry_deps(
             continue;
         };
 
-        match registry.download_tarball(name, &concrete, channel, project_dir) {
-            Ok(checksum) => {
-                let source = registry.source_string();
-                let _ = LockFile::upsert_registry_dep(project_dir, name, &concrete, &source, &checksum);
-                outcomes.push(RegistryDepOutcome {
-                    name: name.clone(), version: concrete,
-                    action: RegistryDepAction::Downloaded,
-                });
+        // Check whether this is a metadata-only package (upstream source pointer).
+        let version_meta = pkg_info.as_ref().and_then(|info| {
+            info.versions.iter().find(|v| v.version == concrete)
+        });
+        let upstream_url = version_meta.and_then(|v| v.upstream_url.clone());
+        let build_system  = version_meta.and_then(|v| v.build_system.clone());
+
+        if let Some(ref url) = upstream_url {
+            // Metadata-only package: fetch the upstream source archive directly.
+            // `fetch_url_dep` writes `.freight-fetched` and extracts to `.deps/<name>/`.
+            let noop_progress: crate::event::Progress = std::sync::Arc::new(|_| {});
+            match crate::fetch::http::fetch_url_dep(name, url, None, project_dir, &noop_progress) {
+                Ok(_) => {
+                    // Write the build-system marker so `build_foreign_deps` knows
+                    // this dep needs compiling from source rather than linking prebuilt libs.
+                    if let Some(ref bs) = build_system {
+                        let bs_path = project_dir.join(".deps").join(name).join(".freight-build-system");
+                        let _ = std::fs::write(&bs_path, bs);
+                    }
+                    let source = registry.source_string();
+                    let _ = LockFile::upsert_registry_dep(project_dir, name, &concrete, &source, "");
+                    outcomes.push(RegistryDepOutcome {
+                        name: name.clone(), version: concrete,
+                        action: RegistryDepAction::Downloaded,
+                    });
+                }
+                Err(_) => {
+                    outcomes.push(RegistryDepOutcome {
+                        name: name.clone(), version: version.to_string(),
+                        action: RegistryDepAction::Unavailable,
+                    });
+                }
             }
-            Err(_) => {
-                outcomes.push(RegistryDepOutcome {
-                    name: name.clone(), version: version.to_string(),
-                    action: RegistryDepAction::Unavailable,
-                });
+        } else {
+            // Regular registry package: download the stored tarball.
+            match registry.download_tarball(name, &concrete, channel, project_dir) {
+                Ok(checksum) => {
+                    let source = registry.source_string();
+                    let _ = LockFile::upsert_registry_dep(project_dir, name, &concrete, &source, &checksum);
+                    outcomes.push(RegistryDepOutcome {
+                        name: name.clone(), version: concrete,
+                        action: RegistryDepAction::Downloaded,
+                    });
+                }
+                Err(_) => {
+                    outcomes.push(RegistryDepOutcome {
+                        name: name.clone(), version: version.to_string(),
+                        action: RegistryDepAction::Unavailable,
+                    });
+                }
             }
         }
     }

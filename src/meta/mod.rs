@@ -124,15 +124,36 @@ pub fn build_foreign_deps(
         if OS_FAMILIES.contains(&name.as_str()) { continue; }
 
         if let Some(version) = package_dep_version(dep) {
-            let query    = package_query(name, version);
-            let repo     = dep_repo(dep);
-            let optional = package_dep_optional(dep);
-            match resolve_version_dep(name, &query, version, repo, optional, project_dir, progress, &mut pc_cache)? {
-                Some((built, maybe_pc)) => {
-                    if let Some(pc) = maybe_pc { pkg_results.push(pc); }
-                    results.push(built);
+            // Check for a metadata-only registry dep that was fetched from upstream source.
+            // `fetch_registry_deps()` writes `.freight-build-system` when the dep needs
+            // compiling from source (e.g. vcpkg packages with `build = "cmake"`).
+            let dep_dir = project_dir.join(".deps").join(name);
+            let bs_file = dep_dir.join(".freight-build-system");
+            if bs_file.exists() {
+                let bs = std::fs::read_to_string(&bs_file)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "cmake".to_string());
+                jobs.push(BuildJob {
+                    name:       name.clone(),
+                    dep_dir,
+                    backend:    bs,
+                    cmake_args: vec![],
+                    include:    vec![],
+                    target:     manifest.compiler.target.clone(),
+                });
+            } else {
+                let query    = package_query(name, version);
+                let repo     = dep_repo(dep);
+                let optional = package_dep_optional(dep);
+                match resolve_version_dep(name, &query, version, repo, optional, project_dir, progress, &mut pc_cache)? {
+                    Some((built, maybe_pc)) => {
+                        if let Some(pc) = maybe_pc { pkg_results.push(pc); }
+                        results.push(built);
+                    }
+                    None => {}
                 }
-                None => {}
             }
             continue;
         }

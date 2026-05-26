@@ -1711,7 +1711,7 @@ pub fn cmd_publish(dry_run: bool, repo: Option<&str>) {
 
     print_status("publishing", &format!("{name}@{version} ({} bytes)", tarball.len()));
 
-    match registry.publish_package(name, version, None, description, license, &tarball) {
+    match registry.publish_package(name, version, None, description, license, &tarball, None, None) {
         Ok(()) => print_success(&format!("published {name}@{version}")),
         Err(e) => print_error(&e.to_string()),
     }
