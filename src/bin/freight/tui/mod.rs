@@ -11,6 +11,8 @@
 //!   - `freight test`           → test runner with live output panel
 
 pub mod browser;
+pub mod login;
+pub mod register;
 pub mod registry;
 
 pub use browser::run_package_browser;

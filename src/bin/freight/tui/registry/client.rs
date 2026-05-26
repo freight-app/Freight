@@ -164,6 +164,32 @@ impl Client {
         Ok(serde_json::from_value(body)?)
     }
 
+    /// Register a new account.  Returns the initial API token on success.
+    pub async fn register(
+        &self,
+        username:   &str,
+        password:   &str,
+        email:      Option<&str>,
+        token_name: Option<&str>,
+    ) -> Result<String> {
+        let resp = self
+            .inner
+            .post(self.url("/api/v1/users/register"))
+            .json(&json!({
+                "username":   username,
+                "password":   sha256_hex(password),
+                "email":      email,
+                "token_name": token_name,
+            }))
+            .send()
+            .await?;
+        let body = Self::check(resp).await?;
+        body["token"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("server response missing token field"))
+    }
+
     pub async fn me(&self) -> Result<(String, bool)> {
         let resp = self.auth(self.inner.get(self.url("/api/v1/me"))).send().await?;
         let body = Self::check(resp).await?;

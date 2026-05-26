@@ -293,12 +293,21 @@ enum Commands {
     },
     /// Authenticate with a registry and save the token
     Login {
-        /// Registry base URL (default: https://freight.dev or first configured registry)
+        /// Registry base URL (default: first configured registry or https://freight.dev)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
-        /// API token (prompted interactively if omitted)
+        /// API token — skip username/password and save this token directly
         #[arg(long, value_name = "TOKEN")]
         token: Option<String>,
+        /// Username (skips the TUI and calls the login API directly when combined with --password)
+        #[arg(long, value_name = "NAME")]
+        username: Option<String>,
+        /// Password (skips the TUI when combined with --username)
+        #[arg(long, value_name = "PASS")]
+        password: Option<String>,
+        /// Skip the interactive TUI and use plain CLI prompts instead
+        #[arg(long)]
+        notui: bool,
     },
     /// Upload this package to a registry
     Publish {
@@ -318,7 +327,7 @@ enum Commands {
         /// Registry base URL (default: first configured registry or https://freight.dev)
         #[arg(long, value_name = "URL")]
         registry: Option<String>,
-        /// Username for the new account (prompted interactively if omitted)
+        /// Username for the new account
         #[arg(long, value_name = "NAME")]
         username: Option<String>,
         /// Email address for the new account (optional)
@@ -327,6 +336,9 @@ enum Commands {
         /// Name for the initial API token (default: init)
         #[arg(long, value_name = "NAME")]
         token_name: Option<String>,
+        /// Skip the interactive TUI and use plain CLI prompts instead
+        #[arg(long)]
+        notui: bool,
     },
     /// Yank a published version (prevents new installs)
     Yank {
@@ -572,9 +584,68 @@ fn main() -> Result<()> {
             let cmd = Cli::command();
             print_completion(shell, &cmd);
         }
-        Commands::Login { registry, token } => cmd_login(registry.as_deref(), token.as_deref()),
-        Commands::Register { registry, username, email, token_name } => {
-            cmd_register(registry.as_deref(), username.as_deref(), email.as_deref(), token_name.as_deref());
+        Commands::Login { registry, token, username, password, notui } => {
+            // --token → store directly, no TUI
+            // --username + --password → call API directly, no TUI
+            // --notui → existing stdin-prompt CLI
+            // default → TUI login form
+            if token.is_some() || notui {
+                cmd_login(registry.as_deref(), token.as_deref());
+            } else if username.is_some() || password.is_some() {
+                cmd_login_with_credentials(
+                    registry.as_deref(),
+                    username.as_deref(),
+                    password.as_deref(),
+                );
+            } else {
+                let url = resolve_registry_url(registry.as_deref());
+                match tui::login::run(url.clone(), None) {
+                    Ok((uname, token)) => {
+                        let name = registry_name_for(&url);
+                        match freight_core::toolchain::cache::GlobalConfig::save_credential(&url, &name, &token) {
+                            Ok(()) => crate::output::print_success(
+                                &format!("logged in as `{uname}` — token saved to ~/.freight/credentials.toml")
+                            ),
+                            Err(e) => {
+                                crate::output::print_error(&e.to_string());
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) if e.to_string() == "cancelled" => {}
+                    Err(e) => {
+                        crate::output::print_error(&e.to_string());
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+        Commands::Register { registry, username, email, token_name, notui } => {
+            // --notui or username already given → CLI path (stdin prompts for missing fields)
+            if notui {
+                cmd_register(registry.as_deref(), username.as_deref(), email.as_deref(), token_name.as_deref());
+            } else {
+                let url = resolve_registry_url(registry.as_deref());
+                match tui::register::run(url.clone(), username, email, token_name) {
+                    Ok((uname, token)) => {
+                        let name = registry_name_for(&url);
+                        match freight_core::toolchain::cache::GlobalConfig::save_credential(&url, &name, &token) {
+                            Ok(()) => crate::output::print_success(
+                                &format!("registered as `{uname}` — token saved to ~/.freight/credentials.toml")
+                            ),
+                            Err(e) => {
+                                crate::output::print_error(&e.to_string());
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) if e.to_string() == "cancelled" => {}
+                    Err(e) => {
+                        crate::output::print_error(&e.to_string());
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
         Commands::Publish { dry_run, repo, prebuilt } => {
             if let Some(triple_opt) = prebuilt {
@@ -611,6 +682,94 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── TUI dispatch helpers ───────────────────────────────────────────────────────
+
+/// Resolve the registry URL from the explicit flag, first configured registry,
+/// or the default freight.dev URL — same logic as cmd_login.
+fn resolve_registry_url(registry: Option<&str>) -> String {
+    use freight_core::toolchain::cache::GlobalConfig;
+    registry
+        .map(str::to_string)
+        .or_else(|| GlobalConfig::load().registries.into_iter().next().map(|r| r.url))
+        .unwrap_or_else(|| "https://freight.dev".to_string())
+}
+
+/// Return the configured registry name for a URL, falling back to "freight".
+fn registry_name_for(url: &str) -> String {
+    use freight_core::toolchain::cache::GlobalConfig;
+    GlobalConfig::load()
+        .registries
+        .iter()
+        .find(|r| r.url == url)
+        .map(|r| r.name.clone())
+        .unwrap_or_else(|| "freight".to_string())
+}
+
+/// Call /api/v1/users/login with username + password and save the resulting token.
+/// Used by `freight login --username NAME --password PASS` (non-TUI path).
+fn cmd_login_with_credentials(
+    registry_url: Option<&str>,
+    username:     Option<&str>,
+    password:     Option<&str>,
+) {
+    use freight_core::toolchain::cache::GlobalConfig;
+
+    let url  = resolve_registry_url(registry_url);
+    let name = registry_name_for(&url);
+
+    let username = match username {
+        Some(u) => u.to_string(),
+        None => {
+            use std::io::{self, Write};
+            print!("Username: ");
+            io::stdout().flush().ok();
+            let mut u = String::new();
+            io::stdin().read_line(&mut u).ok();
+            u.trim().to_string()
+        }
+    };
+    let password = match password {
+        Some(p) => p.to_string(),
+        None => {
+            use std::io::{self, Write};
+            print!("Password: ");
+            io::stdout().flush().ok();
+            let mut p = String::new();
+            io::stdin().read_line(&mut p).ok();
+            p.trim().to_string()
+        }
+    };
+
+    if username.is_empty() {
+        crate::output::print_error("username cannot be empty");
+        std::process::exit(1);
+    }
+
+    // Use the TUI client (reqwest + tokio, already deps) to call the login API.
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(e) => { crate::output::print_error(&e.to_string()); std::process::exit(1); }
+    };
+    let client = tui::registry::client::Client::new(url.clone(), None);
+    let token = match rt.block_on(client.login(&username, &password)) {
+        Ok(resp) => resp.token,
+        Err(e) => {
+            crate::output::print_error(&format!("login failed: {e}"));
+            std::process::exit(1);
+        }
+    };
+
+    match GlobalConfig::save_credential(&url, &name, &token) {
+        Ok(()) => crate::output::print_success(
+            &format!("logged in as `{username}` — token saved to ~/.freight/credentials.toml")
+        ),
+        Err(e) => {
+            crate::output::print_error(&e.to_string());
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]

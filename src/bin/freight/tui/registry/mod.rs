@@ -1,5 +1,5 @@
 mod app;
-mod client;
+pub mod client;
 mod config;
 mod ui;
 
