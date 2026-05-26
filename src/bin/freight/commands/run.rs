@@ -29,10 +29,13 @@ pub struct Args {
     /// Select a specific workspace member to run
     #[arg(long, short = 'p', value_name = "PACKAGE")]
     pub package: Option<String>,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl Args {
     pub fn run(self) {
+        self.build.apply();
         cmd_run(
             self.release,
             self.package.as_deref(),

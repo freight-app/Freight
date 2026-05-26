@@ -15,10 +15,14 @@ pub struct Args {
     /// Always download source tarballs, even if a prebuilt is available for the current triple
     #[arg(long, short = 's')]
     pub source: bool,
+    /// Parallel jobs for building foreign dependencies (cmake/make/meson/autotools)
+    #[arg(long, short = 'j', value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 impl Args {
     pub fn run(self) {
+        super::common::apply_jobs(self.jobs);
         cmd_fetch(self.source);
     }
 }

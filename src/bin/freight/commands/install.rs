@@ -22,10 +22,13 @@ pub struct Args {
     /// Cross-compilation target triple (e.g. aarch64-linux-gnu)
     #[arg(long, value_name = "TRIPLE")]
     pub target: Option<String>,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl Args {
     pub fn run(self) {
+        self.build.apply();
         cmd_install(Some(&self.prefix), self.destdir.as_deref(), self.release, self.no_build, self.target.as_deref());
     }
 }
@@ -39,10 +42,13 @@ pub struct PackageArgs {
     /// Omit for a native build. Unsupported combinations are skipped with a warning.
     #[arg(long, value_name = "TRIPLES", value_delimiter = ',')]
     pub target: Vec<String>,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl PackageArgs {
     pub fn run(self) {
+        self.build.apply();
         cmd_package(self.release, &self.target);
     }
 }

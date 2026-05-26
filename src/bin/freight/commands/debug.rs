@@ -16,10 +16,13 @@ pub struct Args {
     /// Arguments passed to the debugged program
     #[arg(last = true)]
     pub args: Vec<String>,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl Args {
     pub fn run(self) {
+        self.build.apply();
         cmd_debug(self.binary.as_deref(), self.debugger.as_deref(), &self.args, self.launch_json);
     }
 }

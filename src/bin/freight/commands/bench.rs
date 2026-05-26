@@ -15,10 +15,13 @@ pub struct Args {
     /// Select a specific workspace member to benchmark
     #[arg(long, short = 'p', value_name = "PACKAGE")]
     pub package: Option<String>,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl Args {
     pub fn run(self) {
+        self.build.apply();
         cmd_bench(
             self.name.as_deref(),
             self.package.as_deref(),

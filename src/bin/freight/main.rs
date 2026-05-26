@@ -19,12 +19,6 @@ pub(crate) fn cli_command() -> clap::Command {
     about = "Build tool and package manager for C, C++, Fortran, and more"
 )]
 struct Cli {
-    /// Print every compiler and linker invocation
-    #[arg(long, short = 'v', global = true)]
-    verbose: bool,
-    /// Number of parallel compile jobs (default: logical CPUs)
-    #[arg(long, short = 'j', global = true, value_name = "N")]
-    jobs: Option<usize>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -68,7 +62,8 @@ enum Commands {
     /// Wipe target/
     Clean(commands::clean::Args),
     /// Generate compile_commands.json for clangd, fortls, serve-d and other language servers
-    CompileCommands(commands::compile_commands::Args),
+    #[command(visible_alias = "compile-commands")]
+    Compile(commands::compile_commands::Args),
     /// Open the dependency documentation browser, or generate API docs / man pages
     Doc(commands::doc::Args),
     /// Install build outputs to a system prefix (binaries, libs, headers)
@@ -104,23 +99,6 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if cli.verbose {
-        // Safety: single-threaded at this point; no rayon workers started yet.
-        unsafe {
-            std::env::set_var("FREIGHT_VERBOSE", "1");
-        }
-    }
-    // Always configure the rayon thread pool so foreign build systems (cmake,
-    // make, ninja, …) can read rayon::current_num_threads() as the job count.
-    // Default: min(logical CPUs, 6) — prevents saturating all cores.
-    let jobs = cli.jobs.unwrap_or_else(|| {
-        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6)
-    });
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build_global()
-        .ok();
-
     match cli.command {
         Commands::New(args)             => args.run(),
         Commands::Init(args)            => args.run(),
@@ -140,7 +118,7 @@ fn main() -> Result<()> {
         Commands::Search(args)          => args.run(),
         Commands::Check(args)           => args.run(),
         Commands::Clean(args)           => args.run(),
-        Commands::CompileCommands(args) => args.run(),
+        Commands::Compile(args)         => args.run(),
         Commands::Doc(args)             => args.run(),
         Commands::Install(args)         => args.run(),
         Commands::Package(args)         => args.run(),

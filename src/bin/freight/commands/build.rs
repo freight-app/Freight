@@ -30,10 +30,13 @@ pub struct Args {
     /// Output format for --graph: text (default), mermaid, dot
     #[arg(long, default_value = "text", value_name = "FORMAT", requires = "graph")]
     pub graph_format: String,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl Args {
     pub fn run(self) {
+        self.build.apply();
         if self.graph {
             cmd_build_graph(self.release, self.package.as_deref(), &self.features, !self.no_default_features, &self.graph_format);
         } else {

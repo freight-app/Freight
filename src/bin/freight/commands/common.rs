@@ -5,6 +5,40 @@ use freight_core::manifest::find_manifest_dir;
 
 use crate::output::{print_error, print_warning};
 
+// ── Shared build flags ────────────────────────────────────────────────────────
+
+/// Common flags for commands that invoke the freight build engine.
+/// Flatten into a command's `Args` with `#[command(flatten)]`.
+#[derive(clap::Args, Clone)]
+pub struct BuildFlags {
+    /// Print every compiler and linker invocation
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
+    /// Number of parallel compile jobs (default: min(logical CPUs, 6))
+    #[arg(long, short = 'j', value_name = "N")]
+    pub jobs: Option<usize>,
+}
+
+impl BuildFlags {
+    /// Set `FREIGHT_VERBOSE` and configure the rayon thread pool.
+    /// Call once, before any build engine use.
+    pub fn apply(&self) {
+        if self.verbose {
+            // Safety: single-threaded here; rayon workers not yet started.
+            unsafe { std::env::set_var("FREIGHT_VERBOSE", "1"); }
+        }
+        apply_jobs(self.jobs);
+    }
+}
+
+/// Configure the rayon thread pool from an optional `--jobs N` value.
+pub fn apply_jobs(jobs: Option<usize>) {
+    let n = jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6)
+    });
+    rayon::ThreadPoolBuilder::new().num_threads(n).build_global().ok();
+}
+
 pub fn locate_project_dir() -> Option<PathBuf> {
     let cwd = match std::env::current_dir() {
         Ok(d) => d,

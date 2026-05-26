@@ -14,10 +14,13 @@ use crate::output::{print_error, print_success};
 pub struct Args {
     #[arg(long)]
     pub release: bool,
+    #[command(flatten)]
+    pub build: super::common::BuildFlags,
 }
 
 impl Args {
     pub fn run(self) {
+        self.build.apply();
         cmd_watch(self.release);
     }
 }
