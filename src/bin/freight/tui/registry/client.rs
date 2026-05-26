@@ -3,16 +3,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 
-/// SHA-256 hex digest — matches the client-side pre-hash the registry expects.
-/// The server stores `Argon2id(SHA-256(plaintext))`, so the client must always
-/// send the SHA-256 layer; the server adds Argon2id on top.
-fn sha256_hex(s: &str) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(s.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
+use super::super::common::sha256_hex;
 
 // ── Response types ────────────────────────────────────────────────────────────
 

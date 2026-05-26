@@ -6,7 +6,6 @@ use crossterm::{
         MouseButton, MouseEventKind,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -17,9 +16,12 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use freight_core::registry::{PackageInfo};
+use freight_core::registry::PackageInfo;
 use freight_core::registry::repos::{repo_by_name, registries_in_order};
 use freight_core::toolchain::cache::GlobalConfig;
+
+use super::common::{enter_tui, leave_tui};
+use super::common::widgets::center_rect;
 
 const SEARCH_DEBOUNCE_MS: u64 = 350;
 const PAGE_SIZE: usize = 20;
@@ -159,17 +161,14 @@ impl App {
 }
 
 pub fn run_package_browser(repo: Option<&str>) -> anyhow::Result<Option<BrowserResult>> {
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = enter_tui()?;
+    // Enable mouse capture on top of the standard alternate-screen setup.
+    execute!(terminal.backend_mut(), EnableMouseCapture)?;
 
     let result = run_loop(&mut terminal, repo);
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-    terminal.show_cursor()?;
+    execute!(terminal.backend_mut(), DisableMouseCapture)?;
+    leave_tui(&mut terminal)?;
 
     result
 }

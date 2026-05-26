@@ -11,6 +11,7 @@
 //!   - `freight test`           → test runner with live output panel
 
 pub mod browser;
+pub mod common;
 pub mod login;
 pub mod register;
 #[cfg(feature = "admin")]
