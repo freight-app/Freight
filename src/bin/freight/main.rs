@@ -362,6 +362,15 @@ enum Commands {
         #[command(subcommand)]
         command: ToolchainCommands,
     },
+    /// Open the registry admin panel (packages, users, tokens, orgs, audit log)
+    Tui {
+        /// Registry base URL (default: http://localhost:7878 or configured registry)
+        #[arg(long, env = "FREIGHT_REGISTRY_URL", default_value = "http://localhost:7878")]
+        url: String,
+        /// API token — omit to use saved credentials or the interactive login screen
+        #[arg(long, env = "FREIGHT_REGISTRY_TOKEN")]
+        token: Option<String>,
+    },
     /// Internal helper used by generated shell completion scripts
     #[command(name = "__complete", hide = true)]
     Complete { context: CompletionContext },
@@ -592,6 +601,12 @@ fn main() -> Result<()> {
             ToolchainCommands::List => cmd_toolchain_list(),
             ToolchainCommands::Use { name } => cmd_toolchain_use(&name),
         },
+        Commands::Tui { url, token } => {
+            if let Err(e) = tui::registry::run(url, token) {
+                eprintln!("error: {e:#}");
+                std::process::exit(1);
+            }
+        }
         Commands::Complete { context } => print_completion_candidates(context),
     }
 
