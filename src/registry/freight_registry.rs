@@ -75,9 +75,27 @@ impl PackageRepo for FreightRegistry {
     }
 
     fn search(&self, query: &str) -> Result<Vec<PackageInfo>, FreightError> {
-        let url = format!("{}/api/v1/search?q={}", self.base_url, url_encode(query));
-        let result = http_get_json::<ApiSearchResult>(&url, self.token.as_deref())?;
-        Ok(result.packages.into_iter().map(Into::into).collect())
+        const SEARCH_PAGE_SIZE: usize = 100;
+
+        let mut packages = Vec::new();
+        let mut offset = 0usize;
+        loop {
+            let url = format!(
+                "{}/api/v1/search?q={}&limit={SEARCH_PAGE_SIZE}&offset={offset}",
+                self.base_url,
+                url_encode(query)
+            );
+            let result = http_get_json::<ApiSearchResult>(&url, self.token.as_deref())?;
+            let count = result.packages.len();
+            packages.extend(result.packages.into_iter().map(Into::into));
+
+            offset += count;
+            if count < SEARCH_PAGE_SIZE || result.total.is_some_and(|total| offset >= total) {
+                break;
+            }
+        }
+
+        Ok(packages)
     }
 
     fn fetch_readme(&self, name: &str) -> Option<String> {
@@ -407,6 +425,8 @@ struct ApiVersion {
 #[derive(Deserialize)]
 struct ApiSearchResult {
     packages: Vec<ApiPackage>,
+    #[serde(default)]
+    total: Option<usize>,
 }
 
 impl From<ApiPackage> for PackageInfo {

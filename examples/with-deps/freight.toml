@@ -11,6 +11,15 @@ src  = "src/main.cpp"
 
 [dependencies]
 vecmath = "0.1.0"
+boost-atomic = "1.91.0"
+flashlight-cuda = "0.3"
+graphviz = "10.0.1"
+7zip = "26.0"
+ableton = "3.0.5"
+3fd = "2.6.3"
+abcmake = "6.4.0"
+abletonlink = "3.0.6"
+abumq-ripe = "4.2.2"
 
 [profile.dev]
 opt-level = 0

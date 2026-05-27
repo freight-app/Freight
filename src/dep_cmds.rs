@@ -337,7 +337,9 @@ pub fn fetch_registry_deps(
         let version_meta = pkg_info.as_ref().and_then(|info| {
             info.versions.iter().find(|v| v.version == concrete)
         });
-        let upstream_url = version_meta.and_then(|v| v.upstream_url.clone());
+        // Substitute ${VERSION} in case the registry stub still has the raw template.
+        let upstream_url = version_meta.and_then(|v| v.upstream_url.clone())
+            .map(|u| u.replace("${VERSION}", &concrete));
         let build_system  = version_meta.and_then(|v| v.build_system.clone());
 
         if let Some(ref url) = upstream_url {
