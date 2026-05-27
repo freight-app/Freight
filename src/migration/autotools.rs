@@ -2,7 +2,8 @@
 ///
 /// Parsing strategy (static only — no shell execution):
 ///   1. `configure.ac` / `configure.in` → package name, version, dependencies
-///   2. `Makefile.am`                    → targets (bin_PROGRAMS, lib_LIBRARIES, …)
+///   2. `Makefile.am`                    → targets (bin_PROGRAMS, lib_LIBRARIES, …),
+///                                         `SUBDIRS` (recursed automatically)
 ///   3. `Makefile.in` fallback          → treat like a Makefile after stripping @...@ tokens
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,14 @@ use toml_edit::{Array, DocumentMut, Item, Table, value};
 pub struct ImportResult {
     pub written: Vec<PathBuf>,
     pub warnings: Vec<String>,
+}
+
+/// A local path dependency discovered while recursing into a SUBDIRS entry.
+struct PathDep {
+    /// Dep name as it appears in `[dependencies]`.
+    name: String,
+    /// Path relative to the project root (e.g. `"lib/foo"`).
+    rel_path: String,
 }
 
 /// Purge artefacts left by autotools from `dir`.
@@ -53,6 +62,7 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
     };
     let out_root = out_dir.unwrap_or(&project_dir);
     let mut warnings: Vec<String> = Vec::new();
+    let mut all_written: Vec<PathBuf> = Vec::new();
 
     // ── 1. Parse configure.ac / configure.in ─────────────────────────────────
     let dir_name = project_dir
@@ -81,7 +91,7 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
     };
 
     // ── 2. Parse Makefile.am (preferred) or Makefile.in (fallback) ───────────
-    let (targets, lang_std, extra_defines) =
+    let (targets, lang_std, extra_defines, subdirs) =
         if let Some(am) = find_file(&project_dir, "Makefile.am") {
             let content = std::fs::read_to_string(&am)
                 .with_context(|| format!("reading {}", am.display()))?;
@@ -90,7 +100,8 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
             let content = std::fs::read_to_string(&mf_in)
                 .with_context(|| format!("reading {}", mf_in.display()))?;
             warnings.push("No Makefile.am found — falling back to Makefile.in".into());
-            parse_makefile_in(&content, &mut warnings)
+            let (t, s, d) = parse_makefile_in(&content, &mut warnings);
+            (t, s, d, vec![])
         } else {
             warnings.push("No Makefile.am or Makefile.in — inferring from filesystem".into());
             let kind = if has_main_function(&project_dir) {
@@ -99,16 +110,76 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
                 TargetKind::StaticLib
             };
             let name = sanitize_name(&pkg_name);
-            (vec![TargetSpec { name, kind }], None, vec![])
+            (vec![TargetSpec { name, kind }], None, vec![], vec![])
         };
 
     // Filter well-known auto-linked libs (pkg-config finds them anyway)
     deps.retain(|d| !AUTO_LINKED.contains(&d.as_str()));
 
-    // ── 3. Emit freight.toml ──────────────────────────────────────────────────
+    // ── 3. Recurse into SUBDIRS ───────────────────────────────────────────────
+    let mut path_deps: Vec<PathDep> = Vec::new();
+
+    for subdir_name in &subdirs {
+        let subdir_path = project_dir.join(subdir_name);
+        if !subdir_path.is_dir() {
+            warnings.push(format!(
+                "SUBDIRS: '{subdir_name}' does not exist — skipping"
+            ));
+            continue;
+        }
+
+        // Only recurse if the subdir has autotools files to migrate.
+        let has_configure = find_configure_ac(&subdir_path).is_some();
+        let has_makefile_am = find_file(&subdir_path, "Makefile.am").is_some();
+        if !has_configure && !has_makefile_am {
+            warnings.push(format!(
+                "SUBDIRS: '{subdir_name}' has no configure.ac or Makefile.am — skipping"
+            ));
+            continue;
+        }
+
+        // Migrate the subdir in-place (writes its own freight.toml).
+        match import_autotools(&subdir_path, Some(&subdir_path)) {
+            Ok(sub_result) => {
+                // Prefix subdir warnings so the user knows which subdir they came from.
+                warnings.extend(
+                    sub_result.warnings.into_iter()
+                        .map(|w| format!("[{subdir_name}] {w}")),
+                );
+                all_written.extend(sub_result.written);
+
+                // If the subdir produces library targets, add it as a path dep.
+                if let Some(am) = find_file(&subdir_path, "Makefile.am") {
+                    if let Ok(content) = std::fs::read_to_string(&am) {
+                        let mut sub_warnings = Vec::new();
+                        let (sub_targets, ..) = parse_makefile_am(&content, &mut sub_warnings);
+                        for t in &sub_targets {
+                            if matches!(t.kind, TargetKind::StaticLib | TargetKind::SharedLib) {
+                                // Relative path from the project root to the subdir.
+                                let rel = subdir_name.clone();
+                                if !path_deps.iter().any(|p| p.name == t.name) {
+                                    path_deps.push(PathDep {
+                                        name: t.name.clone(),
+                                        rel_path: rel.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "SUBDIRS: failed to migrate '{subdir_name}': {e:#}"
+                ));
+            }
+        }
+    }
+
+    // ── 4. Emit freight.toml ──────────────────────────────────────────────────
     let toml = emit_toml(
         &pkg_name, &pkg_version, &targets, lang_std.as_deref(),
-        &extra_defines, &deps, &warnings,
+        &extra_defines, &deps, &path_deps, &warnings,
     );
 
     std::fs::create_dir_all(out_root)
@@ -116,8 +187,9 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
     let dest = out_root.join("freight.toml");
     std::fs::write(&dest, &toml)
         .with_context(|| format!("writing {}", dest.display()))?;
+    all_written.push(dest);
 
-    Ok(ImportResult { written: vec![dest], warnings })
+    Ok(ImportResult { written: all_written, warnings })
 }
 
 // ── configure.ac parser ───────────────────────────────────────────────────────
@@ -191,13 +263,16 @@ enum TargetKind { Bin, StaticLib, SharedLib }
 #[derive(Debug)]
 struct TargetSpec { name: String, kind: TargetKind }
 
+/// Returns `(targets, lang_std, defines, subdirs)`.
+/// `subdirs` is the list of directory names from any `SUBDIRS = ...` line.
 fn parse_makefile_am(
     content: &str,
     warnings: &mut Vec<String>,
-) -> (Vec<TargetSpec>, Option<String>, Vec<String>) {
+) -> (Vec<TargetSpec>, Option<String>, Vec<String>, Vec<String>) {
     let mut targets: Vec<TargetSpec> = Vec::new();
     let mut lang_std: Option<String> = None;
     let mut defines: Vec<String> = Vec::new();
+    let mut subdirs: Vec<String> = Vec::new();
 
     // Join continuation lines
     let joined = join_continuations(content);
@@ -209,7 +284,7 @@ fn parse_makefile_am(
         // bin_PROGRAMS / noinst_PROGRAMS / check_PROGRAMS / sbin_PROGRAMS / libexec_PROGRAMS
         if let Some(rest) = strip_lhs(line, &["bin_PROGRAMS", "sbin_PROGRAMS",
             "libexec_PROGRAMS", "noinst_PROGRAMS", "check_PROGRAMS",
-            "dist_bin_SCRIPTS", "noinst_PROGRAMS"])
+            "dist_bin_SCRIPTS"])
         {
             for name in rest.split_whitespace() {
                 let n = sanitize_name(name);
@@ -255,18 +330,27 @@ fn parse_makefile_am(
                 }
             }
         }
-        // SUBDIRS — warn about them
-        else if line.starts_with("SUBDIRS") {
-            warnings.push("Makefile.am has SUBDIRS — workspace members not yet auto-detected".into());
+        // SUBDIRS — collect subdir names for recursive migration
+        else if let Some(rest) = strip_lhs(line, &["SUBDIRS"]) {
+            for name in rest.split_whitespace() {
+                // Skip special tokens like '.' (current dir) or '..'
+                if name != "." && name != ".." && !name.is_empty() {
+                    subdirs.push(name.to_string());
+                }
+            }
+        }
+        // DIST_SUBDIRS is informational only — don't recurse into it
+        else if line.starts_with("DIST_SUBDIRS") {
+            // ignore
         }
     }
 
-    // If nothing found, fall back
-    if targets.is_empty() {
+    // If nothing found (and no subdirs to recurse), warn
+    if targets.is_empty() && subdirs.is_empty() {
         warnings.push("No target declarations found in Makefile.am".into());
     }
 
-    (targets, lang_std, defines)
+    (targets, lang_std, defines, subdirs)
 }
 
 // ── Makefile.in fallback parser ───────────────────────────────────────────────
@@ -341,8 +425,11 @@ fn emit_toml(
     lang_std: Option<&str>,
     defines: &[String],
     deps: &[String],
+    path_deps: &[PathDep],
     warnings: &[String],
 ) -> String {
+    use toml_edit::InlineTable;
+
     let mut doc = DocumentMut::new();
 
     let header: String = warnings
@@ -373,10 +460,17 @@ fn emit_toml(
         doc["build"] = Item::Table(build_tbl);
     }
 
-    if !deps.is_empty() {
+    if !deps.is_empty() || !path_deps.is_empty() {
         let mut dep_tbl = Table::new();
+        // Version / pkg-config deps
         for d in deps {
             dep_tbl[d.as_str()] = value("*");
+        }
+        // Path deps discovered from SUBDIRS
+        for pd in path_deps {
+            let mut inline = InlineTable::new();
+            inline.insert("path", pd.rel_path.as_str().into());
+            dep_tbl[pd.name.as_str()] = Item::Value(toml_edit::Value::InlineTable(inline));
         }
         doc["dependencies"] = Item::Table(dep_tbl);
     }
@@ -528,22 +622,42 @@ mod tests {
     fn parse_makefile_am_bin_programs() {
         let content = "bin_PROGRAMS = foo bar\nAM_CFLAGS = -std=c11 -DFOO\n";
         let mut w = vec![];
-        let (targets, std, defines) = parse_makefile_am(content, &mut w);
+        let (targets, std, defines, subdirs) = parse_makefile_am(content, &mut w);
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].kind, TargetKind::Bin);
         assert_eq!(targets[0].name, "foo");
         assert_eq!(std.as_deref(), Some("c11"));
         assert_eq!(defines, vec!["FOO"]);
+        assert!(subdirs.is_empty());
     }
 
     #[test]
     fn parse_makefile_am_lib_ltlibraries() {
         let content = "lib_LTLIBRARIES = libfoo.la\n";
         let mut w = vec![];
-        let (targets, _, _) = parse_makefile_am(content, &mut w);
+        let (targets, _, _, _) = parse_makefile_am(content, &mut w);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].name, "foo");
         assert_eq!(targets[0].kind, TargetKind::SharedLib);
+    }
+
+    #[test]
+    fn parse_makefile_am_subdirs_collected() {
+        let content = "SUBDIRS = lib src tests\n";
+        let mut w = vec![];
+        let (targets, _, _, subdirs) = parse_makefile_am(content, &mut w);
+        assert!(targets.is_empty());
+        assert_eq!(subdirs, vec!["lib", "src", "tests"]);
+        // No "not detected" warning anymore
+        assert!(!w.iter().any(|w| w.contains("workspace members not yet")));
+    }
+
+    #[test]
+    fn parse_makefile_am_subdirs_dot_skipped() {
+        let content = "SUBDIRS = . lib\n";
+        let mut w = vec![];
+        let (_, _, _, subdirs) = parse_makefile_am(content, &mut w);
+        assert_eq!(subdirs, vec!["lib"]);
     }
 
     #[test]
@@ -554,6 +668,43 @@ mod tests {
         let static_t = targets.iter().find(|t| t.kind == TargetKind::StaticLib);
         assert!(static_t.is_some());
         assert_eq!(static_t.unwrap().name, "z");
+    }
+
+    #[test]
+    fn subdirs_recursed_and_emitted_as_path_deps() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!(
+            "autotools-subdirs-test-{}",
+            std::process::id()
+        ));
+        // Root: configure.ac + Makefile.am with SUBDIRS = mylib
+        fs::create_dir_all(root.join("mylib")).unwrap();
+        fs::write(
+            root.join("configure.ac"),
+            "AC_INIT([myapp], [1.0])\n",
+        ).unwrap();
+        fs::write(
+            root.join("Makefile.am"),
+            "SUBDIRS = mylib\nbin_PROGRAMS = myapp\n",
+        ).unwrap();
+        // Subdir: its own Makefile.am with a static library
+        fs::write(
+            root.join("mylib/Makefile.am"),
+            "lib_LIBRARIES = libmylib.a\n",
+        ).unwrap();
+
+        let result = import_autotools(&root, Some(&root)).unwrap();
+
+        // Both freight.tomls should have been written
+        assert!(result.written.iter().any(|p| p == &root.join("freight.toml")));
+        assert!(result.written.iter().any(|p| p == &root.join("mylib/freight.toml")));
+
+        // Root manifest should have mylib as a path dep
+        let root_toml = fs::read_to_string(root.join("freight.toml")).unwrap();
+        assert!(root_toml.contains("mylib"), "expected mylib path dep in root manifest:\n{root_toml}");
+        assert!(root_toml.contains("mylib"), "expected 'mylib' in root manifest:\n{root_toml}");
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -41,9 +41,12 @@ Add `BuildEvent::Compiling` before the whole-program linker invocation.
 
 ## Migration tool
 
-### Autotools: SUBDIRS not auto-detected
-`migration/autotools.rs` warns when `Makefile.am` has `SUBDIRS` but does not walk
-subdirectories to produce workspace members. Should recurse into each subdir.
+### ~~Autotools: SUBDIRS not auto-detected~~
+Done. `migration/autotools.rs` now parses `SUBDIRS = ...`, recurses into each
+listed directory that has a `Makefile.am`, writes a `freight.toml` there, and
+adds any library targets as `{ path = "subdir" }` deps in the root manifest.
+Subdirs with only `bin_PROGRAMS` are migrated independently but not added as
+deps. Missing subdirs are skipped with a warning.
 
 ### ~~CMake migration: platform-conditional block handling~~
 Done. `cmake_lossless::eval::platform_condition` identifies `if(WIN32)`, `if(APPLE)`,
