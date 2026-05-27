@@ -2,7 +2,7 @@
 
 A pure-D binary demonstrating ranges, UFCS, operator overloading, and C interop.
 
-**Prerequisites:** `dmd` or `ldc2` on `$PATH`.
+**Prerequisites:** any of `dmd`, `ldc2`, or `gdc` on `$PATH`.
 
 ```sh
 freight build
@@ -48,9 +48,15 @@ after:  [-1, -0.5, 0, 1.41, 2.72, 3.14]
 ## Compiler selection
 
 `[compiler] backend = "ldc2"` makes freight prefer LDC2 when available and fall
-back to DMD otherwise. To force DMD:
+back to DMD otherwise. All three D compilers are supported:
+
+| Backend | Notes |
+|---|---|
+| `ldc2` | LLVM-based; best optimisation; recommended |
+| `dmd` | Reference compiler; fastest compilation |
+| `gdc` | GCC front-end; integrates with GCC toolchain |
 
 ```toml
 [compiler]
-backend = "dmd"
+backend = "gdc"   # or "dmd"
 ```
