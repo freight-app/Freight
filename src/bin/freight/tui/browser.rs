@@ -665,22 +665,40 @@ fn run_loop(
                     (KeyCode::Enter, _) => {
                         app.install_selected();
                     }
-                    // Navigation
-                    (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => app.move_up(),
-                    (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                    // Navigation — vim aliases only fire when the search box is
+                    // empty so that letters in package names (l, h, j, k) are
+                    // not stolen from the search input.
+                    (KeyCode::Up, _) => app.move_up(),
+                    (KeyCode::Char('k'), KeyModifiers::NONE) if app.query.is_empty() => {
+                        app.move_up()
+                    }
+                    (KeyCode::Down, _) => app.move_down(),
+                    (KeyCode::Char('j'), KeyModifiers::NONE) if app.query.is_empty() => {
                         app.move_down()
                     }
                     // Scroll the focused panel.
                     (KeyCode::PageUp, _) => app.page_focused_up(),
                     (KeyCode::PageDown, _) => app.page_focused_down(),
-                    // Pagination
-                    (KeyCode::Right, _) | (KeyCode::Char('l'), KeyModifiers::NONE) => {
+                    // Pagination — same guard: only when not actively typing.
+                    (KeyCode::Right, _) => {
                         if app.offset + RESULT_WINDOW_SIZE < app.total {
                             app.offset += RESULT_WINDOW_SIZE;
                             app.update_window(PageSelection::First);
                         }
                     }
-                    (KeyCode::Left, _) | (KeyCode::Char('h'), KeyModifiers::NONE) => {
+                    (KeyCode::Char('l'), KeyModifiers::NONE) if app.query.is_empty() => {
+                        if app.offset + RESULT_WINDOW_SIZE < app.total {
+                            app.offset += RESULT_WINDOW_SIZE;
+                            app.update_window(PageSelection::First);
+                        }
+                    }
+                    (KeyCode::Left, _) => {
+                        if app.offset >= RESULT_WINDOW_SIZE {
+                            app.offset -= RESULT_WINDOW_SIZE;
+                            app.update_window(PageSelection::Last);
+                        }
+                    }
+                    (KeyCode::Char('h'), KeyModifiers::NONE) if app.query.is_empty() => {
                         if app.offset >= RESULT_WINDOW_SIZE {
                             app.offset -= RESULT_WINDOW_SIZE;
                             app.update_window(PageSelection::Last);
