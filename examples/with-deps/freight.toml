@@ -10,7 +10,7 @@ name = "with-deps"
 src  = "src/main.cpp"
 
 [dependencies]
-vecmath = "0.1.0"
+#vecmath = "0.1.0"
 boost-atomic = "1.91.0"
 flashlight-cuda = "0.3"
 graphviz = "10.0.1"

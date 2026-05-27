@@ -462,7 +462,7 @@ impl App {
 
     /// Add the currently highlighted package to freight.toml without leaving the browser.
     fn install_selected(&mut self) {
-        use freight_core::dep_cmds::manifest_add_dep;
+        use freight_core::dep_cmds::{manifest_add_dep, manifest_remove_dep};
         use freight_core::manifest::types::Dependency;
 
         let Some(info) = &self.detail else { return };
@@ -474,16 +474,32 @@ impl App {
             return;
         };
 
-        let dep = Dependency::Simple(version.clone());
-        match manifest_add_dep(manifest_path, &name, &dep, self.dev) {
-            Ok(()) => {
-                let section = if self.dev { "dev-dependencies" } else { "dependencies" };
-                self.status = Some(format!("✓ added `{name}@{version}` to [{section}]"));
-                self.error = None;
-                self.installed.insert(name);
+        if self.installed.contains(&name) {
+            // Already installed — remove it.
+            match manifest_remove_dep(manifest_path, &name) {
+                Ok(_) => {
+                    let section = if self.dev { "dev-dependencies" } else { "dependencies" };
+                    self.status = Some(format!("✗ removed `{name}` from [{section}]"));
+                    self.error = None;
+                    self.installed.remove(&name);
+                }
+                Err(e) => {
+                    self.error = Some(format!("remove failed: {e}"));
+                }
             }
-            Err(e) => {
-                self.error = Some(format!("add failed: {e}"));
+        } else {
+            // Not installed — add it.
+            let dep = Dependency::Simple(version.clone());
+            match manifest_add_dep(manifest_path, &name, &dep, self.dev) {
+                Ok(()) => {
+                    let section = if self.dev { "dev-dependencies" } else { "dependencies" };
+                    self.status = Some(format!("✓ added `{name}@{version}` to [{section}]"));
+                    self.error = None;
+                    self.installed.insert(name);
+                }
+                Err(e) => {
+                    self.error = Some(format!("add failed: {e}"));
+                }
             }
         }
     }
