@@ -20,7 +20,7 @@ use ratatui::{
 };
 
 use freight_core::registry::repos::{registries_in_order, repo_by_name};
-use freight_core::registry::PackageInfo;
+use freight_core::registry::{PackageInfo, PackageVersion};
 use freight_core::toolchain::cache::GlobalConfig;
 
 use super::common::{enter_tui, leave_tui};
@@ -1017,8 +1017,11 @@ fn version_lines(pkg: &PackageInfo) -> Vec<Line<'_>> {
         )];
     }
 
-    pkg.versions
-        .iter()
+    let mut sorted: Vec<&PackageVersion> = pkg.versions.iter().collect();
+    sorted.sort_by(|a, b| cmp_version(&b.version, &a.version));
+
+    sorted
+        .into_iter()
         .map(|version| {
             let style = if version.version == pkg.latest {
                 Style::default()
@@ -1030,6 +1033,21 @@ fn version_lines(pkg: &PackageInfo) -> Vec<Line<'_>> {
             Line::styled(version.version.as_str(), style)
         })
         .collect()
+}
+
+fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
+    let ta: Vec<&str> = a.split(['.', '-', '_']).collect();
+    let tb: Vec<&str> = b.split(['.', '-', '_']).collect();
+    for (sa, sb) in ta.iter().zip(tb.iter()) {
+        let ord = match (sa.parse::<u64>(), sb.parse::<u64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => sa.cmp(sb),
+        };
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    ta.len().cmp(&tb.len())
 }
 
 fn render_statusbar(f: &mut Frame, app: &App, area: Rect) {
