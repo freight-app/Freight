@@ -38,6 +38,13 @@ pub struct Manifest {
     pub bins: Vec<BinTarget>,
     #[serde(default)]
     pub dependencies: HashMap<String, Dependency>,
+    /// Build-time tool dependencies — fetched and built before regular deps.
+    /// Executables found in their install `bin/` are prepended to PATH for all
+    /// subsequent build steps.  Use this for tools like cmake, ninja, protoc, etc.
+    #[serde(rename = "build-dependencies", default)]
+    pub build_dependencies: HashMap<String, Dependency>,
+    /// Debug / development-only dependencies — linked in debug builds and tests
+    /// but excluded from release artifacts.
     #[serde(rename = "dev-dependencies", default)]
     pub dev_dependencies: HashMap<String, Dependency>,
     #[serde(default)]

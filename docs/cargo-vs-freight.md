@@ -14,7 +14,8 @@ Freight is deliberately modelled after Cargo. If you know Cargo, most concepts m
 | Features | `[features]` | `[features]` — same syntax; active features emit `-D<NAME>` |
 | Build profiles | `[profile.dev]`, `[profile.release]` | `[profile.dev]`, `[profile.release]` — same keys |
 | Dependencies | `[dependencies]` | `[dependencies]` — extended (see below) |
-| Dev dependencies | `[dev-dependencies]` | `[dev-dependencies]` |
+| Dev dependencies | `[dev-dependencies]` | `[dev-dependencies]` — debug builds + tests only |
+| Build-time tools | `[build-dependencies]` (for build.rs) | `[build-dependencies]` — executables needed during compilation; `bin/` prepended to PATH |
 | Build script | `build.rs` | Not supported |
 | Workspaces | `[workspace]` in root `Cargo.toml` | Same |
 
@@ -59,6 +60,7 @@ srcs = ["src/os/windows/**"]
 | Path dep | `{ path = "../mylib" }` | `{ path = "../mylib" }` |
 | Git dep | `{ git = "...", tag = "v1" }` | `{ git = "...", tag = "v1" }` — same keys |
 | Dev dep | `[dev-dependencies]` | `[dev-dependencies]` |
+| Build-time tool | `[build-dependencies]` | `[build-dependencies]` — different semantics: no build.rs, tools go on PATH |
 | Feature selection | `{ features = ["tls"] }` | `{ features = ["tls"] }` |
 | Default features | `{ default-features = false }` | `{ default-features = false }` |
 

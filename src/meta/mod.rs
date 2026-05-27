@@ -80,6 +80,8 @@ struct BuildJob {
     cmake_args: Vec<String>,
     include:    Vec<String>,
     target:     Option<String>,
+    /// Tool bin dirs accumulated from build-deps built before this job.
+    tool_paths: Vec<PathBuf>,
 }
 
 pub fn build_foreign_deps(
@@ -92,6 +94,58 @@ pub fn build_foreign_deps(
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
     let all_stubs = load_system_lib_stubs();
+
+    // ── Build-dependency pass (sequential, before everything else) ────────────
+    // Build-deps are tools (cmake, ninja, protoc, …).  We build them first and
+    // collect any executable `bin/` directories they install.  Those paths are
+    // then prepended to PATH for every subsequent build step so freight-installed
+    // tools take precedence over system ones.
+    let mut tool_paths: Vec<PathBuf> = Vec::new();
+
+    for (name, dep) in &manifest.build_dependencies {
+        let dep_dir = match build_dep_dir(name, dep, project_dir) {
+            Some(d) => d,
+            None    => continue,
+        };
+        if !dep_dir.exists() {
+            progress(BuildEvent::Warning(format!(
+                "build-dep '{name}' not found at '{}' — run `freight fetch` first",
+                dep_dir.display()
+            )));
+            continue;
+        }
+
+        // Determine the backend (same logic as regular deps but build-deps rarely
+        // need compilation — most are prebuilt binary tarballs with build = "none").
+        let backend = if let Dependency::Detailed(d) = dep {
+            match d.backend.as_deref() {
+                Some("none") | None if !dep_dir.join("CMakeLists.txt").exists()
+                                     && !dep_dir.join("Makefile").exists()
+                                     && !dep_dir.join("meson.build").exists() => None,
+                Some(bs) => Some(bs.to_string()),
+                None     => detect_build_system(&dep_dir),
+            }
+        } else {
+            detect_build_system(&dep_dir)
+        };
+
+        if let Some(bs) = backend {
+            let build_dir = dep_dir.join(".freight-build");
+            invoke_build_system(
+                &dep_dir, &build_dir, name, &bs,
+                profile, &[], None, progress, &tool_paths,
+            )?;
+        }
+
+        let new_bins = collect_bin_dirs(&dep_dir);
+        if !new_bins.is_empty() {
+            progress(BuildEvent::Warning(format!(
+                "build-dep '{name}': using local executables from {}",
+                new_bins.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            )));
+        }
+        tool_paths.extend(new_bins);
+    }
 
     // ── Sequential pass: fast deps + build-job collection ────────────────────
     // Slow deps (those that call into cmake/make/ninja) are staged in `jobs`
@@ -142,6 +196,7 @@ pub fn build_foreign_deps(
                     cmake_args: vec![],
                     include:    vec![],
                     target:     manifest.compiler.target.clone(),
+                    tool_paths: tool_paths.clone(),
                 });
             } else {
                 let query    = package_query(name, version);
@@ -221,6 +276,7 @@ pub fn build_foreign_deps(
             cmake_args: d.cmake_args.clone(),
             include:    d.include.clone(),
             target:     manifest.compiler.target.clone(),
+            tool_paths: tool_paths.clone(),
         });
     }
 
@@ -233,6 +289,7 @@ pub fn build_foreign_deps(
             let libs = invoke_build_system(
                 &job.dep_dir, &build_dir, &job.name, &job.backend,
                 profile, &job.cmake_args, job.target.as_deref(), progress,
+                &job.tool_paths,
             )?;
             let include_dirs = collect_include_dirs(&job.dep_dir, &job.include, Some(&build_dir));
             Ok(ForeignBuilt {
@@ -248,6 +305,22 @@ pub fn build_foreign_deps(
 
     pc_cache.save(project_dir);
     Ok((results, pkg_results))
+}
+
+/// Resolve the on-disk directory for a build-dep entry.
+/// Same logic as regular deps: path → join project_dir; git/url/version → .deps/<name>.
+fn build_dep_dir(name: &str, dep: &Dependency, project_dir: &Path) -> Option<PathBuf> {
+    match dep {
+        Dependency::Simple(_) => Some(project_dir.join(".deps").join(name)),
+        Dependency::Detailed(d) => {
+            if let Some(p) = &d.path {
+                Some(project_dir.join(p))
+            } else {
+                // git, url, or version dep — all land in .deps/<name> after `freight fetch`
+                Some(project_dir.join(".deps").join(name))
+            }
+        }
+    }
 }
 
 fn package_dep_version(dep: &Dependency) -> Option<&str> {
@@ -475,6 +548,7 @@ fn invoke_build_system(
     cmake_args: &[String],
     target: Option<&str>,
     progress: &Progress,
+    tool_paths: &[PathBuf],
 ) -> Result<Vec<PathBuf>, FreightError> {
     let resolved = build_system.to_string();
 
@@ -483,12 +557,12 @@ fn invoke_build_system(
     progress(BuildEvent::BuildingForeignDep { name: name.to_string(), backend: resolved.clone() });
 
     let search_dir = match resolved.as_str() {
-        "cmake"     => { cmake::build_cmake(dep_dir, build_dir, profile, cmake_args, target)?; build_dir.to_path_buf() }
-        "make"      => { make::build_make(dep_dir)?; dep_dir.to_path_buf() }
-        "meson"     => { meson::build_meson(dep_dir, build_dir)?; build_dir.to_path_buf() }
-        "autotools" => { autotools::build_autotools(dep_dir, build_dir, target)?; build_dir.join("install") }
-        "scons"     => { scons::build_scons(dep_dir)?; dep_dir.to_path_buf() }
-        "bazel"     => { bazel::build_bazel(dep_dir)?; dep_dir.to_path_buf() }
+        "cmake"     => { cmake::build_cmake(dep_dir, build_dir, profile, cmake_args, target, tool_paths)?; build_dir.to_path_buf() }
+        "make"      => { make::build_make(dep_dir, tool_paths)?; dep_dir.to_path_buf() }
+        "meson"     => { meson::build_meson(dep_dir, build_dir, tool_paths)?; build_dir.to_path_buf() }
+        "autotools" => { autotools::build_autotools(dep_dir, build_dir, target, tool_paths)?; build_dir.join("install") }
+        "scons"     => { scons::build_scons(dep_dir, tool_paths)?; dep_dir.to_path_buf() }
+        "bazel"     => { bazel::build_bazel(dep_dir, tool_paths)?; dep_dir.to_path_buf() }
         other => {
             return Err(FreightError::ManifestParse(format!(
                 "unknown backend '{other}' for dep '{name}'; \
@@ -503,10 +577,29 @@ fn invoke_build_system(
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 /// Shared helper used by all builder submodules.
-pub(crate) fn run(prog: &str, args: &[&str], cwd: &Path, label: &str) -> Result<(), FreightError> {
-    let status = Command::new(prog)
-        .args(args)
-        .current_dir(cwd)
+///
+/// `tool_paths` is prepended to `PATH` so that build-time tool deps (cmake,
+/// ninja, protoc, …) installed by freight take precedence over system ones.
+pub(crate) fn run(
+    prog: &str,
+    args: &[&str],
+    cwd: &Path,
+    label: &str,
+    tool_paths: &[PathBuf],
+) -> Result<(), FreightError> {
+    let mut cmd = Command::new(prog);
+    cmd.args(args).current_dir(cwd);
+
+    if !tool_paths.is_empty() {
+        let current = std::env::var_os("PATH").unwrap_or_default();
+        let mut parts: Vec<PathBuf> = tool_paths.to_vec();
+        parts.extend(std::env::split_paths(&current));
+        if let Ok(new_path) = std::env::join_paths(parts) {
+            cmd.env("PATH", new_path);
+        }
+    }
+
+    let status = cmd
         .status()
         .map_err(|e| FreightError::CompilerNotFound(format!("{prog} not found: {e}")))?;
 
@@ -558,6 +651,72 @@ pub(crate) fn has_source_files(dir: &Path) -> bool {
         false
     }
     walk(dir, 4)
+}
+
+/// Collect `bin/` directories that contain executables from a built or extracted dep.
+///
+/// Tries, in order:
+/// - `<dep_dir>/bin/`              — prebuilt tarballs or installed deps
+/// - `<dep_dir>/install/bin/`      — cmake/autotools install prefix
+/// - `<dep_dir>/.freight-build/install/bin/` — freight's own build dir
+/// - `<dep_dir>/<any-subdir>/bin/` — tarballs with a top-level wrapper dir
+///                                   (e.g. `cmake-3.28.6-linux-x86_64/bin/`)
+///
+/// Only directories that actually contain at least one executable are returned.
+pub(crate) fn collect_bin_dirs(dep_dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = Vec::new();
+
+    let candidates = [
+        dep_dir.join("bin"),
+        dep_dir.join("install").join("bin"),
+        dep_dir.join(".freight-build").join("install").join("bin"),
+    ];
+    for c in &candidates {
+        if has_executables(c) { found.push(c.clone()); }
+    }
+
+    // One level deep — catches tarballs that unpack to a versioned top directory.
+    if let Ok(entries) = std::fs::read_dir(dep_dir) {
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+            // Skip already-checked names and freight internal dirs.
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(name.as_ref(), "bin" | "install" | ".freight-build" | "include" | "lib" | "src") {
+                continue;
+            }
+            let sub_bin = entry.path().join("bin");
+            if has_executables(&sub_bin) { found.push(sub_bin); }
+        }
+    }
+
+    found
+}
+
+fn has_executables(dir: &Path) -> bool {
+    if !dir.is_dir() { return false; }
+    std::fs::read_dir(dir)
+        .ok()
+        .map(|rd| rd.flatten().any(|e| is_executable(&e.path())))
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.is_file()
+        && std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+        && matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("exe") | Some("cmd") | Some("bat")
+        )
 }
 
 fn find_libs(search_dir: &Path) -> Result<Vec<PathBuf>, FreightError> {

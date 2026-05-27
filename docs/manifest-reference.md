@@ -98,10 +98,21 @@ ensures that `main()` from one binary is not linked into another.
 
 ---
 
-## `[dependencies]` and `[dev-dependencies]`
+## `[dependencies]`, `[build-dependencies]`, and `[dev-dependencies]`
 
-Dependencies listed under `[dependencies]` are always compiled and linked. Those under
-`[dev-dependencies]` are only linked when running `freight test`.
+| Section | When it applies | What freight does with it |
+|---|---|---|
+| `[dependencies]` | All builds | Compiled and linked into every artifact |
+| `[build-dependencies]` | All builds | Fetched and built **before** regular deps; any `bin/` in the installed output is prepended to PATH for all subsequent build steps |
+| `[dev-dependencies]` | Debug builds and `freight test` | Compiled and linked only when `--profile dev` (the default) or during test builds |
+
+`[build-dependencies]` is the right place for tools like `cmake`, `ninja`, `protoc`, `flex`, `bison`, and any other executables that are invoked *during* compilation but do not end up linked into your final binary. Freight builds and installs them first, then uses whatever binaries they produced (e.g. `.deps/cmake/bin/cmake`) for every cmake/make/meson/autotools dep build in the same project — so you can pin away from a system cmake that breaks an older library.
+
+```toml
+[build-dependencies]
+cmake = ">=3.20, <4"   # use any cmake 3.x; avoids cmake 4 breaking old CMakeLists.txt
+ninja = "*"            # prefer locally-installed ninja over system one
+```
 
 ### Version dependency (automatic resolver chain)
 

@@ -66,7 +66,18 @@ zlib    = "1.3"                                         # pkg-config → registr
 myutils = { path = "../myutils" }                       # local freight project
 imgui   = { git = "https://github.com/ocornut/imgui" } # git dep
 pthread = { version = "0", os = "unix" }                # unix only
+
+[build-dependencies]
+cmake = ">=3.20, <4"   # tool needed to build deps — its bin/ is prepended to PATH
+
+[dev-dependencies]
+catch2 = "3.7"         # test framework — linked only in debug builds
 ```
+
+Three dependency sections:
+- `[dependencies]` — linked in all builds
+- `[build-dependencies]` — executables needed during compilation; freight installs them first and prepends their `bin/` to PATH so locally-installed tools take precedence over system ones
+- `[dev-dependencies]` — linked only in debug builds (test frameworks, sanitizers)
 
 See [docs/manifest-reference.md](docs/manifest-reference.md) for the full field reference.
 

@@ -261,7 +261,11 @@ pub fn fetch_registry_deps(
     let manifest = load_manifest(project_dir)?;
     let mut outcomes = Vec::new();
 
-    for (name, dep) in &manifest.dependencies {
+    // Fetch both regular dependencies and build-dependencies (tools like cmake).
+    let all_deps = manifest.dependencies.iter()
+        .chain(manifest.build_dependencies.iter());
+
+    for (name, dep) in all_deps {
         let (version, repo_name, channel) = match dep {
             Dependency::Simple(v) => (v.as_str(), None, None),
             Dependency::Detailed(d)

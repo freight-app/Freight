@@ -7,7 +7,7 @@
 //!   already exist and the `configure` script hasn't changed since then
 //! - Emscripten support: uses `emconfigure`/`emmake` for wasm/emscripten targets
 //! - Always passes `--enable-static --disable-shared`
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::FreightError;
 use super::run;
@@ -16,6 +16,7 @@ pub fn build_autotools(
     dep_dir: &Path,
     build_dir: &Path,
     target: Option<&str>,
+    tool_paths: &[PathBuf],
 ) -> Result<(), FreightError> {
     let use_emscripten = target
         .map(|t| t.contains("wasm") || t.contains("emscripten"))
@@ -25,12 +26,12 @@ pub fn build_autotools(
     if !dep_dir.join("configure").exists() {
         if dep_dir.join("autogen.sh").exists() {
             if use_emscripten {
-                run("emconfigure", &["sh", "autogen.sh"], dep_dir, "autogen.sh")?;
+                run("emconfigure", &["sh", "autogen.sh"], dep_dir, "autogen.sh", tool_paths)?;
             } else {
-                run("sh", &["autogen.sh"], dep_dir, "autogen.sh")?;
+                run("sh", &["autogen.sh"], dep_dir, "autogen.sh", tool_paths)?;
             }
         } else {
-            run("autoreconf", &["-fi"], dep_dir, "autoreconf")?;
+            run("autoreconf", &["-fi"], dep_dir, "autoreconf", tool_paths)?;
         }
     }
 
@@ -56,9 +57,9 @@ pub fn build_autotools(
         if use_emscripten {
             let mut full: Vec<&str> = vec![&configure];
             full.extend_from_slice(&arg_refs);
-            run("emconfigure", &full, dep_dir, "configure")?;
+            run("emconfigure", &full, dep_dir, "configure", tool_paths)?;
         } else {
-            run(&configure, &arg_refs, dep_dir, "configure")?;
+            run(&configure, &arg_refs, dep_dir, "configure", tool_paths)?;
         }
     }
 
@@ -66,11 +67,11 @@ pub fn build_autotools(
     let jobs_str = rayon::current_num_threads().to_string();
 
     if use_emscripten {
-        run("emmake", &["make", "-j", &jobs_str], dep_dir, "make")?;
-        run("emmake", &["make", "install"],        dep_dir, "make install")?;
+        run("emmake", &["make", "-j", &jobs_str], dep_dir, "make", tool_paths)?;
+        run("emmake", &["make", "install"],        dep_dir, "make install", tool_paths)?;
     } else {
-        run("make", &["-j", &jobs_str], dep_dir, "make")?;
-        run("make", &["install"],       dep_dir, "make install")?;
+        run("make", &["-j", &jobs_str], dep_dir, "make", tool_paths)?;
+        run("make", &["install"],       dep_dir, "make install", tool_paths)?;
     }
 
     Ok(())
