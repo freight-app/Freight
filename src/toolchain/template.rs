@@ -1361,6 +1361,15 @@ mod tests {
             passthrough_prefix: "-Xcompiler",
             always_flags: &["--expt-relaxed-constexpr","--extended-lambda"],
             opt_flags: &[("0","-O0"),("2","-O2"),("3","-O3")],
+            // Device-code C++ standard — nvcc 9+ supports c++14, nvcc 11+ supports c++17,
+            // nvcc 12+ supports c++20.
+            standards: &[
+                ("c++11","-std=c++11"),
+                ("c++14","-std=c++14"),
+                ("c++17","-std=c++17"),
+                ("c++20","-std=c++20"),
+            ],
+            defaults: &[("std","c++17")],
             structure: &[
                 ("include_dir","-I{path}"),("define","-D{name}"),("define_value","-D{name}={value}"),
                 ("output","-o {path}"),("compile_only","-c"),

@@ -1,0 +1,25 @@
+[package]
+name        = "opencl-hello"
+version     = "0.1.0"
+description = "OpenCL vector-addition kernels — requires an OpenCL-capable device"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "opencl-hello"
+src  = "src/main.cpp"
+
+# OpenCL ICD loader — resolved via pkg-config (returns -lOpenCL).
+# The loader dispatches at run-time to whatever platform is installed
+# (NVIDIA, Intel, AMD, POCL, etc.).  Use `"*"` to accept any version.
+[dependencies]
+OpenCL = "*"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true

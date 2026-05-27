@@ -3,6 +3,11 @@ name        = "cuda-hello"
 version     = "0.1.0"
 description = "CUDA vector-addition kernel — requires a CUDA-capable GPU to run"
 
+# Device-code C++ standard.  c++17 is the default; set explicitly to document
+# the requirement and to show how to pin it.
+[language.cuda]
+std = "c++17"
+
 [[bin]]
 name = "cuda-hello"
 src  = "src/main.cu"

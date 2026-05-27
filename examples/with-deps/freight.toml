@@ -20,6 +20,7 @@ ableton = "3.0.5"
 abcmake = "6.4.0"
 abletonlink = "3.0.6"
 abumq-ripe = "4.2.2"
+audiofile = "1.1.4"
 
 [profile.dev]
 opt-level = 0
