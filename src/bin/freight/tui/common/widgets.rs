@@ -2,7 +2,7 @@
 use ratatui::{
     layout::{Alignment, Rect},
     style::Style,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
@@ -27,6 +27,7 @@ pub fn render_popup(frame: &mut Frame, title: &str, status: &FormStatus, popup: 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(status.border_color()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -107,6 +108,7 @@ pub fn render_field(
                 Block::default()
                     .title(label)
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(border_style),
             ),
         area,

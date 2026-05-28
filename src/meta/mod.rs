@@ -119,7 +119,7 @@ pub fn build_foreign_deps(
         // Determine the backend (same logic as regular deps but build-deps rarely
         // need compilation — most are prebuilt binary tarballs with build = "none").
         let backend = if let Dependency::Detailed(d) = dep {
-            match d.backend.as_deref() {
+            match d.dep_type.as_deref() {
                 Some("none") | None if !dep_dir.join("CMakeLists.txt").exists()
                                      && !dep_dir.join("Makefile").exists()
                                      && !dep_dir.join("meson.build").exists() => None,
@@ -243,7 +243,7 @@ pub fn build_foreign_deps(
             )));
         }
 
-        let bs = match &d.backend {
+        let bs = match &d.dep_type {
             Some(bs) if bs == "none" => {
                 let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
                 results.push(ForeignBuilt {
@@ -544,8 +544,8 @@ fn resolve_version_dep(
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-fn validate_backend(name: &str, backend: &str, dep_dir: &Path) -> Result<(), FreightError> {
-    let (present, marker) = match backend {
+fn validate_backend(name: &str, dep_type: &str, dep_dir: &Path) -> Result<(), FreightError> {
+    let (present, marker) = match dep_type {
         "cmake"     => (dep_dir.join("CMakeLists.txt").exists(),     "CMakeLists.txt"),
         "meson"     => (dep_dir.join("meson.build").exists(),        "meson.build"),
         "autotools" => (dep_dir.join("configure.ac").exists()
@@ -559,13 +559,13 @@ fn validate_backend(name: &str, backend: &str, dep_dir: &Path) -> Result<(), Fre
                      || dep_dir.join("WORKSPACE.bazel").exists(),    "WORKSPACE"),
         "auto" | "none" => return Ok(()),
         other => return Err(FreightError::ManifestParse(format!(
-            "unknown backend '{other}' for dep '{name}'; \
-             expected: cmake, make, meson, autotools, scons, bazel"
+            "unknown type '{other}' for dep '{name}'; \
+             expected: cmake, make, meson, autotools, scons, bazel, none"
         ))),
     };
     if !present {
         return Err(FreightError::ManifestParse(format!(
-            "backend '{backend}' specified for dep '{name}' \
+            "type '{dep_type}' specified for dep '{name}' \
              but '{marker}' not found in '{}'",
             dep_dir.display()
         )));

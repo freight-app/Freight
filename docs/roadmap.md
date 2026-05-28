@@ -79,7 +79,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] GitHub release deps — `{ github = "owner/repo", tag = "v1.0" }` shorthand
 - [x] Download sentinel — `.deps/<name>/.freight-fetched` prevents re-downloading
 - [x] pkg-config deps — standalone or with system fallback
-- [x] `backend = "none"` explicit header-only override
+- [x] `type = "none"` explicit header-only / prebuilt override
 - [x] Header-only auto-detection when no build system and no source files found
 - [x] **pkg-config**: `pkgconf` fallback when `pkg-config` binary is absent; cross-compile env var lookup (`PKG_CONFIG_PATH_<target>`, `TARGET_PKG_CONFIG_PATH`, …); `PKG_CONFIG_LIBDIR` / `PKG_CONFIG_SYSROOT_DIR` passthrough; `PKG_CONFIG_ALL_STATIC` static-link mode
 - [x] **CMake**: Ninja generator auto-selected when `ninja` is on `$PATH`; `CMAKE_SYSTEM_NAME` + `CMAKE_SYSTEM_PROCESSOR` injected from target triple for cross-builds; `cmake --build --parallel N` on CMake ≥ 3.12; `cmake --install` step with explicit prefix

@@ -3,14 +3,15 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, List, ListItem, Paragraph, Row, Sparkline, Table, Tabs, Wrap,
+        Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Row, Sparkline, Table, Tabs,
+        Wrap,
     },
     Frame,
 };
 
 use super::app::{App, AppMode, Tab};
 
-const SELECTED_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+const SELECTED_STYLE: Style = Style::new();
 const DIM_STYLE:      Style = Style::new().fg(Color::DarkGray);
 const OK_STYLE:       Style = Style::new().fg(Color::Green);
 const ERR_STYLE:      Style = Style::new().fg(Color::Red);
@@ -56,8 +57,9 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
                 app.current_user,
                 if app.is_admin { " [admin]" } else { "" }
             ))
-            .borders(Borders::ALL))
-        .style(Style::default().fg(Color::Gray))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded))
+        .style(Style::default().fg(Color::Reset))
         .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .divider("│");
     frame.render_widget(tabs, area);
@@ -87,6 +89,7 @@ fn draw_packages(frame: &mut Frame, area: Rect, app: &mut App) {
         .title(if app.pkg_search_on { " Search (Enter to run, Esc to cancel) " }
                else { " / to search  r to refresh  P to publish " })
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(if app.pkg_search_on { Style::default().fg(Color::Yellow) }
                       else { Style::default() });
     frame.render_widget(Paragraph::new(app.pkg_search.as_str()).block(search_block), search_area);
@@ -118,7 +121,8 @@ fn draw_package_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let list = List::new(items)
         .block(Block::default()
             .title(format!(" Packages ({}){} ", app.packages.len(), loading_sfx))
-            .borders(Borders::ALL))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded))
         .highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
 
@@ -146,7 +150,7 @@ fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         Line::from(vec![Span::styled("Desc:  ", HDR_STYLE), Span::raw(desc)]),
         Line::from(vec![Span::styled("Owners:", HDR_STYLE), Span::raw(format!(" {owners_str}"))]),
     ])
-    .block(Block::default().borders(Borders::ALL).title(" Detail "));
+    .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title(" Detail "));
     frame.render_widget(info, info_area);
 
     // Versions list
@@ -164,7 +168,7 @@ fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
     }).collect();
 
     let ver_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL)
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
             .title(" Versions (j/k  y=yank  u=unyank  📦=has prebuilts) "))
         .highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
@@ -175,7 +179,7 @@ fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
             .map(|v| v.downloads.max(0) as u64)
             .collect();
         let sparkline = Sparkline::default()
-            .block(Block::default().borders(Borders::ALL)
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
                 .title(" Downloads (oldest → newest) "))
             .data(&spark_data)
             .style(Style::default().fg(Color::Cyan));
@@ -218,7 +222,7 @@ fn draw_users(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(6),
     ])
     .header(header)
-    .block(Block::default().borders(Borders::ALL)
+    .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
         .title(format!(" Users ({}) ", app.users.len())))
     .row_highlight_style(SELECTED_STYLE)
     .highlight_symbol("► ");
@@ -262,7 +266,7 @@ fn draw_tokens(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Min(12),
     ])
     .header(header)
-    .block(Block::default().borders(Borders::ALL)
+    .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
         .title(format!(" My Tokens ({}) ", app.tokens.len())))
     .row_highlight_style(SELECTED_STYLE)
     .highlight_symbol("► ");
@@ -314,7 +318,8 @@ fn draw_org_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let list = List::new(items)
         .block(Block::default()
             .title(format!(" Organizations ({}){} ", app.orgs.len(), loading_sfx))
-            .borders(Borders::ALL))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded))
         .highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
 
@@ -334,7 +339,7 @@ fn draw_org_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         Line::from(vec![Span::styled("Name: ", HDR_STYLE), Span::raw(&org.name)]),
         Line::from(vec![Span::styled("Desc: ", HDR_STYLE), Span::raw(desc)]),
     ])
-    .block(Block::default().borders(Borders::ALL).title(" Org "));
+    .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title(" Org "));
     frame.render_widget(info, info_area);
 
     let header = Row::new(["Username", "Role"]).style(HDR_STYLE);
@@ -345,7 +350,7 @@ fn draw_org_detail(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let table = Table::new(rows, [Constraint::Min(20), Constraint::Length(8)])
         .header(header)
-        .block(Block::default().borders(Borders::ALL)
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
             .title(format!(" Members ({}) ", app.org_members.len())))
         .row_highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
@@ -366,6 +371,7 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
         .title(if app.aud_filter_on { " Filter (user:name or action, Enter/Esc to apply) " }
                else { " / to filter  r to refresh " })
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(if app.aud_filter_on { Style::default().fg(Color::Yellow) }
                       else { Style::default() });
     frame.render_widget(
@@ -404,7 +410,7 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Min(12),
     ])
     .header(header)
-    .block(Block::default().borders(Borders::ALL)
+    .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
         .title(format!(" Audit Log ({}) ", app.audit.len())))
     .row_highlight_style(SELECTED_STYLE)
     .highlight_symbol("► ");
@@ -434,6 +440,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
     let block = Block::default()
         .title(" freight-registry — login ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Cyan));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -455,12 +462,14 @@ fn draw_login(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Paragraph::new(app.login.url.as_str())
             .block(Block::default().title(" Registry URL ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(field_style(0))),
         url_a,
     );
     frame.render_widget(
         Paragraph::new(app.login.username.as_str())
             .block(Block::default().title(" Username ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(field_style(1))),
         usr_a,
     );
@@ -468,6 +477,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Paragraph::new(pw_mask.as_str())
             .block(Block::default().title(" Password ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(field_style(2))),
         pw_a,
     );
@@ -493,6 +503,7 @@ fn draw_confirm(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(" Confirm ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Yellow));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -527,6 +538,7 @@ fn draw_publish_form(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(" Publish Package ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -544,17 +556,18 @@ fn draw_publish_form(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(form.name.as_str())
-            .block(Block::default().title(" Package name ").borders(Borders::ALL).border_style(fs(0))),
+            .block(Block::default().title(" Package name ").borders(Borders::ALL).border_type(BorderType::Rounded).border_style(fs(0))),
         na,
     );
     frame.render_widget(
         Paragraph::new(form.vers.as_str())
-            .block(Block::default().title(" Version ").borders(Borders::ALL).border_style(fs(1))),
+            .block(Block::default().title(" Version ").borders(Borders::ALL).border_type(BorderType::Rounded).border_style(fs(1))),
         va,
     );
     frame.render_widget(
         Paragraph::new(form.path.as_str())
             .block(Block::default().title(" Path to .tar.gz (Enter to publish) ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(fs(2))),
         pa,
     );
@@ -575,6 +588,7 @@ fn draw_create_token_form(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(" New Token ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -589,6 +603,7 @@ fn draw_create_token_form(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(form.name.as_str())
             .block(Block::default().title(" Token name ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Yellow))),
         name_a,
     );
@@ -605,7 +620,7 @@ fn draw_create_token_form(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(scope_label)
             .style(Style::default().fg(scope_colour))
-            .block(Block::default().title(" Scope ").borders(Borders::ALL)),
+            .block(Block::default().title(" Scope ").borders(Borders::ALL).border_type(BorderType::Rounded)),
         scope_a,
     );
 
@@ -625,6 +640,7 @@ fn draw_create_org_form(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(" New Organization ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -641,12 +657,13 @@ fn draw_create_org_form(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(form.name.as_str())
-            .block(Block::default().title(" Name ").borders(Borders::ALL).border_style(fs(0))),
+            .block(Block::default().title(" Name ").borders(Borders::ALL).border_type(BorderType::Rounded).border_style(fs(0))),
         na,
     );
     frame.render_widget(
         Paragraph::new(form.description.as_str())
             .block(Block::default().title(" Description (optional) ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(fs(1))),
         da,
     );
@@ -666,6 +683,7 @@ fn draw_add_member_form(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(format!(" Add Member to '{}' ", form.org))
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -680,6 +698,7 @@ fn draw_add_member_form(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(form.username.as_str())
             .block(Block::default().title(" Username ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Yellow))),
         usr_a,
     );
@@ -689,7 +708,7 @@ fn draw_add_member_form(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(role_label)
             .style(Style::default().fg(role_colour))
-            .block(Block::default().title(" Role ").borders(Borders::ALL)),
+            .block(Block::default().title(" Role ").borders(Borders::ALL).border_type(BorderType::Rounded)),
         role_a,
     );
 
@@ -709,6 +728,7 @@ fn draw_add_owner_form(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(format!(" Add Owner to '{}' ", form.pkg))
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -722,6 +742,7 @@ fn draw_add_owner_form(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(form.username.as_str())
             .block(Block::default().title(" Username ").borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Yellow))),
         usr_a,
     );
@@ -741,6 +762,7 @@ fn draw_new_token(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(" Token created — copy this now! ")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .style(Style::default().fg(Color::Green));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);

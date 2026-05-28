@@ -23,7 +23,7 @@ pub(crate) enum CompletionContext {
 }
 
 const DEP_KEYS: &[&str] = &[
-    "version", "path", "git", "branch", "tag", "rev", "features", "backend", "include",
+    "version", "path", "git", "branch", "tag", "rev", "features", "type", "include",
 ];
 
 pub(crate) fn print_completion_candidates(context: CompletionContext) {
@@ -352,7 +352,7 @@ mod tests {
     fn add_dependency_key_candidates_include_supported_dep_fields() {
         let candidates = completion_candidates(CompletionContext::AddDepKeys);
         for expected in [
-            "version", "path", "git", "branch", "tag", "rev", "features", "backend", "include",
+            "version", "path", "git", "branch", "tag", "rev", "features", "type", "include",
         ] {
             assert!(candidates.iter().any(|candidate| candidate == expected));
         }

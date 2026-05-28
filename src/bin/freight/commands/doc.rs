@@ -448,7 +448,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
     Terminal,
 };
 
@@ -952,6 +952,7 @@ fn draw_tree(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(if focused { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) });
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -976,13 +977,13 @@ fn draw_tree(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
                         "local"     => Color::Cyan,
                         "local-dev" => Color::Blue,
                         "global"    => Color::DarkGray,
-                        _           => Color::White,
+                        _           => Color::Reset,
                     })
-                    .unwrap_or(Color::White);
+                    .unwrap_or(Color::Reset);
                 let arrow = if node.expanded { "▾ " } else { "▸ " };
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{pad}{arrow}"), Style::default().fg(scope_color)),
-                    Span::styled(node.label.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(node.label.clone(), Style::default().fg(Color::Reset).add_modifier(Modifier::BOLD)),
                 ]))
             }
             TreeNodeKind::Group => {
@@ -999,9 +1000,9 @@ fn draw_tree(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
                         "fn" | "sub" | "func" => Color::LightBlue,
                         "struct" | "class"    => Color::LightGreen,
                         "enum"                => Color::LightMagenta,
-                        _                     => Color::White,
+                        _                     => Color::Reset,
                     })
-                    .unwrap_or(Color::White);
+                    .unwrap_or(Color::Reset);
                 ListItem::new(Line::from(vec![
                     Span::raw(pad),
                     Span::styled(format!("  {}", node.label), Style::default().fg(color)),
@@ -1021,7 +1022,7 @@ fn draw_tree(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
     state.select(Some(sel_in_view));
     frame.render_stateful_widget(
         List::new(items)
-            .highlight_style(Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD))
+            .highlight_style(Style::default())
             .highlight_symbol(""),
         inner, &mut state,
     );
@@ -1032,6 +1033,7 @@ fn draw_content(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
     let outer = Block::default()
         .title("docs")
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(if focused { Style::default() } else { Style::default().fg(Color::DarkGray) });
     let inner = outer.inner(area);
     frame.render_widget(outer, area);
@@ -1088,6 +1090,7 @@ fn draw_meta(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
     let block = Block::default()
         .title(if focused { "Info [focus]" } else { "Info" })
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(if focused { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) });
     let inner = block.inner(area);
     frame.render_widget(block, area);

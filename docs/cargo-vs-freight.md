@@ -87,7 +87,7 @@ json = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.g
 
 **Foreign build system deps** — CMake, Meson, Autotools, Make, Bazel, SCons:
 ```toml
-SDL2 = { path = "../SDL2", backend = "cmake", cmake-args = ["-DSDL_STATIC=ON"] }
+SDL2 = { path = "../SDL2", type = "cmake", cmake-args = ["-DSDL_STATIC=ON"] }
 ```
 
 **System link deps** — explicit linker flags, no package manager:

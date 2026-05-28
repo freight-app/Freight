@@ -60,23 +60,17 @@ Available standard strings depend on the loaded template. Common values:
 
 `[language.proto]` is a special language key that triggers **protobuf code generation** via
 `protoc`. When declared, freight discovers all `.proto` files under `src/`, runs `protoc
---cpp_out=<out>` on each, and injects the generated `.pb.cc` files into the normal C++
+--cpp_out=<dest>` on each, and injects the generated `.pb.cc` files into the normal C++
 compilation step. The generated header directory is added to the include path automatically
 so `#include "foo.pb.h"` works without any manual flags.
 
 ```toml
 [language.proto]
 # Directory for generated C++ files.  Default: target/<profile>/proto-gen/
-# out = "src/generated"
+# dest = "src/generated"
 
 # Extra --proto_path roots beyond src/ and the project root (comma-separated).
-# proto_path = "proto/"
-
-# Enable gRPC stub generation (requires grpc_cpp_plugin on PATH or in [build-dependencies]).
-# grpc = "true"
-
-# Override the path to grpc_cpp_plugin (default: resolved from tool_paths then PATH).
-# grpc_plugin = "grpc_cpp_plugin"
+# srcs = "proto/"
 
 # Extra flags forwarded verbatim to protoc (whitespace-separated).
 # extra_flags = "--experimental_allow_proto3_optional"
@@ -88,7 +82,7 @@ then from the system PATH. To pin to a specific protoc version:
 ```toml
 [build-dependencies]
 # Prebuilt protoc binary — freight extracts it and uses the protoc from its bin/.
-protoc = { url = "https://github.com/protocolbuffers/protobuf/releases/download/v27.0/protoc-27.0-linux-x86_64.zip", backend = "none" }
+protoc = { url = "https://github.com/protocolbuffers/protobuf/releases/download/v27.0/protoc-27.0-linux-x86_64.zip", type = "none" }
 
 [dependencies]
 # Link the protobuf runtime library (resolved via pkg-config or the registry).
@@ -285,28 +279,29 @@ Any dep with a source (path, git, http, github) supports these additional keys:
 ```toml
 dep = {
     path        = "../dep",
-    backend     = "cmake",               # cmake | make | meson | autotools | scons | bazel | none
+    type        = "cmake",               # cmake | make | meson | autotools | scons | bazel | none
     cmake-args  = ["-DBUILD_TESTS=OFF"], # extra args forwarded to cmake configure step
     include     = ["include/", "src/"],  # explicit include dirs (skips auto-detection)
 }
 ```
 
-`backend` is optional — freight auto-detects the build system from marker files in the dep directory
+`type` is optional — freight auto-detects the build system from marker files in the dep directory
 (`CMakeLists.txt` → cmake, `meson.build` → meson, `configure.ac` → autotools, `Makefile` → make, etc.).
-Specifying an explicit `backend` when the required marker file is absent is an error.
+Specifying an explicit `type` when the required marker file is absent is an error.
 
-`backend = "none"` skips the build entirely — useful when you want to explicitly declare a
-header-only dep. Freight also auto-detects header-only deps: if no compilable source files are found
-after fetching, the build step is skipped and include dirs are collected automatically.
+`type = "none"` skips the build entirely — useful when you want to explicitly declare a
+header-only dep or a prebuilt binary tarball. Freight also auto-detects header-only deps: if no
+compilable source files are found after fetching, the build step is skipped and include dirs are
+collected automatically.
 
-**CMake build details** — when `backend = "cmake"` (or auto-detected):
+**CMake build details** — when `type = "cmake"` (or auto-detected):
 - Ninja is used as the generator when `ninja` is on `$PATH`; otherwise CMake's default (Unix Makefiles) is used.
 - When `[compiler] target` is set, `-DCMAKE_SYSTEM_NAME` and `-DCMAKE_SYSTEM_PROCESSOR` are injected automatically from the target triple.
 - Parallel builds via `cmake --build --parallel N` on CMake ≥ 3.12.
 - `cmake --install` installs built artifacts to `.freight-build/install/` so headers and archives are always found at a predictable path.
 - Additional arguments from `cmake-args` are forwarded to the configure step verbatim.
 
-**Autotools build details** — when `backend = "autotools"` (or auto-detected):
+**Autotools build details** — when `type = "autotools"` (or auto-detected):
 - When `[compiler] target` is set, `--host=<triple>` is passed to `configure` automatically.
 - Configure is skipped when `config.status` and `Makefile` are already present and `configure` has not been modified since the last configure run (fast-build).
 - `--enable-static --disable-shared` is always passed for predictable static archive output.

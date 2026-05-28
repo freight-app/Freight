@@ -15,7 +15,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -896,6 +896,7 @@ fn render_search(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Cyan))
                 .title(Span::styled(
                     " Search packages ",
@@ -904,7 +905,7 @@ fn render_search(f: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 )),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::Reset));
     f.render_widget(p, area);
 }
 
@@ -967,15 +968,11 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(panel_border_style(app.focus == FocusPane::Packages))
-                .title(Span::styled(title, Style::default().fg(Color::White))),
+                .title(Span::styled(title, Style::default().fg(Color::Reset))),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(30, 50, 80))
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(Style::default())
         .highlight_symbol("▶ ");
 
     f.render_stateful_widget(list, area, &mut app.list_state);
@@ -985,8 +982,9 @@ fn render_detail(f: &mut Frame, app: &mut App, area: Rect, include_versions: boo
     app.detail_area = area;
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(panel_border_style(app.focus == FocusPane::Details))
-        .title(Span::styled(" Details ", Style::default().fg(Color::White)));
+        .title(Span::styled(" Details ", Style::default().fg(Color::Reset)));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -1090,11 +1088,9 @@ fn render_versions(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == FocusPane::Versions;
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(panel_border_style(focused))
-        .title(Span::styled(
-            " Versions ",
-            Style::default().fg(Color::White),
-        ));
+        .title(Span::styled(" Versions ", Style::default().fg(Color::Reset)));
 
     let inner = block.inner(area);
     f.render_widget(block, area);

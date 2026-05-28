@@ -529,12 +529,13 @@ pub struct DetailedDep {
     /// specific commit and prevents `freight update` from moving it forward.
     #[serde(default)]
     pub rev: Option<String>,
-    /// Delegate building this dep to an external build system rather than
-    /// freight's own compiler. Values: `"cmake"`, `"make"`, `"meson"`,
-    /// `"autotools"`, `"scons"`, `"bazel"`. Omit to auto-detect from the
-    /// dep directory's marker files (CMakeLists.txt, meson.build, etc.).
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "build_system")]
-    pub backend: Option<String>,
+    /// How the dep content should be treated. Covers build systems and
+    /// content kinds. Values: `"cmake"`, `"make"`, `"meson"`, `"autotools"`,
+    /// `"scons"`, `"bazel"`, `"none"`. Omit to auto-detect from the dep
+    /// directory's marker files (CMakeLists.txt, meson.build, etc.).
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none",
+            alias = "backend", alias = "build_system")]
+    pub dep_type: Option<String>,
     /// Include directories to expose to code that depends on this dep,
     /// relative to the dep's source directory. Only used for foreign deps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

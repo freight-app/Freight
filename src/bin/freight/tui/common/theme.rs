@@ -49,7 +49,7 @@ impl FormStatus {
 
 /// Style for text inside an active input field.
 pub fn input_style() -> Style {
-    Style::default().fg(Color::White)
+    Style::default().fg(Color::Reset)
 }
 
 /// Style for success messages.
