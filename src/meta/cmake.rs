@@ -58,7 +58,7 @@ pub fn build_cmake(
     let jobs = rayon::current_num_threads();
     let jobs_str = jobs.to_string();
     let cmake_ver = cmake_version(tool_paths);
-    let parallel_ok = cmake_ver.map(|(maj, min)| (maj, min) >= (3, 12)).unwrap_or(false);
+    let parallel_ok = cmake_ver.map(|(maj, min, _)| (maj, min) >= (3, 12)).unwrap_or(false);
 
     if parallel_ok {
         run("cmake", &["--build", &bdir, "--parallel", &jobs_str], dep_dir, "cmake build", tool_paths)?;
@@ -68,7 +68,7 @@ pub fn build_cmake(
 
     // Install step.
     let prefix_str = install_prefix.to_string_lossy().into_owned();
-    let install_ok = cmake_ver.map(|(maj, min)| (maj, min) >= (3, 15)).unwrap_or(false);
+    let install_ok = cmake_ver.map(|(maj, min, _)| (maj, min) >= (3, 15)).unwrap_or(false);
     if install_ok {
         run("cmake", &["--install", &bdir, "--prefix", &prefix_str], dep_dir, "cmake install", tool_paths)?;
     } else {
@@ -80,7 +80,9 @@ pub fn build_cmake(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn cmake_version(tool_paths: &[PathBuf]) -> Option<(u32, u32)> {
+/// Returns `(major, minor, patch)` of the cmake binary reachable via
+/// `tool_paths` (tried first) or system PATH.
+pub(super) fn cmake_version(tool_paths: &[PathBuf]) -> Option<(u32, u32, u32)> {
     // Try tool_paths first (locally installed cmake), then fall back to PATH.
     let cmake_bin = tool_paths
         .iter()
@@ -96,7 +98,8 @@ fn cmake_version(tool_paths: &[PathBuf]) -> Option<(u32, u32)> {
     let mut parts = ver_str.split('.');
     let major: u32 = parts.next()?.parse().ok()?;
     let minor: u32 = parts.next()?.parse().ok()?;
-    Some((major, minor))
+    let patch: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    Some((major, minor, patch))
 }
 
 fn select_generator(tool_paths: &[PathBuf]) -> Option<String> {

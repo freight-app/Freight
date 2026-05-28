@@ -147,6 +147,14 @@ pub fn build_foreign_deps(
         tool_paths.extend(new_bins);
     }
 
+    // ── cmake version check ───────────────────────────────────────────────────
+    // If the project declares `cmake = "<constraint>"` in [build-dependencies],
+    // verify that the cmake binary we will actually use satisfies the constraint
+    // before any cmake-based dep build starts.
+    if let Some(cmake_constraint) = cmake_build_dep_constraint(manifest) {
+        check_cmake_version(&cmake_constraint, &tool_paths)?;
+    }
+
     // ── Sequential pass: fast deps + build-job collection ────────────────────
     // Slow deps (those that call into cmake/make/ninja) are staged in `jobs`
     // and built concurrently in the parallel pass below.
@@ -305,6 +313,56 @@ pub fn build_foreign_deps(
 
     pc_cache.save(project_dir);
     Ok((results, pkg_results))
+}
+
+/// Extract the cmake version constraint from `[build-dependencies]`, if any.
+/// Returns `Some(">=3.20")` when the user wrote `cmake = ">=3.20"` (or any
+/// detailed form with a `version` field).
+fn cmake_build_dep_constraint(manifest: &Manifest) -> Option<String> {
+    let dep = manifest.build_dependencies.get("cmake")?;
+    match dep {
+        Dependency::Simple(v) => {
+            let v = v.trim();
+            if v.is_empty() || v == "*" { None } else { Some(v.to_string()) }
+        }
+        Dependency::Detailed(d) => {
+            let v = d.version.as_deref()?.trim();
+            if v.is_empty() || v == "*" { None } else { Some(v.to_string()) }
+        }
+    }
+}
+
+/// Check that the cmake binary reachable via `tool_paths` (or system PATH)
+/// satisfies `constraint`.  Returns a descriptive error if it does not.
+fn check_cmake_version(constraint: &str, tool_paths: &[PathBuf]) -> Result<(), FreightError> {
+    use semver::{Version, VersionReq};
+
+    let (major, minor, patch) = match cmake::cmake_version(tool_paths) {
+        Some((maj, min, pat)) => (maj, min, pat),
+        None => return Err(FreightError::CompilerNotFound(
+            "cmake not found — install cmake or add it to [build-dependencies]".to_string(),
+        )),
+    };
+
+    let req = match VersionReq::parse(constraint) {
+        Ok(r) => r,
+        Err(_) => return Ok(()), // unparseable constraint — skip check
+    };
+
+    let ver_str = format!("{major}.{minor}.{patch}");
+    let ver = match Version::parse(&ver_str) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    if req.matches(&ver) {
+        Ok(())
+    } else {
+        Err(FreightError::ManifestParse(format!(
+            "cmake {constraint} required by [build-dependencies] but found {ver_str}; \
+             install a compatible cmake or change the version constraint"
+        )))
+    }
 }
 
 /// Resolve the on-disk directory for a build-dep entry.
