@@ -102,6 +102,18 @@ impl PackageRepo for FreightRegistry {
         let url = format!("{}/api/v1/packages/{}/readme", self.base_url, name);
         http_get(&url, self.token.as_deref()).ok()
     }
+
+    fn fetch_owners(&self, name: &str) -> Vec<String> {
+        let url = format!("{}/api/v1/packages/{}/owners", self.base_url, name);
+        #[derive(serde::Deserialize)]
+        struct OwnersResp { users: Vec<OwnerEntry> }
+        #[derive(serde::Deserialize)]
+        struct OwnerEntry { login: String }
+        match http_get_json::<OwnersResp>(&url, self.token.as_deref()) {
+            Ok(r) => r.users.into_iter().map(|u| u.login).collect(),
+            Err(_) => vec![],
+        }
+    }
 }
 
 // ── Write API (publish / yank / download) ────────────────────────────────────
@@ -403,6 +415,8 @@ struct ApiPackage {
     latest: String,
     #[serde(default)]
     versions: Vec<ApiVersion>,
+    #[serde(default)]
+    keywords: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -444,6 +458,8 @@ impl From<ApiPackage> for PackageInfo {
                 prebuilt_triples: v.prebuilt_triples,
                 dependencies: v.dependencies,
             }).collect(),
+            keywords: a.keywords,
+            owners: vec![],
         }
     }
 }

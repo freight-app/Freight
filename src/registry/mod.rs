@@ -45,6 +45,10 @@ pub struct PackageInfo {
     pub latest: String,
     /// All available versions, newest first.
     pub versions: Vec<PackageVersion>,
+    /// Keywords / categories declared in `freight.toml` (e.g. `["math", "linear-algebra"]`).
+    pub keywords: Vec<String>,
+    /// Known owners (usernames) of this package, if the registry returned them.
+    pub owners: Vec<String>,
 }
 
 /// A package repository that can resolve and search packages by name.
@@ -62,6 +66,10 @@ pub trait PackageRepo: Send + Sync {
 
     /// Fetch the README for a package. Returns `None` if not available.
     fn fetch_readme(&self, name: &str) -> Option<String>;
+
+    /// Fetch the list of owner usernames for a package.
+    /// Returns an empty vec when the endpoint is unavailable or the package doesn't exist.
+    fn fetch_owners(&self, _name: &str) -> Vec<String> { vec![] }
 }
 
 /// Backward-compatibility alias. Prefer [`PackageRepo`].
