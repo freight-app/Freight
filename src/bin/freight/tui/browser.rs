@@ -19,6 +19,9 @@ use ratatui::{
     Frame, Terminal,
 };
 
+// tui_markdown is declared at the crate root via Cargo.toml
+use tui_markdown;
+
 use freight_core::registry::repos::{registries_in_order, repo_by_name};
 use freight_core::registry::{PackageInfo, PackageVersion};
 use freight_core::toolchain::cache::GlobalConfig;
@@ -28,7 +31,9 @@ use super::common::{enter_tui, leave_tui};
 const SEARCH_DEBOUNCE_MS: u64 = 350;
 const README_DEBOUNCE_MS: u64 = 250;
 const RESULT_WINDOW_SIZE: usize = 100;
-const WIDE_VERSION_PANEL_WIDTH: u16 = 150;
+/// Minimum width for the 3-column layout (list | README | info+versions).
+/// Below this threshold the browser falls back to 2 columns.
+const WIDE_THRESHOLD: u16 = 100;
 
 enum BrowserResponse {
     Search {
@@ -910,22 +915,25 @@ fn render_search(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_body(f: &mut Frame, app: &mut App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(area);
-
-    render_list(f, app, chunks[0]);
-    if area.width >= WIDE_VERSION_PANEL_WIDTH {
-        let detail_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
-            .split(chunks[1]);
-        render_detail(f, app, detail_chunks[0], false);
-        render_versions(f, app, detail_chunks[1]);
+    if app.detail.is_some() && area.width >= WIDE_THRESHOLD {
+        // Wide: 3 columns — package list | README | info + versions
+        let [left, middle, right] = Layout::horizontal([
+            Constraint::Percentage(30),
+            Constraint::Percentage(46),
+            Constraint::Percentage(24),
+        ]).areas(area);
+        render_list(f, app, left);
+        render_readme_panel(f, app, middle);
+        render_info_and_versions(f, app, right);
     } else {
+        // Narrow: 2 columns — list | scrollable detail (info + inline versions + README)
+        let [left, right] = Layout::horizontal([
+            Constraint::Percentage(40),
+            Constraint::Percentage(60),
+        ]).areas(area);
         app.versions_area = Rect::default();
-        render_detail(f, app, chunks[1], true);
+        render_list(f, app, left);
+        render_detail(f, app, right, true);
     }
 }
 
@@ -977,6 +985,108 @@ fn render_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     f.render_stateful_widget(list, area, &mut app.list_state);
 }
+
+// ── README panel (wide layout, middle column) ────────────────────────────────
+
+fn render_readme_panel(f: &mut Frame, app: &mut App, area: Rect) {
+    // Track this area so mouse-scroll over it fires FocusPane::Details → app.scroll
+    app.detail_area = area;
+
+    let focused = app.focus == FocusPane::Details;
+    let content = match &app.readme {
+        Some(s) if !s.trim().is_empty() => s.as_str(),
+        Some(_) => "*No README available.*",
+        None if app.pending_readme.is_some() => "*Loading README…*",
+        None => "*No README available.*",
+    };
+
+    let md = tui_markdown::from_str(content);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(panel_border_style(focused))
+        .title(" README  (Tab to focus · PgUp/PgDn scroll) ");
+    let para = Paragraph::new(md)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0));
+    f.render_widget(para, area);
+}
+
+// ── Info + Versions panel (wide layout, right column) ───────────────────────
+
+fn render_info_and_versions(f: &mut Frame, app: &mut App, area: Rect) {
+    let Some(pkg) = app.detail.as_ref() else { return; };
+
+    // Extract what we need before borrowing app mutably for render_versions
+    let name        = pkg.name.clone();
+    let latest      = pkg.latest.clone();
+    let n_versions  = pkg.versions.len();
+    let n_deps: usize = pkg.versions.iter()
+        .find(|v| v.version == latest)
+        .map(|v| v.dependencies.len())
+        .unwrap_or(0);
+    let desc = pkg.description.as_ref().map(|d| {
+        // Truncate to available width minus borders/label
+        let max_w = area.width.saturating_sub(4) as usize;
+        if d.chars().count() > max_w {
+            let cut: String = d.chars().take(max_w.saturating_sub(1)).collect();
+            format!("{cut}…")
+        } else {
+            d.clone()
+        }
+    });
+
+    // Info block height: 2 border + name + version + blank + [desc] + blank + versions_count
+    let info_h = (2u16 + 2 + 1 + if desc.is_some() { 2 } else { 0 } + 1) as u16;
+    let [info_area, ver_area] = Layout::vertical([
+        Constraint::Length(info_h.max(5)),
+        Constraint::Min(4),
+    ]).areas(area);
+
+    // Build info lines
+    let mut info_lines: Vec<Line<'static>> = vec![
+        Line::from(vec![
+            Span::styled(format!("{:<9}", "Name"),
+                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(name),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("{:<9}", "Latest"),
+                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(latest.clone()),
+        ]),
+    ];
+    if let Some(d) = desc {
+        info_lines.push(Line::raw(""));
+        info_lines.push(Line::from(Span::styled(d, Style::new().fg(Color::Gray))));
+    }
+    info_lines.push(Line::raw(""));
+    info_lines.push(Line::from(vec![
+        Span::styled(format!("{:<9}", "Versions"),
+            Style::new().fg(Color::DarkGray)),
+        Span::raw(n_versions.to_string()),
+    ]));
+    if n_deps > 0 {
+        info_lines.push(Line::from(vec![
+            Span::styled(format!("{:<9}", "Deps"),
+                Style::new().fg(Color::DarkGray)),
+            Span::raw(n_deps.to_string()),
+        ]));
+    }
+
+    let info = Paragraph::new(info_lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Info "))
+        .wrap(Wrap { trim: true });
+    f.render_widget(info, info_area);
+
+    render_versions(f, app, ver_area);
+}
+
+// ── Detail panel (narrow layout) ─────────────────────────────────────────────
 
 fn render_detail(f: &mut Frame, app: &mut App, area: Rect, include_versions: bool) {
     app.detail_area = area;

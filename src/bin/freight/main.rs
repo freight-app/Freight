@@ -89,9 +89,6 @@ enum Commands {
     Migrate(commands::migrate::Args),
     /// Manage compiler toolchains
     Toolchain(commands::toolchain::Args),
-    /// Open the registry admin panel (packages, users, tokens, orgs, audit log)
-    #[cfg(feature = "admin")]
-    Tui(commands::tui::Args),
     /// Internal helper used by generated shell completion scripts
     #[command(name = "__complete", hide = true)]
     Complete { context: CompletionContext },
@@ -135,8 +132,6 @@ fn main() -> Result<()> {
         Commands::Lint(args)            => args.run(),
         Commands::Migrate(args)         => args.run(),
         Commands::Toolchain(args)       => args.run(),
-        #[cfg(feature = "admin")]
-        Commands::Tui(args)             => args.run(),
         Commands::Complete { context }  => print_completion_candidates(context),
     }
 

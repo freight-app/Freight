@@ -30,9 +30,6 @@ pub struct Args {
     /// Output format for --graph: text (default), mermaid, dot
     #[arg(long, default_value = "text", value_name = "FORMAT", requires = "graph")]
     pub graph_format: String,
-    /// Show a live TUI build-progress panel instead of plain output.
-    #[arg(long)]
-    pub panel: bool,
     #[command(flatten)]
     pub build: super::common::BuildFlags,
 }
@@ -42,18 +39,6 @@ impl Args {
         self.build.apply();
         if self.graph {
             cmd_build_graph(self.release, self.package.as_deref(), &self.features, !self.no_default_features, &self.graph_format);
-        } else if self.panel {
-            let profile = if self.release { "release" } else { "dev" };
-            let ws = super::build::at_workspace_root();
-            let code = crate::tui::build_panel::run(
-                profile,
-                self.features,
-                !self.no_default_features,
-                self.sanitize,
-                ws,
-                self.package,
-            );
-            std::process::exit(code);
         } else {
             cmd_build(self.release, self.package.as_deref(), &self.features, !self.no_default_features, &self.sanitize, &self.emit, self.time_passes);
         }

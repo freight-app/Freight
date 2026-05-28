@@ -14,8 +14,7 @@ name = "freight"
 path = "src/bin/freight/main.rs"
 
 [features]
-default   = ["admin"]
-admin     = []          # registry admin panel (freight tui command)
+default   = []
 rich-math = ["dep:ratatui-image", "dep:image", "dep:mathjax-svg-rs", "dep:resvg"]
 
 [dependencies]

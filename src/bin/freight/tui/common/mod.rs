@@ -15,7 +15,7 @@ pub mod theme;
 pub mod widgets;
 
 // Flat re-exports for convenient use in sibling TUI modules.
-pub use http::{post_login, post_register, sha256_hex};
+pub use http::{post_login, post_register};
 pub use term::{enter_tui, leave_tui};
 pub use theme::FormStatus;
 pub use widgets::{render_field, render_hint, render_popup, render_status};

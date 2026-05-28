@@ -29,8 +29,6 @@ pub mod search;
 pub mod test;
 pub mod toolchain;
 pub mod tree;
-#[cfg(feature = "admin")]
-pub mod tui;
 pub mod update;
 pub mod watch;
 pub mod yank;
