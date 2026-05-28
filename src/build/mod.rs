@@ -8,6 +8,7 @@ pub mod header_units;
 pub mod link;
 pub mod modules;
 pub mod pch;
+pub mod proto;
 
 pub use compile::{CompileResult, UNITY_SUPPORTED_LANGS, compile_sources, compile_sources_unity, emit_asm_sources, dep_file_path, object_path, primary_family, select_compiler, settings_for_lang};
 pub use deps::{ResolvedDep, check_slot_conflicts, resolve_dep_graph};
@@ -269,7 +270,7 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, effective_backend, profile, templates, detected, &resolved_deps, progress)?;
-    let (foreign_built, _pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+    let (foreign_built, _pkg_configs, tool_paths) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -285,7 +286,23 @@ pub fn build_project_at(project_dir: &Path, profile: &str, features: &[String], 
     include_dirs.extend(all_dep_includes.iter().cloned());
 
     let compile_defines = feature_defines.clone();
-    let all_sources = found.sources.clone();
+
+    // ── Proto code generation ────────────────────────────────────────────────
+    // When [language.proto] is declared, run protoc on .proto files in src/,
+    // inject the generated .pb.cc files into the compile list, and add the
+    // generated header directory to include_dirs so #include "foo.pb.h" works.
+    let all_sources = if manifest.language.contains_key("proto") {
+        let proto_settings = manifest.effective_language_settings("proto");
+        let result = proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
+        if !result.generated_include_dir.as_os_str().is_empty() {
+            include_dirs.push(result.generated_include_dir);
+        }
+        let mut srcs = found.sources.clone();
+        srcs.extend(result.generated_sources);
+        srcs
+    } else {
+        found.sources.clone()
+    };
 
     // When the project uses C++20+, precompile dep headers as header units so
     // consumers can write `import "dep.h";` instead of `#include "dep.h"`.
@@ -502,7 +519,7 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, effective_backend, profile, templates, detected, &resolved_deps, progress)?;
-    let (foreign_built, _pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+    let (foreign_built, _pkg_configs, tool_paths) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -517,7 +534,20 @@ pub fn test_project_at(project_dir: &Path, profile: &str, filter: Option<&str>, 
     include_dirs.extend(all_dep_includes.iter().cloned());
 
     let compile_defines = feature_defines.clone();
-    let all_sources = found.sources.clone();
+
+    // Proto codegen — same step as in build_project_at.
+    let all_sources = if manifest.language.contains_key("proto") {
+        let proto_settings = manifest.effective_language_settings("proto");
+        let result = proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
+        if !result.generated_include_dir.as_os_str().is_empty() {
+            include_dirs.push(result.generated_include_dir);
+        }
+        let mut srcs = found.sources.clone();
+        srcs.extend(result.generated_sources);
+        srcs
+    } else {
+        found.sources.clone()
+    };
 
     // PCH injection for test builds (same logic as build_project_at).
     let pch_extra_test: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
@@ -705,7 +735,7 @@ pub fn bench_project_at(
         .filter(|d| !to_drop.contains(&d.name))
         .collect();
     let built = build_resolved_deps(manifest, project_dir, effective_backend, profile, templates, detected, &resolved_deps, progress)?;
-    let (foreign_built, _pkg_configs) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+    let (foreign_built, _pkg_configs, tool_paths) = crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -719,7 +749,21 @@ pub fn bench_project_at(
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(all_dep_includes.iter().cloned());
 
-    let compile_result = build_sources(project_dir, manifest, effective_backend, profile, &found.sources, &include_dirs, detected, &feature_defines, &[], progress)?;
+    // Proto codegen — same step as in build_project_at.
+    let bench_sources = if manifest.language.contains_key("proto") {
+        let proto_settings = manifest.effective_language_settings("proto");
+        let result = proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
+        if !result.generated_include_dir.as_os_str().is_empty() {
+            include_dirs.push(result.generated_include_dir);
+        }
+        let mut srcs = found.sources.clone();
+        srcs.extend(result.generated_sources);
+        srcs
+    } else {
+        found.sources.clone()
+    };
+
+    let compile_result = build_sources(project_dir, manifest, effective_backend, profile, &bench_sources, &include_dirs, detected, &feature_defines, &[], progress)?;
 
     // Exclude [[bin]] entry-point objects (contain a main()) from bench linking.
     let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest.bins.iter()
@@ -1079,7 +1123,12 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
     };
 
     let found = discover(project_dir, &manifest, &templates);
-    if found.sources.is_empty() {
+    // Allow projects whose only source files are `.proto` — protoc will generate
+    // C++ sources at build time.  For all other projects, fail fast if src/ is empty.
+    let proto_only = found.sources.is_empty()
+        && manifest.language.contains_key("proto")
+        && proto::has_proto_files(project_dir);
+    if found.sources.is_empty() && !proto_only {
         return Err(FreightError::CompilerNotFound(
             "no source files found under src/".into(),
         ));

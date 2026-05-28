@@ -69,8 +69,9 @@ pub struct ForeignBuilt {
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
-/// Build all foreign deps declared in `manifest` and return their link artifacts
-/// alongside the resolved pkg-config results.
+/// Build all foreign deps declared in `manifest` and return their link artifacts,
+/// the resolved pkg-config results, and any executable bin-dirs accumulated from
+/// `[build-dependencies]` entries (prepended to PATH for subsequent build steps).
 /// A foreign dep that needs a subprocess build (cmake, make, meson, …).
 /// Collected in the sequential pass then dispatched in parallel.
 struct BuildJob {
@@ -89,7 +90,7 @@ pub fn build_foreign_deps(
     manifest: &Manifest,
     profile: &str,
     progress: &Progress,
-) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>), FreightError> {
+) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
@@ -312,7 +313,7 @@ pub fn build_foreign_deps(
     results.extend(built?);
 
     pc_cache.save(project_dir);
-    Ok((results, pkg_results))
+    Ok((results, pkg_results, tool_paths))
 }
 
 /// Extract the cmake version constraint from `[build-dependencies]`, if any.

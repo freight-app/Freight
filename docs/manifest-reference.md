@@ -56,6 +56,48 @@ Available standard strings depend on the loaded template. Common values:
 | `c` | `c11` | `c17`, `c23` |
 | `fortran` | `f2018` | `f2003`, `f2008` |
 
+### `[language.proto]` — protobuf code generation
+
+`[language.proto]` is a special language key that triggers **protobuf code generation** via
+`protoc`. When declared, freight discovers all `.proto` files under `src/`, runs `protoc
+--cpp_out=<out>` on each, and injects the generated `.pb.cc` files into the normal C++
+compilation step. The generated header directory is added to the include path automatically
+so `#include "foo.pb.h"` works without any manual flags.
+
+```toml
+[language.proto]
+# Directory for generated C++ files.  Default: target/<profile>/proto-gen/
+# out = "src/generated"
+
+# Extra --proto_path roots beyond src/ and the project root (comma-separated).
+# proto_path = "proto/"
+
+# Enable gRPC stub generation (requires grpc_cpp_plugin on PATH or in [build-dependencies]).
+# grpc = "true"
+
+# Override the path to grpc_cpp_plugin (default: resolved from tool_paths then PATH).
+# grpc_plugin = "grpc_cpp_plugin"
+
+# Extra flags forwarded verbatim to protoc (whitespace-separated).
+# extra_flags = "--experimental_allow_proto3_optional"
+```
+
+The `protoc` binary is resolved from **tool_paths** (populated by `[build-dependencies]`) first,
+then from the system PATH. To pin to a specific protoc version:
+
+```toml
+[build-dependencies]
+# Prebuilt protoc binary — freight extracts it and uses the protoc from its bin/.
+protoc = { url = "https://github.com/protocolbuffers/protobuf/releases/download/v27.0/protoc-27.0-linux-x86_64.zip", backend = "none" }
+
+[dependencies]
+# Link the protobuf runtime library (resolved via pkg-config or the registry).
+protobuf = "*"
+```
+
+Incremental builds: protoc is only re-invoked for `.proto` files that are newer than their
+corresponding `.pb.cc` / `.pb.h` outputs. Other files are skipped with a `Fresh` event.
+
 ---
 
 ## `[lib]`
