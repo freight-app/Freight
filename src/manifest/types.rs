@@ -533,8 +533,7 @@ pub struct DetailedDep {
     /// content kinds. Values: `"cmake"`, `"make"`, `"meson"`, `"autotools"`,
     /// `"scons"`, `"bazel"`, `"none"`. Omit to auto-detect from the dep
     /// directory's marker files (CMakeLists.txt, meson.build, etc.).
-    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none",
-            alias = "backend", alias = "build_system")]
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub dep_type: Option<String>,
     /// Include directories to expose to code that depends on this dep,
     /// relative to the dep's source directory. Only used for foreign deps.
