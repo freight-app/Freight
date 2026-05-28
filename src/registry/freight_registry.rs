@@ -14,10 +14,12 @@
 //! The default registry is `https://freight.dev`. Additional registries are
 //! configured via `[[registries]]` entries in `~/.freight/config.toml`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use curl::easy::{Easy, List};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{PackageInfo, PackageRepo, PackageVersion, DEFAULT_REGISTRY_URL};
 use crate::error::FreightError;
@@ -30,21 +32,34 @@ pub struct FreightRegistry {
     name: String,
     base_url: String,
     token: Option<String>,
-    /// Root of the on-disk metadata cache for this registry.
-    /// `~/.freight/cache/<slug>/pkg/`
-    cache_dir: Option<PathBuf>,
+    /// Path to `~/.freight/cache/<slug>.msgpack`.
+    cache_path: Option<PathBuf>,
+    /// In-memory metadata cache: package name → `(etag, json_body)`.
+    /// Loaded lazily on first lookup; dirty flag triggers a save after mutations.
+    cache: Mutex<MetadataCache>,
+}
+
+/// Flat on-disk structure: serialised as msgpack via rmp-serde.
+#[derive(Default, Serialize, Deserialize)]
+struct MetadataCache {
+    /// `package_name → (etag_or_empty, json_body)`
+    entries: HashMap<String, (String, String)>,
+    #[serde(skip)]
+    loaded: bool,
+    #[serde(skip)]
+    dirty:  bool,
 }
 
 impl FreightRegistry {
     /// Build from a [`RegistryConfig`] entry.
     pub fn from_config(cfg: &RegistryConfig) -> Self {
         let base_url = cfg.url.trim_end_matches('/').to_string();
-        let cache_dir = pkg_cache_dir(&base_url);
         Self {
-            name: cfg.name.clone(),
-            base_url,
-            token: cfg.token.clone(),
-            cache_dir,
+            name:       cfg.name.clone(),
+            base_url:   base_url.clone(),
+            token:      cfg.token.clone(),
+            cache_path: cache_path_for(&base_url),
+            cache:      Mutex::new(MetadataCache::default()),
         }
     }
 
@@ -54,12 +69,41 @@ impl FreightRegistry {
         let url = std::env::var("FREIGHT_REGISTRY_URL")
             .unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string());
         let base_url = url.trim_end_matches('/').to_string();
-        let cache_dir = pkg_cache_dir(&base_url);
         Self {
-            name: String::new(),
-            base_url,
-            token: None,
-            cache_dir,
+            name:       String::new(),
+            base_url:   base_url.clone(),
+            token:      None,
+            cache_path: cache_path_for(&base_url),
+            cache:      Mutex::new(MetadataCache::default()),
+        }
+    }
+
+    // ── Cache helpers ─────────────────────────────────────────────────────────
+
+    /// Ensure the cache has been loaded from disk.
+    fn ensure_loaded(&self) {
+        let mut c = self.cache.lock().unwrap();
+        if c.loaded { return; }
+        c.loaded = true;
+        if let Some(ref path) = self.cache_path {
+            if let Ok(bytes) = std::fs::read(path) {
+                if let Ok(loaded) = rmp_serde::from_slice::<MetadataCache>(&bytes) {
+                    c.entries = loaded.entries;
+                }
+            }
+        }
+    }
+
+    /// Flush the cache to disk if it has been modified.
+    fn flush(&self) {
+        let c = self.cache.lock().unwrap();
+        if !c.dirty { return; }
+        let Some(ref path) = self.cache_path else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(bytes) = rmp_serde::to_vec(&*c) {
+            let _ = std::fs::write(path, bytes);
         }
     }
 }
@@ -90,28 +134,43 @@ impl PackageRepo for FreightRegistry {
             None => format!("{}/api/v1/packages/{}", self.base_url, name),
         };
 
-        // Read cached ETag (if any) and send it as If-None-Match.
-        let cached = self.cache_dir.as_ref().and_then(|d| cache_read(d, name));
-        let cached_etag = cached.as_ref().and_then(|(etag, _)| etag.as_deref());
+        // Cache key: "name" or "name@channel" for non-stable channels.
+        let key = match channel {
+            Some(ch) if ch != "stable" => format!("{name}@{ch}"),
+            _ => name.to_string(),
+        };
 
-        match http_get_with_etag(&url, self.token.as_deref(), cached_etag) {
+        self.ensure_loaded();
+
+        let cached_etag: Option<String> = self.cache.lock().unwrap()
+            .entries.get(&key)
+            .map(|(etag, _)| etag.clone())
+            .filter(|e| !e.is_empty());
+
+        match http_get_with_etag(&url, self.token.as_deref(), cached_etag.as_deref()) {
             Ok(GetResult::Body(body, etag)) => {
-                // Fresh response — update cache and parse.
-                if let Some(ref dir) = self.cache_dir {
-                    cache_write(dir, name, etag.as_deref(), &body);
+                // Fresh response — update in-memory cache and flush to disk.
+                {
+                    let mut c = self.cache.lock().unwrap();
+                    c.entries.insert(key, (etag.unwrap_or_default(), body.clone()));
+                    c.dirty = true;
                 }
+                self.flush();
                 let pkg: ApiPackage = serde_json::from_str(&body)
                     .map_err(|e| FreightError::RegistryError(format!("invalid JSON from registry: {e}")))?;
                 Ok(Some(pkg.into()))
             }
             Ok(GetResult::NotModified) => {
-                // Server confirmed our cached copy is current.
-                if let Some((_, body)) = cached {
+                // Serve straight from the in-memory cache.
+                let body = self.cache.lock().unwrap()
+                    .entries.get(&key)
+                    .map(|(_, b)| b.clone());
+                if let Some(body) = body {
                     let pkg: ApiPackage = serde_json::from_str(&body)
                         .map_err(|e| FreightError::RegistryError(format!("invalid cached JSON: {e}")))?;
                     Ok(Some(pkg.into()))
                 } else {
-                    // 304 but no cache — shouldn't happen; re-fetch without ETag.
+                    // 304 but nothing in cache — re-fetch unconditionally.
                     match http_get_json::<ApiPackage>(&url, self.token.as_deref()) {
                         Ok(pkg) => Ok(Some(pkg.into())),
                         Err(FreightError::RegistryNotFound(_)) => Ok(None),
@@ -578,35 +637,14 @@ impl From<ApiPackage> for PackageInfo {
 /// `http://localhost:7878` → `localhost-7878`
 /// `https://freight.dev`   → `freight.dev`
 fn url_slug(url: &str) -> String {
-    let stripped = url
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
-    // Replace characters invalid in directory names.
-    stripped.replace(['/', ':', '?', '#', '&', '='], "-")
+    url.trim_start_matches("https://")
+       .trim_start_matches("http://")
+       .replace(['/', ':', '?', '#', '&', '='], "-")
 }
 
-/// Returns `~/.freight/cache/<slug>/pkg/` for the given registry base URL.
-fn pkg_cache_dir(base_url: &str) -> Option<PathBuf> {
-    Some(freight_home()?.join("cache").join(url_slug(base_url)).join("pkg"))
-}
-
-/// On-disk cache entry: `(etag, json_body_string)`.
-/// Stored as a JSON file `{"etag":"...","body":"..."}`.
-fn cache_read(dir: &Path, name: &str) -> Option<(Option<String>, String)> {
-    let path = dir.join(format!("{name}.json"));
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let body = v["body"].as_str()?.to_string();
-    let etag = v["etag"].as_str().map(str::to_string);
-    Some((etag, body))
-}
-
-fn cache_write(dir: &Path, name: &str, etag: Option<&str>, body: &str) {
-    let _ = std::fs::create_dir_all(dir);
-    let entry = serde_json::json!({ "etag": etag, "body": body });
-    if let Ok(s) = serde_json::to_string(&entry) {
-        let _ = std::fs::write(dir.join(format!("{name}.json")), s);
-    }
+/// Returns `~/.freight/cache/<slug>.msgpack` for the given registry base URL.
+fn cache_path_for(base_url: &str) -> Option<PathBuf> {
+    Some(freight_home()?.join("cache").join(format!("{}.msgpack", url_slug(base_url))))
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
