@@ -65,7 +65,7 @@ pub fn import_make(input: &Path, out_dir: Option<&Path>) -> Result<ImportResult>
     }
 
     // ── Single project ────────────────────────────────────────────────────────
-    let spec = analyze(&mf, &expanded, &project_dir, &mut warnings);
+    let spec = analyze(&mf, &expanded, &project_dir, &content, &mut warnings);
     let toml = emit_toml(&spec);
 
     std::fs::create_dir_all(out_root)
@@ -125,7 +125,7 @@ fn import_workspace(
         };
         let vars = collect_vars(&mf);
         let expanded = ExpandedVars::new(vars);
-        let spec = analyze(&mf, &expanded, &member_dir, warnings);
+        let spec = analyze(&mf, &expanded, &member_dir, &content, warnings);
         let toml = emit_toml(&spec);
 
         let dest_dir = out_root.join(subdir);
@@ -150,6 +150,7 @@ struct ProjectSpec {
     lang_c: Option<String>,
     lang_cpp: Option<String>,
     system_deps: Vec<String>,
+    conditional_deps: ConditionalDeps,
     defines: Vec<String>,
     warnings: Vec<String>,
 }
@@ -168,10 +169,19 @@ enum TargetKind {
     DynamicLib,
 }
 
+#[derive(Default)]
+struct ConditionalDeps {
+    windows: Vec<String>,
+    linux: Vec<String>,
+    macos: Vec<String>,
+    unix: Vec<String>,
+}
+
 fn analyze(
     mf: &Makefile,
     vars: &ExpandedVars,
     project_dir: &Path,
+    raw_content: &str,
     warnings: &mut Vec<String>,
 ) -> ProjectSpec {
     // Collect all flag variables
@@ -283,6 +293,8 @@ fn analyze(
         })
         .unwrap_or_else(|| "project".to_string());
 
+    let conditional_deps = parse_conditional_deps(raw_content);
+
     ProjectSpec {
         name,
         version: "0.1.0".to_string(),
@@ -290,6 +302,7 @@ fn analyze(
         lang_c,
         lang_cpp,
         system_deps,
+        conditional_deps,
         defines,
         warnings: warnings.clone(),
     }
@@ -571,15 +584,211 @@ fn emit_toml(spec: &ProjectSpec) -> String {
     // [dependencies]
     if !spec.system_deps.is_empty() {
         let mut deps = Table::new();
-        // Group all system deps under the `linux` platform package
-        let mut tbl = toml_edit::InlineTable::new();
-        let features = toml_edit::Array::from_iter(spec.system_deps.iter().map(|s| s.as_str()));
-        tbl.insert("features", toml_edit::Value::Array(features));
-        deps["linux"] = Item::Value(toml_edit::Value::InlineTable(tbl));
+        for dep in &spec.system_deps {
+            deps[dep.as_str()] = value("*");
+        }
         doc["dependencies"] = Item::Table(deps);
     }
 
+    // [os.*.dependencies] — from ifeq conditional blocks
+    add_os_deps_section(&mut doc, "windows", &spec.conditional_deps.windows);
+    add_os_deps_section(&mut doc, "linux", &spec.conditional_deps.linux);
+    add_os_deps_section(&mut doc, "macos", &spec.conditional_deps.macos);
+    add_os_deps_section(&mut doc, "unix", &spec.conditional_deps.unix);
+
     doc.to_string()
+}
+
+fn add_os_deps_section(doc: &mut DocumentMut, os_key: &str, deps: &[String]) {
+    if deps.is_empty() {
+        return;
+    }
+    if !doc.contains_key("os") {
+        let mut t = Table::new();
+        t.set_implicit(true);
+        doc["os"] = Item::Table(t);
+    }
+    let os_tbl = doc["os"].as_table_mut().expect("os is a table");
+    if !os_tbl.contains_key(os_key) {
+        let mut t = Table::new();
+        t.set_implicit(true);
+        os_tbl[os_key] = Item::Table(t);
+    }
+    let platform_tbl = os_tbl[os_key].as_table_mut().expect("platform is a table");
+    let mut dep_tbl = Table::new();
+    for dep in deps {
+        dep_tbl[dep.as_str()] = value("*");
+    }
+    platform_tbl["dependencies"] = Item::Table(dep_tbl);
+}
+
+// ── Conditional (ifeq/endif) parsing ─────────────────────────────────────────
+
+/// Scan the raw Makefile text for top-level `ifeq`/`ifneq` blocks whose
+/// condition references an OS-detection variable, and collect -l flags found
+/// inside each branch into the appropriate OS bucket.
+fn parse_conditional_deps(content: &str) -> ConditionalDeps {
+    let mut result = ConditionalDeps::default();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let t = lines[i].trim();
+        let negated = t.starts_with("ifneq ");
+        let is_cond = t.starts_with("ifeq ") || negated;
+
+        if is_cond {
+            let keyword = if negated { "ifneq" } else { "ifeq" };
+            let cond_str = t[keyword.len()..].trim();
+            let os_key = classify_make_condition(cond_str);
+
+            let mut then_libs: Vec<String> = Vec::new();
+            let mut else_libs: Vec<String> = Vec::new();
+            let mut in_else = false;
+            let mut depth = 1usize;
+            i += 1;
+
+            while i < lines.len() {
+                let it = lines[i].trim();
+                if it.starts_with("ifeq")
+                    || it.starts_with("ifneq")
+                    || it.starts_with("ifdef")
+                    || it.starts_with("ifndef")
+                {
+                    depth += 1;
+                } else if it.starts_with("endif") {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                } else if it == "else" && depth == 1 {
+                    in_else = true;
+                    i += 1;
+                    continue;
+                }
+                if depth == 1 {
+                    let libs = filter_auto_detected(extract_libs_from_line(it));
+                    let target = if in_else { &mut else_libs } else { &mut then_libs };
+                    for lib in libs {
+                        if !target.contains(&lib) {
+                            target.push(lib);
+                        }
+                    }
+                }
+                i += 1;
+            }
+
+            if let Some(os) = os_key {
+                let (then_os, else_os) = if negated {
+                    (invert_os(os), os)
+                } else {
+                    (os, invert_os(os))
+                };
+                push_unique(cond_bucket(&mut result, then_os), then_libs);
+                push_unique(cond_bucket(&mut result, else_os), else_libs);
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Classify an `ifeq` condition string into a target OS, or return `None`.
+///
+/// Handles `($(OS),Windows_NT)`, `($(UNAME_S),Linux)`, and double-quote forms.
+/// Requires the LHS to reference a known OS-detection variable name to avoid
+/// false positives from unrelated conditions like `ifeq ($(MAKECMDGOALS),linux)`.
+fn classify_make_condition(cond: &str) -> Option<&'static str> {
+    let cond = cond.trim().trim_start_matches('(');
+    let (lhs, rhs) = if let Some((l, r)) = cond.split_once(',') {
+        (l, r)
+    } else {
+        // Double-quote form: `"$(OS)" "Windows_NT"` — split on whitespace
+        let mut parts = cond.split_whitespace();
+        let l = parts.next().unwrap_or("");
+        let r = parts.next().unwrap_or("");
+        (l, r)
+    };
+
+    let lhs_lower = lhs.to_ascii_lowercase();
+    let rhs = rhs.trim().trim_matches([')', '"', '\'', ' ']);
+    let rhs_lower = rhs.to_ascii_lowercase();
+
+    // LHS must reference an OS-detection variable
+    let is_os_var = lhs_lower.contains("os")
+        || lhs_lower.contains("uname")
+        || lhs_lower.contains("system")
+        || lhs_lower.contains("platform")
+        || lhs_lower.contains("host");
+    if !is_os_var {
+        return None;
+    }
+
+    if rhs_lower == "windows_nt"
+        || rhs_lower.contains("mingw")
+        || rhs_lower.contains("msys")
+        || rhs_lower.contains("win32")
+    {
+        Some("windows")
+    } else if rhs_lower == "linux" {
+        Some("linux")
+    } else if rhs_lower == "darwin" {
+        Some("macos")
+    } else if rhs_lower == "freebsd"
+        || rhs_lower == "openbsd"
+        || rhs_lower == "netbsd"
+        || rhs_lower == "dragonfly"
+    {
+        Some("unix")
+    } else {
+        None
+    }
+}
+
+fn invert_os(os: &'static str) -> &'static str {
+    match os {
+        "windows" => "unix",
+        _ => "windows",
+    }
+}
+
+fn cond_bucket<'a>(result: &'a mut ConditionalDeps, os: &str) -> &'a mut Vec<String> {
+    match os {
+        "windows" => &mut result.windows,
+        "linux" => &mut result.linux,
+        "macos" => &mut result.macos,
+        _ => &mut result.unix,
+    }
+}
+
+fn push_unique(vec: &mut Vec<String>, items: Vec<String>) {
+    for item in items {
+        if !vec.contains(&item) {
+            vec.push(item);
+        }
+    }
+}
+
+/// Extract -l<lib> flags from any line, stripping assignment operators first.
+fn extract_libs_from_line(line: &str) -> Vec<String> {
+    let rhs = if let Some(p) = line.find("+=") {
+        &line[p + 2..]
+    } else if let Some(p) = line.find(":=") {
+        &line[p + 2..]
+    } else if let Some(p) = line.find('=') {
+        let before = line[..p].trim();
+        if before.ends_with(['!', '<', '>', '=']) {
+            line
+        } else {
+            &line[p + 1..]
+        }
+    } else {
+        line
+    };
+    extract_libs(rhs)
 }
 
 // ── Variable handling ─────────────────────────────────────────────────────────
@@ -985,6 +1194,123 @@ mod tests {
     }
 
     #[test]
+    fn classify_condition_windows() {
+        assert_eq!(classify_make_condition("($(OS),Windows_NT)"), Some("windows"));
+        assert_eq!(classify_make_condition("($(OS), Windows_NT)"), Some("windows"));
+        assert_eq!(classify_make_condition("\"$(OS)\" \"Windows_NT\""), Some("windows"));
+    }
+
+    #[test]
+    fn classify_condition_linux() {
+        assert_eq!(classify_make_condition("($(UNAME_S),Linux)"), Some("linux"));
+        assert_eq!(classify_make_condition("($(UNAME_S), linux)"), Some("linux"));
+    }
+
+    #[test]
+    fn classify_condition_macos() {
+        assert_eq!(classify_make_condition("($(UNAME_S),Darwin)"), Some("macos"));
+    }
+
+    #[test]
+    fn classify_condition_ignores_unrelated() {
+        // MAKECMDGOALS contains "linux" as a target name — should not match
+        assert_eq!(classify_make_condition("($(MAKECMDGOALS),linux)"), None);
+        assert_eq!(classify_make_condition("($(CC),gcc)"), None);
+    }
+
+    #[test]
+    fn conditional_windows_deps_extracted() {
+        let content = "ifeq ($(OS),Windows_NT)\nLDFLAGS += -lws2_32 -lshlwapi\nendif\n";
+        let deps = parse_conditional_deps(content);
+        assert!(deps.windows.contains(&"ws2_32".to_string()));
+        assert!(deps.windows.contains(&"shlwapi".to_string()));
+        assert!(deps.linux.is_empty());
+    }
+
+    #[test]
+    fn conditional_else_branch_goes_to_unix() {
+        let content =
+            "ifeq ($(OS),Windows_NT)\nLDFLAGS += -lws2_32\nelse\nLDFLAGS += -lssl\nendif\n";
+        let deps = parse_conditional_deps(content);
+        assert!(deps.windows.contains(&"ws2_32".to_string()));
+        assert!(deps.unix.contains(&"ssl".to_string()));
+    }
+
+    #[test]
+    fn conditional_auto_linked_filtered() {
+        let content = "ifeq ($(UNAME_S),Linux)\nLDFLAGS += -lrt -lssl\nendif\n";
+        let deps = parse_conditional_deps(content);
+        // rt is in AUTO_LINKED — must be filtered
+        assert!(!deps.linux.contains(&"rt".to_string()));
+        assert!(deps.linux.contains(&"ssl".to_string()));
+    }
+
+    #[test]
+    fn emit_toml_system_deps_as_individual_entries() {
+        let spec = ProjectSpec {
+            name: "myapp".to_string(),
+            version: "0.1.0".to_string(),
+            targets: vec![TargetSpec {
+                name: "myapp".to_string(),
+                kind: TargetKind::Bin,
+                src: None,
+            }],
+            lang_c: None,
+            lang_cpp: None,
+            system_deps: vec!["ssl".to_string(), "curl".to_string()],
+            conditional_deps: ConditionalDeps::default(),
+            defines: vec![],
+            warnings: vec![],
+        };
+        let toml = emit_toml(&spec);
+        assert!(
+            toml.contains("ssl = \"*\""),
+            "expected individual ssl dep:\n{toml}"
+        );
+        assert!(
+            toml.contains("curl = \"*\""),
+            "expected individual curl dep:\n{toml}"
+        );
+        // Must NOT contain the old broken linux-features grouping
+        assert!(
+            !toml.contains("features"),
+            "must not group deps as features:\n{toml}"
+        );
+    }
+
+    #[test]
+    fn emit_toml_windows_conditional_in_os_section() {
+        let spec = ProjectSpec {
+            name: "myapp".to_string(),
+            version: "0.1.0".to_string(),
+            targets: vec![TargetSpec {
+                name: "myapp".to_string(),
+                kind: TargetKind::Bin,
+                src: None,
+            }],
+            lang_c: None,
+            lang_cpp: None,
+            system_deps: vec![],
+            conditional_deps: ConditionalDeps {
+                windows: vec!["ws2_32".to_string()],
+                ..Default::default()
+            },
+            defines: vec![],
+            warnings: vec![],
+        };
+        let toml = emit_toml(&spec);
+        assert!(
+            toml.contains("ws2_32"),
+            "expected ws2_32 dep:\n{toml}"
+        );
+        // Should appear under an [os.windows.*] section, not [dependencies]
+        assert!(
+            !toml.contains("[dependencies]"),
+            "ws2_32 should not appear in unconditional deps:\n{toml}"
+        );
+    }
+
+    #[test]
     fn find_subdirs_from_variable() {
         let content = "SUBDIRS = liba libb\nall:\n\t$(MAKE) -C liba\n";
         let mf: Makefile = content.parse().unwrap();
@@ -1009,7 +1335,7 @@ $(TARGET): main.o
         let mf = Makefile::read_relaxed(content.as_bytes()).unwrap();
         let vars = ExpandedVars::new(collect_vars(&mf));
         let mut warnings = vec![];
-        let spec = analyze(&mf, &vars, Path::new("/tmp"), &mut warnings);
+        let spec = analyze(&mf, &vars, Path::new("/tmp"), content, &mut warnings);
 
         assert_eq!(spec.name, "myapp");
         assert_eq!(spec.lang_c, Some("c11".into()));

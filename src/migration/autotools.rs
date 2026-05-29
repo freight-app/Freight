@@ -84,7 +84,7 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
         .to_string();
 
     let configure_ac = find_configure_ac(&project_dir);
-    let (parsed_name, pkg_version, mut deps) = match &configure_ac {
+    let (parsed_name, pkg_version, mut deps, ac_defines, ac_features) = match &configure_ac {
         Some(path) => {
             let content = std::fs::read_to_string(path)
                 .with_context(|| format!("reading {}", path.display()))?;
@@ -92,7 +92,7 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
         }
         None => {
             warnings.push("No configure.ac / configure.in found — using defaults".into());
-            (String::new(), "0.1.0".to_string(), vec![])
+            (String::new(), "0.1.0".to_string(), vec![], vec![], vec![])
         }
     };
     // Prefer explicit name from AC_INIT; fall back to directory name
@@ -127,6 +127,9 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
 
     // Filter well-known auto-linked libs (pkg-config finds them anyway)
     deps.retain(|d| !AUTO_LINKED.contains(&d.as_str()));
+
+    // Merge AC_DEFINE symbols into the defines list from Makefile.am
+    // (deduplication happens in emit_toml via the combined slice)
 
     // ── 3. Recurse into SUBDIRS ───────────────────────────────────────────────
     let mut path_deps: Vec<PathDep> = Vec::new();
@@ -189,14 +192,23 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
     }
 
     // ── 4. Emit freight.toml ──────────────────────────────────────────────────
+    // Merge AM_CFLAGS defines with AC_DEFINE symbols
+    let mut all_defines = extra_defines;
+    for d in &ac_defines {
+        if !all_defines.contains(d) {
+            all_defines.push(d.clone());
+        }
+    }
+
     let toml = emit_toml(
         &pkg_name,
         &pkg_version,
         &targets,
         lang_std.as_deref(),
-        &extra_defines,
+        &all_defines,
         &deps,
         &path_deps,
+        &ac_features,
         &warnings,
     );
 
@@ -233,10 +245,18 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     }
 }
 
-fn parse_configure_ac(content: &str, warnings: &mut Vec<String>) -> (String, String, Vec<String>) {
+/// Returns `(name, version, deps, defines, features)`.
+/// - `defines`  — symbols from `AC_DEFINE`
+/// - `features` — names from `AC_ARG_ENABLE` / `AC_ARG_WITH`
+fn parse_configure_ac(
+    content: &str,
+    warnings: &mut Vec<String>,
+) -> (String, String, Vec<String>, Vec<String>, Vec<String>) {
     let mut name = String::new();
     let mut version = String::from("0.1.0");
     let mut deps: Vec<String> = Vec::new();
+    let mut defines: Vec<String> = Vec::new();
+    let mut features: Vec<String> = Vec::new();
 
     // AC_INIT([name], [version]) or AC_INIT(name, version)
     let ac_init = Regex::new(r"AC_INIT\(\s*\[?([^\],\)]+)\]?\s*,\s*\[?([^\],\)]+)\]?").unwrap();
@@ -280,12 +300,44 @@ fn parse_configure_ac(content: &str, warnings: &mut Vec<String>) -> (String, Str
         }
     }
 
+    // AC_DEFINE([SYMBOL], ...) / AC_DEFINE_UNQUOTED([SYMBOL], ...)
+    let ac_define = Regex::new(r"AC_DEFINE(?:_UNQUOTED)?\(\s*\[?(\w+)\]?").unwrap();
+    for cap in ac_define.captures_iter(content) {
+        let sym = cap[1].to_string();
+        if !defines.contains(&sym) {
+            defines.push(sym);
+        }
+    }
+    if !defines.is_empty() {
+        warnings.push(
+            "AC_DEFINE macros found — emitted under [build] defines; \
+             verify they apply to your environment"
+                .into(),
+        );
+    }
+
+    // AC_ARG_ENABLE([feature], ...) and AC_ARG_WITH([name], ...)
+    let ac_arg_enable = Regex::new(r"AC_ARG_ENABLE\(\s*\[?([a-zA-Z0-9_-]+)\]?").unwrap();
+    for cap in ac_arg_enable.captures_iter(content) {
+        let feat = sanitize_name(cap[1].trim());
+        if !feat.is_empty() && !features.contains(&feat) {
+            features.push(feat);
+        }
+    }
+    let ac_arg_with = Regex::new(r"AC_ARG_WITH\(\s*\[?([a-zA-Z0-9_-]+)\]?").unwrap();
+    for cap in ac_arg_with.captures_iter(content) {
+        let feat = sanitize_name(cap[1].trim());
+        if !feat.is_empty() && !features.contains(&feat) {
+            features.push(feat);
+        }
+    }
+
     // Warn about things we can't convert
     if content.contains("AC_CHECK_HEADERS") {
         warnings.push("AC_CHECK_HEADERS detected — review include paths manually".into());
     }
 
-    (name, version, deps)
+    (name, version, deps, defines, features)
 }
 
 // ── Makefile.am parser ────────────────────────────────────────────────────────
@@ -421,6 +473,17 @@ fn parse_makefile_am(
         else if line.starts_with("DIST_SUBDIRS") {
             // ignore
         }
+        // AM_CONDITIONAL if/endif blocks — warn, we can't evaluate the condition
+        else if line.starts_with("if ")
+            && !line.starts_with("ifeq")
+            && !line.starts_with("ifdef")
+        {
+            let cond_name = line[3..].trim();
+            warnings.push(format!(
+                "AM_CONDITIONAL block 'if {cond_name}' detected — \
+                 conditional sources/deps not converted; review manually"
+            ));
+        }
     }
 
     // If nothing found (and no subdirs to recurse), warn
@@ -524,6 +587,7 @@ fn emit_toml(
     defines: &[String],
     deps: &[String],
     path_deps: &[PathDep],
+    features: &[String],
     warnings: &[String],
 ) -> String {
     use toml_edit::InlineTable;
@@ -541,6 +605,15 @@ fn emit_toml(
     pkg["name"] = value(name);
     pkg["version"] = value(version);
     doc["package"] = Item::Table(pkg);
+
+    // [features] — from AC_ARG_ENABLE / AC_ARG_WITH
+    if !features.is_empty() {
+        let mut feat_tbl = Table::new();
+        for f in features {
+            feat_tbl[f.as_str()] = value(Array::new());
+        }
+        doc["features"] = Item::Table(feat_tbl);
+    }
 
     if let Some(std) = lang_std {
         let lang_key = if std.starts_with("c++") || std.starts_with("gnu++") {
@@ -567,11 +640,9 @@ fn emit_toml(
 
     if !deps.is_empty() || !path_deps.is_empty() {
         let mut dep_tbl = Table::new();
-        // Version / pkg-config deps
         for d in deps {
             dep_tbl[d.as_str()] = value("*");
         }
-        // Path deps discovered from SUBDIRS
         for pd in path_deps {
             let mut inline = InlineTable::new();
             inline.insert("path", pd.rel_path.as_str().into());
@@ -598,7 +669,6 @@ fn emit_toml(
         }
     }
 
-    // Prepend header comment manually (toml_edit doesn't expose file-level comments)
     format!("{header}{doc}")
 }
 
@@ -703,7 +773,7 @@ mod tests {
     fn parse_ac_init_bracket_style() {
         let content = "AC_INIT([mylib], [1.2.3], [bugs@example.com])";
         let mut w = vec![];
-        let (name, ver, _) = parse_configure_ac(content, &mut w);
+        let (name, ver, _, _, _) = parse_configure_ac(content, &mut w);
         assert_eq!(name, "mylib");
         assert_eq!(ver, "1.2.3");
     }
@@ -712,7 +782,7 @@ mod tests {
     fn parse_ac_init_bare_style() {
         let content = "AC_INIT(myapp, 2.0)";
         let mut w = vec![];
-        let (name, ver, _) = parse_configure_ac(content, &mut w);
+        let (name, ver, _, _, _) = parse_configure_ac(content, &mut w);
         assert_eq!(name, "myapp");
         assert_eq!(ver, "2.0");
     }
@@ -721,7 +791,7 @@ mod tests {
     fn parse_pkg_check_modules() {
         let content = "PKG_CHECK_MODULES(SSL, openssl >= 1.0 libcurl)\n";
         let mut w = vec![];
-        let (_, _, deps) = parse_configure_ac(content, &mut w);
+        let (_, _, deps, _, _) = parse_configure_ac(content, &mut w);
         assert!(deps.contains(&"openssl".to_string()));
         assert!(deps.contains(&"libcurl".to_string()));
     }
@@ -730,7 +800,7 @@ mod tests {
     fn parse_ac_check_lib() {
         let content = "AC_CHECK_LIB([ssl], [SSL_new])\nAC_CHECK_LIB(m, sin)\n";
         let mut w = vec![];
-        let (_, _, deps) = parse_configure_ac(content, &mut w);
+        let (_, _, deps, _, _) = parse_configure_ac(content, &mut w);
         assert!(deps.contains(&"ssl".to_string()));
         assert!(deps.contains(&"m".to_string()));
     }
@@ -837,10 +907,77 @@ mod tests {
     fn auto_linked_libs_filtered() {
         let content = "AC_CHECK_LIB(m, sin)\nAC_CHECK_LIB(ssl, SSL_new)\n";
         let mut w = vec![];
-        let (_, _, deps) = parse_configure_ac(content, &mut w);
+        let (_, _, deps, _, _) = parse_configure_ac(content, &mut w);
         let mut deps_copy = deps.clone();
         deps_copy.retain(|d| !AUTO_LINKED.contains(&d.as_str()));
         assert!(!deps_copy.contains(&"m".to_string()));
         assert!(deps_copy.contains(&"ssl".to_string()));
+    }
+
+    #[test]
+    fn parse_ac_define() {
+        let content = "AC_DEFINE([HAVE_SSL], [1], [OpenSSL available])\nAC_DEFINE_UNQUOTED([VERSION], [\"1.0\"], [])\n";
+        let mut w = vec![];
+        let (_, _, _, defines, _) = parse_configure_ac(content, &mut w);
+        assert!(defines.contains(&"HAVE_SSL".to_string()));
+        assert!(defines.contains(&"VERSION".to_string()));
+        assert!(!w.is_empty(), "should warn about AC_DEFINE");
+    }
+
+    #[test]
+    fn parse_ac_arg_enable_and_with() {
+        let content =
+            "AC_ARG_ENABLE([tls], AS_HELP_STRING([--enable-tls], [Enable TLS]))\n\
+             AC_ARG_WITH([openssl], AS_HELP_STRING([--with-openssl], [Use OpenSSL]))\n";
+        let mut w = vec![];
+        let (_, _, _, _, features) = parse_configure_ac(content, &mut w);
+        assert!(features.contains(&"tls".to_string()));
+        assert!(features.contains(&"openssl".to_string()));
+    }
+
+    #[test]
+    fn emit_toml_features_section() {
+        let toml = emit_toml(
+            "mylib",
+            "1.0.0",
+            &[],
+            None,
+            &[],
+            &[],
+            &[],
+            &["tls".to_string(), "openssl".to_string()],
+            &[],
+        );
+        assert!(toml.contains("[features]"), "expected [features] section:\n{toml}");
+        assert!(toml.contains("tls"), "expected tls feature:\n{toml}");
+        assert!(toml.contains("openssl"), "expected openssl feature:\n{toml}");
+    }
+
+    #[test]
+    fn emit_toml_ac_defines_in_build() {
+        let toml = emit_toml(
+            "mylib",
+            "1.0.0",
+            &[],
+            None,
+            &["HAVE_SSL".to_string()],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+        assert!(toml.contains("[build]"), "expected [build] section:\n{toml}");
+        assert!(toml.contains("HAVE_SSL"), "expected HAVE_SSL define:\n{toml}");
+    }
+
+    #[test]
+    fn am_conditional_block_warned() {
+        let content = "bin_PROGRAMS = foo\nif HAVE_SSL\nfoo_LDADD = -lssl\nendif\n";
+        let mut w = vec![];
+        let _ = parse_makefile_am(content, &mut w);
+        assert!(
+            w.iter().any(|s| s.contains("HAVE_SSL")),
+            "expected AM_CONDITIONAL warning:\n{w:?}"
+        );
     }
 }
