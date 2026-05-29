@@ -8,9 +8,9 @@ use sha2::{Digest, Sha256};
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
 
-/// Download a source archive to `target/deps/{name}/`, verify SHA-256, and extract.
+/// Download a source archive to `.deps/{name}/`, verify SHA-256, and extract.
 ///
-/// If `target/deps/{name}/.freight-fetched` already exists the download is skipped.
+/// If `.deps/{name}/.freight-fetched` already exists the download is skipped.
 /// Returns the extracted source dir.
 pub fn fetch_url_dep(
     name: &str,
@@ -19,7 +19,7 @@ pub fn fetch_url_dep(
     project_dir: &Path,
     progress: &Progress,
 ) -> Result<PathBuf, FreightError> {
-    let deps_dir = project_dir.join("target").join("deps").join(name);
+    let deps_dir = project_dir.join(".deps").join(name);
     let sentinel = deps_dir.join(".freight-fetched");
 
     if sentinel.exists() {
@@ -31,12 +31,11 @@ pub fn fetch_url_dep(
         source: url.to_string(),
     });
 
-    std::fs::create_dir_all(project_dir.join("target").join("deps"))?;
+    std::fs::create_dir_all(project_dir.join(".deps"))?;
 
     let ext = archive_ext(url);
     let archive_path = project_dir
-        .join("target")
-        .join("deps")
+        .join(".deps")
         .join(format!("{name}.{ext}"));
 
     download(url, &archive_path)?;

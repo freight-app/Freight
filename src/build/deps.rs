@@ -77,7 +77,7 @@ pub fn resolve_dep_graph(
             if !sub_dir.exists() {
                 return Err(FreightError::ManifestParse(format!(
                     "dep '{name}' requires '{sub_name}', which is not present. \
-                     Add it to your root target/deps/ and run `freight fetch`.",
+                     Run `freight fetch` to download missing dependencies.",
                 )));
             }
         }
@@ -270,8 +270,8 @@ fn compilable_dep_dir(
                 return None;
             }
             let dep_dir = if d.git.is_some() {
-                // Git dep → root target/deps/{name}/ (flat pool)
-                root_dir.join("target").join("deps").join(name)
+                // Git dep → root .deps/{name}/ (flat pool)
+                root_dir.join(".deps").join(name)
             } else if let Some(p) = &d.path {
                 // Path dep → relative to the manifest that declares it
                 declaring_dir.join(p)

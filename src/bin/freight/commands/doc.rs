@@ -291,7 +291,7 @@ fn dependency_summary(
 ) -> DocDependency {
     let (kind, version, source, path) = match dep {
         Dependency::Simple(version) => {
-            let dir = project_dir.join("target").join("deps").join(name);
+            let dir = project_dir.join(".deps").join(name);
             (
                 "registry".to_string(),
                 version.clone(),
@@ -317,7 +317,7 @@ fn dependency_summary(
             )
         }
         Dependency::Detailed(d) if d.git.is_some() => {
-            let dir = project_dir.join("target").join("deps").join(name);
+            let dir = project_dir.join(".deps").join(name);
             let source = d.git.clone().unwrap_or_default();
             (
                 "git".to_string(),
@@ -327,7 +327,7 @@ fn dependency_summary(
             )
         }
         Dependency::Detailed(d) if d.url.is_some() => {
-            let dir = project_dir.join("target").join("deps").join(name);
+            let dir = project_dir.join(".deps").join(name);
             let source = d.url.clone().unwrap_or_default();
             (
                 "url".to_string(),
@@ -337,7 +337,7 @@ fn dependency_summary(
             )
         }
         Dependency::Detailed(d) => {
-            let dir = project_dir.join("target").join("deps").join(name);
+            let dir = project_dir.join(".deps").join(name);
             (
                 "registry".to_string(),
                 d.version.clone().unwrap_or_else(|| "*".into()),

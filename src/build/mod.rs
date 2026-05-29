@@ -1378,14 +1378,14 @@ pub fn bench_project_at(
 
 // ── Git dep helpers ───────────────────────────────────────────────────────────
 
-/// Auto-clone any git deps whose `target/deps/<name>/` directory doesn't exist yet.
+/// Auto-clone any git deps whose `.deps/<name>/` directory doesn't exist yet.
 /// Runs silently when all deps are present.
 fn ensure_git_deps_fetched(
     project_dir: &Path,
     manifest: &Manifest,
     progress: &Progress,
 ) -> Result<(), FreightError> {
-    let deps_dir = project_dir.join("target").join("deps");
+    let deps_dir = project_dir.join(".deps");
 
     for (name, dep) in &manifest.dependencies {
         let Dependency::Detailed(d) = dep else {
@@ -1432,7 +1432,7 @@ fn verify_git_dep_shas(
         };
         let Some(_url) = &d.git else { continue };
 
-        let dep_dir = project_dir.join("target").join("deps").join(name);
+        let dep_dir = project_dir.join(".deps").join(name);
         if !dep_dir.exists() {
             continue;
         }

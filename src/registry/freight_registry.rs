@@ -232,9 +232,9 @@ impl PackageRepo for FreightRegistry {
 // ── Write API (publish / yank / download) ────────────────────────────────────
 
 impl FreightRegistry {
-    /// Download a specific version's tarball to `target/deps/<name>/`.
+    /// Download a specific version's tarball to `.deps/<name>/`.
     ///
-    /// Skips if `target/deps/<name>/.freight-fetched` already exists.
+    /// Skips if `.deps/<name>/.freight-fetched` already exists.
     /// Returns the SHA-256 checksum (hex) of the downloaded tarball.
     pub fn download_tarball(
         &self,
@@ -243,7 +243,7 @@ impl FreightRegistry {
         channel: Option<&str>,
         project_dir: &Path,
     ) -> Result<String, FreightError> {
-        let deps_dir = project_dir.join("target").join("deps").join(name);
+        let deps_dir = project_dir.join(".deps").join(name);
         let sentinel = deps_dir.join(".freight-fetched");
         if sentinel.exists() {
             // Already fetched — read checksum from sentinel if available.
@@ -268,10 +268,9 @@ impl FreightRegistry {
         };
         let (bytes, checksum_header) = http_get_bytes(&url, self.token.as_deref())?;
 
-        std::fs::create_dir_all(project_dir.join("target").join("deps"))?;
+        std::fs::create_dir_all(project_dir.join(".deps"))?;
         let archive = project_dir
-            .join("target")
-            .join("deps")
+            .join(".deps")
             .join(format!("{name}-{version}.tar.gz"));
         std::fs::write(&archive, &bytes)?;
 

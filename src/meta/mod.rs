@@ -228,7 +228,7 @@ pub fn build_foreign_deps(
             // Check for a metadata-only registry dep that was fetched from upstream source.
             // `fetch_registry_deps()` writes `.freight-build-system` when the dep needs
             // compiling from source (e.g. vcpkg packages with `build = "cmake"`).
-            let dep_dir = project_dir.join("target").join("deps").join(name);
+            let dep_dir = project_dir.join(".deps").join(name);
             let bs_file = dep_dir.join(".freight-build-system");
             if bs_file.exists() {
                 let bs = std::fs::read_to_string(&bs_file)
@@ -282,7 +282,7 @@ pub fn build_foreign_deps(
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
         } else if d.git.is_some() {
-            project_dir.join("target").join("deps").join(name)
+            project_dir.join(".deps").join(name)
         } else if let Some(url) = &d.url {
             crate::fetch::http::fetch_url_dep(
                 name,
@@ -446,16 +446,16 @@ fn check_cmake_version(constraint: &str, tool_paths: &[PathBuf]) -> Result<(), F
 }
 
 /// Resolve the on-disk directory for a build-dep entry.
-/// Same logic as regular deps: path → join project_dir; git/url/version → target/deps/<name>.
+/// Same logic as regular deps: path → join project_dir; git/url/version → .deps/<name>.
 fn build_dep_dir(name: &str, dep: &Dependency, project_dir: &Path) -> Option<PathBuf> {
     match dep {
-        Dependency::Simple(_) => Some(project_dir.join("target").join("deps").join(name)),
+        Dependency::Simple(_) => Some(project_dir.join(".deps").join(name)),
         Dependency::Detailed(d) => {
             if let Some(p) = &d.path {
                 Some(project_dir.join(p))
             } else {
-                // git, url, or version dep — all land in target/deps/<name> after `freight fetch`
-                Some(project_dir.join("target").join("deps").join(name))
+                // git, url, or version dep — all land in .deps/<name> after `freight fetch`
+                Some(project_dir.join(".deps").join(name))
             }
         }
     }
@@ -597,16 +597,11 @@ fn resolve_version_dep(
                     None,
                 )));
             }
-            // Check two possible cache locations:
-            //   .deps/<name>/         — prebuilt binary tarballs (survive `freight clean`)
-            //   target/deps/<name>/   — source packages fetched from the registry
-            let prebuilt_dir = project_dir.join(".deps").join(name);
-            let source_dir   = project_dir.join("target").join("deps").join(name);
+            // All freight-fetched deps (source, prebuilt, git, url) live in .deps/<name>/
+            let dep_dir = project_dir.join(".deps").join(name);
             let cached: Option<(PathBuf, &str)> =
-                if prebuilt_dir.join(".freight-fetched").exists() {
-                    Some((prebuilt_dir, ".deps (prebuilt)"))
-                } else if source_dir.join(".freight-fetched").exists() {
-                    Some((source_dir, "target/deps (source fetch)"))
+                if dep_dir.join(".freight-fetched").exists() {
+                    Some((dep_dir, ".deps"))
                 } else {
                     None
                 };
