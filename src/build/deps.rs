@@ -281,7 +281,7 @@ fn compilable_dep_dir(
             // Explicitly foreign, or auto-detected as foreign (and not a freight project).
             if d.dep_type.is_some()
                 || (!(d.path.is_some() && dep_dir.join("freight.toml").exists())
-                    && crate::meta::detect_build_system(&dep_dir).is_some())
+                    && crate::adaptors::detect_build_system(&dep_dir).is_some())
             {
                 return None;
             }

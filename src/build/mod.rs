@@ -412,7 +412,7 @@ pub fn build_project_at(
         progress,
     )?;
     let (foreign_built, _pkg_configs, tool_paths) =
-        crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -839,7 +839,7 @@ pub fn test_project_at(
         progress,
     )?;
     let (foreign_built, _pkg_configs, tool_paths) =
-        crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -1196,7 +1196,7 @@ pub fn bench_project_at(
         progress,
     )?;
     let (foreign_built, _pkg_configs, tool_paths) =
-        crate::meta::build_foreign_deps(project_dir, manifest, profile, progress)?;
+        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();

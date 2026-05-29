@@ -9,7 +9,7 @@ pub mod fetch;
 pub mod install;
 pub mod lock;
 pub mod manifest;
-pub mod meta;
+pub mod adaptors;
 pub mod new;
 pub mod registry;
 pub mod toolchain;

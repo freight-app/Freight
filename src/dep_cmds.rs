@@ -521,7 +521,7 @@ pub struct PackageDepOutcome {
 }
 
 pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, FreightError> {
-    use crate::meta::pkg_config_query;
+    use crate::adaptors::pkg_config_query;
 
     let manifest = load_manifest(project_dir)?;
     let mut outcomes = Vec::new();
