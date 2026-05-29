@@ -1385,7 +1385,7 @@ fn ensure_git_deps_fetched(
     manifest: &Manifest,
     progress: &Progress,
 ) -> Result<(), FreightError> {
-    let deps_dir = project_dir.join(".deps");
+    let deps_dir = project_dir.join(".pkgs");
 
     for (name, dep) in &manifest.dependencies {
         let Dependency::Detailed(d) = dep else {
@@ -1432,7 +1432,7 @@ fn verify_git_dep_shas(
         };
         let Some(_url) = &d.git else { continue };
 
-        let dep_dir = project_dir.join(".deps").join(name);
+        let dep_dir = project_dir.join(".pkgs").join(name);
         if !dep_dir.exists() {
             continue;
         }

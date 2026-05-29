@@ -19,7 +19,7 @@ pub fn fetch_url_dep(
     project_dir: &Path,
     progress: &Progress,
 ) -> Result<PathBuf, FreightError> {
-    let deps_dir = project_dir.join(".deps").join(name);
+    let deps_dir = project_dir.join(".pkgs").join(name);
     let sentinel = deps_dir.join(".freight-fetched");
 
     if sentinel.exists() {
@@ -31,11 +31,11 @@ pub fn fetch_url_dep(
         source: url.to_string(),
     });
 
-    std::fs::create_dir_all(project_dir.join(".deps"))?;
+    std::fs::create_dir_all(project_dir.join(".pkgs"))?;
 
     let ext = archive_ext(url);
     let archive_path = project_dir
-        .join(".deps")
+        .join(".pkgs")
         .join(format!("{name}.{ext}"));
 
     download(url, &archive_path)?;

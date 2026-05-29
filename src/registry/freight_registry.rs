@@ -243,7 +243,7 @@ impl FreightRegistry {
         channel: Option<&str>,
         project_dir: &Path,
     ) -> Result<String, FreightError> {
-        let deps_dir = project_dir.join(".deps").join(name);
+        let deps_dir = project_dir.join(".pkgs").join(name);
         let sentinel = deps_dir.join(".freight-fetched");
         if sentinel.exists() {
             // Already fetched — read checksum from sentinel if available.
@@ -268,9 +268,9 @@ impl FreightRegistry {
         };
         let (bytes, checksum_header) = http_get_bytes(&url, self.token.as_deref())?;
 
-        std::fs::create_dir_all(project_dir.join(".deps"))?;
+        std::fs::create_dir_all(project_dir.join(".pkgs"))?;
         let archive = project_dir
-            .join(".deps")
+            .join(".pkgs")
             .join(format!("{name}-{version}.tar.gz"));
         std::fs::write(&archive, &bytes)?;
 
@@ -487,11 +487,11 @@ impl FreightRegistry {
         };
         let (bytes, checksum_header) = http_get_bytes(&url, self.token.as_deref())?;
 
-        let deps_dir = project_dir.join(".deps").join(name);
+        let deps_dir = project_dir.join(".pkgs").join(name);
         std::fs::create_dir_all(&deps_dir)?;
 
         let archive = project_dir
-            .join(".deps")
+            .join(".pkgs")
             .join(format!("{name}-{version}-{triple}.tar.gz"));
         std::fs::write(&archive, &bytes)?;
 

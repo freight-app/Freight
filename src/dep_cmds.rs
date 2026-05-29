@@ -146,7 +146,7 @@ pub enum GitDepAction {
 /// Already-present directories are left untouched (use [`update_git_deps`] to refresh them).
 pub fn fetch_git_deps(project_dir: &Path) -> Result<Vec<GitDepOutcome>, FreightError> {
     let manifest = load_manifest(project_dir)?;
-    let deps_dir = project_dir.join(".deps");
+    let deps_dir = project_dir.join(".pkgs");
     let mut outcomes = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
@@ -192,7 +192,7 @@ pub fn update_git_deps(
     only: Option<&str>,
 ) -> Result<Vec<GitDepOutcome>, FreightError> {
     let manifest = load_manifest(project_dir)?;
-    let deps_dir = project_dir.join(".deps");
+    let deps_dir = project_dir.join(".pkgs");
     let mut outcomes = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
@@ -252,7 +252,7 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
         let Some(url) = &d.url else { continue };
 
         let already = project_dir
-            .join(".deps")
+            .join(".pkgs")
             .join(name)
             .join(".freight-fetched")
             .exists();
@@ -329,7 +329,7 @@ pub fn fetch_registry_deps(
         }
 
         // If already fetched, skip.
-        let sentinel = project_dir.join(".deps").join(name).join(".freight-fetched");
+        let sentinel = project_dir.join(".pkgs").join(name).join(".freight-fetched");
         if sentinel.exists() {
             outcomes.push(RegistryDepOutcome {
                 name: name.clone(),
@@ -542,7 +542,7 @@ pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, 
 
         // Registry-fetched deps are expected to already be present in .deps/
         // after `freight fetch`. Report presence or warn if missing.
-        let dep_dir = project_dir.join(".deps").join(name);
+        let dep_dir = project_dir.join(".pkgs").join(name);
         if dep_dir.exists() {
             outcomes.push(PackageDepOutcome {
                 name: name.clone(),

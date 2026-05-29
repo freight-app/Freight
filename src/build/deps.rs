@@ -25,11 +25,11 @@ pub struct ResolvedDep {
 /// - Version deps (`name = "0.3"`) → resolved via pkg-config, system stubs, or registry
 /// - Path deps (`path = "..."`) → resolved from that path
 /// - System deps (`system = "..."`) → skipped (linked by name, no source)
-/// - Git deps → resolved from `target/deps/{name}/` after `freight fetch`
+/// - Git deps → resolved from `.pkgs/{name}/` after `freight fetch`
 ///
 /// Only one level of availability is checked: if dep A requires dep B, B must
-/// already be present in `target/deps/`. Freight refuses to download transitively —
-/// run `freight fetch` to populate `target/deps/` before building.
+/// already be present in `.pkgs/`. Freight refuses to download transitively —
+/// run `freight fetch` to populate `.pkgs/` before building.
 pub fn resolve_dep_graph(
     root_dir: &Path,
     root_manifest: &Manifest,
@@ -68,7 +68,7 @@ pub fn resolve_dep_graph(
             .map_err(|e| FreightError::ManifestParse(format!("dep '{name}': {e}")))?;
 
         // All deps — including transitive ones — live in the root project's flat
-        // target/deps/ pool, not in a nested .deps/ inside each dep.  Path deps in a
+        // .pkgs/ pool, not in a nested .pkgs/ inside each dep.  Path deps in a
         // transitive manifest are relative to that dep's own directory, but
         // version/git deps always resolve against root_dir.
         let empty = BTreeSet::new();
@@ -216,7 +216,7 @@ pub fn dep_include_dirs(dep_dir: &Path, manifest: &Manifest) -> Vec<PathBuf> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// `root_dir`      — the root project's directory; version/git deps resolve to
-///                   `root_dir/target/deps/{name}/` (flat, shared pool).
+///                   `root_dir/.pkgs/{name}/` (flat, shared pool).
 /// `declaring_dir` — the directory of the manifest that declares this dep;
 ///                   path deps (`path = "../foo"`) are relative to this.
 ///
@@ -271,7 +271,7 @@ fn compilable_dep_dir(
             }
             let dep_dir = if d.git.is_some() {
                 // Git dep → root .deps/{name}/ (flat pool)
-                root_dir.join(".deps").join(name)
+                root_dir.join(".pkgs").join(name)
             } else if let Some(p) = &d.path {
                 // Path dep → relative to the manifest that declares it
                 declaring_dir.join(p)
