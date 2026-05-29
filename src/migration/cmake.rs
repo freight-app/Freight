@@ -20,12 +20,17 @@
 ///   - `if(APPLE)` blocks → deps go to `[os.macos.dependencies]`
 ///   - `if(UNIX)` blocks → deps go to `[os.unix.dependencies]`
 ///   - `function()` and `macro()` bodies are skipped (can't evaluate calls)
+///   - `FetchContent_Declare(name GIT_REPOSITORY … GIT_TAG …)` → `{ git, tag }`
+///   - `FetchContent_Declare(name URL … URL_HASH SHA256=…)` → `{ url, sha256 }`
+///   - `ExternalProject_Add(name …)` → same rules; custom build steps warned
+///   - `CPMAddPackage(NAME … GITHUB_REPOSITORY … GIT_TAG …)` → `{ git, tag }`
+///   - `CPMAddPackage("gh:user/repo#tag")` compact form
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use cmake_lossless::{CMakeFile, CommandInvocation, Node};
-use toml_edit::{value, Array, DocumentMut, Item, Table};
+use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table};
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -180,6 +185,17 @@ fn resolve_input(input: &Path) -> Result<(PathBuf, PathBuf)> {
 
 // ── Extracted data ────────────────────────────────────────────────────────────
 
+/// A dep fetched at configure-time by FetchContent, ExternalProject, or CPM.
+struct FetchedDep {
+    name: String,
+    git: Option<String>,
+    tag: Option<String>,
+    branch: Option<String>,
+    rev: Option<String>,
+    url: Option<String>,
+    sha256: Option<String>,
+}
+
 struct Extracted {
     name: String,
     version: String,
@@ -188,6 +204,7 @@ struct Extracted {
     deps: Vec<String>,
     find_packages: Vec<String>,
     pkg_modules: Vec<String>,
+    fetched_deps: Vec<FetchedDep>,
     /// Platform-conditional deps: OS name (e.g. "windows", "macos", "unix") → dep list.
     platform_deps: HashMap<String, Vec<String>>,
     c_std: Option<String>,
@@ -215,6 +232,7 @@ impl Extracted {
             deps: Vec::new(),
             find_packages: Vec::new(),
             pkg_modules: Vec::new(),
+            fetched_deps: Vec::new(),
             platform_deps: HashMap::new(),
             c_std: None,
             cxx_std: None,
@@ -335,6 +353,9 @@ fn handle_command(
                 }
             }
         }
+        "fetchcontent_declare" => handle_fetchcontent_declare(&args, ex, warnings),
+        "externalproject_add" => handle_externalproject_add(&args, ex, warnings),
+        "cpmaddpackage" => handle_cpm_add_package(&args, ex, warnings),
         _ => {}
     }
 }
@@ -632,6 +653,263 @@ fn handle_add_definitions(args: &[&str], ex: &mut Extracted, has_target: bool) {
     }
 }
 
+// ── FetchContent / ExternalProject / CPM handlers ────────────────────────────
+
+fn handle_fetchcontent_declare(args: &[&str], ex: &mut Extracted, warnings: &mut Vec<String>) {
+    if args.is_empty() {
+        return;
+    }
+    let name = sanitize_name(&expand_var(args[0], &ex.vars));
+    if name.is_empty() || name.contains('$') {
+        return;
+    }
+    if ex.fetched_deps.iter().any(|d| d.name == name) {
+        return; // already declared
+    }
+    if let Some(dep) = parse_fetch_kv(&name, &args[1..], warnings) {
+        ex.fetched_deps.push(dep);
+    }
+}
+
+fn handle_externalproject_add(args: &[&str], ex: &mut Extracted, warnings: &mut Vec<String>) {
+    if args.is_empty() {
+        return;
+    }
+    let name = sanitize_name(&expand_var(args[0], &ex.vars));
+    if name.is_empty() || name.contains('$') {
+        return;
+    }
+    if ex.fetched_deps.iter().any(|d| d.name == name) {
+        return;
+    }
+    let kv = keyword_value_pairs(&args[1..]);
+    if kv.contains_key("BUILD_COMMAND")
+        || kv.contains_key("INSTALL_COMMAND")
+        || kv.contains_key("PATCH_COMMAND")
+    {
+        warnings.push(format!(
+            "ExternalProject_Add({name}): custom build/install/patch commands not migrated — review manually"
+        ));
+    }
+    if let Some(dep) = parse_fetch_kv(&name, &args[1..], warnings) {
+        ex.fetched_deps.push(dep);
+    }
+}
+
+fn handle_cpm_add_package(args: &[&str], ex: &mut Extracted, warnings: &mut Vec<String>) {
+    if args.is_empty() {
+        return;
+    }
+    // Compact single-string form: "gh:user/repo#tag" / "gl:..." / "bb:..."
+    if args.len() == 1 {
+        match parse_cpm_compact(args[0]) {
+            Some(dep) => {
+                if !ex.fetched_deps.iter().any(|d| d.name == dep.name) {
+                    ex.fetched_deps.push(dep);
+                }
+            }
+            None => warnings.push(format!(
+                "CPMAddPackage: unrecognised compact form '{}' — add dep manually",
+                args[0]
+            )),
+        }
+        return;
+    }
+    // Keyword form
+    let kv = keyword_value_pairs(args);
+    let name = match kv.get("NAME").map(|s| sanitize_name(s)) {
+        Some(n) if !n.is_empty() && !n.contains('$') => n,
+        _ => return,
+    };
+    if ex.fetched_deps.iter().any(|d| d.name == name) {
+        return;
+    }
+    // Resolve git URL from various CPM source keys
+    let git = kv
+        .get("GITHUB_REPOSITORY")
+        .map(|r| format!("https://github.com/{r}.git"))
+        .or_else(|| {
+            kv.get("GITLAB_REPOSITORY")
+                .map(|r| format!("https://gitlab.com/{r}.git"))
+        })
+        .or_else(|| {
+            kv.get("BITBUCKET_REPOSITORY")
+                .map(|r| format!("https://bitbucket.org/{r}.git"))
+        })
+        .or_else(|| kv.get("GIT_REPOSITORY").map(|r| r.clone()));
+
+    let url = kv.get("URL").cloned();
+    let sha256 = kv.get("URL_HASH").and_then(|h| {
+        h.strip_prefix("SHA256=")
+            .or_else(|| h.strip_prefix("sha256="))
+            .map(str::to_string)
+    });
+
+    let git_tag_str = kv.get("GIT_TAG").map(|s| s.as_str());
+    let (mut tag, branch, rev) = match git_tag_str {
+        Some(t) => classify_git_ref(t),
+        None => (None, None, None),
+    };
+    // VERSION without GIT_TAG → synthesise a "v{version}" tag
+    if tag.is_none() && branch.is_none() && rev.is_none() {
+        if let Some(v) = kv.get("VERSION") {
+            if git.is_some() {
+                tag = Some(format!("v{v}"));
+            }
+        }
+    }
+
+    if git.is_none() && url.is_none() {
+        warnings.push(format!(
+            "CPMAddPackage({name}): no repository or URL found — add dep manually"
+        ));
+        return;
+    }
+    ex.fetched_deps.push(FetchedDep {
+        name,
+        git,
+        tag,
+        branch,
+        rev,
+        url,
+        sha256,
+    });
+}
+
+// ── FetchContent / CPM helpers ────────────────────────────────────────────────
+
+/// Parse GIT_REPOSITORY / URL / URL_HASH / GIT_TAG keyword-value pairs into a
+/// `FetchedDep`.  Returns `None` and pushes a warning if no source is found.
+fn parse_fetch_kv(
+    name: &str,
+    tail: &[&str],
+    warnings: &mut Vec<String>,
+) -> Option<FetchedDep> {
+    let kv = keyword_value_pairs(tail);
+    let git = kv.get("GIT_REPOSITORY").cloned();
+    let url = kv.get("URL").cloned();
+    let sha256 = kv.get("URL_HASH").and_then(|h| {
+        h.strip_prefix("SHA256=")
+            .or_else(|| h.strip_prefix("sha256="))
+            .map(str::to_string)
+    }).or_else(|| kv.get("SHA256").cloned());
+
+    let git_tag_str = kv.get("GIT_TAG").map(|s| s.as_str());
+    let (tag, branch, rev) = match git_tag_str {
+        Some(t) => classify_git_ref(t),
+        None => (None, None, None),
+    };
+
+    if git.is_none() && url.is_none() {
+        warnings.push(format!(
+            "FetchContent_Declare / ExternalProject_Add({name}): no GIT_REPOSITORY or URL — add dep manually"
+        ));
+        return None;
+    }
+    Some(FetchedDep {
+        name: name.to_string(),
+        git,
+        tag,
+        branch,
+        rev,
+        url,
+        sha256,
+    })
+}
+
+/// Parse `CPMAddPackage("gh:user/repo#tag")` and its `gl:` / `bb:` variants.
+fn parse_cpm_compact(s: &str) -> Option<FetchedDep> {
+    let (prefix, host) = if s.starts_with("gh:") {
+        ("gh:", "https://github.com/")
+    } else if s.starts_with("gl:") {
+        ("gl:", "https://gitlab.com/")
+    } else if s.starts_with("bb:") {
+        ("bb:", "https://bitbucket.org/")
+    } else {
+        return None;
+    };
+    let rest = s.strip_prefix(prefix)?;
+    let (repo, ref_str) = rest.split_once('#').unwrap_or((rest, ""));
+    let raw_name = repo.rsplit('/').next()?;
+    let name = sanitize_name(raw_name);
+    if name.is_empty() {
+        return None;
+    }
+    let git = Some(format!("{host}{repo}.git"));
+    let (tag, branch, rev) = if !ref_str.is_empty() {
+        classify_git_ref(ref_str)
+    } else {
+        (None, None, None)
+    };
+    Some(FetchedDep {
+        name,
+        git,
+        tag,
+        branch,
+        rev,
+        url: None,
+        sha256: None,
+    })
+}
+
+/// Classify a `GIT_TAG` value as a tag, branch, or pinned revision.
+///
+/// 40-char hex → `rev`; version-like string → `tag`; otherwise → `branch`.
+fn classify_git_ref(s: &str) -> (Option<String>, Option<String>, Option<String>) {
+    if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (None, None, Some(s.to_string()));
+    }
+    let looks_like_version = s.starts_with('v') && s[1..].starts_with(|c: char| c.is_ascii_digit())
+        || s.starts_with(|c: char| c.is_ascii_digit());
+    if looks_like_version {
+        return (Some(s.to_string()), None, None);
+    }
+    (None, Some(s.to_string()), None)
+}
+
+/// Extract keyword→value pairs from a CMake argument list.
+/// Keywords are all-uppercase tokens with only `[A-Z0-9_]` characters.
+fn keyword_value_pairs(args: &[&str]) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut i = 0;
+    while i + 1 < args.len() {
+        let upper = args[i].to_ascii_uppercase();
+        if !upper.is_empty()
+            && upper
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        {
+            map.entry(upper).or_insert_with(|| args[i + 1].to_string());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    map
+}
+
+/// Build a toml_edit `InlineTable` for a `FetchedDep` entry.
+fn fetched_dep_inline(dep: &FetchedDep) -> InlineTable {
+    let mut tbl = InlineTable::new();
+    if let Some(git) = &dep.git {
+        tbl.insert("git", toml_edit::Value::from(git.as_str()));
+    }
+    if let Some(tag) = &dep.tag {
+        tbl.insert("tag", toml_edit::Value::from(tag.as_str()));
+    } else if let Some(branch) = &dep.branch {
+        tbl.insert("branch", toml_edit::Value::from(branch.as_str()));
+    } else if let Some(rev) = &dep.rev {
+        tbl.insert("rev", toml_edit::Value::from(rev.as_str()));
+    }
+    if let Some(url) = &dep.url {
+        tbl.insert("url", toml_edit::Value::from(url.as_str()));
+    }
+    if let Some(sha256) = &dep.sha256 {
+        tbl.insert("sha256", toml_edit::Value::from(sha256.as_str()));
+    }
+    tbl
+}
+
 // ── Variable expansion ────────────────────────────────────────────────────────
 
 /// Expand `${VAR}` / `$ENV{VAR}` / `$CACHE{VAR}` references using the known
@@ -862,7 +1140,10 @@ fn emit_toml(name: &str, version: &str, ex: &Extracted, warnings: &[String]) -> 
         doc.insert("compiler", Item::Table(compiler));
     }
 
-    let all_deps: Vec<String> = {
+    // Fetched deps (FetchContent / ExternalProject / CPM) take priority over
+    // system/find_package entries for the same name.
+    let fetched_names: HashSet<&str> = ex.fetched_deps.iter().map(|d| d.name.as_str()).collect();
+    let system_deps: Vec<&str> = {
         let mut seen = HashSet::new();
         let mut deps = Vec::new();
         for d in ex
@@ -871,15 +1152,21 @@ fn emit_toml(name: &str, version: &str, ex: &Extracted, warnings: &[String]) -> 
             .chain(ex.find_packages.iter())
             .chain(ex.pkg_modules.iter())
         {
-            if seen.insert(d.clone()) {
-                deps.push(d.clone());
+            if !fetched_names.contains(d.as_str()) && seen.insert(d.as_str()) {
+                deps.push(d.as_str());
             }
         }
         deps
     };
-    if !all_deps.is_empty() {
+    if !ex.fetched_deps.is_empty() || !system_deps.is_empty() {
         let mut dep_tbl = Table::new();
-        for d in &all_deps {
+        for dep in &ex.fetched_deps {
+            dep_tbl.insert(
+                &dep.name,
+                Item::Value(toml_edit::Value::InlineTable(fetched_dep_inline(dep))),
+            );
+        }
+        for d in &system_deps {
             dep_tbl.insert(d, value("*"));
         }
         doc.insert("dependencies", Item::Table(dep_tbl));
@@ -1453,5 +1740,193 @@ mod tests {
         let toml = emit_toml("app", "0.1.0", &ex, &w);
         assert!(!toml.contains("[dependencies]"));
         assert!(!toml.contains("[compiler]"));
+    }
+
+    // ── FetchContent ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn fetchcontent_git_with_tag() {
+        let src = r#"
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG        10.2.1
+)
+FetchContent_MakeAvailable(fmt)
+"#;
+        let (ex, w) = extract_src(src);
+        assert!(w.is_empty(), "unexpected warnings: {w:?}");
+        assert_eq!(ex.fetched_deps.len(), 1);
+        let d = &ex.fetched_deps[0];
+        assert_eq!(d.name, "fmt");
+        assert_eq!(d.git.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
+        assert_eq!(d.tag.as_deref(), Some("10.2.1"));
+        assert!(d.branch.is_none() && d.rev.is_none());
+    }
+
+    #[test]
+    fn fetchcontent_git_hash_becomes_rev() {
+        let src = "FetchContent_Declare(mylib GIT_REPOSITORY https://github.com/x/y.git GIT_TAG a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2)";
+        let (ex, _) = extract_src(src);
+        assert_eq!(ex.fetched_deps[0].rev.as_deref(), Some("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"));
+        assert!(ex.fetched_deps[0].tag.is_none());
+    }
+
+    #[test]
+    fn fetchcontent_git_branch() {
+        let src = "FetchContent_Declare(mylib GIT_REPOSITORY https://github.com/x/y.git GIT_TAG main)";
+        let (ex, _) = extract_src(src);
+        assert_eq!(ex.fetched_deps[0].branch.as_deref(), Some("main"));
+        assert!(ex.fetched_deps[0].tag.is_none() && ex.fetched_deps[0].rev.is_none());
+    }
+
+    #[test]
+    fn fetchcontent_url_with_sha256_prefix() {
+        let src = r#"
+FetchContent_Declare(
+  zlib
+  URL      https://zlib.net/zlib-1.3.tar.gz
+  URL_HASH SHA256=ff0ba4c292013dbc27530b3a81e1f9a813cd39de0fb13876d0e4ac6e8f11f0a7
+)
+"#;
+        let (ex, _) = extract_src(src);
+        let d = &ex.fetched_deps[0];
+        assert_eq!(d.name, "zlib");
+        assert_eq!(d.url.as_deref(), Some("https://zlib.net/zlib-1.3.tar.gz"));
+        assert_eq!(
+            d.sha256.as_deref(),
+            Some("ff0ba4c292013dbc27530b3a81e1f9a813cd39de0fb13876d0e4ac6e8f11f0a7")
+        );
+        assert!(d.git.is_none());
+    }
+
+    #[test]
+    fn fetchcontent_no_source_emits_warning() {
+        let (ex, w) = extract_src("FetchContent_Declare(foo DOWNLOAD_EXTRACT_TIMESTAMP TRUE)");
+        assert!(ex.fetched_deps.is_empty());
+        assert!(w.iter().any(|s| s.contains("foo")));
+    }
+
+    #[test]
+    fn fetchcontent_deduplicated() {
+        let src = r#"
+FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG 10.2.1)
+FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG 11.0.0)
+"#;
+        let (ex, _) = extract_src(src);
+        assert_eq!(ex.fetched_deps.len(), 1, "duplicate declare should be ignored");
+        assert_eq!(ex.fetched_deps[0].tag.as_deref(), Some("10.2.1"));
+    }
+
+    #[test]
+    fn fetchcontent_shadows_find_package() {
+        // When a dep is declared via FetchContent it should appear as an inline
+        // table, not as a bare "*" version even if find_package also references it.
+        let src = r#"
+FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG 10.2.1)
+find_package(fmt REQUIRED)
+"#;
+        let (ex, w) = extract_src(src);
+        let toml = emit_toml("app", "0.1.0", &ex, &w);
+        assert!(toml.contains("git = "), "expected inline git dep, got:\n{toml}");
+        // Should not also appear as `fmt = "*"`
+        assert!(!toml.contains("fmt = \"*\""));
+    }
+
+    // ── ExternalProject_Add ───────────────────────────────────────────────────
+
+    #[test]
+    fn externalproject_git() {
+        let src = r#"
+ExternalProject_Add(
+  mylib
+  GIT_REPOSITORY https://github.com/user/mylib.git
+  GIT_TAG        v1.0.0
+)
+"#;
+        let (ex, _) = extract_src(src);
+        let d = &ex.fetched_deps[0];
+        assert_eq!(d.name, "mylib");
+        assert_eq!(d.git.as_deref(), Some("https://github.com/user/mylib.git"));
+        assert_eq!(d.tag.as_deref(), Some("v1.0.0"));
+    }
+
+    #[test]
+    fn externalproject_custom_commands_warned() {
+        let src = r#"
+ExternalProject_Add(
+  mylib
+  GIT_REPOSITORY https://github.com/user/mylib.git
+  GIT_TAG        v1.0.0
+  BUILD_COMMAND  make special
+)
+"#;
+        let (_, w) = extract_src(src);
+        assert!(w.iter().any(|s| s.contains("custom build")));
+    }
+
+    // ── CPMAddPackage ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn cpm_keyword_github() {
+        let src = r#"
+CPMAddPackage(
+  NAME fmt
+  GITHUB_REPOSITORY fmtlib/fmt
+  GIT_TAG 10.2.1
+)
+"#;
+        let (ex, w) = extract_src(src);
+        assert!(w.is_empty(), "unexpected warnings: {w:?}");
+        let d = &ex.fetched_deps[0];
+        assert_eq!(d.name, "fmt");
+        assert_eq!(d.git.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
+        assert_eq!(d.tag.as_deref(), Some("10.2.1"));
+    }
+
+    #[test]
+    fn cpm_keyword_version_synthesises_tag() {
+        let src = "CPMAddPackage(NAME catch2 VERSION 3.4.0 GITHUB_REPOSITORY catchorg/Catch2)";
+        let (ex, _) = extract_src(src);
+        assert_eq!(ex.fetched_deps[0].tag.as_deref(), Some("v3.4.0"));
+    }
+
+    #[test]
+    fn cpm_compact_gh() {
+        let (ex, w) = extract_src("CPMAddPackage(\"gh:fmtlib/fmt#10.2.1\")");
+        assert!(w.is_empty(), "unexpected warnings: {w:?}");
+        let d = &ex.fetched_deps[0];
+        assert_eq!(d.name, "fmt");
+        assert_eq!(d.git.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
+        assert_eq!(d.tag.as_deref(), Some("10.2.1"));
+    }
+
+    #[test]
+    fn cpm_compact_gl() {
+        let (ex, _) = extract_src("CPMAddPackage(\"gl:user/mylib#develop\")");
+        let d = &ex.fetched_deps[0];
+        assert_eq!(d.git.as_deref(), Some("https://gitlab.com/user/mylib.git"));
+        assert_eq!(d.branch.as_deref(), Some("develop"));
+    }
+
+    // ── Emitter ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn emits_fetched_dep_as_inline_table() {
+        let src = "FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG 10.2.1)";
+        let (ex, w) = extract_src(src);
+        let toml = emit_toml("app", "0.1.0", &ex, &w);
+        assert!(toml.contains("[dependencies]"));
+        assert!(toml.contains("git = \"https://github.com/fmtlib/fmt.git\""));
+        assert!(toml.contains("tag = \"10.2.1\""));
+    }
+
+    #[test]
+    fn emits_fetched_url_dep() {
+        let src = "FetchContent_Declare(zlib URL https://zlib.net/zlib-1.3.tar.gz URL_HASH SHA256=abc123)";
+        let (ex, w) = extract_src(src);
+        let toml = emit_toml("app", "0.1.0", &ex, &w);
+        assert!(toml.contains("url = \"https://zlib.net/zlib-1.3.tar.gz\""));
+        assert!(toml.contains("sha256 = \"abc123\""));
     }
 }
