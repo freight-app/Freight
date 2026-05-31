@@ -917,14 +917,23 @@ fn handle_key(app: &mut DocApp<'_>, key: KeyEvent) -> bool {
             app.focus = Focus::Content;
         }
 
-        // Tab: Left→Content (focus switch); Content→next declaration; Meta→Left.
+        // Tab: Left→next dep node; Content→next declaration; Meta→Left.
+        // Shift-Tab: Left→prev dep node; Content→prev declaration; Meta→Left.
         KeyEvent {
             code: KeyCode::Tab,
             modifiers: KeyModifiers::NONE,
             ..
         } => match app.focus {
             Focus::Left => {
-                app.focus = Focus::Content;
+                let vis = visible_nodes(&app.tree);
+                let next = vis
+                    .iter()
+                    .position(|&ti| {
+                        app.tree[ti].kind == TreeNodeKind::Dep
+                            && ti > vis.get(app.tree_cursor).copied().unwrap_or(0)
+                    })
+                    .unwrap_or(app.tree_cursor);
+                app.tree_cursor = next;
             }
             Focus::Content => {
                 app.next_declaration();
@@ -937,6 +946,15 @@ fn handle_key(app: &mut DocApp<'_>, key: KeyEvent) -> bool {
             code: KeyCode::BackTab,
             ..
         } => match app.focus {
+            Focus::Left => {
+                let vis = visible_nodes(&app.tree);
+                let cur_ti = vis.get(app.tree_cursor).copied().unwrap_or(0);
+                let prev = vis
+                    .iter()
+                    .rposition(|&ti| app.tree[ti].kind == TreeNodeKind::Dep && ti < cur_ti)
+                    .unwrap_or(app.tree_cursor);
+                app.tree_cursor = prev;
+            }
             Focus::Content => {
                 app.prev_declaration();
             }
@@ -1198,7 +1216,7 @@ fn draw_app(frame: &mut ratatui::Frame, app: &mut DocApp<'_>) {
 
 fn draw_help_bar(frame: &mut ratatui::Frame, app: &DocApp<'_>, area: Rect) {
     let text = match app.focus {
-        Focus::Left => "↑/↓  Enter navigate  Tab→content  q quit",
+        Focus::Left => "↑/↓  PgUp/Dn  Tab next pkg  Enter open  →content  q quit",
         Focus::Content => "↑/↓  PgUp/Dn  Tab next section  Enter/click link  ← tree  q quit",
         Focus::Meta => "↑/↓  Tab/← focus  q quit",
     };
