@@ -20,7 +20,7 @@ impl Args {
     }
 }
 
-use docify::extract::{extract_dir, DocItem, DocSet};
+use docify::extract::{extract_dir, DocItem, DocKind, DocSet};
 use docify::render;
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
@@ -1389,10 +1389,9 @@ fn latex_display_to_block(
 
 // ── Doc content loading ───────────────────────────────────────────────────────
 
-/// Render all `items` into a single content area, building per-item offset tables.
-///
-/// Link virtual lines from each `markdown_to_blocks` call are offset by the running
-/// total so they point into the combined block list.
+/// Render all `items` into a single content area, sorted Doxygen-style:
+/// language → namespace → kind (Types, Functions, Variables), with section
+/// header lines emitted before each group transition.
 fn load_all_items(
     items: &[DocItem],
     item_offset: usize,
@@ -1402,11 +1401,62 @@ fn load_all_items(
     out_vlines: &mut Vec<usize>,
     out_line_map: &mut std::collections::HashMap<usize, usize>,
 ) {
-    for (i, item) in items.iter().enumerate() {
-        let item_idx = item_offset + i;
+    // Build a display-order list: (lang, ns, kind_rank, local_name, idx)
+    let mut order: Vec<(String, String, u8, String, usize)> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| !it.name.is_empty())
+        .map(|(i, it)| {
+            let lang = it.lang.label().to_string();
+            let ns = it.name.rfind("::").or_else(|| it.name.rfind('.'))
+                .map_or(String::new(), |p| it.name[..p].to_string());
+            let local = it.name.rfind("::").or_else(|| it.name.rfind('.'))
+                .map_or(it.name.as_str(), |p| &it.name[p + 2..]);
+            (lang, ns, kind_rank(&it.kind), local.to_lowercase(), item_offset + i)
+        })
+        .collect();
+    order.sort_by(|a, b| (a.0.as_str(), a.1.as_str(), a.2, a.3.as_str())
+        .cmp(&(b.0.as_str(), b.1.as_str(), b.2, b.3.as_str())));
+
+    let mut last_lang: &str = "";
+    let mut last_ns:   &str = "";
+    let mut last_rank: Option<u8> = None;
+
+    for (ref lang, ref ns, rank, _, idx) in &order {
+        // Language section header
+        if lang.as_str() != last_lang {
+            out_blocks.push(ContentBlock::Lines(vec![
+                Line::raw(""),
+                section_rule_line(lang),
+                Line::raw(""),
+            ]));
+            last_lang = lang.as_str();
+            last_ns   = "";
+            last_rank = None;
+        }
+        // Namespace sub-header (only when namespace is non-empty)
+        if !ns.is_empty() && ns.as_str() != last_ns {
+            out_blocks.push(ContentBlock::Lines(vec![
+                heading_line(pulldown_cmark::HeadingLevel::H3, ns),
+                Line::raw(""),
+            ]));
+            last_ns   = ns.as_str();
+            last_rank = None;
+        }
+        // Kind sub-header
+        if Some(*rank) != last_rank {
+            last_rank = Some(*rank);
+            let label = kind_section_label(*rank);
+            out_blocks.push(ContentBlock::Lines(vec![
+                section_kind_line(label),
+                Line::raw(""),
+            ]));
+        }
+
+        let item = &items[idx - item_offset];
         let start_vline: usize = out_blocks.iter().map(|b| b.line_count()).sum();
         out_vlines.push(start_vline);
-        out_line_map.insert(item_idx, start_vline);
+        out_line_map.insert(*idx, start_vline);
 
         let md = docify::render_tui::items_to_markdown(std::slice::from_ref(item));
         let (item_blocks, item_links) = markdown_to_blocks(&md, 80, ctx);
@@ -1414,6 +1464,49 @@ fn load_all_items(
             out_links.push((start_vline + vl, target));
         }
         out_blocks.extend(item_blocks);
+    }
+}
+
+/// Horizontal rule with centred language label — e.g. `──── C++ ────`.
+fn section_rule_line(lang: &str) -> Line<'static> {
+    let label = format!("  {}  ", lang);
+    let bars  = "─".repeat(6);
+    Line::from(vec![
+        Span::styled(bars.clone(), Style::default().fg(Color::DarkGray)),
+        Span::styled(label.to_owned(), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+        Span::styled(bars, Style::default().fg(Color::DarkGray)),
+    ])
+}
+
+/// Doxygen-style kind separator, e.g. `· Functions ················`.
+fn section_kind_line(label: &str) -> Line<'static> {
+    let prefix = format!("· {} ", label);
+    let dots   = "·".repeat(50_usize.saturating_sub(prefix.chars().count()));
+    Line::from(vec![
+        Span::styled("· ".to_owned(), Style::default().fg(Color::DarkGray)),
+        Span::styled(label.to_owned(), Style::default().fg(Color::Yellow)),
+        Span::styled(format!(" {}", dots), Style::default().fg(Color::DarkGray)),
+    ])
+}
+
+fn kind_rank(kind: &DocKind) -> u8 {
+    match kind {
+        DocKind::Class | DocKind::Struct | DocKind::Interface
+        | DocKind::Enum | DocKind::Typedef => 0,
+        DocKind::Module => 1,
+        DocKind::Function | DocKind::Subroutine | DocKind::Macro => 2,
+        DocKind::Variable => 3,
+        _ => 4,
+    }
+}
+
+fn kind_section_label(rank: u8) -> &'static str {
+    match rank {
+        0 => "Types",
+        1 => "Modules",
+        2 => "Functions",
+        3 => "Variables",
+        _ => "Other",
     }
 }
 
@@ -1487,73 +1580,127 @@ fn extract_dep_items(dep: &DocDependency) -> Vec<DocItem> {
 ///
 /// `item_offset` is the position of `items[0]` in the global `doc_items` vec.
 /// `base_depth` is the depth of the generated nodes (1 for dep children).
-/// Items with `::` or `.` in the name are grouped under expandable namespace nodes.
+///
+/// Grouping mirrors Doxygen's class-reference layout:
+/// - If multiple languages are present a language node wraps each language's items.
+/// - Within each language, namespaced items are grouped under a namespace node.
+/// - Within each namespace (or at the free-symbol level), items are sub-grouped by
+///   kind when multiple kinds are present: Types → Modules → Functions → Variables.
 fn build_api_subtree(items: &[DocItem], item_offset: usize, base_depth: usize) -> Vec<TreeNode> {
     use std::collections::BTreeMap;
 
-    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    let mut roots: Vec<usize> = Vec::new();
-
+    // --- 1. Group indices by language ---
+    let mut by_lang: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, item) in items.iter().enumerate() {
-        if item.name.is_empty() {
-            continue;
-        } // skip file-level/anonymous items
-        let global = item_offset + i;
-        let sep = item.name.rfind("::").or_else(|| item.name.rfind('.'));
-        if let Some(p) = sep {
-            groups
-                .entry(item.name[..p].to_string())
-                .or_default()
-                .push(global);
-        } else {
-            roots.push(global);
-        }
+        if item.name.is_empty() { continue; }
+        by_lang.entry(item.lang.label().to_string()).or_default().push(item_offset + i);
     }
 
+    let single_lang = by_lang.len() <= 1;
     let mut tree = Vec::new();
 
-    for gi in roots {
-        tree.push(TreeNode {
-            label: items[gi - item_offset].name.clone(),
-            depth: base_depth,
-            kind: TreeNodeKind::Symbol,
-            expanded: false,
-            item_idx: Some(gi),
-            dep_idx: None,
-            loaded: false,
-        });
+    for (lang, lang_indices) in &by_lang {
+        // Language group (only when multiple languages are present)
+        let ns_depth = if single_lang {
+            base_depth
+        } else {
+            tree.push(TreeNode {
+                label: lang.clone(),
+                depth: base_depth,
+                kind: TreeNodeKind::Group,
+                expanded: true,
+                item_idx: None,
+                dep_idx: None,
+                loaded: false,
+            });
+            base_depth + 1
+        };
+
+        // --- 2. Partition into namespaced vs. free ---
+        let mut by_ns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut free: Vec<usize> = Vec::new();
+        for &idx in lang_indices {
+            let name = &items[idx - item_offset].name;
+            if let Some(p) = name.rfind("::").or_else(|| name.rfind('.')) {
+                by_ns.entry(name[..p].to_string()).or_default().push(idx);
+            } else {
+                free.push(idx);
+            }
+        }
+
+        // --- 3. Namespace groups ---
+        for (ns, ns_indices) in &by_ns {
+            tree.push(TreeNode {
+                label: ns.clone(),
+                depth: ns_depth,
+                kind: TreeNodeKind::Group,
+                expanded: true,
+                item_idx: None,
+                dep_idx: None,
+                loaded: false,
+            });
+            push_kind_groups(&mut tree, ns_indices, items, item_offset, ns_depth + 1);
+        }
+
+        // --- 4. Free symbols ---
+        push_kind_groups(&mut tree, &free, items, item_offset, ns_depth);
     }
 
-    for (ns, members) in &groups {
-        tree.push(TreeNode {
-            label: ns.clone(),
-            depth: base_depth,
-            kind: TreeNodeKind::Group,
-            expanded: true,
-            item_idx: None,
-            dep_idx: None,
-            loaded: false,
-        });
-        for &gi in members {
-            let item = &items[gi - item_offset];
-            let local = item
-                .name
-                .rfind("::")
-                .or_else(|| item.name.rfind('.'))
-                .map_or(item.name.as_str(), |p| &item.name[p + 2..]);
+    tree
+}
+
+/// Append kind sub-groups (or direct symbol nodes when only one kind is present).
+fn push_kind_groups(
+    tree: &mut Vec<TreeNode>,
+    indices: &[usize],
+    items: &[DocItem],
+    item_offset: usize,
+    depth: usize,
+) {
+    if indices.is_empty() { return; }
+
+    // Sort by (kind_rank, local_name)
+    let mut sorted: Vec<(u8, String, usize)> = indices.iter().map(|&idx| {
+        let it    = &items[idx - item_offset];
+        let local = it.name.rfind("::").or_else(|| it.name.rfind('.'))
+            .map_or(it.name.as_str(), |p| &it.name[p + 2..]);
+        (kind_rank(&it.kind), local.to_lowercase(), idx)
+    }).collect();
+    sorted.sort();
+
+    let multi_kind = {
+        let mut r = sorted[0].0;
+        sorted.iter().any(|(rank, _, _)| { let changed = *rank != r; r = *rank; changed })
+    };
+
+    let mut cur_rank: Option<u8> = None;
+    for (rank, _, idx) in sorted {
+        if multi_kind && Some(rank) != cur_rank {
+            cur_rank = Some(rank);
             tree.push(TreeNode {
-                label: local.to_owned(),
-                depth: base_depth + 1,
-                kind: TreeNodeKind::Symbol,
-                expanded: false,
-                item_idx: Some(gi),
+                label: kind_section_label(rank).to_string(),
+                depth,
+                kind: TreeNodeKind::Group,
+                expanded: true,
+                item_idx: None,
                 dep_idx: None,
                 loaded: false,
             });
         }
+        let item = &items[idx - item_offset];
+        let sym_depth = if multi_kind { depth + 1 } else { depth };
+        let local     = item.name.rfind("::").or_else(|| item.name.rfind('.'))
+            .map_or(item.name.as_str(), |p| &item.name[p + 2..]);
+        tree.push(TreeNode {
+            label: local.to_owned(),
+            depth: sym_depth,
+            kind: TreeNodeKind::Symbol,
+            expanded: false,
+            item_idx: Some(idx),
+            dep_idx: None,
+            loaded: false,
+        });
     }
-
-    tree
 }
 
 /// Return indices of currently-visible tree nodes, respecting collapsed groups and deps.
@@ -2482,7 +2629,8 @@ mod tree_tests {
 
     #[test]
     fn build_api_subtree_namespaced_items_visible() {
-        // Items with "ns::name" form should be grouped and visible once dep expands.
+        // Items with "ns::name" form are grouped under the namespace, then sub-grouped
+        // by kind when multiple kinds are present (Doxygen-style).
         let items = vec![
             make_item("stats::mean", DocKind::Function),
             make_item("stats::variance", DocKind::Function),
@@ -2491,7 +2639,8 @@ mod tree_tests {
         ];
         let sub = build_api_subtree(&items, 0, 1);
 
-        // Should have: Group "stats" + 3 Symbol children (empty-named item skipped).
+        // All items are C++ (single lang) → no language group.
+        // Namespace group "stats" + kind sub-groups "Types"/"Functions" + 3 symbols.
         let groups: Vec<_> = sub
             .iter()
             .filter(|n| matches!(n.kind, TreeNodeKind::Group))
@@ -2500,10 +2649,12 @@ mod tree_tests {
             .iter()
             .filter(|n| matches!(n.kind, TreeNodeKind::Symbol))
             .collect();
-        assert_eq!(groups.len(), 1, "expected one 'stats' group");
+        assert_eq!(groups.len(), 3, "stats + Types + Functions groups");
         assert_eq!(syms.len(), 3, "expected 3 symbols");
         assert_eq!(groups[0].label, "stats");
         assert!(groups[0].expanded, "group should start expanded");
+        assert_eq!(groups[1].label, "Types");
+        assert_eq!(groups[2].label, "Functions");
 
         // Build a minimal tree with a Dep + the subtree.
         let mut tree = vec![TreeNode {
@@ -2518,11 +2669,11 @@ mod tree_tests {
         tree.extend(sub);
 
         let vis = visible_nodes(&tree);
-        // All nodes should be visible: dep + group + 3 symbols = 5.
+        // dep + stats + Types + OrderStatistics + Functions + mean + variance = 7
         assert_eq!(
             vis.len(),
-            5,
-            "dep, group, and all 3 symbols should be visible"
+            7,
+            "dep, namespace group, 2 kind groups, and 3 symbols"
         );
     }
 
