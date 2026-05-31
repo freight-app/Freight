@@ -552,6 +552,7 @@ struct DocApp<'a> {
     scroll: usize,
     content_links: Vec<(usize, String)>, // virtual_line → link target name
     content_area: Rect,                  // updated each frame for click hit-testing
+    tree_area: Rect,                     // updated each frame for click hit-testing (tree panel)
     item_vlines: Vec<usize>,             // sorted virtual line of each item section (for Tab)
     item_line_map: std::collections::HashMap<usize, usize>, // item_idx → first virtual line
 
@@ -594,6 +595,7 @@ impl<'a> DocApp<'a> {
             scroll: 0,
             content_links: Vec::new(),
             content_area: Rect::default(),
+            tree_area: Rect::default(),
             item_vlines: Vec::new(),
             item_line_map: std::collections::HashMap::new(),
             meta_lines: Vec::new(),
@@ -1085,6 +1087,23 @@ fn handle_content_key(app: &mut DocApp<'_>, key: KeyEvent) {
         } => {
             app.scroll = total.saturating_sub(1);
         }
+        // Enter: follow the first link visible on screen (at or after current scroll).
+        KeyEvent {
+            code: KeyCode::Enter,
+            ..
+        } => {
+            let visible_h = app.content_area.height as usize;
+            let lo = app.scroll;
+            let hi = app.scroll + visible_h;
+            if let Some((_, target)) = app
+                .content_links
+                .iter()
+                .find(|(vl, _)| *vl >= lo && *vl < hi)
+            {
+                let target = target.clone();
+                app.navigate_link(&target);
+            }
+        }
         _ => {}
     }
 }
@@ -1127,6 +1146,20 @@ fn handle_meta_key(app: &mut DocApp<'_>, key: KeyEvent) {
 }
 
 fn handle_mouse_click(app: &mut DocApp<'_>, col: u16, row: u16) {
+    // Tree panel: click selects and activates the item (same as Enter).
+    let t = app.tree_area;
+    if t.width > 0 && col >= t.x && col < t.x + t.width && row >= t.y && row < t.y + t.height {
+        let item_offset = (row - t.y) as usize;
+        let vis = visible_nodes(&app.tree);
+        let vis_idx = app.tree_offset + item_offset;
+        if vis_idx < vis.len() {
+            app.tree_cursor = vis_idx;
+            app.open_tree_item();
+        }
+        return;
+    }
+
+    // Content panel: click follows a link at the clicked virtual line.
     let a = app.content_area;
     if a.width == 0 {
         return;
@@ -1166,7 +1199,7 @@ fn draw_app(frame: &mut ratatui::Frame, app: &mut DocApp<'_>) {
 fn draw_help_bar(frame: &mut ratatui::Frame, app: &DocApp<'_>, area: Rect) {
     let text = match app.focus {
         Focus::Left => "↑/↓  Enter navigate  Tab→content  q quit",
-        Focus::Content => "↑/↓  PgUp/Dn  Tab next section  click link  ← tree  q quit",
+        Focus::Content => "↑/↓  PgUp/Dn  Tab next section  Enter/click link  ← tree  q quit",
         Focus::Meta => "↑/↓  Tab/← focus  q quit",
     };
     frame.render_widget(
@@ -1191,6 +1224,7 @@ fn draw_tree(frame: &mut ratatui::Frame, app: &mut DocApp<'_>, area: Rect) {
         });
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    app.tree_area = inner;
 
     let visible = inner.height as usize;
     app.tree_visible = visible;
@@ -1855,7 +1889,12 @@ fn item_row_line(item: &DocItem, width: usize) -> Line<'static> {
         Span::raw("  "),
         Span::styled(badge, Style::default().fg(badge_color)),
         Span::raw("  "),
-        Span::styled(name_col, Style::default().fg(Color::White)),
+        Span::styled(
+            name_col,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
         Span::raw("  "),
         Span::styled(brief_col, Style::default().fg(Color::DarkGray)),
     ])
