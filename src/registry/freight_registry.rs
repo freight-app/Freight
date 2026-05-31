@@ -186,14 +186,22 @@ impl PackageRepo for FreightRegistry {
     fn search(&self, query: &str) -> Result<Vec<PackageInfo>, FreightError> {
         const SEARCH_PAGE_SIZE: usize = 100;
 
+        // Strip #keyword / @user prefixes and set the appropriate API flag.
+        let (bare, keyword_flag) = if let Some(kw) = query.strip_prefix('#') {
+            (kw, true)
+        } else {
+            (query, false)
+        };
+
         let mut packages = Vec::new();
         let mut offset = 0usize;
         loop {
-            let url = format!(
+            let mut url = format!(
                 "{}/api/v1/search?q={}&limit={SEARCH_PAGE_SIZE}&offset={offset}",
                 self.base_url,
-                url_encode(query)
+                url_encode(bare)
             );
+            if keyword_flag { url.push_str("&keyword=1"); }
             let result = http_get_json::<ApiSearchResult>(&url, self.token.as_deref())?;
             let count = result.packages.len();
             packages.extend(result.packages.into_iter().map(Into::into));
@@ -227,11 +235,29 @@ impl PackageRepo for FreightRegistry {
             Err(_) => vec![],
         }
     }
+
+    fn fetch_user_profile(&self, username: &str) -> Option<super::UserProfile> {
+        let api = self.fetch_user_profile_inner(username).ok()?;
+        Some(super::UserProfile {
+            username: api.username,
+            packages: api.packages.into_iter().map(|p| super::UserPackageEntry {
+                name:        p.name,
+                description: p.description,
+                version:     p.version,
+                channel:     p.channel,
+            }).collect(),
+        })
+    }
 }
 
 // ── Write API (publish / yank / download) ────────────────────────────────────
 
 impl FreightRegistry {
+    fn fetch_user_profile_inner(&self, username: &str) -> Result<ApiUserProfile, FreightError> {
+        let url = format!("{}/api/v1/users/{}", self.base_url, url_encode(username));
+        http_get_json::<ApiUserProfile>(&url, self.token.as_deref())
+    }
+
     /// Download a specific version's tarball to `.deps/<name>/`.
     ///
     /// Skips if `.deps/<name>/.freight-fetched` already exists.
@@ -601,6 +627,24 @@ struct ApiSearchResult {
     packages: Vec<ApiPackage>,
     #[serde(default)]
     total: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct ApiUserProfile {
+    username: String,
+    #[serde(default)]
+    packages: Vec<ApiUserPackage>,
+}
+
+#[derive(Deserialize)]
+struct ApiUserPackage {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 impl From<ApiPackage> for PackageInfo {

@@ -78,6 +78,25 @@ pub trait PackageRepo: Send + Sync {
     fn fetch_owners(&self, _name: &str) -> Vec<String> {
         vec![]
     }
+
+    /// Fetch a user's public profile (username + packages they own).
+    /// Returns `None` when the registry doesn't support this endpoint.
+    fn fetch_user_profile(&self, _username: &str) -> Option<UserProfile> {
+        None
+    }
+}
+
+/// Public profile for a registry user.
+pub struct UserProfile {
+    pub username: String,
+    pub packages: Vec<UserPackageEntry>,
+}
+
+pub struct UserPackageEntry {
+    pub name:        String,
+    pub description: Option<String>,
+    pub version:     Option<String>,
+    pub channel:     Option<String>,
 }
 
 /// Backward-compatibility alias. Prefer [`PackageRepo`].
