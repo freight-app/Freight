@@ -1,10 +1,12 @@
+use docify::extract::extract_dir;
+
 use freight_core::manifest::types::Manifest;
 use freight_core::manifest::{find_manifest_dir, load_manifest};
 use freight_core::registry::freight_registry::FreightRegistry;
 use freight_core::registry::host_triple;
 use freight_core::toolchain::cache::GlobalConfig;
 
-use crate::output::{print_error, print_status, print_success};
+use crate::output::{print_error, print_status, print_success, print_warning};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -142,7 +144,31 @@ fn cmd_publish(dry_run: bool, repo: Option<&str>) {
         None,
     ) {
         Ok(()) => print_success(&format!("published {name}@{version}")),
-        Err(e) => print_error(&e.to_string()),
+        Err(e) => {
+            print_error(&e.to_string());
+            return;
+        }
+    }
+
+    // Extract and upload API docs (non-fatal).
+    let src_dir = project_dir.join("src");
+    let scan_dir = if src_dir.is_dir() { src_dir } else { project_dir.clone() };
+    let items = extract_dir(&scan_dir).items;
+    if items.is_empty() {
+        print_warning("no doc comments found — skipping docs upload");
+    } else {
+        print_status(
+            "uploading",
+            &format!("docs ({} items)", items.len()),
+        );
+        match docify::to_msgpack(&items) {
+            Ok(blob) => {
+                if let Err(e) = registry.upload_docs(name, version, &blob) {
+                    print_warning(&format!("docs upload failed: {e}"));
+                }
+            }
+            Err(e) => print_warning(&format!("docs serialization failed: {e}")),
+        }
     }
 }
 

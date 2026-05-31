@@ -556,6 +556,23 @@ impl FreightRegistry {
         Ok(checksum)
     }
 
+    /// Upload a msgpack API-doc blob for `name@version`.
+    pub fn upload_docs(
+        &self,
+        name: &str,
+        version: &str,
+        docs: &[u8],
+    ) -> Result<(), FreightError> {
+        let token = self.token.as_deref().ok_or_else(|| {
+            FreightError::RegistryError(
+                "no token configured for this registry — run `freight login`".into(),
+            )
+        })?;
+        let url = format!("{}/api/v1/packages/{}/{}/docs", self.base_url, name, version);
+        http_put(&url, Some(token), "application/octet-stream", docs.to_vec())?;
+        Ok(())
+    }
+
     /// Upload a prebuilt tarball for `triple`.
     pub fn upload_prebuilt(
         &self,
