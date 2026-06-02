@@ -873,16 +873,14 @@ fn source_lines(item: &DocItem, lang: &DocLanguage, width: usize) -> Vec<Line<'s
     };
     let lines: Vec<&str> = src.lines().collect();
     let decl_line = item.line.saturating_sub(1); // 0-indexed
-    let start = decl_line.saturating_sub(3);
-    let end = (decl_line + 40).min(lines.len());
     let mut out = Vec::new();
     out.push(Line::styled(
         format!(" {} : line {}", item.file.display(), item.line),
         Style::default().fg(COLOR_HINT),
     ));
     out.push(Line::raw(""));
-    for (i, &line) in lines[start..end].iter().enumerate() {
-        let abs = start + i;
+    for (i, &line) in lines.iter().enumerate() {
+        let abs = i;
         let is_decl = abs == decl_line;
         let num_style = if is_decl {
             Style::default().fg(Color::Yellow)
