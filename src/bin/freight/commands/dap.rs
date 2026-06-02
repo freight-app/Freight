@@ -40,6 +40,10 @@ struct DapServer {
     debug_started: bool,
     configuration_done: bool,
     init_request: Option<Value>,
+    // Varobj tracking for MI2 struct/array expansion.
+    // Maps variablesReference ID → GDB varobj name.
+    varobjs: HashMap<u64, String>,
+    varobj_seq: u64,
 }
 
 impl DapServer {
@@ -61,6 +65,8 @@ impl DapServer {
             debug_started: false,
             configuration_done: false,
             init_request: None,
+            varobjs: HashMap::new(),
+            varobj_seq: 1000,
         }
     }
 
@@ -465,6 +471,8 @@ impl DapServer {
     }
 
     fn handle_exec(&mut self, request: &Value, command: &str, body: Value) -> anyhow::Result<()> {
+        // Varobjs reflect a specific stopped state; drop them before resuming.
+        self.drop_varobjs();
         if let Err(err) = self.gdb_command(command) {
             self.output(&format!("{err}\n"), "stderr")?;
         }
@@ -515,8 +523,105 @@ impl DapServer {
     }
 
     fn handle_variables(&mut self, request: &Value) -> anyhow::Result<()> {
-        let line = self.gdb_command("-stack-list-variables --simple-values")?;
-        self.response(request, json!({ "variables": parse_variables(&line) }))
+        let var_ref = request["arguments"]["variablesReference"].as_u64().unwrap_or(1);
+
+        if var_ref == 1 {
+            // Top-level locals scope.  Recreate varobjs from scratch so we always
+            // reflect the current stopped state.
+            self.drop_varobjs();
+            let line = self.gdb_command("-stack-list-variables --all-values")?;
+            let raw = parse_raw_variables(&line);
+            let mut result = Vec::new();
+            for (name, value, type_) in raw {
+                let vo_name = format!("frt_{}", self.varobj_seq);
+                self.varobj_seq += 1;
+                // Create a varobj so we know the child count for this variable.
+                match self.gdb_command(&format!("-var-create {} * {}", vo_name, mi_quote(&name))) {
+                    Ok(info) => {
+                        let numchild: u64 = mi_field(&info, "numchild")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        let display = mi_field(&info, "value").unwrap_or(value);
+                        let ref_id = if numchild > 0 {
+                            let id = self.varobj_seq;
+                            self.varobj_seq += 1;
+                            self.varobjs.insert(id, vo_name);
+                            id
+                        } else {
+                            // No children — delete the varobj immediately.
+                            let _ = self.gdb_command(&format!("-var-delete frt_{}", self.varobj_seq - 1));
+                            0
+                        };
+                        result.push(json!({
+                            "name": name,
+                            "value": display,
+                            "type": type_,
+                            "variablesReference": ref_id,
+                        }));
+                    }
+                    Err(_) => {
+                        result.push(json!({
+                            "name": name,
+                            "value": value,
+                            "type": type_,
+                            "variablesReference": 0,
+                        }));
+                    }
+                }
+            }
+            self.response(request, json!({ "variables": result }))
+        } else {
+            // Child expansion of a previously issued varobj.
+            let vo_name = self.varobjs.get(&var_ref).cloned();
+            match vo_name {
+                None => self.response(request, json!({ "variables": [] })),
+                Some(name) => {
+                    let line = self.gdb_command(&format!(
+                        "-var-list-children --all-values {}",
+                        mi_quote(&name)
+                    ))?;
+                    let children = self.expand_varobj_children(&line)?;
+                    self.response(request, json!({ "variables": children }))
+                }
+            }
+        }
+    }
+
+    fn expand_varobj_children(&mut self, line: &str) -> anyhow::Result<Vec<Value>> {
+        let raw = mi_parse_list_value(line, "child");
+        let mut result = Vec::new();
+        for child in raw {
+            let child_name = child.get("name").cloned().unwrap_or_default();
+            let exp = child.get("exp").cloned().unwrap_or_else(|| child_name.clone());
+            let value = child.get("value").cloned().unwrap_or_else(|| "<unavailable>".to_string());
+            let type_ = child.get("type").cloned().unwrap_or_default();
+            let numchild: u64 = child.get("numchild").and_then(|s| s.parse().ok()).unwrap_or(0);
+            let ref_id = if numchild > 0 {
+                let id = self.varobj_seq;
+                self.varobj_seq += 1;
+                self.varobjs.insert(id, child_name);
+                id
+            } else {
+                0
+            };
+            result.push(json!({
+                "name": exp,
+                "value": value,
+                "type": type_,
+                "variablesReference": ref_id,
+            }));
+        }
+        Ok(result)
+    }
+
+    fn drop_varobjs(&mut self) {
+        if self.gdb.is_some() {
+            let names: Vec<String> = self.varobjs.values().cloned().collect();
+            for name in names {
+                let _ = self.gdb_command(&format!("-var-delete {}", mi_quote(&name)));
+            }
+        }
+        self.varobjs.clear();
     }
 
     fn handle_evaluate(&mut self, request: &Value) -> anyhow::Result<()> {
@@ -698,6 +803,7 @@ impl DapServer {
     }
 
     fn shutdown(&mut self) {
+        self.varobjs.clear(); // GDB is about to exit; no need to send -var-delete
         if let Some(mut stdin) = self.gdb_stdin.take() {
             let _ = writeln!(stdin, "-gdb-exit");
         }
@@ -1140,20 +1246,15 @@ fn parse_stack_frames(line: &str) -> Vec<Value> {
         .collect()
 }
 
-fn parse_variables(line: &str) -> Vec<Value> {
+/// Extract (name, value, type) tuples from `-stack-list-variables --all-values` output.
+fn parse_raw_variables(line: &str) -> Vec<(String, String, String)> {
     mi_parse_list_value(line, "variable")
         .into_iter()
         .filter_map(|var| {
             let name = var.get("name")?.clone();
-            let value = var
-                .get("value")
-                .cloned()
-                .unwrap_or_else(|| "<unavailable>".to_string());
-            Some(json!({
-                "name": name,
-                "value": value,
-                "variablesReference": 0,
-            }))
+            let value = var.get("value").cloned().unwrap_or_else(|| "<unavailable>".to_string());
+            let type_ = var.get("type").cloned().unwrap_or_default();
+            Some((name, value, type_))
         })
         .collect()
 }
