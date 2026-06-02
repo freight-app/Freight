@@ -39,6 +39,8 @@ enum Commands {
     Test(commands::test::Args),
     /// Build (debug) and launch an interactive debugger session
     Debug(commands::debug::Args),
+    /// Start Freight's Debug Adapter Protocol server over stdio
+    Dap(commands::dap::Args),
     /// Watch source files and rebuild on changes
     Watch(commands::watch::Args),
     /// Add a dependency
@@ -87,6 +89,8 @@ enum Commands {
     Lint(commands::lint::Args),
     /// Import a project from another build system into freight
     Migrate(commands::migrate::Args),
+    /// Start the freight.toml language server and clangd passthrough
+    Lsp(commands::lsp::Args),
     /// Manage compiler toolchains
     Toolchain(commands::toolchain::Args),
     /// Internal helper used by generated shell completion scripts
@@ -105,6 +109,7 @@ fn main() -> Result<()> {
         Commands::Bench(args) => args.run(),
         Commands::Test(args) => args.run(),
         Commands::Debug(args) => args.run(),
+        Commands::Dap(args) => args.run(),
         Commands::Watch(args) => args.run(),
         Commands::Add(args) => args.run(),
         Commands::Remove(args) => args.run(),
@@ -131,6 +136,7 @@ fn main() -> Result<()> {
         Commands::Fmt(args) => args.run(),
         Commands::Lint(args) => args.run(),
         Commands::Migrate(args) => args.run(),
+        Commands::Lsp(args) => args.run(),
         Commands::Toolchain(args) => args.run(),
         Commands::Complete { context } => print_completion_candidates(context),
     }

@@ -223,6 +223,45 @@ pub fn clean_workspace() -> Result<(), FreightError> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{is_standard_c_family_include_dir, lsp_visible_include_dirs};
+    use std::path::PathBuf;
+
+    #[test]
+    fn lsp_include_filter_keeps_project_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let include = dir.path().join("include");
+        std::fs::create_dir_all(&include).unwrap();
+
+        let filtered = lsp_visible_include_dirs(dir.path(), vec![include.clone()]);
+        assert_eq!(filtered, vec![include]);
+    }
+
+    #[test]
+    fn lsp_include_filter_drops_broad_system_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let filtered = lsp_visible_include_dirs(
+            dir.path(),
+            vec![PathBuf::from("/usr/include"), PathBuf::from("/opt/local/include")],
+        );
+        assert!(
+            filtered.is_empty(),
+            "hidden LSP compile DB should not expose broad system include directories"
+        );
+    }
+
+    #[test]
+    fn lsp_include_filter_allows_c_family_standard_dirs() {
+        assert!(is_standard_c_family_include_dir(&PathBuf::from(
+            "/usr/include/c++/13"
+        )));
+        assert!(is_standard_c_family_include_dir(&PathBuf::from(
+            "/usr/lib/llvm-18/lib/clang/18/include"
+        )));
+    }
+}
+
 /// Test every member of a workspace rooted at the current working directory.
 pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary, FreightError> {
     test_workspace_with(profile, filter, None, &[], true, &silent())
@@ -707,6 +746,7 @@ pub fn generate_lsp_compile_commands_at(
     let dep_includes = collect_dep_include_dirs(project_dir, manifest);
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(dep_includes);
+    let include_dirs = lsp_visible_include_dirs(project_dir, include_dirs);
 
     let commands = compile_commands::generate(
         project_dir,
@@ -735,6 +775,36 @@ fn lsp_compile_commands_dir(project_dir: &Path, profile: &str) -> PathBuf {
         .join("freight")
         .join("lsp")
         .join(format!("{:016x}", hasher.finish()))
+}
+
+fn lsp_visible_include_dirs(project_dir: &Path, include_dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    let project_root = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    include_dirs
+        .into_iter()
+        .filter(|dir| {
+            if dir.is_relative() {
+                return true;
+            }
+            let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            canonical.starts_with(&project_root) || is_standard_c_family_include_dir(&canonical)
+        })
+        .collect()
+}
+
+fn is_standard_c_family_include_dir(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    if text.contains("/lib/clang/") && text.ends_with("/include") {
+        return true;
+    }
+    if text.contains("/include/c++/") {
+        return true;
+    }
+    if text.ends_with("/include/c++") || text.ends_with("/include/c++/v1") {
+        return true;
+    }
+    false
 }
 
 /// Collect every dep's exported include dirs without compiling anything.

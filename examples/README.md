@@ -50,8 +50,8 @@ freight package
 ```
 
 Some commands require optional tools (`gfortran`, `nasm`, `cmake`, `make`,
-`pkg-config`, formatters, linters, or a debugger). The examples below call out
-those prerequisites when they matter.
+`pkg-config`, `hipcc`, Apple clang/Foundation, formatters, linters, or a
+debugger). The examples below call out those prerequisites when they matter.
 
 ## Example matrix
 
@@ -71,7 +71,10 @@ those prerequisites when they matter.
 | [`zig-cpp-hello/`](zig-cpp-hello/) | Zig binary calling a C++ library; documents the Zig 0.16 SysV ABI rules for >16-byte structs | `freight run` |
 | [`zig-asm-hello/`](zig-asm-hello/) | Zig binary calling hand-written x86-64 NASM assembly (POPCNT, BSWAP, GCD, BSR) | `freight run` |
 | [`ada-hello/`](ada-hello/) | Pure Ada binary: `Vec2` record, insertion sort, subtype constraints, exception handling | `freight run` |
+| [`objc-hello/`](objc-hello/) | Objective-C binary using clang and the macOS Foundation framework | `freight run` |
+| [`objcpp-hello/`](objcpp-hello/) | Objective-C++ binary mixing Foundation objects with C++ containers | `freight run` |
 | [`cuda-hello/`](cuda-hello/) | CUDA `vec_add` and `vec_scale` kernels — requires a CUDA-capable GPU to run | `freight run` |
+| [`hip-hello/`](hip-hello/) | HIP `vec_add` and `vec_scale` kernels — requires ROCm and a supported AMD GPU | `freight run` |
 | [`opencl-hello/`](opencl-hello/) | OpenCL `vec_add` and `vec_scale` — requires an OpenCL platform (NVIDIA / Intel / AMD / POCL) | `freight run` |
 | [`ispc-hello/`](ispc-hello/) | ISPC SPMD kernels auto-vectorised for AVX2/NEON — requires `ispc` on `$PATH` | `freight run` |
 | [`multi-bin/`](multi-bin/) | Multiple `[[bin]]` targets in one manifest | `freight run --bin encode`, `freight run --bin decode` |
@@ -162,11 +165,17 @@ freight run
 
 cd ../d-hello
 freight run
+
+cd ../objc-hello
+freight run
+
+cd ../objcpp-hello
+freight run
 ```
 
 Freight classifies sources by extension and routes them to the matching compiler
-template. These examples show C + C++, Fortran + C + C++, C + assembly, and D
-with C interop via `extern (C)` / libc `qsort`.
+template. These examples show C + C++, Fortran + C + C++, C + assembly, D with
+C interop via `extern (C)` / libc `qsort`, Objective-C, and Objective-C++.
 
 ### 6. Exercise dependency resolution
 

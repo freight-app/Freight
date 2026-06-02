@@ -520,6 +520,44 @@ freight fmt --check   # exit non-zero if any file needs reformatting (CI use)
 
 ---
 
+## IDE / LSP
+
+`freight lsp` runs a stdio language server for editors. It owns `freight.toml`
+diagnostics, completion, and hover, and can start source-file language servers
+as passthroughs:
+
+| Language | Passthrough |
+|---|---|
+| C / C++ / CUDA / HIP / Objective-C / Objective-C++ | `clangd` |
+| Fortran | `fortls` |
+| Assembly (`.asm`, `.nasm`, `.s`) | `asm-lsp` |
+
+On initialize, when `freight.toml` is saved, and when the editor reports an
+external `freight.toml` file change, the server refreshes a backend-owned source
+LSP compile database outside the project tree. `clangd` is launched with
+`--compile-commands-dir=<freight-lsp-cache>`, so the editor does not need a
+project-root `compile_commands.json` in the explorer. The explicit
+`freight compile-commands` command still writes the project-root file for users
+and tools that ask for it.
+
+The generated database is manifest-aware. Source language servers should see
+only include paths and sources reachable from packages explicitly declared in
+`freight.toml` and active for the current OS, architecture, target triple,
+profile, and feature set. Installed system packages that are not listed in the
+manifest are not added to the source LSP search surface.
+
+```sh
+freight lsp                    # freight.toml helper + source LSP passthroughs
+freight lsp --no-clangd        # disable C-family passthrough
+freight lsp --clangd /path/to/clangd
+freight lsp --fortls /path/to/fortls
+freight lsp --asm-lsp /path/to/asm-lsp
+freight lsp --no-clangd --no-fortls --no-asm-lsp  # manifest-only mode
+freight lsp --profile release  # generate release LSP compile database
+```
+
+---
+
 ## `[linter]`
 
 Optional. Declares the project's preferred linter and its settings. When absent, `freight lint`
@@ -565,6 +603,7 @@ Local config overrides global. Both share the same format:
 ```toml
 # ~/.freight/config.toml  or  <project>/.freight/config.toml
 default_backend = "clang"       # preferred compiler family
+default_debugger = "lldb"       # preferred debugger backend
 target          = "aarch64-linux-gnu"  # cross-compilation target triple
 sysroot         = "/opt/sysroot"
 auto-cpu-tuning = true          # set false to suppress derived -march/-mcpu/-mtune flags

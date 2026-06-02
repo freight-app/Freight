@@ -124,6 +124,7 @@ pub fn generate(
 
         let mut args = vec![compile_bin.to_string_lossy().into_owned()];
         args.extend(compiler.template.assemble_flags(&settings));
+        args.extend(clangd_only_flags(&source.lang_key));
         args.extend(extra_flags.iter().cloned());
         args.extend(compiler.template.compile_only_flag());
         // Source and output use paths relative to `directory` so the entry is
@@ -145,6 +146,17 @@ pub fn generate(
 
     commands.sort_by(|a, b| a.file.cmp(&b.file));
     commands
+}
+
+fn clangd_only_flags(lang_key: &str) -> Vec<String> {
+    if matches!(
+        lang_key,
+        "c" | "cpp" | "objc" | "objcpp" | "cuda" | "hip" | "opencl"
+    ) {
+        vec!["-Wno-gnu-include-next".to_string()]
+    } else {
+        vec![]
+    }
 }
 
 /// Incrementally update compile commands by reusing existing entries for
@@ -272,17 +284,49 @@ pub fn write_incremental_cache(
 
 /// Serialise `commands` to `<project_dir>/compile_commands.json`.
 pub fn write(project_dir: &Path, commands: &[CompileCommand]) -> Result<(), FreightError> {
-    let path = project_dir.join("compile_commands.json");
+    write_to(&project_dir.join("compile_commands.json"), commands)
+}
+
+/// Serialise `commands` to an explicit compile database path.
+pub fn write_to(path: &Path, commands: &[CompileCommand]) -> Result<(), FreightError> {
     let json = serde_json::to_string_pretty(commands)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     // Only write when content actually changed.
-    if let Ok(existing) = std::fs::read_to_string(&path) {
+    if let Ok(existing) = std::fs::read_to_string(path) {
         if existing == json {
             return Ok(());
         }
     }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::write(path, json)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clangd_only_flags;
+
+    #[test]
+    fn c_family_compile_commands_suppress_include_next_extension_warning() {
+        for lang in ["c", "cpp", "objc", "objcpp", "cuda", "hip", "opencl"] {
+            assert!(
+                clangd_only_flags(lang).contains(&"-Wno-gnu-include-next".to_string()),
+                "{lang} should suppress clangd #include_next extension noise"
+            );
+        }
+    }
+
+    #[test]
+    fn non_clangd_languages_do_not_get_clang_warning_flags() {
+        for lang in ["fortran", "ada", "d", "asm", "ispc", "zig"] {
+            assert!(
+                clangd_only_flags(lang).is_empty(),
+                "{lang} should not receive clang-only diagnostic flags"
+            );
+        }
+    }
 }
 
 fn generation_signature(

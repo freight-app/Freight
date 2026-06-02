@@ -660,10 +660,22 @@ Neither file is part of `freight.toml`.
 
 ```toml
 # ~/.freight/config.toml
+default_debugger = "gdb"
+
 [debugger.gdb]
 args  = ["--tui"]   # raw extra flags
 tui   = true        # resolved via gdb.rhai's settings map → --tui
 quiet = true
+```
+
+Project-local overrides use the same format in `<project>/.freight/config.toml`.
+For example, a developer can keep package metadata portable in `freight.toml`
+while selecting LLVM tools locally:
+
+```toml
+# <project>/.freight/config.toml
+default_backend = "clang"
+default_debugger = "lldb"
 ```
 
 ---

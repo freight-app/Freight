@@ -105,7 +105,8 @@ pub fn cmd_debug(
     }
 
     // ── Select debugger ────────────────────────────────────────────────────────
-    let debugger = if let Some(pref) = debugger_pref {
+    let debugger_preference = debugger_pref.or(global_cfg.default_debugger.as_deref());
+    let debugger = if let Some(pref) = debugger_preference {
         match debuggers.iter().find(|d| d.template.name == pref) {
             Some(d) => d,
             None => {

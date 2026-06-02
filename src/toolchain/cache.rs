@@ -135,6 +135,8 @@ pub struct RegistryConfig {
 pub struct GlobalConfig {
     /// Default compiler backend. `None` = first detected compiler for each language.
     pub default_backend: Option<String>,
+    /// Default debugger backend. `None` = first detected debugger.
+    pub default_debugger: Option<String>,
     /// Cross-compilation target triple (e.g. `"aarch64-linux-gnu"`). Machine-local.
     pub target: Option<String>,
     /// Path to the cross-compilation sysroot. Machine-local absolute path.
@@ -289,6 +291,9 @@ impl GlobalConfig {
         if local.default_backend.is_some() {
             self.default_backend = local.default_backend;
         }
+        if local.default_debugger.is_some() {
+            self.default_debugger = local.default_debugger;
+        }
         if local.target.is_some() {
             self.target = local.target;
         }
@@ -439,5 +444,34 @@ mod tests {
         assert_eq!(reloaded.get_version(&bin), Some("15.0.0"));
 
         std::env::remove_var("FREIGHT_HOME");
+    }
+
+    #[test]
+    fn config_deserializes_default_debugger() {
+        let cfg: GlobalConfig = toml_edit::de::from_str(
+            r#"
+default_backend = "clang"
+default_debugger = "lldb"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.default_backend.as_deref(), Some("clang"));
+        assert_eq!(cfg.default_debugger.as_deref(), Some("lldb"));
+    }
+
+    #[test]
+    fn local_config_overrides_default_debugger() {
+        let mut base = GlobalConfig {
+            default_debugger: Some("gdb".into()),
+            ..Default::default()
+        };
+        let local = GlobalConfig {
+            default_debugger: Some("lldb".into()),
+            ..Default::default()
+        };
+
+        base.apply_local(local);
+        assert_eq!(base.default_debugger.as_deref(), Some("lldb"));
     }
 }

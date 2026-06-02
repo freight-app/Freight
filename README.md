@@ -106,6 +106,7 @@ freight update [<package>]
 freight fetch                    download all git/url deps
 freight tree                     print dependency tree
 freight search <query>           search the registry
+freight lsp                      serve freight.toml diagnostics + source LSP passthroughs
 freight publish                  upload this package to a registry
 freight doc                      browse dependency docs in a TUI
 freight doc --format md|json     generate extracted API docs

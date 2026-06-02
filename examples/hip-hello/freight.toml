@@ -1,0 +1,20 @@
+[package]
+name        = "hip-hello"
+version     = "0.1.0"
+description = "HIP vector kernels — requires ROCm and a supported AMD GPU"
+
+[language.hip]
+std = "c++17"
+
+[[bin]]
+name = "hip-hello"
+src  = "src/main.hip"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true
+debug     = false

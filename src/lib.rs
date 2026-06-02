@@ -1,4 +1,5 @@
 pub mod build;
+pub mod doc;
 pub mod dep_cmds;
 pub mod error;
 pub mod event;

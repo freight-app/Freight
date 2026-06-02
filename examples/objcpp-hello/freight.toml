@@ -1,0 +1,27 @@
+[package]
+name        = "objcpp-hello"
+version     = "0.1.0"
+description = "Objective-C++ binary mixing Foundation objects and C++ containers"
+
+[language.objcpp]
+std = "c++17"
+
+[[bin]]
+name = "objcpp-hello"
+src  = "src/main.mm"
+
+[dependencies]
+macos = { features = ["Foundation"], os = "macos" }
+
+[compiler]
+backend  = "clang++"
+warnings = "all"
+
+[profile.dev]
+opt-level = 0
+debug     = true
+
+[profile.release]
+opt-level = 3
+strip     = true
+debug     = false
