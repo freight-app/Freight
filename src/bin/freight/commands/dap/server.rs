@@ -33,6 +33,9 @@ pub struct DapServer {
     requests: Receiver<Value>,
     stdout: std::io::Stdout,
     init_request: Option<Value>,
+    /// Breakpoint configuration requests that arrived before `launch`.
+    /// Sent to the native adapter after the binary is built and loaded.
+    pre_launch_config: Vec<Value>,
 }
 
 impl DapServer {
@@ -42,6 +45,7 @@ impl DapServer {
             requests: spawn_dap_reader(),
             stdout: std::io::stdout(),
             init_request: None,
+            pre_launch_config: Vec::new(),
         }
     }
 
@@ -61,8 +65,17 @@ impl DapServer {
                     self.event("terminated", json!({}))?;
                     break;
                 }
-                // Any other request that arrives before launch (rare) gets an
-                // empty success response so VS Code doesn't stall.
+                // Breakpoint config arrives before launch when VS Code has persistent
+                // breakpoints.  Buffer and reply with unverified placeholders; the
+                // real verification comes via `breakpoint` events once GDB is running.
+                cmd @ ("setBreakpoints" | "setFunctionBreakpoints") => {
+                    self.buffer_pre_launch_config(&request, cmd)?;
+                }
+                cmd @ ("setExceptionBreakpoints" | "configurationDone") => {
+                    self.pre_launch_config.push(request.clone());
+                    let _ = cmd;
+                    self.response(&request, json!({}))?;
+                }
                 _ => self.response(&request, json!({}))?,
             }
         }
@@ -73,12 +86,32 @@ impl DapServer {
 
     fn handle_initialize(&mut self, request: &Value) -> anyhow::Result<()> {
         self.init_request = Some(request.clone());
-        // Respond with minimal capabilities.  The native adapter will send its
-        // own initialize response (with richer caps) once the relay starts.
         self.response(request, json!({
             "supportsConfigurationDoneRequest": true,
             "supportsTerminateRequest":         true,
-        }))
+        }))?;
+        // Tell VS Code to enter the configuration phase (send setBreakpoints etc.).
+        self.event("initialized", json!({}))
+    }
+
+    fn buffer_pre_launch_config(&mut self, request: &Value, cmd: &str) -> anyhow::Result<()> {
+        self.pre_launch_config.push(request.clone());
+        // Return unverified placeholders so VS Code marks them pending rather than erroring.
+        let bps: Vec<Value> = request["arguments"]["breakpoints"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .enumerate()
+                    .map(|(i, _)| json!({
+                        "id": i as i64 + 1,
+                        "verified": false,
+                        "message": "pending — waiting for debugger to start"
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let _ = cmd;
+        self.response(request, json!({ "breakpoints": bps }))
     }
 
     // ── Launch ────────────────────────────────────────────────────────────────
@@ -210,9 +243,8 @@ impl DapServer {
         });
 
         // Bootstrap: send initialize to the adapter.  We already responded to
-        // VS Code's initialize; the adapter needs its own before it can do
-        // anything.  Drain the adapter's initialize response (don't forward —
-        // VS Code already has ours).
+        // VS Code's initialize and sent `initialized`; the adapter needs its
+        // own before it can do anything.
         let init_req = self.init_request.clone().unwrap_or_else(|| json!({
             "type": "request", "seq": 1, "command": "initialize",
             "arguments": {
@@ -221,10 +253,49 @@ impl DapServer {
             }
         }));
         write_dap(&mut adapter_stdin, &init_req)?;
+        // Drain GDB's initialize-response (VS Code already has ours).
         let _ = adapter_out_rx.recv_timeout(Duration::from_secs(5));
+        // Drain GDB's initialized event (VS Code already received ours).
+        let _ = adapter_out_rx.recv_timeout(Duration::from_millis(300));
 
-        // Forward the launch/attach request.
+        // Forward the launch/attach request so GDB loads the binary.
         write_dap(&mut adapter_stdin, &first_request)?;
+
+        // Replay breakpoint configuration that arrived before launch.
+        // configurationDone is replayed last so GDB starts the program only
+        // after all breakpoints are installed.
+        let config = std::mem::take(&mut self.pre_launch_config);
+        let mut deferred_config_done: Option<Value> = None;
+        for req in &config {
+            match req["command"].as_str().unwrap_or("") {
+                "configurationDone" => {
+                    deferred_config_done = Some(req.clone());
+                }
+                _ => {
+                    write_dap(&mut adapter_stdin, req)?;
+                    // Collect GDB's response.  Forward as breakpoint-changed events
+                    // for any newly-verified breakpoints (VS Code already has the
+                    // unverified placeholder response, so we can't send a 2nd response).
+                    if let Ok(bytes) = adapter_out_rx.recv_timeout(Duration::from_secs(3)) {
+                        if let Ok(resp) = serde_json::from_slice::<Value>(&bytes) {
+                            if let Some(bps) = resp["body"]["breakpoints"].as_array() {
+                                for bp in bps {
+                                    if bp["verified"].as_bool().unwrap_or(false) {
+                                        self.event("breakpoint", json!({
+                                            "reason": "changed",
+                                            "breakpoint": bp,
+                                        }))?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(cd) = &deferred_config_done {
+            write_dap(&mut adapter_stdin, cd)?;
+        }
 
         // Relay loop: adapter → VS Code, VS Code → adapter.
         loop {
@@ -271,7 +342,7 @@ impl DapServer {
 
         let features = string_array(&config["features"]);
         let output = build_project_with(
-            "debug", &features,
+            "dev", &features,
             !config["noDefaultFeatures"].as_bool().unwrap_or(false),
             &[], &silent(),
         )?;
@@ -487,7 +558,7 @@ fn select_binary(
             manifest.bins.iter().map(|b| b.name.as_str()).collect::<Vec<_>>().join(", ")
         ),
         0 => {
-            let fallback = project_dir.join("target").join("debug").join(&manifest.package.name);
+            let fallback = project_dir.join("target").join("dev").join(&manifest.package.name);
             if fallback.exists() { Ok(fallback) }
             else { anyhow::bail!("no binary built — does the manifest declare [[bin]]?") }
         }

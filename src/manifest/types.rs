@@ -184,8 +184,25 @@ impl Manifest {
             } // cycle guard
             visited.push(current_name.clone());
             let p = match current_name.as_str() {
-                "dev" => self.profile.dev.clone()?,
-                "release" => self.profile.release.clone()?,
+                // "debug" is an alias for "dev" (used by freight dap).
+                "debug" | "dev" => self.profile.dev.clone().unwrap_or(Profile {
+                    inherits: None,
+                    opt_level: Some(0),
+                    debug: Some(true),
+                    lto: Some(false),
+                    strip: Some(false),
+                    sanitize: vec![],
+                    features: vec![],
+                }),
+                "release" => self.profile.release.clone().unwrap_or(Profile {
+                    inherits: None,
+                    opt_level: Some(3),
+                    debug: Some(false),
+                    lto: Some(false),
+                    strip: Some(false),
+                    sanitize: vec![],
+                    features: vec![],
+                }),
                 // Built-in bench default: release-speed + debug symbols, no strip.
                 // Overridable with [profile.bench] in freight.toml.
                 "bench" => self
