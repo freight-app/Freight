@@ -33,9 +33,6 @@ pub struct DapServer {
     requests: Receiver<Value>,
     stdout: std::io::Stdout,
     init_request: Option<Value>,
-    /// Breakpoint configuration requests that arrived before `launch`.
-    /// Sent to the native adapter after the binary is built and loaded.
-    pre_launch_config: Vec<Value>,
 }
 
 impl DapServer {
@@ -45,7 +42,6 @@ impl DapServer {
             requests: spawn_dap_reader(),
             stdout: std::io::stdout(),
             init_request: None,
-            pre_launch_config: Vec::new(),
         }
     }
 
@@ -65,15 +61,14 @@ impl DapServer {
                     self.event("terminated", json!({}))?;
                     break;
                 }
-                // Breakpoint config arrives before launch when VS Code has persistent
-                // breakpoints.  Buffer and reply with unverified placeholders; the
-                // real verification comes via `breakpoint` events once GDB is running.
+                // Breakpoint config may arrive before launch when VS Code has
+                // persistent breakpoints.  Respond with unverified placeholders;
+                // VS Code will re-send when it gets GDB's `initialized` event
+                // via the relay, at which point the binary is already loaded.
                 cmd @ ("setBreakpoints" | "setFunctionBreakpoints") => {
                     self.buffer_pre_launch_config(&request, cmd)?;
                 }
-                cmd @ ("setExceptionBreakpoints" | "configurationDone") => {
-                    self.pre_launch_config.push(request.clone());
-                    let _ = cmd;
+                "setExceptionBreakpoints" => {
                     self.response(&request, json!({}))?;
                 }
                 _ => self.response(&request, json!({}))?,
@@ -86,17 +81,20 @@ impl DapServer {
 
     fn handle_initialize(&mut self, request: &Value) -> anyhow::Result<()> {
         self.init_request = Some(request.clone());
+        // Respond with minimal capabilities.  GDB will send `initialized` once
+        // the binary is loaded and ready, which triggers VS Code to send breakpoints
+        // at the right time.
         self.response(request, json!({
             "supportsConfigurationDoneRequest": true,
             "supportsTerminateRequest":         true,
-        }))?;
-        // Tell VS Code to enter the configuration phase (send setBreakpoints etc.).
-        self.event("initialized", json!({}))
+        }))
     }
 
-    fn buffer_pre_launch_config(&mut self, request: &Value, cmd: &str) -> anyhow::Result<()> {
-        self.pre_launch_config.push(request.clone());
-        // Return unverified placeholders so VS Code marks them pending rather than erroring.
+    /// Reply to a pre-launch setBreakpoints/setFunctionBreakpoints with unverified
+    /// placeholders.  VS Code will re-send the full set when it gets GDB's own
+    /// `initialized` event (forwarded by the relay), at which point GDB has the
+    /// binary loaded and can verify the locations.
+    fn buffer_pre_launch_config(&mut self, request: &Value, _cmd: &str) -> anyhow::Result<()> {
         let bps: Vec<Value> = request["arguments"]["breakpoints"]
             .as_array()
             .map(|arr| {
@@ -110,7 +108,6 @@ impl DapServer {
                     .collect()
             })
             .unwrap_or_default();
-        let _ = cmd;
         self.response(request, json!({ "breakpoints": bps }))
     }
 
@@ -242,9 +239,8 @@ impl DapServer {
             }
         });
 
-        // Bootstrap: send initialize to the adapter.  We already responded to
-        // VS Code's initialize and sent `initialized`; the adapter needs its
-        // own before it can do anything.
+        // Bootstrap: send initialize to GDB.  We already responded to VS Code's
+        // initialize; GDB needs its own before it will accept any other request.
         let init_req = self.init_request.clone().unwrap_or_else(|| json!({
             "type": "request", "seq": 1, "command": "initialize",
             "arguments": {
@@ -253,49 +249,31 @@ impl DapServer {
             }
         }));
         write_dap(&mut adapter_stdin, &init_req)?;
-        // Drain GDB's initialize-response (VS Code already has ours).
-        let _ = adapter_out_rx.recv_timeout(Duration::from_secs(5));
-        // Drain GDB's initialized event (VS Code already received ours).
-        let _ = adapter_out_rx.recv_timeout(Duration::from_millis(300));
 
-        // Forward the launch/attach request so GDB loads the binary.
-        write_dap(&mut adapter_stdin, &first_request)?;
-
-        // Replay breakpoint configuration that arrived before launch.
-        // configurationDone is replayed last so GDB starts the program only
-        // after all breakpoints are installed.
-        let config = std::mem::take(&mut self.pre_launch_config);
-        let mut deferred_config_done: Option<Value> = None;
-        for req in &config {
-            match req["command"].as_str().unwrap_or("") {
-                "configurationDone" => {
-                    deferred_config_done = Some(req.clone());
-                }
-                _ => {
-                    write_dap(&mut adapter_stdin, req)?;
-                    // Collect GDB's response.  Forward as breakpoint-changed events
-                    // for any newly-verified breakpoints (VS Code already has the
-                    // unverified placeholder response, so we can't send a 2nd response).
-                    if let Ok(bytes) = adapter_out_rx.recv_timeout(Duration::from_secs(3)) {
-                        if let Ok(resp) = serde_json::from_slice::<Value>(&bytes) {
-                            if let Some(bps) = resp["body"]["breakpoints"].as_array() {
-                                for bp in bps {
-                                    if bp["verified"].as_bool().unwrap_or(false) {
-                                        self.event("breakpoint", json!({
-                                            "reason": "changed",
-                                            "breakpoint": bp,
-                                        }))?;
-                                    }
-                                }
-                            }
-                        }
+        // Drain GDB's response to our initialize.  GDB may also emit console
+        // `output` events (startup banner) before it sends the response; those
+        // are forwarded to VS Code.  Everything that is NOT the initialize-response
+        // (including the `initialized` event) is forwarded so that VS Code receives
+        // GDB's `initialized` via the relay and enters the configuration phase once
+        // the binary is actually loaded.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() { break; }
+            match adapter_out_rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(ref bytes) => {
+                    if gdb_msg_is(bytes, "response", "initialize") {
+                        break; // discard — VS Code already has ours
                     }
+                    self.stdout.write_all(bytes)?;
+                    self.stdout.flush()?;
                 }
+                Err(_) => break,
             }
         }
-        if let Some(cd) = &deferred_config_done {
-            write_dap(&mut adapter_stdin, cd)?;
-        }
+
+        // Forward launch/attach so GDB loads the binary.
+        write_dap(&mut adapter_stdin, &first_request)?;
 
         // Relay loop: adapter → VS Code, VS Code → adapter.
         loop {
@@ -524,6 +502,18 @@ fn pipe_to_output(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Return true if `bytes` (a raw DAP frame with header) is a message of the
+/// given `msg_type` and `command`.  Used to route GDB bootstrap messages
+/// without fully parsing every frame.
+fn gdb_msg_is(bytes: &[u8], msg_type: &str, command: &str) -> bool {
+    let body = match bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+        Some(i) => &bytes[i + 4..],
+        None    => return false,
+    };
+    let Ok(msg) = serde_json::from_slice::<Value>(body) else { return false };
+    msg["type"] == msg_type && msg["command"] == command
+}
 
 fn load_global_cfg(project_dir: &Path) -> GlobalConfig {
     let mut cfg = GlobalConfig::load();
