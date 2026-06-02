@@ -135,7 +135,7 @@ impl DetectedDebugger {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub fn load_debugger_templates() -> Vec<DebuggerTemplate> {
-    vec![gdb(), lldb(), rr(), cdb(), windbg()]
+    vec![gdb(), cuda_gdb(), lldb(), rr(), cdb(), windbg()]
 }
 
 fn gdb() -> DebuggerTemplate {
@@ -177,6 +177,29 @@ fn lldb() -> DebuggerTemplate {
             binaries: vec!["lldb-dap".into(), "lldb-vscode".into()],
             vscode_type: "lldb".into(),
             mi_mode: "lldb".into(),
+        },
+        settings,
+        default_args: vec![],
+    }
+}
+
+/// `cuda-gdb` — NVIDIA CUDA debugger; extends GDB with GPU thread/memory support.
+/// Activated automatically when a CUDA binary is debugged; requires CUDA toolkit.
+fn cuda_gdb() -> DebuggerTemplate {
+    let mut settings = HashMap::new();
+    settings.insert("quiet".into(), "-q".into());
+    DebuggerTemplate {
+        name: "cuda-gdb".into(),
+        binary: "cuda-gdb".into(),
+        version_arg: "--version".into(),
+        version_regex: r"NVIDIA cuda-gdb[^\d]+(\d+\.\d+)".into(),
+        launch: LaunchConfig {
+            separator: "--args".into(),
+        },
+        dap: DapConfig {
+            binaries: vec![],
+            vscode_type: "cppdbg".into(),
+            mi_mode: "gdb".into(),
         },
         settings,
         default_args: vec![],

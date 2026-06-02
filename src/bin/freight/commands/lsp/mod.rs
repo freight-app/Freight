@@ -448,43 +448,71 @@ impl Server {
 
     fn start_clangd(&mut self, initialize_msg: &Value) -> Option<Value> {
         let dir = self.compile_commands_dir()?;
+        let root = self.state.manifest_dir.as_deref()
+            .unwrap_or(&self.state.root_dir);
         let compile_commands_arg = format!("--compile-commands-dir={}", dir.display());
-        let (server, caps) = self.start_passthrough(
+        let (server, caps) = self.start_passthrough_in(
             "clangd", &self.args.clangd,
             &[compile_commands_arg, "--background-index=false".to_string(), "--header-insertion=never".to_string()],
             INTERNAL_CLANGD_INIT_ID, initialize_msg,
+            Some(root),
         )?;
         self.state.clangd = Some(server);
         caps
     }
 
     fn start_fortls(&mut self, initialize_msg: &Value) -> Option<Value> {
-        let (server, caps) = self.start_passthrough(
-            "fortls", &self.args.fortls, &[], INTERNAL_FORTLS_INIT_ID, initialize_msg,
+        // Tell fortls where the sources live so it can resolve modules and
+        // includes. We always include `src/` plus the project root.
+        let root = self.state.manifest_dir.as_deref()
+            .unwrap_or(&self.state.root_dir);
+        let src_dir = root.join("src");
+        let mut args = vec![
+            "--source_dirs".to_string(),
+            if src_dir.is_dir() {
+                format!("{}", src_dir.display())
+            } else {
+                format!("{}", root.display())
+            },
+            "--incremental_sync".to_string(),
+            "--notify_init".to_string(),
+        ];
+        // Suppress fortls's banner chatter in the output channel.
+        args.push("--silent".to_string());
+        let (server, caps) = self.start_passthrough_in(
+            "fortls", &self.args.fortls, &args,
+            INTERNAL_FORTLS_INIT_ID, initialize_msg,
+            Some(root),
         )?;
         self.state.fortls = Some(server);
         caps
     }
 
     fn start_asm_lsp(&mut self, initialize_msg: &Value) -> Option<Value> {
-        let (server, caps) = self.start_passthrough(
-            "asm-lsp", &self.args.asm_lsp, &[], INTERNAL_ASM_LSP_INIT_ID, initialize_msg,
+        let root = self.state.manifest_dir.as_deref()
+            .unwrap_or(&self.state.root_dir);
+        let (server, caps) = self.start_passthrough_in(
+            "asm-lsp", &self.args.asm_lsp, &[],
+            INTERNAL_ASM_LSP_INIT_ID, initialize_msg,
+            Some(root),
         )?;
         self.state.asm_lsp = Some(server);
         caps
     }
 
-    fn start_passthrough(
+    fn start_passthrough_in(
         &self,
         _name: &str,
         command: &str,
         args: &[String],
         init_id: &str,
         initialize_msg: &Value,
+        cwd: Option<&Path>,
     ) -> Option<(Passthrough, Option<Value>)> {
-        let mut child = Command::new(command)
-            .args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-            .spawn().ok()?;
+        let mut cmd = Command::new(command);
+        cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        if let Some(dir) = cwd { cmd.current_dir(dir); }
+        let mut child = cmd.spawn().ok()?;
         let mut child_stdin = child.stdin.take()?;
         let child_stdout = child.stdout.take()?;
         let mut init = initialize_msg.clone();

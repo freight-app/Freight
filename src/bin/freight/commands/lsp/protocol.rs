@@ -203,10 +203,16 @@ pub fn source_server_for_uri(uri: &str) -> Option<SourceServer> {
     let path = path_from_uri(uri)?;
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     match ext.as_str() {
-        "f" | "for" | "f90" | "f95" | "f03" | "f08" => Some(SourceServer::Fortls),
+        // Fortran: free-form and fixed-form, with and without preprocessor suffix.
+        "f" | "for" | "ftn"
+        | "f90" | "f95" | "f03" | "f08" | "f18"
+        | "f77" | "f66" => Some(SourceServer::Fortls),
+        // Assembly: GAS (.s/.S), NASM (.asm/.nasm), Intel HEX (.asm).
         "asm" | "nasm" | "s" => Some(SourceServer::AsmLsp),
+        // C-family: C, C++, CUDA, HIP, Objective-C — all handled by clangd.
         "c" | "h" | "cc" | "hh" | "cpp" | "hpp" | "cxx" | "hxx" | "c++" | "h++"
-        | "cppm" | "ixx" | "mpp" | "cu" | "cuh" | "hip" | "m" | "mm" => Some(SourceServer::Clangd),
+        | "cppm" | "ixx" | "mpp" | "cu" | "cuh" | "hip" | "m" | "mm"
+        | "cl" | "ispc" => Some(SourceServer::Clangd),
         _ => None,
     }
 }
