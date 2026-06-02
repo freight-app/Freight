@@ -602,23 +602,23 @@ impl App {
         && y >= area.y && y < area.y + area.height
     }
 
-    fn detail_line_count(&self) -> u16 {
-        detail_lines(self).len() as u16
-    }
-
     fn scroll_detail(&mut self, delta: i32) {
-        let inner_h = self.detail_area.height.saturating_sub(2);
-        let n = self.detail_line_count();
-        // +1 so the last logical line is never clipped by the bottom border.
-        let max = if n > inner_h { n - inner_h + 1 } else { 0 };
-        let next = (self.scroll as i32 + delta).clamp(0, max as i32) as u16;
+        let inner_w = self.detail_area.width.saturating_sub(2) as usize;
+        let inner_h = self.detail_area.height.saturating_sub(2) as usize;
+        let lines = detail_lines(self);
+        let total_visual = visual_row_count(&lines, inner_w);
+        let max = total_visual.saturating_sub(inner_h) as i32;
+        let next = (self.scroll as i32 + delta).clamp(0, max) as u16;
         self.scroll = next;
     }
 
     fn activate_detail_link(&mut self, x: u16, y: u16) -> bool {
         if !App::contains(self.detail_area, x, y) { return false; }
-        let line_idx = self.scroll as usize
+        let inner_w = self.detail_area.width.saturating_sub(2) as usize;
+        let visual_row = self.scroll as usize
             + (y.saturating_sub(self.detail_area.y + 1)) as usize;
+        let lines = detail_lines(self);
+        let line_idx = visual_to_logical(&lines, visual_row, inner_w);
         let col = x.saturating_sub(self.detail_area.x + 1) as usize;
         let Some(link) = self.detail_links.iter()
             .find(|l| l.line == line_idx && col >= l.start_col && col < l.end_col)
@@ -836,6 +836,30 @@ fn render_tree(app: &mut App, f: &mut Frame) {
     f.render_stateful_widget(list, app.tree_area, &mut app.list_state);
 }
 
+/// Estimated total visual rows for `lines` when wrapped to `inner_width` columns.
+fn visual_row_count(lines: &[Line<'static>], inner_width: usize) -> usize {
+    if inner_width == 0 { return lines.len(); }
+    lines.iter().map(|line| {
+        let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        chars.div_ceil(inner_width).max(1)
+    }).sum()
+}
+
+/// Map a visual row index to the logical line index that contains it.
+fn visual_to_logical(lines: &[Line<'static>], visual_row: usize, inner_width: usize) -> usize {
+    if inner_width == 0 || lines.is_empty() {
+        return visual_row.min(lines.len().saturating_sub(1));
+    }
+    let mut v = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        let rows = chars.div_ceil(inner_width).max(1);
+        v += rows;
+        if v > visual_row { return i; }
+    }
+    lines.len().saturating_sub(1)
+}
+
 fn render_detail(app: &mut App, f: &mut Frame) {
     let border_style = Style::default().fg(
         if app.focus == Focus::Detail { COLOR_ACTIVE } else { COLOR_BORDER }
@@ -865,9 +889,7 @@ fn render_detail(app: &mut App, f: &mut Frame) {
         })
     };
     annotate_links(&mut lines, &app.sym_index, &mut app.detail_links, current);
-    let skip = app.scroll as usize;
-    let visible: Vec<Line> = lines.into_iter().skip(skip).collect();
-    let para = Paragraph::new(visible).wrap(Wrap { trim: false });
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((app.scroll, 0));
     f.render_widget(para, inner);
 }
 
