@@ -1627,15 +1627,14 @@ mod tests {
     }
 
     #[test]
-    fn not_win32_branch_is_unconditional() {
-        // NOT WIN32 is not a recognised platform_condition — walk it as unconditional
+    fn not_win32_branch_is_unix_platform() {
+        // NOT WIN32 maps to "unix" via platform_condition — deps go to [os.unix.dependencies]
         let src = "if(NOT WIN32)\n  target_link_libraries(app z)\nendif()";
         let (ex, _) = extract_src(src);
         assert!(
-            ex.deps.contains(&"z".to_string()),
-            "NOT WIN32 body should be unconditional"
+            ex.platform_deps.get("unix").map_or(false, |d| d.contains(&"z".to_string())),
+            "NOT WIN32 body should be mapped to unix platform deps"
         );
-        assert!(ex.platform_deps.is_empty());
     }
 
     // ── find_package mapping ──────────────────────────────────────────────────

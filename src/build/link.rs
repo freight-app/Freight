@@ -11,6 +11,15 @@ use crate::vendor::parse_triple;
 
 use super::compile::object_path;
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/// Priority order for linker selection: the first language in this list that is
+/// active in the project wins the link step.
+const LINK_PRIORITY: &[&str] = &[
+    "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "zig",
+    "opencl", "ispc",
+];
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub struct LinkResult {
@@ -63,6 +72,19 @@ pub fn link_targets(
             .cloned()
             .collect();
 
+        // Whole-program builders (e.g. gnatmake) compile + bind + link in one shot.
+        // Emit a Compiling event here so the CLI shows progress for Ada projects
+        // that otherwise produce no individual Compiling events during the compile step.
+        if linker.template.linking.values().any(|l| l.whole_program) {
+            // The "objects" list contains absolute source paths for whole-program langs.
+            for src in bin_objects.iter().filter(|p| {
+                p.extension().and_then(|e| e.to_str()) != Some("o")
+            }) {
+                progress(BuildEvent::Compiling {
+                    path: src.clone(),
+                });
+            }
+        }
         progress(BuildEvent::Linking {
             name: bin.name.clone(),
         });
@@ -163,29 +185,6 @@ pub fn link_static_lib(objects: &[PathBuf], out: &Path, ar_bin: &str) -> Result<
     link_static(out, objects, ar_bin)
 }
 
-/// Return true if `lang_key` is active in this manifest: either explicitly declared via
-/// `[language.X]`, or implicitly present because at least one source file has an extension
-/// handled by that language key.
-fn has_lang(manifest: &Manifest, lang_key: &str, detected: &[DetectedCompiler]) -> bool {
-    if manifest.language.contains_key(lang_key) {
-        return true;
-    }
-    let exts: Vec<&str> = detected
-        .iter()
-        .filter_map(|d| d.template.linking.get(lang_key))
-        .flat_map(|l| l.extensions.iter().map(String::as_str))
-        .collect();
-    if exts.is_empty() {
-        return false;
-    }
-    let has = |src: &str| exts.iter().any(|e| src.ends_with(*e));
-    manifest.bins.iter().any(|b| has(&b.src))
-        || manifest
-            .lib
-            .as_ref()
-            .map_or(false, |l| l.srcs.iter().any(|s| has(s)))
-}
-
 /// Pick the compiler binary that drives the final link step.
 ///
 /// Priority order:
@@ -216,11 +215,6 @@ pub fn select_linker<'a>(
         }
     }
 
-    const PRIORITY: &[&str] = &[
-        "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "zig",
-        "opencl", "ispc",
-    ];
-
     // Non-auto backend: prefer a linker from the requested family first.
     if !backend.is_auto() {
         let family = backend.name();
@@ -233,8 +227,8 @@ pub fn select_linker<'a>(
         }) {
             return Some(own);
         }
-        for &lang in PRIORITY {
-            if has_lang(manifest, lang, detected) {
+        for &lang in LINK_PRIORITY {
+            if super::has_lang(manifest, lang, detected) {
                 let found = detected.iter().find(|d| {
                     d.template.linking.contains_key(lang)
                         && (d.template.family == family || d.template.name == family)
@@ -246,8 +240,8 @@ pub fn select_linker<'a>(
         }
     }
 
-    for &lang in PRIORITY {
-        if has_lang(manifest, lang, detected) {
+    for &lang in LINK_PRIORITY {
+        if super::has_lang(manifest, lang, detected) {
             let found = detected
                 .iter()
                 .find(|d| d.template.linking.contains_key(lang));

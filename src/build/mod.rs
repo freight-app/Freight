@@ -23,6 +23,7 @@ pub use modules::{
 };
 
 use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,6 +41,35 @@ use crate::toolchain::{
     backend_matches, check_manifest_version_bounds, detect_all_cached, load_all_templates,
     CompilerTemplate, DetectedCompiler, GlobalConfig,
 };
+
+// ── Shared lang helper ────────────────────────────────────────────────────────
+
+/// Return true if `lang_key` is active in this manifest: either explicitly declared
+/// via `[language.X]`, or implicitly present because at least one source file has an
+/// extension handled by that language key (checked against `detected` compilers).
+pub(super) fn has_lang(
+    manifest: &Manifest,
+    lang_key: &str,
+    detected: &[DetectedCompiler],
+) -> bool {
+    if manifest.language.contains_key(lang_key) {
+        return true;
+    }
+    let exts: Vec<&str> = detected
+        .iter()
+        .filter_map(|d| d.template.linking.get(lang_key))
+        .flat_map(|l| l.extensions.iter().map(String::as_str))
+        .collect();
+    if exts.is_empty() {
+        return false;
+    }
+    let has = |src: &str| exts.iter().any(|e| src.ends_with(*e));
+    manifest.bins.iter().any(|b| has(&b.src))
+        || manifest
+            .lib
+            .as_ref()
+            .map_or(false, |l| l.srcs.iter().any(|s| has(s)))
+}
 
 // ── Public results ────────────────────────────────────────────────────────────
 
@@ -648,6 +678,63 @@ pub fn generate_compile_commands_at(
         )
     })?;
     Ok(count)
+}
+
+/// Generate the compile database used internally by `freight lsp`.
+///
+/// Unlike [`generate_compile_commands_at`], this writes to a backend cache
+/// directory outside the project tree
+/// so editor integrations can point source language servers at Freight's
+/// manifest-scoped view without adding `compile_commands.json` to the project
+/// root or the explorer.
+pub fn generate_lsp_compile_commands_at(
+    project_dir: &Path,
+    profile: &str,
+) -> Result<PathBuf, FreightError> {
+    let ctx = load_project_at(project_dir, profile)?;
+    let ProjectContext {
+        project_dir,
+        manifest,
+        effective_backend,
+        templates: _,
+        detected,
+        found,
+    } = &ctx;
+
+    let resolution = features::resolve_features(&manifest.features, &[], true)?;
+    let feature_defines = features::to_defines(&resolution.active);
+
+    let dep_includes = collect_dep_include_dirs(project_dir, manifest);
+    let mut include_dirs = found.include_dirs.clone();
+    include_dirs.extend(dep_includes);
+
+    let commands = compile_commands::generate(
+        project_dir,
+        manifest,
+        effective_backend,
+        detected,
+        profile,
+        &found.sources,
+        &include_dirs,
+        &feature_defines,
+        &[],
+    );
+    let dir = lsp_compile_commands_dir(project_dir, profile);
+    compile_commands::write_to(&dir.join("compile_commands.json"), &commands)?;
+    Ok(dir)
+}
+
+fn lsp_compile_commands_dir(project_dir: &Path, profile: &str) -> PathBuf {
+    let stable_project_dir = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    stable_project_dir.hash(&mut hasher);
+    profile.hash(&mut hasher);
+    std::env::temp_dir()
+        .join("freight")
+        .join("lsp")
+        .join(format!("{:016x}", hasher.finish()))
 }
 
 /// Collect every dep's exported include dirs without compiling anything.
