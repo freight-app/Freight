@@ -1473,6 +1473,46 @@ fn styled_heading_line(level: u8, text: &str) -> Line<'static> {
     ])
 }
 
+/// Render a fenced code block as a box with the language tag in the top border.
+///
+/// ```
+/// ┌─── rust ───────────────────────────────────────┐
+/// │  fn main() { println!("hello"); }              │
+/// └────────────────────────────────────────────────┘
+/// ```
+fn push_fenced_code(out: &mut Vec<Line<'static>>, fence_lang: &str, code: &str, width: usize) {
+    let border = Style::default().fg(COLOR_BORDER);
+    let w = width.max(10);
+
+    // Top border: ┌─── lang ───…───┐
+    let lang_part = if fence_lang.is_empty() {
+        String::new()
+    } else {
+        format!(" {} ", fence_lang)
+    };
+    let left_dashes = 3usize;
+    let right_dashes = w.saturating_sub(left_dashes + lang_part.chars().count() + 2);
+    out.push(Line::styled(
+        format!("┌{}{}{}┐", "─".repeat(left_dashes), lang_part, "─".repeat(right_dashes)),
+        border,
+    ));
+
+    // Code lines — syntax highlighted, wrapped in │ … │
+    let md_src = format!("```{fence_lang}\n{code}\n```\n");
+    let rendered = tui_markdown::from_str(&md_src);
+    for line in rendered.lines {
+        let raw: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        if raw.trim().starts_with("```") { continue; }
+        let mut spans: Vec<Span<'static>> = vec![Span::styled("│ ", border)];
+        spans.extend(line.spans.into_iter().map(|s| Span::styled(s.content.into_owned(), s.style)));
+        out.push(Line::from(spans));
+    }
+
+    // Bottom border: └───…───┘
+    out.push(Line::styled(format!("└{}┘", "─".repeat(w.saturating_sub(2))), border));
+    out.push(Line::raw(""));
+}
+
 fn push_markdown_body(out: &mut Vec<Line<'static>>, text: &str) {
     let math_processed = render_math_lines(text);
     let raw: Vec<&str> = math_processed.lines().collect();
@@ -1487,16 +1527,30 @@ fn push_markdown_body(out: &mut Vec<Line<'static>>, text: &str) {
             i += 1;
             continue;
         }
+        // Fenced code block — render as a boxed block with language in the top border.
+        if raw[i].starts_with("```") {
+            let fence_lang = raw[i].trim_start_matches('`').trim();
+            let code_start = i + 1;
+            let mut code_end = code_start;
+            while code_end < raw.len() && !raw[code_end].starts_with("```") {
+                code_end += 1;
+            }
+            let code = raw[code_start..code_end].join("\n");
+            push_fenced_code(out, fence_lang, &code, 72);
+            i = code_end + 1;
+            continue;
+        }
         if let Some((table, consumed)) = parse_markdown_table(&raw, i) {
             push_markdown_table(out, &table, 72);
             i += consumed;
             continue;
         }
-        // Accumulate non-heading, non-table lines into a block for tui_markdown.
+        // Accumulate non-heading, non-table, non-fence lines for tui_markdown.
         let start = i;
         while i < raw.len()
             && parse_markdown_table(&raw, i).is_none()
             && parse_heading_line(raw[i]).is_none()
+            && !raw[i].starts_with("```")
         {
             i += 1;
         }
