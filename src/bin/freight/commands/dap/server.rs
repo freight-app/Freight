@@ -229,40 +229,41 @@ impl DapServer {
 
     fn launch_debug(&mut self, launch_request: &Value, config: &Value) -> anyhow::Result<bool> {
         let (debugger, binary) = self.resolve_debugger_and_build(config)?;
+        let mut fwd = launch_request.clone();
+        fwd["arguments"]["program"] = Value::String(binary.to_string_lossy().into_owned());
+
         match debugger.template.name.as_str() {
             "gdb" => {
-                let (major, _) = gdb_version(&debugger.path);
-                if major >= 14 {
+                // Prefer native DAP regardless of version — probe the adapter and
+                // fall back to MI2 only if it doesn't speak DAP.
+                if probe_dap_support(&debugger.path, &["--interpreter=dap"]) {
                     self.output(&format!(
                         "Debugging {} with {} {} (native DAP)\n",
                         binary.display(), debugger.template.name, debugger.version
                     ), "console")?;
-                    let mut fwd = launch_request.clone();
-                    fwd["arguments"]["program"] =
-                        Value::String(binary.to_string_lossy().into_owned());
                     self.run_passthrough(&debugger.path, &["--interpreter=dap"], fwd)
                 } else {
                     self.output(&format!(
                         "Debugging {} with {} {} (GDB/MI2 bridge)\n",
                         binary.display(), debugger.template.name, debugger.version
                     ), "console")?;
+                    // --nx suppresses .gdbinit so it can't fire commands before
+                    // the binary is loaded (avoids spurious "No symbol table" output).
                     self.launch_gdb_mi2(
                         &debugger.path,
-                        &["--interpreter=mi2", "--quiet"],
+                        &["--interpreter=mi2", "--nx", "--quiet"],
                         Some(&binary), config,
                     )?;
                     Ok(false)
                 }
             }
             "lldb" => {
+                // lldb-dap / lldb-vscode is the native adapter; fall back to MI2.
                 if let Some(ref dap_bin) = debugger.dap_path {
                     self.output(&format!(
                         "Debugging {} with {} (native DAP)\n",
                         binary.display(), dap_bin.display()
                     ), "console")?;
-                    let mut fwd = launch_request.clone();
-                    fwd["arguments"]["program"] =
-                        Value::String(binary.to_string_lossy().into_owned());
                     self.run_passthrough(dap_bin, &[], fwd)
                 } else {
                     self.output(&format!(
@@ -271,7 +272,7 @@ impl DapServer {
                     ), "console")?;
                     self.launch_gdb_mi2(
                         &debugger.path,
-                        &["--interpreter=mi", "--quiet"],
+                        &["--interpreter=mi", "--nx", "--quiet"],
                         Some(&binary), config,
                     )?;
                     Ok(false)
@@ -356,7 +357,7 @@ impl DapServer {
                         "Attaching to pid {} with {} {} (GDB/MI2 bridge)\n",
                         pid, debugger.template.name, debugger.version
                     ), "console")?;
-                    self.launch_gdb_mi2(&debugger.path, &["--interpreter=mi2", "--quiet"], None, config)?;
+                    self.launch_gdb_mi2(&debugger.path, &["--interpreter=mi2", "--nx", "--quiet"], None, config)?;
                     if let Some(prog) = config["program"].as_str() {
                         let _ = self.gdb_command(&format!("-file-exec-and-symbols {}", mi_quote(prog)));
                     }
@@ -376,7 +377,7 @@ impl DapServer {
                         "Attaching to pid {} with lldb {} (LLDB/MI2 bridge)\n",
                         pid, debugger.version
                     ), "console")?;
-                    self.launch_gdb_mi2(&debugger.path, &["--interpreter=mi", "--quiet"], None, config)?;
+                    self.launch_gdb_mi2(&debugger.path, &["--interpreter=mi", "--nx", "--quiet"], None, config)?;
                     if let Some(prog) = config["program"].as_str() {
                         let _ = self.gdb_command(&format!("-file-exec-and-symbols {}", mi_quote(prog)));
                     }
@@ -931,8 +932,10 @@ impl DapServer {
             self.output(&mi_c_string(rest), "console")?;
             return Ok(None);
         }
-        if let Some(rest) = line.strip_prefix('&') {
-            self.output(&mi_c_string(rest), "stderr")?;
+        if line.starts_with('&') {
+            // GDB log stream — internal GDB messages (init output, command echoes,
+            // "No symbol table is loaded" from .gdbinit, etc.). Not meaningful to
+            // the user; suppress rather than emitting as red "stderr" text.
             return Ok(None);
         }
         if line.starts_with("*stopped") {
@@ -1054,6 +1057,53 @@ fn step_cmd(kind: &str, request: &Value) -> String {
     } else {
         base.to_string()
     }
+}
+
+/// Probe whether a DAP adapter binary actually speaks the DAP protocol.
+///
+/// Spawns `bin args…`, sends a minimal `initialize` request, and waits up to
+/// 3 seconds for any response.  Returns `true` if the adapter responds (DAP
+/// supported), `false` if it exits immediately or times out without a response
+/// (e.g. GDB that doesn't support `--interpreter=dap`).
+fn probe_dap_support(bin: &Path, args: &[&str]) -> bool {
+    let Ok(mut child) = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+
+    let Ok(mut stdin) = child.stdin.take().ok_or(()) else {
+        let _ = child.kill();
+        return false;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        return false;
+    };
+
+    let probe_msg = serde_json::json!({
+        "type": "request", "seq": 1, "command": "initialize",
+        "arguments": { "clientID": "freight-probe", "adapterID": "freight" }
+    });
+    if write_dap(&mut stdin, &probe_msg).is_err() {
+        let _ = child.kill();
+        return false;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(stdout);
+        let supported = read_dap_frame(&mut reader).is_some();
+        let _ = tx.send(supported);
+    });
+
+    let result = rx.recv_timeout(Duration::from_secs(3)).unwrap_or(false);
+    let _ = child.kill();
+    result
 }
 
 fn find_project_dir() -> anyhow::Result<PathBuf> {
