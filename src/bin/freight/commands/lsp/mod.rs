@@ -1,6 +1,7 @@
 //! `freight lsp` — Language Server Protocol multiplexer for freight.toml and
 //! source files (clangd, fortls, asm-lsp passthroughs).
 
+mod doc_index;
 mod manifest;
 mod protocol;
 
@@ -16,6 +17,7 @@ use freight_core::manifest::find_manifest_dir;
 use freight_core::toolchain::load_all_templates;
 use serde_json::{json, Value};
 
+use doc_index::{DocIndex, item_to_markdown, word_at};
 use manifest::{completion_result, hover_result, manifest_diagnostics, signature_help_result};
 use protocol::*;
 
@@ -76,6 +78,8 @@ struct ServerState {
     clangd: Option<Passthrough>,
     fortls: Option<Passthrough>,
     asm_lsp: Option<Passthrough>,
+    /// Symbol documentation index built from the project source tree.
+    doc_index: Option<DocIndex>,
 }
 
 struct Passthrough {
@@ -111,6 +115,7 @@ impl Server {
                 clangd: None,
                 fortls: None,
                 asm_lsp: None,
+                doc_index: None,
             },
         }
     }
@@ -266,10 +271,38 @@ impl Server {
 
     fn handle_hover_or_forward(&mut self, msg: Value) -> io::Result<()> {
         let Some(uri) = text_document_uri(&msg) else { return self.forward_or_null(msg); };
-        if !is_freight_manifest_uri(&uri) { return self.forward_or_null(msg); }
-        let text = self.manifest_text(&uri);
-        let result = hover_result(text.as_deref(), position(&msg));
-        self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null))
+
+        if is_freight_manifest_uri(&uri) {
+            let text = self.manifest_text(&uri);
+            let result = hover_result(text.as_deref(), position(&msg));
+            return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
+        }
+
+        // For source files: try to serve documentation from the docify index.
+        // If we find the symbol, return our rich markdown immediately (no
+        // round-trip to clangd needed).  If not found, forward to the
+        // passthrough language server.
+        if let Some(hover_md) = self.doc_hover(&uri, &msg) {
+            return self.respond(msg.get("id").cloned(), hover_md);
+        }
+
+        self.forward_or_null(msg)
+    }
+
+    fn doc_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
+        let index = self.state.doc_index.as_ref().filter(|i| !i.is_empty())?;
+        let (line, character) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        let text = std::fs::read_to_string(&path).ok()?;
+        let word = word_at(&text, line, character)?;
+        let item = index.lookup(&word)?;
+        let markdown = item_to_markdown(item);
+        Some(json!({
+            "contents": {
+                "kind": "markdown",
+                "value": markdown
+            }
+        }))
     }
 
     fn handle_signature_help_or_forward(&mut self, msg: Value) -> io::Result<()> {
@@ -383,6 +416,19 @@ impl Server {
         if let Ok(dir) = generate_lsp_compile_commands_at(dir, &self.args.profile) {
             self.state.compile_commands_dir = Some(dir);
         }
+        self.refresh_doc_index();
+    }
+
+    fn refresh_doc_index(&mut self) {
+        // Build the doc index from `src/` alongside the manifest, falling back
+        // to the workspace root if `src/` doesn't exist.
+        let base = self.state.manifest_dir.as_deref()
+            .unwrap_or(&self.state.root_dir);
+        let src = base.join("src");
+        let scan_dir = if src.is_dir() { src } else { base.to_path_buf() };
+        // Run synchronously in the LSP server thread; the index is typically
+        // built in well under a second for medium-sized projects.
+        self.state.doc_index = Some(DocIndex::build(&scan_dir));
     }
 
     fn notify_compile_commands_changed(&mut self) -> io::Result<()> {
