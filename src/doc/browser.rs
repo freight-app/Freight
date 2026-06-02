@@ -1528,7 +1528,7 @@ fn styled_heading_line(level: u8, text: &str) -> Line<'static> {
     };
     let style = Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD);
     let prefix = "\u{E0B6} ".to_string();
-    let suffix = " \u{E0B7}".to_string();
+    let suffix = " \u{E0B4}".to_string();
     Line::from(vec![
         Span::styled(prefix, style),
         Span::styled(text.to_string(), style),
