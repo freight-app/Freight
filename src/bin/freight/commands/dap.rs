@@ -260,12 +260,17 @@ impl DapServer {
                         ),
                         "console",
                     )?;
-                    self.launch_gdb_mi2(&debugger.path, &binary, config)?;
+                    self.launch_gdb_mi2(
+                        &debugger.path,
+                        &["--interpreter=mi2", "--quiet"],
+                        Some(&binary),
+                        config,
+                    )?;
                     Ok(false)
                 }
             }
             "lldb" => {
-                if let Some(dap_bin) = find_lldb_dap(&debugger.path) {
+                if let Some(ref dap_bin) = debugger.dap_path {
                     self.output(
                         &format!(
                             "Debugging {} with {} (native DAP)\n",
@@ -276,14 +281,56 @@ impl DapServer {
                     )?;
                     self.run_passthrough(&dap_bin, &[], &binary, launch_request)
                 } else {
-                    anyhow::bail!(
-                        "lldb-dap / lldb-vscode not found; install lldb-dap alongside lldb for DAP support"
-                    );
+                    // lldb-dap not available; fall back to LLDB's built-in MI interpreter.
+                    self.output(
+                        &format!(
+                            "Debugging {} with lldb {} (LLDB/MI2 bridge; install lldb-dap for full support)\n",
+                            binary.display(),
+                            debugger.version
+                        ),
+                        "console",
+                    )?;
+                    self.launch_gdb_mi2(
+                        &debugger.path,
+                        &["--interpreter=mi", "--quiet"],
+                        Some(&binary),
+                        config,
+                    )?;
+                    Ok(false)
                 }
+            }
+            "rr" => {
+                // rr replays the most recent recording over a GDB/MI2 session.
+                // Users must record first: `rr record ./binary [args]`
+                self.output(
+                    &format!(
+                        "Replaying with rr {} (GDB/MI2 bridge) — recording must exist\n",
+                        debugger.version
+                    ),
+                    "console",
+                )?;
+                // `rr replay -- <gdb-args>` passes the trailing args directly to GDB.
+                self.launch_gdb_mi2(
+                    &debugger.path,
+                    &["replay", "--", "--interpreter=mi2", "--quiet"],
+                    None, // binary is baked into the rr recording
+                    config,
+                )?;
+                Ok(false)
+            }
+            "cdb" | "windbg" => {
+                anyhow::bail!(
+                    "{} does not support a freight DAP backend; \
+                     use the 'ms-vscode.cpptools' VS Code extension (cppdbg) for Windows debuggers",
+                    debugger.template.name
+                )
             }
             other => {
                 anyhow::bail!(
-                    "debugger '{other}' has no Freight DAP backend; supported: gdb (≥14 native, older via MI2), lldb (with lldb-dap)"
+                    "debugger '{other}' has no Freight DAP backend; \
+                     supported: gdb (≥14 native DAP, older via MI2), \
+                     lldb (native DAP with lldb-dap, or MI2 fallback), \
+                     rr (MI2 replay)"
                 );
             }
         }
@@ -393,42 +440,45 @@ impl DapServer {
         Ok(true)
     }
 
-    /// GDB/MI2 bridge (fallback for GDB < 14).
+    /// MI2 bridge — spawns `debugger_path` with `args`, then drives it over GDB/MI2.
+    ///
+    /// `binary` is `Some` for GDB and LLDB (we load it with `-file-exec-and-symbols`).
+    /// Pass `None` for rr, which already has the binary from the recording.
     fn launch_gdb_mi2(
         &mut self,
-        gdb_path: &Path,
-        binary: &Path,
+        debugger_path: &Path,
+        args: &[&str],
+        binary: Option<&Path>,
         config: &Value,
     ) -> anyhow::Result<()> {
-        let mut child = Command::new(gdb_path)
-            .args(["--interpreter=mi2", "--quiet"])
+        let mut child = Command::new(debugger_path)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("gdb stdout unavailable"))?;
-        let stderr = child.stderr.take().ok_or_else(|| anyhow::anyhow!("gdb stderr unavailable"))?;
-        let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("gdb stdin unavailable"))?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("debugger stdout unavailable"))?;
+        let stderr = child.stderr.take().ok_or_else(|| anyhow::anyhow!("debugger stderr unavailable"))?;
+        let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("debugger stdin unavailable"))?;
         self.gdb_rx = Some(spawn_gdb_reader(stdout));
         spawn_process_output(stderr, "stderr", self.output_tx.clone());
         self.gdb_stdin = Some(stdin);
         self.gdb = Some(child);
-        self.gdb_command("-gdb-set target-async on")?;
-        self.gdb_command("-gdb-set breakpoint pending on")?;
-        self.gdb_command(&format!(
-            "-file-exec-and-symbols {}",
-            mi_quote(&binary.display().to_string())
-        ))?;
-        let program_args = string_array(&config["args"]);
-        if !program_args.is_empty() {
+        // These may error on some debuggers (e.g. LLDB already runs async); ignore failures.
+        let _ = self.gdb_command("-gdb-set target-async on");
+        let _ = self.gdb_command("-gdb-set breakpoint pending on");
+        if let Some(bin) = binary {
             self.gdb_command(&format!(
-                "-exec-arguments {}",
-                program_args
-                    .iter()
-                    .map(|arg| mi_quote(arg))
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                "-file-exec-and-symbols {}",
+                mi_quote(&bin.display().to_string())
             ))?;
+            let program_args = string_array(&config["args"]);
+            if !program_args.is_empty() {
+                self.gdb_command(&format!(
+                    "-exec-arguments {}",
+                    program_args.iter().map(|a| mi_quote(a)).collect::<Vec<_>>().join(" ")
+                ))?;
+            }
         }
         self.apply_breakpoints()?;
         Ok(())
@@ -880,28 +930,6 @@ fn gdb_version(path: &Path) -> (u32, u32) {
     (0, 0)
 }
 
-/// Look for `lldb-dap` or `lldb-vscode` next to `lldb_path`, then on `PATH`.
-fn find_lldb_dap(lldb_path: &Path) -> Option<PathBuf> {
-    let dir = lldb_path.parent()?;
-    for name in &["lldb-dap", "lldb-vscode"] {
-        let candidate = dir.join(name);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    // Fall back to PATH.
-    for name in &["lldb-dap", "lldb-vscode"] {
-        if let Ok(out) = Command::new("which").arg(name).output() {
-            if out.status.success() {
-                let p = PathBuf::from(std::str::from_utf8(&out.stdout).unwrap_or("").trim());
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
 
 // ---------------------------------------------------------------------------
 // GDB/MI2 parser — recursive-descent, one-level nesting
