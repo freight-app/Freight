@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use docify::extract::{DocItem, DocKind, DocLanguage, DocTag, TagKind};
+use docify::extract::{DocItem, DocKind, DocLanguage, TagKind};
 
 use crate::doc::latex::render_math_lines;
 use crate::doc::stdlib::StdlibMsg;
@@ -167,7 +167,6 @@ struct TreeRow {
 #[derive(Clone)]
 enum RowKind {
     Package   { pkg_idx: usize },
-    Section   { pkg_idx: usize, section: Section },
     /// Expandable namespace — children are its member items.
     Namespace { pkg_idx: usize, name: String },
     /// Expandable class / struct / typedef — children are its member items.
@@ -342,41 +341,8 @@ fn find_sym_refs(
     results
 }
 
-/// Apply underlined link style to the character range [start_col, end_col) within a Line.
-fn apply_link_style(line: &mut Line<'static>, start_col: usize, end_col: usize) {
-    let link_style = Style::default()
-        .fg(Color::LightCyan)
-        .add_modifier(Modifier::UNDERLINED);
-    let mut new_spans: Vec<Span<'static>> = Vec::new();
-    let mut col = 0usize;
-    for span in std::mem::take(&mut line.spans) {
-        let len = span.content.chars().count();
-        let span_start = col;
-        let span_end = col + len;
-        col = span_end;
-        if span_end <= start_col || span_start >= end_col {
-            new_spans.push(span);
-            continue;
-        }
-        let chars: Vec<char> = span.content.chars().collect();
-        let overlap_s = start_col.saturating_sub(span_start);
-        let overlap_e = (end_col - span_start).min(len);
-        if overlap_s > 0 {
-            new_spans.push(Span::styled(chars[..overlap_s].iter().collect::<String>(), span.style));
-        }
-        new_spans.push(Span::styled(
-            chars[overlap_s..overlap_e].iter().collect::<String>(),
-            link_style,
-        ));
-        if overlap_e < len {
-            new_spans.push(Span::styled(chars[overlap_e..].iter().collect::<String>(), span.style));
-        }
-    }
-    line.spans = new_spans;
-}
 
 fn pkg_key(pkg_idx: usize) -> String { format!("p:{pkg_idx}") }
-fn sec_key(pkg_idx: usize, s: Section) -> String { format!("s:{pkg_idx}:{}", s as u8) }
 fn grp_key(pkg_idx: usize, item_idx: usize) -> String { format!("g:{pkg_idx}:{item_idx}") }
 fn ns_key(pkg_idx: usize, name: &str)  -> String { format!("n:{pkg_idx}:{name}") }
 
@@ -565,7 +531,6 @@ impl App {
                 else { self.expanded.insert(k); }
                 self.rebuild_rows();
             }
-            RowKind::Section { .. } => {} // sections no longer used in tree
             RowKind::Namespace { pkg_idx, name } => {
                 let k = ns_key(pkg_idx, &name);
                 if self.expanded.contains(&k) { self.expanded.remove(&k); }
@@ -707,9 +672,6 @@ fn render_filter(app: &App, f: &mut Frame) {
     // Show stdlib loading progress inside the filter block when loading.
     let title = if let Some((done, total, ref label)) = app.stdlib_status {
         let pct = if total > 0 { done * 100 / total } else { 0 };
-        let bar_w = app.filter_area.width.saturating_sub(12) as usize;
-        let filled = bar_w * pct / 100;
-        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(bar_w - filled));
         Span::styled(
             format!(" ⟳ stdlib {pct}% {label:.12} "),
             Style::default().fg(Color::Rgb(160, 160, 80)),
@@ -765,18 +727,6 @@ fn render_tree(app: &mut App, f: &mut Frame) {
                     Span::styled(format!("{arrow} "), Style::default().fg(COLOR_PKG)),
                     Span::styled(row.label.clone(),
                         Style::default().fg(COLOR_PKG).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!(" ({})", row.count),
-                        Style::default().fg(COLOR_HINT)),
-                ])
-            }
-            RowKind::Section { pkg_idx, section } => {
-                let arrow = if app.expanded.contains(&sec_key(*pkg_idx, *section)) {
-                    "▾" } else { "▸" };
-                Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(format!("{arrow} "), Style::default().fg(COLOR_SECTION)),
-                    Span::styled(row.label.clone(),
-                        Style::default().fg(COLOR_SECTION)),
                     Span::styled(format!(" ({})", row.count),
                         Style::default().fg(COLOR_HINT)),
                 ])
@@ -901,9 +851,6 @@ fn detail_title(app: &App) -> String {
         Some(RowKind::Package { pkg_idx }) => {
             format!("{} — overview", app.packages[*pkg_idx].name)
         }
-        Some(RowKind::Section { pkg_idx, section }) => {
-            format!("{} — {}", app.packages[*pkg_idx].name, section.label())
-        }
         Some(RowKind::Namespace { pkg_idx, name }) => {
             format!("{} — namespace {name}", app.packages[*pkg_idx].name)
         }
@@ -984,9 +931,6 @@ fn detail_lines(app: &App) -> Vec<Line<'static>> {
     }
     match app.selected_row().map(|r| r.kind.clone()) {
         Some(RowKind::Package { pkg_idx }) => pkg_overview_lines(&app.packages[pkg_idx], width),
-        Some(RowKind::Section { pkg_idx, section }) => {
-            section_lines(&app.packages[pkg_idx], section, width)
-        }
         Some(RowKind::Namespace { pkg_idx, name }) => {
             namespace_lines(&app.packages[pkg_idx], &name, width)
         }
@@ -1086,34 +1030,6 @@ fn pkg_overview_lines(pkg: &PackageDoc, width: usize) -> Vec<Line<'static>> {
             Style::default().fg(COLOR_BORDER))));
         out.push(Line::raw(""));
         push_markdown_body(&mut out, readme);
-    }
-    out
-}
-
-fn section_lines(pkg: &PackageDoc, sec: Section, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    out.push(Line::styled(sec.label().to_string(),
-        Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
-    out.push(Line::from(Span::styled(
-        "─".repeat(width.min(60)),
-        Style::default().fg(COLOR_BORDER))));
-    out.push(Line::raw(""));
-
-    for item in pkg.items.iter().filter(|i| item_section(i) == Some(sec)) {
-        let kl = kind_label(&item.kind);
-        out.push(Line::from(vec![
-            Span::styled(item_display_name(item),
-                Style::default().fg(COLOR_SYMBOL).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("  [{kl}]"), Style::default().fg(COLOR_KIND)),
-        ]));
-        if !item.brief.is_empty() {
-            let brief = render_math_lines(&item.brief);
-            for line in word_wrap(&brief, width.saturating_sub(4)) {
-                out.push(Line::styled(format!("    {line}"),
-                    Style::default().fg(COLOR_BRIEF)));
-            }
-        }
-        out.push(Line::raw(""));
     }
     out
 }
