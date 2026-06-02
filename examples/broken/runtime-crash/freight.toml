@@ -1,0 +1,18 @@
+[package]
+name        = "runtime-crash"
+version     = "0.1.0"
+description = "Intentionally broken at runtime: null pointer dereference — shows the difference between build success and runtime failure"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "runtime-crash"
+src  = "src/main.cpp"
+
+[profile.dev]
+debug = true
+
+[profile.release]
+opt-level = 3
+debug     = false

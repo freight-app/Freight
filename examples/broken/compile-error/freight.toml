@@ -1,0 +1,14 @@
+[package]
+name        = "compile-error"
+version     = "0.1.0"
+description = "Intentionally broken: C++ syntax errors — shows what freight reports on a compile failure"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "compile-error"
+src  = "src/main.cpp"
+
+[profile.dev]
+debug = true

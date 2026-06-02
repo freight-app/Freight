@@ -1,0 +1,17 @@
+[package]
+name        = "bad-dep"
+version     = "0.1.0"
+description = "Intentionally broken: depends on a library that does not exist — shows freight's dependency resolution failure"
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "bad-dep"
+src  = "src/main.c"
+
+[dependencies]
+libdoesnotexist = "1.0"
+
+[profile.dev]
+debug = true

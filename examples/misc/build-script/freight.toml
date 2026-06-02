@@ -1,0 +1,15 @@
+[package]
+name        = "with-build-script"
+version     = "1.3.0"
+authors     = ["You <you@example.com>"]
+description = "build.freight pre-build script — runs before compilation, generates headers"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "demo"
+src  = "src/main.cpp"
+
+[dependencies]
+zlib = { system = "zlib", optional = true }

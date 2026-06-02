@@ -1,0 +1,14 @@
+[package]
+name        = "link-error"
+version     = "0.1.0"
+description = "Intentionally broken: undefined symbol at link time — shows freight's linker error output"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "link-error"
+src  = "src/main.cpp"
+
+[profile.dev]
+debug = true
