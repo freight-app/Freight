@@ -1524,7 +1524,7 @@ fn styled_heading_line(level: u8, text: &str) -> Line<'static> {
 
 /// Render a fenced code block as a box with the language tag in the top border.
 ///
-/// ```
+/// ```text
 /// ┌─── rust ───────────────────────────────────────┐
 /// │  fn main() { println!("hello"); }              │
 /// └────────────────────────────────────────────────┘
