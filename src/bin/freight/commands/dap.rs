@@ -24,6 +24,27 @@ impl Args {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Breakpoint specs
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct BreakpointSpec {
+    line: u64,
+    condition: Option<String>,
+    hit_condition: Option<u64>,
+}
+
+#[derive(Clone)]
+struct FuncBreakpointSpec {
+    name: String,
+    condition: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// DapServer
+// ---------------------------------------------------------------------------
+
 struct DapServer {
     seq: i64,
     requests: Receiver<Value>,
@@ -35,15 +56,28 @@ struct DapServer {
     gdb_stdin: Option<ChildStdin>,
     gdb_rx: Option<Receiver<String>>,
     gdb_token: u64,
-    breakpoints: HashMap<String, Vec<u64>>,
+    /// Line breakpoints: source path → specs.
+    breakpoints: HashMap<String, Vec<BreakpointSpec>>,
+    /// Function breakpoints.
+    func_breakpoints: Vec<FuncBreakpointSpec>,
+    /// Active exception filter names ("cpp_throw", "cpp_catch", …).
+    exception_filters: Vec<String>,
+    /// GDB breakpoint numbers currently applied (used to delete before re-applying).
+    applied_bkpt_numbers: Vec<u64>,
     breakpoints_applied: bool,
     debug_started: bool,
     configuration_done: bool,
+    /// True when we attached to a running process (skip -exec-run on configDone).
+    attached: bool,
     init_request: Option<Value>,
-    // Varobj tracking for MI2 struct/array expansion.
-    // Maps variablesReference ID → GDB varobj name.
+    /// variablesReference IDs ≥ 1000 → GDB varobj name (expandable children).
+    /// Frame locals scopes use IDs 1..=999 (frameId + 1).
     varobjs: HashMap<u64, String>,
     varobj_seq: u64,
+    /// (parent_ref, display_name) → GDB varobj name — for setVariable lookups.
+    setvar_varobjs: HashMap<(u64, String), String>,
+    /// Top-level varobj GDB names to -var-delete on cleanup (children auto-deleted).
+    top_varobjs: Vec<String>,
 }
 
 impl DapServer {
@@ -61,12 +95,18 @@ impl DapServer {
             gdb_rx: None,
             gdb_token: 1,
             breakpoints: HashMap::new(),
+            func_breakpoints: Vec::new(),
+            exception_filters: Vec::new(),
+            applied_bkpt_numbers: Vec::new(),
             breakpoints_applied: false,
             debug_started: false,
             configuration_done: false,
+            attached: false,
             init_request: None,
             varobjs: HashMap::new(),
             varobj_seq: 1000,
+            setvar_varobjs: HashMap::new(),
+            top_varobjs: Vec::new(),
         }
     }
 
@@ -80,23 +120,39 @@ impl DapServer {
             };
             let command = request["command"].as_str().unwrap_or("");
             match command {
-                "initialize" => self.handle_initialize(&request)?,
-                "launch" => self.handle_launch(&request)?,
-                "setBreakpoints" => self.handle_set_breakpoints(&request)?,
-                "configurationDone" => self.handle_configuration_done(&request)?,
-                "threads" => self.handle_threads(&request)?,
-                "stackTrace" => self.handle_stack_trace(&request)?,
-                "scopes" => self.response(
-                    &request,
-                    json!({ "scopes": [{ "name": "Locals", "variablesReference": 1, "expensive": false }] }),
-                )?,
-                "variables" => self.handle_variables(&request)?,
-                "evaluate" => self.handle_evaluate(&request)?,
-                "continue" => self.handle_exec(&request, "-exec-continue", json!({ "allThreadsContinued": true }))?,
-                "next" => self.handle_exec(&request, "-exec-next", json!({}))?,
-                "stepIn" => self.handle_exec(&request, "-exec-step", json!({}))?,
-                "stepOut" => self.handle_exec(&request, "-exec-finish", json!({}))?,
-                "pause" => self.handle_exec(&request, "-exec-interrupt", json!({}))?,
+                "initialize"              => self.handle_initialize(&request)?,
+                "launch"                  => self.handle_launch(&request)?,
+                "attach"                  => self.handle_attach(&request)?,
+                "setBreakpoints"          => self.handle_set_breakpoints(&request)?,
+                "setFunctionBreakpoints"  => self.handle_set_function_breakpoints(&request)?,
+                "setExceptionBreakpoints" => self.handle_set_exception_breakpoints(&request)?,
+                "configurationDone"       => self.handle_configuration_done(&request)?,
+                "threads"                 => self.handle_threads(&request)?,
+                "stackTrace"              => self.handle_stack_trace(&request)?,
+                "scopes"                  => self.handle_scopes(&request)?,
+                "variables"               => self.handle_variables(&request)?,
+                "setVariable"             => self.handle_set_variable(&request)?,
+                "evaluate"                => self.handle_evaluate(&request)?,
+                "continue" => {
+                    let cmd = exec_cmd("-exec-continue", &request, false);
+                    self.handle_exec(&request, &cmd, json!({ "allThreadsContinued": true }))?
+                }
+                "next" => {
+                    let cmd = step_cmd("next", &request);
+                    self.handle_exec(&request, &cmd, json!({}))?
+                }
+                "stepIn" => {
+                    let cmd = step_cmd("stepIn", &request);
+                    self.handle_exec(&request, &cmd, json!({}))?
+                }
+                "stepOut" => {
+                    let cmd = exec_cmd("-exec-finish", &request, true);
+                    self.handle_exec(&request, &cmd, json!({}))?
+                }
+                "pause" => {
+                    let cmd = exec_cmd("-exec-interrupt", &request, true);
+                    self.handle_exec(&request, &cmd, json!({}))?
+                }
                 "disconnect" | "terminate" => {
                     self.shutdown();
                     self.response(&request, json!({}))?;
@@ -110,6 +166,8 @@ impl DapServer {
         Ok(())
     }
 
+    // ── Initialize ────────────────────────────────────────────────────────────
+
     fn handle_initialize(&mut self, request: &Value) -> anyhow::Result<()> {
         self.init_request = Some(request.clone());
         self.response(
@@ -118,11 +176,23 @@ impl DapServer {
                 "supportsConfigurationDoneRequest": true,
                 "supportsTerminateRequest": true,
                 "supportsEvaluateForHovers": true,
-                "supportsSetVariable": false,
+                "supportsSetVariable": true,
                 "supportsStepBack": false,
+                "supportsConditionalBreakpoints": true,
+                "supportsHitConditionalBreakpoints": true,
+                "supportsFunctionBreakpoints": true,
+                "supportsStepGranularities": true,
+                "exceptionBreakpointFilters": [
+                    { "filter": "cpp_throw",  "label": "C++: on throw",  "default": false },
+                    { "filter": "cpp_catch",  "label": "C++: on catch",  "default": false },
+                    { "filter": "sig_segv",   "label": "SIGSEGV",        "default": false },
+                    { "filter": "sig_abrt",   "label": "SIGABRT",        "default": false },
+                ]
             }),
         )
     }
+
+    // ── Launch ────────────────────────────────────────────────────────────────
 
     fn handle_launch(&mut self, request: &Value) -> anyhow::Result<()> {
         let config = request.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -134,13 +204,8 @@ impl DapServer {
 
         if config["mode"].as_str().unwrap_or("run") == "debug" {
             match self.launch_debug(request, &config) {
-                Ok(true) => {
-                    // Passthrough mode: the relay already handled the full session,
-                    // including forwarding the adapter's launch response and initialized
-                    // event to VS Code. Nothing more to send.
-                }
+                Ok(true) => {}
                 Ok(false) => {
-                    // MI2 mode: we own the protocol; send initialized + launch response.
                     self.event("initialized", json!({}))?;
                     self.response(request, json!({}))?;
                     if self.configuration_done {
@@ -157,9 +222,7 @@ impl DapServer {
         }
 
         match self.launch_run(&config) {
-            Ok(()) => {
-                self.response(request, json!({}))?;
-            }
+            Ok(()) => self.response(request, json!({}))?,
             Err(err) => {
                 self.output(&format!("{err}\n"), "stderr")?;
                 self.error_response(request, &err.to_string())?;
@@ -172,10 +235,7 @@ impl DapServer {
     fn launch_run(&mut self, config: &Value) -> anyhow::Result<()> {
         let freight = std::env::current_exe()?;
         let args = freight_run_args(config);
-        self.output(
-            &format!("$ {} {}\n", freight.display(), shell_words(&args)),
-            "console",
-        )?;
+        self.output(&format!("$ {} {}\n", freight.display(), shell_words(&args)), "console")?;
         let mut child = Command::new(freight)
             .args(args)
             .stdin(Stdio::null())
@@ -192,72 +252,28 @@ impl DapServer {
         Ok(())
     }
 
-    /// Returns `Ok(true)` if passthrough mode ran the full session inline.
-    /// Returns `Ok(false)` if MI2 mode was set up and the caller should drive the protocol.
+    /// Returns `Ok(true)` if passthrough ran the full session inline.
+    /// Returns `Ok(false)` if MI2 was set up and the caller drives protocol.
     fn launch_debug(&mut self, launch_request: &Value, config: &Value) -> anyhow::Result<bool> {
-        let project_dir = find_project_dir()?;
-        let manifest = load_manifest(&project_dir)?;
-        let mut global_cfg = GlobalConfig::load();
-        if let Some(local) = GlobalConfig::load_local(&project_dir) {
-            global_cfg.apply_local(local);
-        }
-        let debuggers = detect_debuggers(&load_debugger_templates());
-        if debuggers.is_empty() {
-            anyhow::bail!(
-                "no debugger found on PATH; install gdb (≥14 for native DAP) or lldb (with lldb-dap)"
-            );
-        }
+        let (debugger, binary) = self.resolve_debugger_and_build(config)?;
 
-        let debugger_pref = config["debugger"]
-            .as_str()
-            .or(global_cfg.default_debugger.as_deref());
-        let debugger = if let Some(pref) = debugger_pref {
-            debuggers
-                .iter()
-                .find(|d| d.template.name == pref)
-                .ok_or_else(|| anyhow::anyhow!("debugger '{pref}' not found on PATH"))?
-        } else {
-            &debuggers[0]
-        };
-
-        let features = string_array(&config["features"]);
-        let output = build_project_with(
-            "debug",
-            &features,
-            !config["noDefaultFeatures"].as_bool().unwrap_or(false),
-            &[],
-            &silent(),
-        )?;
-        let binary = select_binary(&output, &project_dir, config["bin"].as_str(), &manifest)?;
-
-        // Decide on passthrough vs MI2 bridge.
         match debugger.template.name.as_str() {
             "gdb" => {
-                let (major, _minor) = gdb_version(&debugger.path);
+                let (major, _) = gdb_version(&debugger.path);
                 if major >= 14 {
                     self.output(
-                        &format!(
-                            "Debugging {} with {} {} (native DAP)\n",
-                            binary.display(),
-                            debugger.template.name,
-                            debugger.version
-                        ),
+                        &format!("Debugging {} with {} {} (native DAP)\n",
+                            binary.display(), debugger.template.name, debugger.version),
                         "console",
                     )?;
-                    self.run_passthrough(
-                        &debugger.path,
-                        &["--interpreter=dap"],
-                        &binary,
-                        launch_request,
-                    )
+                    let mut fwd = launch_request.clone();
+                    fwd["arguments"]["program"] =
+                        Value::String(binary.to_string_lossy().into_owned());
+                    self.run_passthrough(&debugger.path, &["--interpreter=dap"], fwd)
                 } else {
                     self.output(
-                        &format!(
-                            "Debugging {} with {} {} (GDB/MI2 bridge)\n",
-                            binary.display(),
-                            debugger.template.name,
-                            debugger.version
-                        ),
+                        &format!("Debugging {} with {} {} (GDB/MI2 bridge)\n",
+                            binary.display(), debugger.template.name, debugger.version),
                         "console",
                     )?;
                     self.launch_gdb_mi2(
@@ -272,22 +288,18 @@ impl DapServer {
             "lldb" => {
                 if let Some(ref dap_bin) = debugger.dap_path {
                     self.output(
-                        &format!(
-                            "Debugging {} with {} (native DAP)\n",
-                            binary.display(),
-                            dap_bin.display()
-                        ),
+                        &format!("Debugging {} with {} (native DAP)\n",
+                            binary.display(), dap_bin.display()),
                         "console",
                     )?;
-                    self.run_passthrough(&dap_bin, &[], &binary, launch_request)
+                    let mut fwd = launch_request.clone();
+                    fwd["arguments"]["program"] =
+                        Value::String(binary.to_string_lossy().into_owned());
+                    self.run_passthrough(dap_bin, &[], fwd)
                 } else {
-                    // lldb-dap not available; fall back to LLDB's built-in MI interpreter.
                     self.output(
-                        &format!(
-                            "Debugging {} with lldb {} (LLDB/MI2 bridge; install lldb-dap for full support)\n",
-                            binary.display(),
-                            debugger.version
-                        ),
+                        &format!("Debugging {} with lldb {} (LLDB/MI2 bridge; install lldb-dap for full support)\n",
+                            binary.display(), debugger.version),
                         "console",
                     )?;
                     self.launch_gdb_mi2(
@@ -300,53 +312,148 @@ impl DapServer {
                 }
             }
             "rr" => {
-                // rr replays the most recent recording over a GDB/MI2 session.
-                // Users must record first: `rr record ./binary [args]`
                 self.output(
-                    &format!(
-                        "Replaying with rr {} (GDB/MI2 bridge) — recording must exist\n",
-                        debugger.version
-                    ),
+                    &format!("Replaying with rr {} (GDB/MI2 bridge) — recording must exist\n",
+                        debugger.version),
                     "console",
                 )?;
-                // `rr replay -- <gdb-args>` passes the trailing args directly to GDB.
                 self.launch_gdb_mi2(
                     &debugger.path,
                     &["replay", "--", "--interpreter=mi2", "--quiet"],
-                    None, // binary is baked into the rr recording
+                    None,
                     config,
                 )?;
                 Ok(false)
             }
-            "cdb" | "windbg" => {
-                anyhow::bail!(
-                    "{} does not support a freight DAP backend; \
-                     use the 'ms-vscode.cpptools' VS Code extension (cppdbg) for Windows debuggers",
-                    debugger.template.name
-                )
-            }
-            other => {
-                anyhow::bail!(
-                    "debugger '{other}' has no Freight DAP backend; \
-                     supported: gdb (≥14 native DAP, older via MI2), \
-                     lldb (native DAP with lldb-dap, or MI2 fallback), \
-                     rr (MI2 replay)"
-                );
-            }
+            "cdb" | "windbg" => anyhow::bail!(
+                "{} does not support a freight DAP backend; \
+                 use the 'ms-vscode.cpptools' VS Code extension (cppdbg) for Windows debuggers",
+                debugger.template.name
+            ),
+            other => anyhow::bail!(
+                "debugger '{other}' has no Freight DAP backend; \
+                 supported: gdb (≥14 native DAP, older via MI2), \
+                 lldb (native DAP with lldb-dap, or MI2 fallback), \
+                 rr (MI2 replay)"
+            ),
         }
     }
 
-    /// Passthrough mode: spawn the native DAP adapter, bootstrap it with `initialize`
-    /// and `launch` (which VS Code already sent to us), then relay all subsequent
-    /// traffic bidirectionally until the adapter exits.
+    // ── Attach ────────────────────────────────────────────────────────────────
+
+    fn handle_attach(&mut self, request: &Value) -> anyhow::Result<()> {
+        let config = request.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        if let Some(cwd) = config["cwd"].as_str() {
+            if !cwd.is_empty() {
+                std::env::set_current_dir(cwd)?;
+            }
+        }
+        match self.attach_debug(request, &config) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.event("initialized", json!({}))?;
+                self.response(request, json!({}))?;
+            }
+            Err(err) => {
+                self.output(&format!("{err}\n"), "stderr")?;
+                self.error_response(request, &err.to_string())?;
+                self.event("terminated", json!({}))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn attach_debug(&mut self, attach_request: &Value, config: &Value) -> anyhow::Result<bool> {
+        let pid = config["pid"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("attach requires 'pid' in launch arguments"))?;
+
+        let global_cfg = GlobalConfig::load();
+        let debuggers = detect_debuggers(&load_debugger_templates());
+        if debuggers.is_empty() {
+            anyhow::bail!("no debugger found on PATH");
+        }
+        let debugger_pref = config["debugger"]
+            .as_str()
+            .or(global_cfg.default_debugger.as_deref());
+        let debugger = if let Some(pref) = debugger_pref {
+            debuggers
+                .iter()
+                .find(|d| d.template.name == pref)
+                .ok_or_else(|| anyhow::anyhow!("debugger '{pref}' not found on PATH"))?
+        } else {
+            &debuggers[0]
+        };
+
+        self.attached = true;
+
+        match debugger.template.name.as_str() {
+            "gdb" => {
+                let (major, _) = gdb_version(&debugger.path);
+                if major >= 14 {
+                    self.output(
+                        &format!("Attaching to pid {} with {} {} (native DAP)\n",
+                            pid, debugger.template.name, debugger.version),
+                        "console",
+                    )?;
+                    self.run_passthrough(
+                        &debugger.path,
+                        &["--interpreter=dap"],
+                        attach_request.clone(),
+                    )
+                } else {
+                    self.output(
+                        &format!("Attaching to pid {} with {} {} (GDB/MI2 bridge)\n",
+                            pid, debugger.template.name, debugger.version),
+                        "console",
+                    )?;
+                    self.launch_gdb_mi2(&debugger.path, &["--interpreter=mi2", "--quiet"], None, config)?;
+                    if let Some(prog) = config["program"].as_str() {
+                        let _ = self.gdb_command(&format!("-file-exec-and-symbols {}", mi_quote(prog)));
+                    }
+                    self.gdb_command(&format!("-target-attach {pid}"))?;
+                    Ok(false)
+                }
+            }
+            "lldb" => {
+                if let Some(ref dap_bin) = debugger.dap_path {
+                    self.output(
+                        &format!("Attaching to pid {} with {} (native DAP)\n",
+                            pid, dap_bin.display()),
+                        "console",
+                    )?;
+                    self.run_passthrough(dap_bin, &[], attach_request.clone())
+                } else {
+                    self.output(
+                        &format!("Attaching to pid {} with lldb {} (LLDB/MI2 bridge)\n",
+                            pid, debugger.version),
+                        "console",
+                    )?;
+                    self.launch_gdb_mi2(&debugger.path, &["--interpreter=mi", "--quiet"], None, config)?;
+                    if let Some(prog) = config["program"].as_str() {
+                        let _ = self.gdb_command(&format!("-file-exec-and-symbols {}", mi_quote(prog)));
+                    }
+                    self.gdb_command(&format!("-target-attach {pid}"))?;
+                    Ok(false)
+                }
+            }
+            other => anyhow::bail!(
+                "attach is not supported for debugger '{other}'; use gdb or lldb"
+            ),
+        }
+    }
+
+    // ── Passthrough relay ─────────────────────────────────────────────────────
+
+    /// Spawn a native DAP adapter and relay all traffic between it and VS Code.
     ///
-    /// Returns `Ok(true)` always; the full session is handled inline.
+    /// `first_request` is the launch/attach request (already augmented with
+    /// `program` if needed) to forward after bootstrapping `initialize`.
     fn run_passthrough(
         &mut self,
         adapter_bin: &Path,
         adapter_args: &[&str],
-        binary: &Path,
-        launch_request: &Value,
+        first_request: Value,
     ) -> anyhow::Result<bool> {
         let mut child = Command::new(adapter_bin)
             .args(adapter_args)
@@ -355,10 +462,11 @@ impl DapServer {
             .stderr(Stdio::null())
             .spawn()?;
 
-        let mut adapter_stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("adapter stdin unavailable"))?;
-        let adapter_stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("adapter stdout unavailable"))?;
+        let mut adapter_stdin = child.stdin.take()
+            .ok_or_else(|| anyhow::anyhow!("adapter stdin unavailable"))?;
+        let adapter_stdout = child.stdout.take()
+            .ok_or_else(|| anyhow::anyhow!("adapter stdout unavailable"))?;
 
-        // Pump adapter stdout into a channel so we can interleave it with VS Code requests.
         let (adapter_out_tx, adapter_out_rx) = mpsc::channel::<Vec<u8>>();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(adapter_stdout);
@@ -377,42 +485,28 @@ impl DapServer {
             }
         });
 
-        // Bootstrap the adapter with the requests VS Code already sent us.
-        // The adapter needs `initialize` before it can accept `launch`.
+        // Bootstrap: send initialize (VS Code already got our capabilities response;
+        // the adapter needs its own initialize before it can accept launch/attach).
         let init_req = self.init_request.clone().unwrap_or_else(|| json!({
-            "type": "request",
-            "seq": 1,
-            "command": "initialize",
+            "type": "request", "seq": 1, "command": "initialize",
             "arguments": {
-                "clientID": "vscode",
-                "adapterID": "freight",
-                "linesStartAt1": true,
-                "columnsStartAt1": true,
-                "pathFormat": "path"
+                "clientID": "vscode", "adapterID": "freight",
+                "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path"
             }
         }));
         write_dap(&mut adapter_stdin, &init_req)?;
-
-        // Drain the adapter's `initialize` response — we already sent our own
-        // capabilities to VS Code and must not forward the adapter's duplicate.
+        // Drain adapter's initialize response — don't forward (VS Code already got ours).
         let _ = adapter_out_rx.recv_timeout(Duration::from_secs(5));
 
-        // Forward `launch` with the built binary injected.
-        let mut fwd_launch = launch_request.clone();
-        if let Some(args) = fwd_launch["arguments"].as_object_mut() {
-            args.insert("program".to_string(), Value::String(binary.to_string_lossy().into_owned()));
-        }
-        write_dap(&mut adapter_stdin, &fwd_launch)?;
+        // Forward the launch/attach request.
+        write_dap(&mut adapter_stdin, &first_request)?;
 
-        // Relay loop: forward adapter output to VS Code, VS Code requests to adapter.
-        // The adapter's `launch` response and `initialized` event come through here
-        // and are forwarded to VS Code, satisfying the pending `launch` request.
+        // Relay all subsequent traffic.
         loop {
             while let Ok(bytes) = adapter_out_rx.try_recv() {
                 self.stdout.write_all(&bytes)?;
                 self.stdout.flush()?;
             }
-
             let request = match self.requests.recv_timeout(Duration::from_millis(20)) {
                 Ok(r) => r,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -423,9 +517,7 @@ impl DapServer {
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             };
-
             write_dap(&mut adapter_stdin, &request)?;
-
             match request["command"].as_str().unwrap_or("") {
                 "disconnect" | "terminate" => break,
                 _ => {}
@@ -440,10 +532,10 @@ impl DapServer {
         Ok(true)
     }
 
-    /// MI2 bridge — spawns `debugger_path` with `args`, then drives it over GDB/MI2.
-    ///
-    /// `binary` is `Some` for GDB and LLDB (we load it with `-file-exec-and-symbols`).
-    /// Pass `None` for rr, which already has the binary from the recording.
+    // ── MI2 bridge setup ──────────────────────────────────────────────────────
+
+    /// Spawn `debugger_path args…` and attach GDB/MI2 I/O.
+    /// `binary = Some(p)` loads the executable; `None` skips (e.g. rr, attach).
     fn launch_gdb_mi2(
         &mut self,
         debugger_path: &Path,
@@ -457,21 +549,20 @@ impl DapServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("debugger stdout unavailable"))?;
-        let stderr = child.stderr.take().ok_or_else(|| anyhow::anyhow!("debugger stderr unavailable"))?;
-        let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("debugger stdin unavailable"))?;
+        let stdout = child.stdout.take()
+            .ok_or_else(|| anyhow::anyhow!("debugger stdout unavailable"))?;
+        let stderr = child.stderr.take()
+            .ok_or_else(|| anyhow::anyhow!("debugger stderr unavailable"))?;
+        let stdin = child.stdin.take()
+            .ok_or_else(|| anyhow::anyhow!("debugger stdin unavailable"))?;
         self.gdb_rx = Some(spawn_gdb_reader(stdout));
         spawn_process_output(stderr, "stderr", self.output_tx.clone());
         self.gdb_stdin = Some(stdin);
         self.gdb = Some(child);
-        // These may error on some debuggers (e.g. LLDB already runs async); ignore failures.
         let _ = self.gdb_command("-gdb-set target-async on");
         let _ = self.gdb_command("-gdb-set breakpoint pending on");
         if let Some(bin) = binary {
-            self.gdb_command(&format!(
-                "-file-exec-and-symbols {}",
-                mi_quote(&bin.display().to_string())
-            ))?;
+            self.gdb_command(&format!("-file-exec-and-symbols {}", mi_quote(&bin.display().to_string())))?;
             let program_args = string_array(&config["args"]);
             if !program_args.is_empty() {
                 self.gdb_command(&format!(
@@ -484,34 +575,144 @@ impl DapServer {
         Ok(())
     }
 
+    // ── Breakpoints ───────────────────────────────────────────────────────────
+
     fn handle_set_breakpoints(&mut self, request: &Value) -> anyhow::Result<()> {
         let args = &request["arguments"];
         let path = args["source"]["path"].as_str().unwrap_or("").to_string();
         let requested = args["breakpoints"].as_array().cloned().unwrap_or_default();
-        let lines = requested
-            .iter()
-            .filter_map(|bp| bp["line"].as_u64())
-            .collect::<Vec<_>>();
+
         if !path.is_empty() {
-            self.breakpoints.insert(path.clone(), lines);
-            // Clear the flag so apply_breakpoints will re-apply everything.
+            let specs = requested.iter().filter_map(|bp| {
+                let line = bp["line"].as_u64()?;
+                let condition = bp["condition"].as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let hit_condition = bp["hitCondition"].as_str()
+                    .and_then(|s| s.trim().parse::<u64>().ok());
+                Some(BreakpointSpec { line, condition, hit_condition })
+            }).collect();
+            self.breakpoints.insert(path.clone(), specs);
             self.breakpoints_applied = false;
             if self.gdb.is_some() {
                 self.apply_breakpoints()?;
             }
         }
-        self.response(
-            request,
-            json!({
-                "breakpoints": requested.iter().map(|bp| {
-                    json!({
-                        "verified": true,
-                        "source": args["source"].clone(),
-                        "line": bp["line"].clone(),
-                    })
-                }).collect::<Vec<_>>()
-            }),
-        )
+
+        self.response(request, json!({
+            "breakpoints": requested.iter().map(|bp| json!({
+                "verified": true,
+                "source": args["source"].clone(),
+                "line": bp["line"].clone(),
+            })).collect::<Vec<_>>()
+        }))
+    }
+
+    fn handle_set_function_breakpoints(&mut self, request: &Value) -> anyhow::Result<()> {
+        let bps = request["arguments"]["breakpoints"].as_array().cloned().unwrap_or_default();
+        self.func_breakpoints = bps.iter().filter_map(|bp| {
+            let name = bp["name"].as_str().filter(|s| !s.is_empty())?.to_string();
+            let condition = bp["condition"].as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            Some(FuncBreakpointSpec { name, condition })
+        }).collect();
+        self.breakpoints_applied = false;
+        if self.gdb.is_some() {
+            self.apply_breakpoints()?;
+        }
+        self.response(request, json!({
+            "breakpoints": bps.iter().map(|bp| json!({
+                "verified": self.gdb.is_some(),
+                "name": bp["name"].clone(),
+            })).collect::<Vec<_>>()
+        }))
+    }
+
+    fn handle_set_exception_breakpoints(&mut self, request: &Value) -> anyhow::Result<()> {
+        let filters = request["arguments"]["filters"].as_array().cloned().unwrap_or_default();
+        self.exception_filters = filters.iter()
+            .filter_map(|f| f.as_str().map(str::to_string))
+            .collect();
+        self.breakpoints_applied = false;
+        if self.gdb.is_some() {
+            self.apply_breakpoints()?;
+        }
+        self.response(request, json!({ "breakpoints": [] }))
+    }
+
+    fn apply_breakpoints(&mut self) -> anyhow::Result<()> {
+        if self.gdb.is_none() || self.breakpoints_applied {
+            return Ok(());
+        }
+
+        // Delete previously applied breakpoints by number.
+        if !self.applied_bkpt_numbers.is_empty() {
+            let nums = self.applied_bkpt_numbers.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let _ = self.gdb_command(&format!("-break-delete {nums}"));
+            self.applied_bkpt_numbers.clear();
+        }
+
+        // Line breakpoints.
+        for (file, specs) in self.breakpoints.clone() {
+            for spec in specs {
+                let loc = mi_quote(&format!("{}:{}", file, spec.line));
+                let cmd = if let Some(ref cond) = spec.condition {
+                    format!("-break-insert -c {} {loc}", mi_quote(cond))
+                } else {
+                    format!("-break-insert {loc}")
+                };
+                match self.gdb_command(&cmd) {
+                    Ok(line) => {
+                        if let Some(n) = mi_field(&line, "number").and_then(|s| s.parse().ok()) {
+                            self.applied_bkpt_numbers.push(n);
+                            if let Some(count) = spec.hit_condition {
+                                let _ = self.gdb_command(&format!("-break-after {n} {count}"));
+                            }
+                        }
+                    }
+                    Err(err) => self.output(&format!("{err}\n"), "stderr")?,
+                }
+            }
+        }
+
+        // Function breakpoints.
+        for spec in self.func_breakpoints.clone() {
+            let cmd = if let Some(ref cond) = spec.condition {
+                format!("-break-insert -f -c {} {}", mi_quote(cond), mi_quote(&spec.name))
+            } else {
+                format!("-break-insert -f {}", mi_quote(&spec.name))
+            };
+            if let Ok(line) = self.gdb_command(&cmd) {
+                if let Some(n) = mi_field(&line, "number").and_then(|s| s.parse().ok()) {
+                    self.applied_bkpt_numbers.push(n);
+                }
+            }
+        }
+
+        // Exception catchpoints (GDB-specific MI commands; LLDB will ignore errors).
+        for filter in self.exception_filters.clone() {
+            let cmd = match filter.as_str() {
+                "cpp_throw" => Some("-catch-throw"),
+                "cpp_catch" => Some("-catch-catch"),
+                "sig_segv"  => Some("-catch-signal SIGSEGV"),
+                "sig_abrt"  => Some("-catch-signal SIGABRT"),
+                _ => None,
+            };
+            if let Some(cmd) = cmd {
+                if let Ok(line) = self.gdb_command(cmd) {
+                    if let Some(n) = mi_field(&line, "number").and_then(|s| s.parse().ok()) {
+                        self.applied_bkpt_numbers.push(n);
+                    }
+                }
+            }
+        }
+
+        self.breakpoints_applied = true;
+        Ok(())
     }
 
     fn handle_configuration_done(&mut self, request: &Value) -> anyhow::Result<()> {
@@ -520,8 +721,9 @@ impl DapServer {
         self.start_debuggee()
     }
 
+    // ── Execution control ─────────────────────────────────────────────────────
+
     fn handle_exec(&mut self, request: &Value, command: &str, body: Value) -> anyhow::Result<()> {
-        // Varobjs reflect a specific stopped state; drop them before resuming.
         self.drop_varobjs();
         if let Err(err) = self.gdb_command(command) {
             self.output(&format!("{err}\n"), "stderr")?;
@@ -529,77 +731,106 @@ impl DapServer {
         self.response(request, body)
     }
 
+    fn start_debuggee(&mut self) -> anyhow::Result<()> {
+        if self.gdb.is_none() || self.debug_started {
+            return Ok(());
+        }
+        self.debug_started = true;
+        // For attach: the process is already running; resume it.
+        // For launch: start it from the beginning.
+        let cmd = if self.attached { "-exec-continue" } else { "-exec-run" };
+        if let Err(err) = self.gdb_command(cmd) {
+            self.output(&format!("{err}\n"), "stderr")?;
+            self.event("terminated", json!({}))?;
+        }
+        Ok(())
+    }
+
+    // ── Threads ───────────────────────────────────────────────────────────────
+
     fn handle_threads(&mut self, request: &Value) -> anyhow::Result<()> {
         if self.gdb.is_none() {
-            return self.response(
-                request,
-                json!({ "threads": [{ "id": 1, "name": "main" }] }),
-            );
+            return self.response(request, json!({ "threads": [{ "id": 1, "name": "main" }] }));
         }
-
         let threads = match self.gdb_command("-thread-list-ids") {
             Ok(line) => {
-                // Parse: ^done,thread-ids={thread-id="1",thread-id="2",...},number-of-threads="N"
                 let ids = mi_parse_list_value(&line, "thread-id");
                 if ids.is_empty() {
                     vec![json!({ "id": 1, "name": "main" })]
                 } else {
-                    ids.iter()
-                        .filter_map(|m| {
-                            let id_str = m.get("thread-id")?;
-                            let id: u64 = id_str.parse().ok()?;
-                            Some(json!({ "id": id, "name": format!("thread {id}") }))
-                        })
-                        .collect()
+                    ids.iter().filter_map(|m| {
+                        let id: u64 = m.get("thread-id")?.parse().ok()?;
+                        Some(json!({ "id": id, "name": format!("thread {id}") }))
+                    }).collect()
                 }
             }
             Err(_) => vec![json!({ "id": 1, "name": "main" })],
         };
-
         self.response(request, json!({ "threads": threads }))
     }
+
+    // ── Stack trace ───────────────────────────────────────────────────────────
 
     fn handle_stack_trace(&mut self, request: &Value) -> anyhow::Result<()> {
         let line = self.gdb_command("-stack-list-frames")?;
         let frames = parse_stack_frames(&line);
         let total = frames.len();
-        self.response(
-            request,
-            json!({
-                "stackFrames": frames,
-                "totalFrames": total,
-            }),
-        )
+        self.response(request, json!({ "stackFrames": frames, "totalFrames": total }))
     }
+
+    // ── Scopes ────────────────────────────────────────────────────────────────
+
+    fn handle_scopes(&mut self, request: &Value) -> anyhow::Result<()> {
+        let frame_id = request["arguments"]["frameId"].as_u64().unwrap_or(0);
+        // Frame locals scope: variablesReference = frameId + 1 (range 1..=999).
+        // Varobj expansion refs start at 1000.
+        let locals_ref = frame_id + 1;
+        self.response(request, json!({
+            "scopes": [{
+                "name": "Locals",
+                "variablesReference": locals_ref,
+                "expensive": false,
+            }]
+        }))
+    }
+
+    // ── Variables ─────────────────────────────────────────────────────────────
 
     fn handle_variables(&mut self, request: &Value) -> anyhow::Result<()> {
         let var_ref = request["arguments"]["variablesReference"].as_u64().unwrap_or(1);
 
-        if var_ref == 1 {
-            // Top-level locals scope.  Recreate varobjs from scratch so we always
-            // reflect the current stopped state.
-            self.drop_varobjs();
+        if var_ref < 1000 {
+            // Frame locals scope: var_ref = frameId + 1.
+            let frame_id = var_ref - 1;
+            // Recreate varobjs from scratch for this stop (stale ones already dropped on exec).
+            // Select the requested frame so varobjs reflect its locals.
+            if frame_id > 0 {
+                let _ = self.gdb_command(&format!("-stack-select-frame {frame_id}"));
+            }
             let line = self.gdb_command("-stack-list-variables --all-values")?;
+            // Restore frame 0 so other commands operate on the current frame.
+            if frame_id > 0 {
+                let _ = self.gdb_command("-stack-select-frame 0");
+            }
             let raw = parse_raw_variables(&line);
             let mut result = Vec::new();
             for (name, value, type_) in raw {
                 let vo_name = format!("frt_{}", self.varobj_seq);
                 self.varobj_seq += 1;
-                // Create a varobj so we know the child count for this variable.
                 match self.gdb_command(&format!("-var-create {} * {}", vo_name, mi_quote(&name))) {
                     Ok(info) => {
+                        self.top_varobjs.push(vo_name.clone());
                         let numchild: u64 = mi_field(&info, "numchild")
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0);
+                            .and_then(|s| s.parse().ok()).unwrap_or(0);
                         let display = mi_field(&info, "value").unwrap_or(value);
+                        // Store for setVariable regardless of complexity.
+                        self.setvar_varobjs.insert((var_ref, name.clone()), vo_name.clone());
                         let ref_id = if numchild > 0 {
                             let id = self.varobj_seq;
                             self.varobj_seq += 1;
                             self.varobjs.insert(id, vo_name);
                             id
                         } else {
-                            // No children — delete the varobj immediately.
-                            let _ = self.gdb_command(&format!("-var-delete frt_{}", self.varobj_seq - 1));
                             0
                         };
                         result.push(json!({
@@ -621,23 +852,22 @@ impl DapServer {
             }
             self.response(request, json!({ "variables": result }))
         } else {
-            // Child expansion of a previously issued varobj.
+            // Child expansion of a varobj.
             let vo_name = self.varobjs.get(&var_ref).cloned();
             match vo_name {
                 None => self.response(request, json!({ "variables": [] })),
                 Some(name) => {
                     let line = self.gdb_command(&format!(
-                        "-var-list-children --all-values {}",
-                        mi_quote(&name)
+                        "-var-list-children --all-values {}", mi_quote(&name)
                     ))?;
-                    let children = self.expand_varobj_children(&line)?;
+                    let children = self.expand_varobj_children(var_ref, &line)?;
                     self.response(request, json!({ "variables": children }))
                 }
             }
         }
     }
 
-    fn expand_varobj_children(&mut self, line: &str) -> anyhow::Result<Vec<Value>> {
+    fn expand_varobj_children(&mut self, parent_ref: u64, line: &str) -> anyhow::Result<Vec<Value>> {
         let raw = mi_parse_list_value(line, "child");
         let mut result = Vec::new();
         for child in raw {
@@ -646,6 +876,8 @@ impl DapServer {
             let value = child.get("value").cloned().unwrap_or_else(|| "<unavailable>".to_string());
             let type_ = child.get("type").cloned().unwrap_or_default();
             let numchild: u64 = child.get("numchild").and_then(|s| s.parse().ok()).unwrap_or(0);
+            // Store for setVariable.
+            self.setvar_varobjs.insert((parent_ref, exp.clone()), child_name.clone());
             let ref_id = if numchild > 0 {
                 let id = self.varobj_seq;
                 self.varobj_seq += 1;
@@ -666,13 +898,39 @@ impl DapServer {
 
     fn drop_varobjs(&mut self) {
         if self.gdb.is_some() {
-            let names: Vec<String> = self.varobjs.values().cloned().collect();
+            // Only top-level varobjs need explicit deletion; GDB removes children automatically.
+            let names: Vec<String> = self.top_varobjs.clone();
             for name in names {
                 let _ = self.gdb_command(&format!("-var-delete {}", mi_quote(&name)));
             }
         }
         self.varobjs.clear();
+        self.setvar_varobjs.clear();
+        self.top_varobjs.clear();
     }
+
+    // ── setVariable ───────────────────────────────────────────────────────────
+
+    fn handle_set_variable(&mut self, request: &Value) -> anyhow::Result<()> {
+        let parent_ref = request["arguments"]["variablesReference"].as_u64().unwrap_or(0);
+        let name = request["arguments"]["name"].as_str().unwrap_or("").to_string();
+        let value = request["arguments"]["value"].as_str().unwrap_or("");
+
+        match self.setvar_varobjs.get(&(parent_ref, name.clone())).cloned() {
+            Some(vo_name) => {
+                match self.gdb_command(&format!("-var-assign {} {}", mi_quote(&vo_name), mi_quote(value))) {
+                    Ok(line) => {
+                        let new_val = mi_field(&line, "value").unwrap_or_else(|| value.to_string());
+                        self.response(request, json!({ "value": new_val }))
+                    }
+                    Err(err) => self.error_response(request, &err.to_string()),
+                }
+            }
+            None => self.error_response(request, &format!("variable '{name}' not found")),
+        }
+    }
+
+    // ── Evaluate (hover / REPL) ───────────────────────────────────────────────
 
     fn handle_evaluate(&mut self, request: &Value) -> anyhow::Result<()> {
         let expression = request["arguments"]["expression"].as_str().unwrap_or("").trim();
@@ -691,118 +949,7 @@ impl DapServer {
         }
     }
 
-    fn start_debuggee(&mut self) -> anyhow::Result<()> {
-        if self.gdb.is_none() || self.debug_started {
-            return Ok(());
-        }
-        self.debug_started = true;
-        if let Err(err) = self.gdb_command("-exec-run") {
-            self.output(&format!("{err}\n"), "stderr")?;
-            self.event("terminated", json!({}))?;
-        }
-        Ok(())
-    }
-
-    fn apply_breakpoints(&mut self) -> anyhow::Result<()> {
-        if self.gdb.is_none() || self.breakpoints_applied {
-            return Ok(());
-        }
-        let _ = self.gdb_command("-break-delete");
-        for (file, lines) in self.breakpoints.clone() {
-            for line in lines {
-                if let Err(err) = self.gdb_command(&format!(
-                    "-break-insert {}",
-                    mi_quote(&format!("{file}:{line}"))
-                )) {
-                    self.output(&format!("{err}\n"), "stderr")?;
-                }
-            }
-        }
-        self.breakpoints_applied = true;
-        Ok(())
-    }
-
-    fn gdb_command(&mut self, command: &str) -> anyhow::Result<String> {
-        let token = self.gdb_token;
-        self.gdb_token += 1;
-        let stdin = self
-            .gdb_stdin
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("gdb is not running"))?;
-        writeln!(stdin, "{token}{command}")?;
-        stdin.flush()?;
-
-        loop {
-            let line = self
-                .gdb_rx
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("gdb output unavailable"))?
-                .recv_timeout(Duration::from_secs(30))?;
-            if let Some(result) = self.handle_gdb_line(&line, Some(token))? {
-                return Ok(result);
-            }
-        }
-    }
-
-    fn drain_debugger_events(&mut self) {
-        while let Ok((category, output)) = self.output_rx.try_recv() {
-            let _ = self.output(&output, &category);
-        }
-        while let Some(line) = self.gdb_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            let _ = self.handle_gdb_line(&line, None);
-        }
-        if let Some(child) = self.run_process.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                let _ = self.event("exited", json!({ "exitCode": status.code().unwrap_or(0) }));
-                let _ = self.event("terminated", json!({}));
-                self.run_process = None;
-            }
-        }
-        if let Some(child) = self.gdb.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                let _ = self.event("exited", json!({ "exitCode": status.code().unwrap_or(0) }));
-                let _ = self.event("terminated", json!({}));
-                self.gdb = None;
-                self.gdb_stdin = None;
-            }
-        }
-    }
-
-    fn handle_gdb_line(&mut self, line: &str, waiting_for: Option<u64>) -> anyhow::Result<Option<String>> {
-        if let Some(rest) = line.strip_prefix('~') {
-            self.output(&mi_c_string(rest), "console")?;
-            return Ok(None);
-        }
-        if let Some(rest) = line.strip_prefix('&') {
-            self.output(&mi_c_string(rest), "stderr")?;
-            return Ok(None);
-        }
-        if line.starts_with("*stopped") {
-            if line.contains("exited") {
-                self.event("terminated", json!({}))?;
-            } else {
-                self.event(
-                    "stopped",
-                    json!({
-                        "reason": stopped_reason(line),
-                        "threadId": 1,
-                        "allThreadsStopped": true,
-                    }),
-                )?;
-            }
-            return Ok(None);
-        }
-        let Some((token, result)) = parse_mi_result(line) else {
-            return Ok(None);
-        };
-        if waiting_for != Some(token) {
-            return Ok(None);
-        }
-        if result == "error" {
-            anyhow::bail!("{}", mi_field(line, "msg").unwrap_or_else(|| line.to_string()));
-        }
-        Ok(Some(line.to_string()))
-    }
+    // ── DAP output / write ────────────────────────────────────────────────────
 
     fn response(&mut self, request: &Value, body: Value) -> anyhow::Result<()> {
         let seq = self.next_seq();
@@ -852,8 +999,12 @@ impl DapServer {
         seq
     }
 
+    // ── Shutdown ──────────────────────────────────────────────────────────────
+
     fn shutdown(&mut self) {
-        self.varobjs.clear(); // GDB is about to exit; no need to send -var-delete
+        self.varobjs.clear();
+        self.setvar_varobjs.clear();
+        self.top_varobjs.clear();
         if let Some(mut stdin) = self.gdb_stdin.take() {
             let _ = writeln!(stdin, "-gdb-exit");
         }
@@ -864,13 +1015,179 @@ impl DapServer {
             let _ = child.kill();
         }
     }
+
+    // ── GDB/MI2 event loop ────────────────────────────────────────────────────
+
+    fn drain_debugger_events(&mut self) {
+        while let Ok((category, output)) = self.output_rx.try_recv() {
+            let _ = self.output(&output, &category);
+        }
+        while let Some(line) = self.gdb_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            let _ = self.handle_gdb_line(&line, None);
+        }
+        if let Some(child) = self.run_process.as_mut() {
+            if let Ok(Some(status)) = child.try_wait() {
+                let code = status.code().unwrap_or(0);
+                let _ = self.event("exited", json!({ "exitCode": code }));
+                let _ = self.event("terminated", json!({}));
+                self.run_process = None;
+            }
+        }
+        if let Some(child) = self.gdb.as_mut() {
+            if let Ok(Some(_)) = child.try_wait() {
+                let _ = self.event("terminated", json!({}));
+                self.gdb = None;
+                self.gdb_stdin = None;
+            }
+        }
+    }
+
+    fn handle_gdb_line(&mut self, line: &str, waiting_for: Option<u64>) -> anyhow::Result<Option<String>> {
+        if let Some(rest) = line.strip_prefix('~') {
+            self.output(&mi_c_string(rest), "console")?;
+            return Ok(None);
+        }
+        if let Some(rest) = line.strip_prefix('&') {
+            self.output(&mi_c_string(rest), "stderr")?;
+            return Ok(None);
+        }
+        if line.starts_with("*stopped") {
+            let reason = mi_field(line, "reason").unwrap_or_default();
+            if reason.starts_with("exited") {
+                let exit_code: i64 = mi_field(line, "exit-code")
+                    .and_then(|s| {
+                        // GDB encodes the exit code in octal: "0o1" → 1
+                        let s = s.trim_start_matches("0o");
+                        i64::from_str_radix(s, 8).ok().or_else(|| s.parse().ok())
+                    })
+                    .unwrap_or(if reason == "exited-normally" { 0 } else { -1 });
+                self.event("exited", json!({ "exitCode": exit_code }))?;
+                self.event("terminated", json!({}))?;
+            } else if reason == "exited-signalled" {
+                let sig = mi_field(line, "signal-name").unwrap_or_else(|| "signal".into());
+                self.output(&format!("Program terminated with signal {sig}\n"), "stderr")?;
+                self.event("exited", json!({ "exitCode": -1 }))?;
+                self.event("terminated", json!({}))?;
+            } else {
+                self.event("stopped", json!({
+                    "reason": stopped_reason(&reason),
+                    "threadId": mi_field(line, "thread-id")
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(1),
+                    "allThreadsStopped": true,
+                }))?;
+            }
+            return Ok(None);
+        }
+        let Some((token, result)) = parse_mi_result(line) else {
+            return Ok(None);
+        };
+        if waiting_for != Some(token) {
+            return Ok(None);
+        }
+        if result == "error" {
+            anyhow::bail!("{}", mi_field(line, "msg").unwrap_or_else(|| line.to_string()));
+        }
+        Ok(Some(line.to_string()))
+    }
+
+    fn gdb_command(&mut self, command: &str) -> anyhow::Result<String> {
+        let token = self.gdb_token;
+        self.gdb_token += 1;
+        let stdin = self.gdb_stdin.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("debugger is not running"))?;
+        writeln!(stdin, "{token}{command}")?;
+        stdin.flush()?;
+        loop {
+            let line = self.gdb_rx.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("debugger output unavailable"))?
+                .recv_timeout(Duration::from_secs(30))?;
+            if let Some(result) = self.handle_gdb_line(&line, Some(token))? {
+                return Ok(result);
+            }
+        }
+    }
+
+    // ── Shared debugger resolution ─────────────────────────────────────────────
+
+    fn resolve_debugger_and_build(
+        &self,
+        config: &Value,
+    ) -> anyhow::Result<(freight_core::toolchain::DetectedDebugger, PathBuf)> {
+        let project_dir = find_project_dir()?;
+        let manifest = load_manifest(&project_dir)?;
+        let mut global_cfg = GlobalConfig::load();
+        if let Some(local) = GlobalConfig::load_local(&project_dir) {
+            global_cfg.apply_local(local);
+        }
+        let debuggers = detect_debuggers(&load_debugger_templates());
+        if debuggers.is_empty() {
+            anyhow::bail!(
+                "no debugger found on PATH; install gdb (≥14 for native DAP) or lldb (with lldb-dap)"
+            );
+        }
+        let debugger_pref = config["debugger"]
+            .as_str()
+            .or(global_cfg.default_debugger.as_deref());
+        let debugger = if let Some(pref) = debugger_pref {
+            debuggers
+                .iter()
+                .find(|d| d.template.name == pref)
+                .ok_or_else(|| anyhow::anyhow!("debugger '{pref}' not found on PATH"))?
+                .clone()
+        } else {
+            debuggers[0].clone()
+        };
+
+        let features = string_array(&config["features"]);
+        let output = build_project_with(
+            "debug",
+            &features,
+            !config["noDefaultFeatures"].as_bool().unwrap_or(false),
+            &[],
+            &silent(),
+        )?;
+        let binary = select_binary(&output, &project_dir, config["bin"].as_str(), &manifest)?;
+        Ok((debugger, binary))
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Helper: DAP framing
+// Free helpers: step/exec command builders
 // ---------------------------------------------------------------------------
 
-/// Write a DAP message: `Content-Length: N\r\n\r\n{json}`.
+/// Build a thread-qualified exec command.
+fn exec_cmd(base: &str, request: &Value, thread: bool) -> String {
+    if thread {
+        if let Some(tid) = request["arguments"]["threadId"].as_u64() {
+            return format!("{base} --thread {tid}");
+        }
+    }
+    base.to_string()
+}
+
+/// Build a step command respecting `granularity` and `threadId`.
+fn step_cmd(kind: &str, request: &Value) -> String {
+    let granularity = request["arguments"]["granularity"].as_str().unwrap_or("statement");
+    let instruction = granularity == "instruction";
+    let base = match (kind, instruction) {
+        ("next",   true)  => "-exec-next-instruction",
+        ("next",   false) => "-exec-next",
+        ("stepIn", true)  => "-exec-step-instruction",
+        ("stepIn", false) => "-exec-step",
+        _                 => "-exec-next",
+    };
+    if let Some(tid) = request["arguments"]["threadId"].as_u64() {
+        format!("{base} --thread {tid}")
+    } else {
+        base.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DAP framing
+// ---------------------------------------------------------------------------
+
 fn write_dap(out: &mut impl Write, msg: &Value) -> anyhow::Result<()> {
     let bytes = serde_json::to_vec(msg)?;
     write!(out, "Content-Length: {}\r\n\r\n", bytes.len())?;
@@ -879,8 +1196,6 @@ fn write_dap(out: &mut impl Write, msg: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read one DAP frame from `reader`.  Returns the raw JSON body bytes, or
-/// `None` on EOF / parse error.
 fn read_dap_frame(reader: &mut impl BufRead) -> Option<Vec<u8>> {
     let mut content_length: Option<usize> = None;
     loop {
@@ -903,21 +1218,15 @@ fn read_dap_frame(reader: &mut impl BufRead) -> Option<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: debugger detection
+// Debugger detection helpers
 // ---------------------------------------------------------------------------
 
-/// Run `gdb --version` and return `(major, minor)`.  Returns `(0, 0)` on failure.
 fn gdb_version(path: &Path) -> (u32, u32) {
-    let out = Command::new(path)
-        .arg("--version")
-        .output()
-        .ok();
+    let out = Command::new(path).arg("--version").output().ok();
     let text = out
         .as_ref()
         .and_then(|o| std::str::from_utf8(&o.stdout).ok().map(str::to_string))
         .unwrap_or_default();
-    // "GNU gdb (…) 14.2" — find the last occurrence of a "X.Y" token on the
-    // first line.
     let first_line = text.lines().next().unwrap_or("");
     for token in first_line.split_whitespace().rev() {
         let mut parts = token.split('.');
@@ -930,22 +1239,15 @@ fn gdb_version(path: &Path) -> (u32, u32) {
     (0, 0)
 }
 
-
 // ---------------------------------------------------------------------------
-// GDB/MI2 parser — recursive-descent, one-level nesting
+// GDB/MI2 parser
 // ---------------------------------------------------------------------------
 
-/// Parse a GDB/MI output line and collect all occurrences of `key="{...}"` or
-/// `key="{key=val,...}"` blocks, returning them as flat string maps.
-///
-/// This handles the common cases for `-stack-list-frames` (frame={…}) and
-/// `-thread-list-ids` (thread-id="N") without breaking on nested values.
 fn mi_parse_list_value(s: &str, key: &str) -> Vec<HashMap<String, String>> {
     let mut result = Vec::new();
     let needle_brace = format!("{key}={{");
     let needle_quote = format!("{key}=\"");
 
-    // Collect brace-delimited records: key={field=val,...}
     let mut search = s;
     while let Some(pos) = search.find(&needle_brace) {
         let after = &search[pos + needle_brace.len()..];
@@ -954,7 +1256,6 @@ fn mi_parse_list_value(s: &str, key: &str) -> Vec<HashMap<String, String>> {
         search = &search[pos + needle_brace.len() + consumed..];
     }
 
-    // Collect quoted scalar records: key="value"  (e.g. thread-id="1")
     if result.is_empty() {
         let mut search2 = s;
         while let Some(pos) = search2.find(&needle_quote) {
@@ -970,44 +1271,34 @@ fn mi_parse_list_value(s: &str, key: &str) -> Vec<HashMap<String, String>> {
             }
         }
     }
-
     result
 }
 
-/// Parse a GDB/MI `{field="value",...}` record starting *after* the opening
-/// `{`.  Returns the flat map and the number of bytes consumed (including the
-/// closing `}`).
 fn parse_mi_record(s: &str) -> (HashMap<String, String>, usize) {
     let mut map = HashMap::new();
     let mut i = 0;
     let bytes = s.as_bytes();
-
     while i < bytes.len() {
         if bytes[i] == b'}' {
             i += 1;
             break;
         }
-        // Find the `=` that separates key from value.
         let eq = match s[i..].find('=') {
             Some(p) => i + p,
             None => break,
         };
         let field_name = s[i..eq].trim().to_string();
         i = eq + 1;
-
         if i >= bytes.len() {
             break;
         }
-
         let value = if bytes[i] == b'"' {
-            // Quoted string value.
-            i += 1; // skip opening quote
+            i += 1;
             let end = find_string_end(&s[i..]).unwrap_or(0);
             let val = mi_c_string(&format!("\"{}\"", &s[i..i + end]));
-            i += end + 1; // skip content + closing quote
+            i += end + 1;
             val
         } else if bytes[i] == b'{' {
-            // Nested record — skip it (we only need one level).
             let depth_start = i;
             i += 1;
             let mut depth = 1usize;
@@ -1027,48 +1318,33 @@ fn parse_mi_record(s: &str) -> (HashMap<String, String>, usize) {
             }
             s[depth_start..i].to_string()
         } else {
-            // Unquoted token (e.g. integer).
             let end = s[i..].find(|c| c == ',' || c == '}').unwrap_or(s[i..].len());
             let val = s[i..i + end].to_string();
             i += end;
             val
         };
-
         if !field_name.is_empty() {
             map.insert(field_name, value);
         }
-
-        // Skip comma separator.
         if i < bytes.len() && bytes[i] == b',' {
             i += 1;
         }
     }
-
     (map, i)
 }
 
-/// Find the index of the unescaped closing `"` in a string that starts right
-/// after the opening quote.
 fn find_string_end(s: &str) -> Option<usize> {
     let mut escaped = false;
     for (idx, ch) in s.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            return Some(idx);
-        }
+        if escaped { escaped = false; continue; }
+        if ch == '\\' { escaped = true; continue; }
+        if ch == '"' { return Some(idx); }
     }
     None
 }
 
 // ---------------------------------------------------------------------------
-// Unchanged helpers
+// Thread helpers
 // ---------------------------------------------------------------------------
 
 fn spawn_dap_reader() -> Receiver<Value> {
@@ -1080,9 +1356,7 @@ fn spawn_dap_reader() -> Receiver<Value> {
             match read_dap_frame(&mut reader) {
                 Some(body) => {
                     if let Ok(value) = serde_json::from_slice::<Value>(&body) {
-                        if tx.send(value).is_err() {
-                            return;
-                        }
+                        if tx.send(value).is_err() { return; }
                     }
                 }
                 None => return,
@@ -1120,6 +1394,10 @@ fn spawn_process_output(
     });
 }
 
+// ---------------------------------------------------------------------------
+// Project / binary helpers
+// ---------------------------------------------------------------------------
+
 fn find_project_dir() -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     find_manifest_dir(&cwd).ok_or_else(|| anyhow::anyhow!("no freight.toml found"))
@@ -1132,9 +1410,7 @@ fn select_binary(
     manifest: &freight_core::manifest::types::Manifest,
 ) -> anyhow::Result<PathBuf> {
     let candidates = if let Some(name) = filter {
-        output
-            .binaries
-            .iter()
+        output.binaries.iter()
             .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
             .cloned()
             .collect::<Vec<_>>()
@@ -1143,90 +1419,70 @@ fn select_binary(
     };
     match candidates.len() {
         0 if filter.is_some() => anyhow::bail!(
-            "no binary named '{}' - available: {}",
+            "no binary named '{}' — available: {}",
             filter.unwrap(),
-            manifest
-                .bins
-                .iter()
-                .map(|bin| bin.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            manifest.bins.iter().map(|b| b.name.as_str()).collect::<Vec<_>>().join(", ")
         ),
         0 => {
             let fallback = project_dir.join("target").join("debug").join(&manifest.package.name);
             if fallback.exists() {
                 Ok(fallback)
             } else {
-                anyhow::bail!("no binary built - does the manifest declare [[bin]]?")
+                anyhow::bail!("no binary built — does the manifest declare [[bin]]?")
             }
         }
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ => anyhow::bail!(
             "multiple binaries built; set `bin` to one of: {}",
-            candidates
-                .iter()
-                .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-                .collect::<Vec<_>>()
-                .join(", ")
+            candidates.iter().filter_map(|p| p.file_name().and_then(|n| n.to_str())).collect::<Vec<_>>().join(", ")
         ),
     }
 }
 
 fn freight_run_args(config: &Value) -> Vec<String> {
     let mut args = vec!["run".to_string()];
-    if config["release"].as_bool().unwrap_or(false) {
-        args.push("--release".into());
-    }
-    if let Some(package) = config["package"].as_str() {
-        args.extend(["-p".into(), package.into()]);
-    }
-    if let Some(bin) = config["bin"].as_str() {
-        args.extend(["--bin".into(), bin.into()]);
-    }
+    if config["release"].as_bool().unwrap_or(false) { args.push("--release".into()); }
+    if let Some(package) = config["package"].as_str() { args.extend(["-p".into(), package.into()]); }
+    if let Some(bin) = config["bin"].as_str() { args.extend(["--bin".into(), bin.into()]); }
     let features = string_array(&config["features"]);
-    if !features.is_empty() {
-        args.extend(["--features".into(), features.join(",")]);
-    }
-    if config["noDefaultFeatures"].as_bool().unwrap_or(false) {
-        args.push("--no-default-features".into());
-    }
+    if !features.is_empty() { args.extend(["--features".into(), features.join(",")]); }
+    if config["noDefaultFeatures"].as_bool().unwrap_or(false) { args.push("--no-default-features".into()); }
     let program_args = string_array(&config["args"]);
-    if !program_args.is_empty() {
-        args.push("--".into());
-        args.extend(program_args);
-    }
+    if !program_args.is_empty() { args.push("--".into()); args.extend(program_args); }
     args
 }
 
-fn string_array(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect()
+// ---------------------------------------------------------------------------
+// MI2 output parsers
+// ---------------------------------------------------------------------------
+
+fn parse_raw_variables(line: &str) -> Vec<(String, String, String)> {
+    mi_parse_list_value(line, "variable")
+        .into_iter()
+        .filter_map(|var| {
+            let name = var.get("name")?.clone();
+            let value = var.get("value").cloned().unwrap_or_else(|| "<unavailable>".to_string());
+            let type_ = var.get("type").cloned().unwrap_or_default();
+            Some((name, value, type_))
         })
-        .unwrap_or_default()
+        .collect()
 }
 
-fn shell_words(args: &[String]) -> String {
-    args.iter().map(|arg| shell_quote(arg)).collect::<Vec<_>>().join(" ")
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.chars().all(|c| c.is_ascii_alphanumeric() || "_./:=+-".contains(c)) {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
-}
-
-fn mi_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn mi_c_string(value: &str) -> String {
-    serde_json::from_str::<String>(value).unwrap_or_else(|_| value.trim_matches('"').to_string())
+fn parse_stack_frames(line: &str) -> Vec<Value> {
+    mi_parse_list_value(line, "frame")
+        .into_iter()
+        .enumerate()
+        .map(|(idx, frame)| {
+            let file = frame.get("fullname").or_else(|| frame.get("file")).cloned();
+            json!({
+                "id": idx + 1,
+                "name": frame.get("func").cloned().unwrap_or_else(|| "<unknown>".to_string()),
+                "source": file.as_ref().map(|f| json!({ "name": path_base_name(f), "path": f })),
+                "line": frame.get("line").and_then(|n| n.parse::<u64>().ok()).unwrap_or(0),
+                "column": 1,
+            })
+        })
+        .collect()
 }
 
 fn parse_mi_result(line: &str) -> Option<(u64, &str)> {
@@ -1244,47 +1500,24 @@ fn mi_field(text: &str, field: &str) -> Option<String> {
     Some(mi_c_string(&format!("\"{}\"", &text[start..start + end])))
 }
 
-fn stopped_reason(line: &str) -> &'static str {
-    if line.contains("breakpoint-hit") {
+fn mi_c_string(value: &str) -> String {
+    serde_json::from_str::<String>(value).unwrap_or_else(|_| value.trim_matches('"').to_string())
+}
+
+fn mi_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn stopped_reason(reason: &str) -> &'static str {
+    if reason.contains("breakpoint") || reason.contains("watchpoint") {
         "breakpoint"
-    } else if line.contains("end-stepping-range") || line.contains("function-finished") {
+    } else if reason.contains("end-stepping") || reason.contains("function-finished") {
         "step"
+    } else if reason.contains("signal") {
+        "exception"
     } else {
         "pause"
     }
-}
-
-fn parse_stack_frames(line: &str) -> Vec<Value> {
-    mi_parse_list_value(line, "frame")
-        .into_iter()
-        .enumerate()
-        .map(|(idx, frame)| {
-            let file = frame
-                .get("fullname")
-                .or_else(|| frame.get("file"))
-                .cloned();
-            json!({
-                "id": idx + 1,
-                "name": frame.get("func").cloned().unwrap_or_else(|| "<unknown>".to_string()),
-                "source": file.as_ref().map(|f| json!({ "name": path_base_name(f), "path": f })),
-                "line": frame.get("line").and_then(|n| n.parse::<u64>().ok()).unwrap_or(0),
-                "column": 1,
-            })
-        })
-        .collect()
-}
-
-/// Extract (name, value, type) tuples from `-stack-list-variables --all-values` output.
-fn parse_raw_variables(line: &str) -> Vec<(String, String, String)> {
-    mi_parse_list_value(line, "variable")
-        .into_iter()
-        .filter_map(|var| {
-            let name = var.get("name")?.clone();
-            let value = var.get("value").cloned().unwrap_or_else(|| "<unavailable>".to_string());
-            let type_ = var.get("type").cloned().unwrap_or_default();
-            Some((name, value, type_))
-        })
-        .collect()
 }
 
 fn path_base_name(path: &str) -> String {
@@ -1293,4 +1526,22 @@ fn path_base_name(path: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or(path)
         .to_string()
+}
+
+fn string_array(value: &Value) -> Vec<String> {
+    value.as_array()
+        .map(|arr| arr.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+fn shell_words(args: &[String]) -> String {
+    args.iter().map(|arg| shell_quote(arg)).collect::<Vec<_>>().join(" ")
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.chars().all(|c| c.is_ascii_alphanumeric() || "_./:=+-".contains(c)) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
 }
