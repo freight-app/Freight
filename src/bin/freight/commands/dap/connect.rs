@@ -1,4 +1,4 @@
-//! `freight dap --connect HOST:PORT` — relay VS Code ↔ an already-running
+//! `freight dap --connect HOST:PORT` — relay a DAP client to an already-running
 //! native DAP server (e.g. `gdb --interpreter=dap --listen=:1234`).
 //!
 //! This is a thin byte-level relay; no parsing or injection is needed because

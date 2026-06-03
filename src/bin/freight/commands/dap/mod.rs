@@ -1,17 +1,13 @@
-//! `freight dap` — Debug Adapter Protocol server.
+//! `freight dap` — build and exec into the native DAP adapter.
 //!
-//! Default mode: act as a DAP adapter over stdin/stdout, building the project
-//! and driving GDB or LLDB via MI2 (or native DAP passthrough for GDB≥14 /
-//! lldb-dap).
+//! Default mode: build the project, then exec GDB/LLDB with the binary path.
+//! The editor connects directly to the adapter — no proxy.
 //!
-//! `--connect HOST:PORT`: relay VS Code directly to an already-running native
-//! DAP server (e.g. `gdb --interpreter=dap --listen=:1234`).
+//! `--connect HOST:PORT`: relay a DAP client to an already-running adapter
+//! (e.g. `gdb --interpreter=dap --listen=:1234`).
 
 mod connect;
-mod protocol;
 mod server;
-
-pub use server::DapServer;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -20,6 +16,10 @@ pub struct Args {
     /// `freight dap --connect localhost:1234`.
     #[arg(long, value_name = "HOST:PORT")]
     pub connect: Option<String>,
+
+    /// Attach to a running process instead of launching (skips build).
+    #[arg(long)]
+    pub attach: bool,
 }
 
 impl Args {
@@ -30,7 +30,8 @@ impl Args {
             }
             return;
         }
-        if let Err(e) = DapServer::new().run() {
+        let config = serde_json::json!({});
+        if let Err(e) = server::launch_dap(&config, self.attach) {
             eprintln!("freight dap: {e}");
         }
     }
