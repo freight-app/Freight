@@ -17,6 +17,13 @@ pub fn load_manifest_str(src: &str) -> Result<Manifest, FreightError> {
         .map_err(|e: toml_edit::de::Error| FreightError::ManifestParse(e.to_string()))
 }
 
+/// Parse a workspace-root `freight.toml` from a TOML string.
+pub fn load_workspace_manifest_str(src: &str) -> Result<WorkspaceSection, FreightError> {
+    let parsed: types::WorkspaceToml = toml_edit::de::from_str(src)
+        .map_err(|e: toml_edit::de::Error| FreightError::ManifestParse(e.to_string()))?;
+    Ok(parsed.workspace)
+}
+
 /// Load `freight.toml` from `dir`.
 pub fn load_manifest(dir: &Path) -> Result<Manifest, FreightError> {
     let path = dir.join("freight.toml");
@@ -32,6 +39,5 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, FreightError> {
 /// when the file is absent.
 pub fn load_workspace_manifest(dir: &Path) -> Option<WorkspaceSection> {
     let src = std::fs::read_to_string(dir.join("freight.toml")).ok()?;
-    let parsed: types::WorkspaceToml = toml_edit::de::from_str(&src).ok()?;
-    Some(parsed.workspace)
+    load_workspace_manifest_str(&src).ok()
 }

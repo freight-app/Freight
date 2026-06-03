@@ -218,17 +218,31 @@ fn open_dependency_tui() -> anyhow::Result<()> {
 
     // Current project — prefer [lib] hdrs, then srcs, then src/.
     let manifest = load_manifest(&project_dir).ok();
-    let pkg_name = manifest.as_ref().map(|m| m.package.name.clone())
-        .unwrap_or_else(|| project_dir.file_name()
-            .and_then(|n| n.to_str()).unwrap_or("project").to_string());
-    let pkg_ver = manifest.as_ref().map(|m| m.package.version.clone())
+    let pkg_name = manifest
+        .as_ref()
+        .map(|m| m.package.name.clone())
+        .unwrap_or_else(|| {
+            project_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+                .to_string()
+        });
+    let pkg_ver = manifest
+        .as_ref()
+        .map(|m| m.package.version.clone())
         .unwrap_or_else(|| "0.0.0".to_string());
     let readme = read_readme(&project_dir);
 
     let items = extract_pkg_items(&project_dir, manifest.as_ref());
     if !items.is_empty() {
         print_status("Scanning", &pkg_name);
-        packages.push(PackageDoc { name: pkg_name, version: pkg_ver, items, readme });
+        packages.push(PackageDoc {
+            name: pkg_name,
+            version: pkg_ver,
+            items,
+            readme,
+        });
     }
 
     // Dependencies — prefer their [lib] hdrs too.
@@ -237,7 +251,9 @@ fn open_dependency_tui() -> anyhow::Result<()> {
         let Some(ref dir) = dep.path else { continue };
         let dep_manifest = load_manifest(dir).ok();
         let items = extract_pkg_items(dir, dep_manifest.as_ref());
-        if items.is_empty() { continue; }
+        if items.is_empty() {
+            continue;
+        }
         print_status("     Dep", &dep.name);
         let readme = read_readme(dir);
         packages.push(PackageDoc {
@@ -288,10 +304,17 @@ fn extract_pkg_items(
     let src_dirs: Vec<PathBuf> = manifest
         .and_then(|m| m.lib.as_ref())
         .map(|lib| {
-            lib.srcs.iter()
+            lib.srcs
+                .iter()
                 .map(|s| {
                     let p = dir.join(s);
-                    if p.is_dir() { p } else { p.parent().map(PathBuf::from).unwrap_or_else(|| dir.to_path_buf()) }
+                    if p.is_dir() {
+                        p
+                    } else {
+                        p.parent()
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| dir.to_path_buf())
+                    }
                 })
                 .filter(|p| p.is_dir())
                 .collect()
@@ -508,4 +531,3 @@ fn print_dependency_table(deps: &[DocDependency]) {
         );
     }
 }
-

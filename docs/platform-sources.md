@@ -118,7 +118,7 @@ set) or `std::env::consts::ARCH`. Common values: `x86_64`, `aarch64`, `arm`,
 | File | Change |
 |---|---|
 | `Cargo.toml` | Add `glob = "0.3"` workspace dep |
-| `crates/freight-core/Cargo.toml` | Add `glob` |
-| `crates/freight-core/src/manifest/types.rs` | Add `ConditionalSources`; add `os`/`arch` fields to `Manifest` |
-| `crates/freight-core/src/build/discover.rs` | Exclusion set + conditional source addition |
-| `crates/freight-core/src/build/mod.rs` | Collect and inject platform defines |
+| `crates/freight/Cargo.toml` | Add `glob` |
+| `crates/freight/src/manifest/types.rs` | Add `ConditionalSources`; add `os`/`arch` fields to `Manifest` |
+| `crates/freight/src/build/discover.rs` | Exclusion set + conditional source addition |
+| `crates/freight/src/build/mod.rs` | Collect and inject platform defines |

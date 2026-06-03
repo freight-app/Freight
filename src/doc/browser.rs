@@ -3,8 +3,8 @@ use std::io;
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-        MouseButton, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -25,14 +25,14 @@ use crate::doc::stdlib::StdlibMsg;
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 
-const COLOR_PKG:     Color = Color::Rgb(220, 200, 120);
+const COLOR_PKG: Color = Color::Rgb(220, 200, 120);
 const COLOR_SECTION: Color = Color::Rgb(140, 140, 180);
-const COLOR_SYMBOL:  Color = Color::Rgb(200, 220, 200);
-const COLOR_BRIEF:   Color = Color::Rgb(180, 180, 180);
-const COLOR_BORDER:  Color = Color::Rgb(80, 80, 100);
-const COLOR_ACTIVE:  Color = Color::Rgb(120, 160, 220);
-const COLOR_HINT:    Color = Color::DarkGray;
-const COLOR_KIND:    Color = Color::Rgb(130, 170, 130);
+const COLOR_SYMBOL: Color = Color::Rgb(200, 220, 200);
+const COLOR_BRIEF: Color = Color::Rgb(180, 180, 180);
+const COLOR_BORDER: Color = Color::Rgb(80, 80, 100);
+const COLOR_ACTIVE: Color = Color::Rgb(120, 160, 220);
+const COLOR_HINT: Color = Color::DarkGray;
+const COLOR_KIND: Color = Color::Rgb(130, 170, 130);
 
 // ── Public data type ──────────────────────────────────────────────────────────
 
@@ -47,14 +47,18 @@ pub struct PackageDoc {
 // ── Tree classification ───────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Section { ClassesTypes, Namespaces, FreeSymbols }
+enum Section {
+    ClassesTypes,
+    Namespaces,
+    FreeSymbols,
+}
 
 impl Section {
     fn label(self) -> &'static str {
         match self {
-            Section::ClassesTypes  => "Classes & Types",
-            Section::Namespaces    => "Namespaces",
-            Section::FreeSymbols   => "Free Symbols",
+            Section::ClassesTypes => "Classes & Types",
+            Section::Namespaces => "Namespaces",
+            Section::FreeSymbols => "Free Symbols",
         }
     }
     const ALL: [Section; 3] = [
@@ -70,8 +74,11 @@ fn item_section(item: &DocItem) -> Option<Section> {
         return None;
     }
     Some(match item.kind {
-        DocKind::Class | DocKind::Struct | DocKind::Interface
-        | DocKind::Enum | DocKind::Typedef => Section::ClassesTypes,
+        DocKind::Class
+        | DocKind::Struct
+        | DocKind::Interface
+        | DocKind::Enum
+        | DocKind::Typedef => Section::ClassesTypes,
         DocKind::Module => Section::Namespaces,
         _ => Section::FreeSymbols,
     })
@@ -79,7 +86,8 @@ fn item_section(item: &DocItem) -> Option<Section> {
 
 /// Items whose `meta.parent` simple name matches `class_simple_name`.
 fn class_members<'a>(items: &'a [DocItem], class_simple_name: &str) -> Vec<&'a DocItem> {
-    items.iter()
+    items
+        .iter()
         .filter(|i| i.meta.parent.as_deref() == Some(class_simple_name))
         .collect()
 }
@@ -92,16 +100,30 @@ fn class_members<'a>(items: &'a [DocItem], class_simple_name: &str) -> Vec<&'a D
 fn derive_namespaces(items: &[DocItem]) -> Vec<String> {
     // Collect the simple names of all documented classes so we can exclude
     // them from the namespace list (a class is not a namespace).
-    let class_names: std::collections::HashSet<&str> = items.iter()
-        .filter(|i| matches!(i.kind, DocKind::Class | DocKind::Struct | DocKind::Interface))
-        .map(|i| i.name.rsplit("::").next().or_else(|| i.name.rsplit('.').next()).unwrap_or(&i.name))
+    let class_names: std::collections::HashSet<&str> = items
+        .iter()
+        .filter(|i| {
+            matches!(
+                i.kind,
+                DocKind::Class | DocKind::Struct | DocKind::Interface
+            )
+        })
+        .map(|i| {
+            i.name
+                .rsplit("::")
+                .next()
+                .or_else(|| i.name.rsplit('.').next())
+                .unwrap_or(&i.name)
+        })
         .collect();
 
     let mut set = std::collections::BTreeSet::new();
     for item in items {
         // Class members' qualified names would otherwise pollute the namespace
         // list — skip them; they're reachable via the class detail page.
-        if item.meta.parent.is_some() { continue; }
+        if item.meta.parent.is_some() {
+            continue;
+        }
         if item.kind == DocKind::Module && !item.name.is_empty() {
             set.insert(item.name.clone());
             continue;
@@ -112,8 +134,11 @@ fn derive_namespaces(items: &[DocItem]) -> Vec<String> {
                 for i in 1..parts.len() {
                     let ns = parts[..i].join(sep);
                     // Don't turn a class name into a namespace entry.
-                    let simple = ns.rsplit("::").next()
-                        .or_else(|| ns.rsplit('.').next()).unwrap_or(&ns);
+                    let simple = ns
+                        .rsplit("::")
+                        .next()
+                        .or_else(|| ns.rsplit('.').next())
+                        .unwrap_or(&ns);
                     if !ns.is_empty() && !class_names.contains(simple) {
                         set.insert(ns);
                     }
@@ -129,7 +154,8 @@ fn derive_namespaces(items: &[DocItem]) -> Vec<String> {
 fn items_in_ns<'a>(items: &'a [DocItem], ns: &str) -> Vec<&'a DocItem> {
     let prefix_cc = format!("{ns}::");
     let prefix_dot = format!("{ns}.");
-    items.iter()
+    items
+        .iter()
         .filter(|item| {
             item.kind != DocKind::Module
             // Class members belong to their class, not to the enclosing namespace.
@@ -142,15 +168,15 @@ fn items_in_ns<'a>(items: &'a [DocItem], ns: &str) -> Vec<&'a DocItem> {
 fn kind_label(kind: &DocKind) -> &'static str {
     match kind {
         DocKind::Function | DocKind::Subroutine => "fn",
-        DocKind::Class     => "class",
-        DocKind::Struct    => "struct",
+        DocKind::Class => "class",
+        DocKind::Struct => "struct",
         DocKind::Interface => "iface",
-        DocKind::Enum      => "enum",
-        DocKind::Typedef   => "type",
-        DocKind::Module    => "ns",
-        DocKind::Variable  => "var",
-        DocKind::Macro     => "macro",
-        DocKind::Unknown   => "?",
+        DocKind::Enum => "enum",
+        DocKind::Typedef => "type",
+        DocKind::Module => "ns",
+        DocKind::Variable => "var",
+        DocKind::Macro => "macro",
+        DocKind::Unknown => "?",
     }
 }
 
@@ -158,56 +184,74 @@ fn kind_label(kind: &DocKind) -> &'static str {
 
 #[derive(Clone)]
 struct TreeRow {
-    depth:  usize,
-    label:  String,
-    count:  usize, // item count — shown on pkg/section rows
-    kind:   RowKind,
+    depth: usize,
+    label: String,
+    count: usize, // item count — shown on pkg/section rows
+    kind: RowKind,
 }
 
 #[derive(Clone)]
 enum RowKind {
-    Package   { pkg_idx: usize },
+    Package {
+        pkg_idx: usize,
+    },
     /// Expandable namespace — children are its member items.
-    Namespace { pkg_idx: usize, name: String },
+    Namespace {
+        pkg_idx: usize,
+        name: String,
+    },
     /// Expandable class / struct / typedef — children are its member items.
-    Group     { pkg_idx: usize, item_idx: usize },
+    Group {
+        pkg_idx: usize,
+        item_idx: usize,
+    },
     /// Leaf symbol with no members.
-    Symbol    { pkg_idx: usize, item_idx: usize },
+    Symbol {
+        pkg_idx: usize,
+        item_idx: usize,
+    },
     /// Child of a Group or Namespace — shows full documentation when selected.
-    Member    { pkg_idx: usize, item_idx: usize },
+    Member {
+        pkg_idx: usize,
+        item_idx: usize,
+    },
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
 struct App {
     /// Visible packages — shown in the sidebar tree.
-    packages:      Vec<PackageDoc>,
+    packages: Vec<PackageDoc>,
     /// Hidden packages (stdlib, etc.) — in sym_index but not in the tree.
-    hidden:        Vec<PackageDoc>,
-    expanded:      HashSet<String>,
-    rows:          Vec<TreeRow>,
-    list_state:    ListState,
-    scroll:        u16,
-    focus:         Focus,
-    query:         String,
-    tree_area:     Rect,
-    filter_area:   Rect,
-    detail_area:   Rect,
+    hidden: Vec<PackageDoc>,
+    expanded: HashSet<String>,
+    rows: Vec<TreeRow>,
+    list_state: ListState,
+    scroll: u16,
+    focus: Focus,
+    query: String,
+    tree_area: Rect,
+    filter_area: Rect,
+    detail_area: Rect,
     /// (pkg_idx, item_idx) of a hidden item being shown in the detail pane.
     /// pkg_idx is an index into `hidden`.
     external_item: Option<(usize, usize)>,
-    sym_index:     HashMap<String, (usize, usize, bool)>, // name → (pkg_idx, item_idx, is_hidden)
-    detail_links:  Vec<DocLink>,
+    sym_index: HashMap<String, (usize, usize, bool)>, // name → (pkg_idx, item_idx, is_hidden)
+    detail_links: Vec<DocLink>,
     /// When true, detail pane shows source file instead of doc text.
-    show_source:   bool,
+    show_source: bool,
     /// Cached source file: (path, lines). Invalidated when the path changes.
-    source_cache:  Option<(std::path::PathBuf, Vec<String>)>,
+    source_cache: Option<(std::path::PathBuf, Vec<String>)>,
     /// Loading indicator while the background stdlib thread is running.
     stdlib_status: Option<(usize, usize, String)>, // (done, total, label)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Focus { Filter, Tree, Detail }
+enum Focus {
+    Filter,
+    Tree,
+    Detail,
+}
 
 fn group_or_leaf_rows(
     items: &[DocItem],
@@ -225,7 +269,10 @@ fn group_or_leaf_rows(
             depth,
             label: item_display_name(item),
             count,
-            kind: RowKind::Group { pkg_idx: pi, item_idx: ii },
+            kind: RowKind::Group {
+                pkg_idx: pi,
+                item_idx: ii,
+            },
         }];
         if gexp {
             for m in members {
@@ -234,7 +281,10 @@ fn group_or_leaf_rows(
                     depth: depth + 1,
                     label: item_display_name(m),
                     count: 0,
-                    kind: RowKind::Member { pkg_idx: pi, item_idx: mi },
+                    kind: RowKind::Member {
+                        pkg_idx: pi,
+                        item_idx: mi,
+                    },
                 });
             }
         }
@@ -244,7 +294,10 @@ fn group_or_leaf_rows(
             depth,
             label: item_display_name(item),
             count: 0,
-            kind: RowKind::Symbol { pkg_idx: pi, item_idx: ii },
+            kind: RowKind::Symbol {
+                pkg_idx: pi,
+                item_idx: ii,
+            },
         }]
     }
 }
@@ -253,11 +306,11 @@ fn group_or_leaf_rows(
 
 #[derive(Clone)]
 struct DocLink {
-    line:      usize,
+    line: usize,
     start_col: usize,
-    end_col:   usize,
-    pkg_idx:   usize,
-    item_idx:  usize,
+    end_col: usize,
+    pkg_idx: usize,
+    item_idx: usize,
     is_hidden: bool,
 }
 
@@ -302,8 +355,17 @@ fn annotate_links(
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         let found = find_sym_refs(&text, sym_index);
         for (start_col, end_col, pi, ii, hidden) in found {
-            if !hidden && current == Some((pi, ii)) { continue; }
-            links.push(DocLink { line: line_no, start_col, end_col, pkg_idx: pi, item_idx: ii, is_hidden: hidden });
+            if !hidden && current == Some((pi, ii)) {
+                continue;
+            }
+            links.push(DocLink {
+                line: line_no,
+                start_col,
+                end_col,
+                pkg_idx: pi,
+                item_idx: ii,
+                is_hidden: hidden,
+            });
         }
     }
 }
@@ -323,7 +385,7 @@ fn find_sym_refs(
             while i < chars.len() {
                 if chars[i].is_alphanumeric() || chars[i] == '_' {
                     i += 1;
-                } else if chars.get(i..i+2) == Some(&[':', ':']) {
+                } else if chars.get(i..i + 2) == Some(&[':', ':']) {
                     i += 2;
                 } else {
                     break;
@@ -343,14 +405,21 @@ fn find_sym_refs(
     results
 }
 
-
-fn pkg_key(pkg_idx: usize) -> String { format!("p:{pkg_idx}") }
-fn grp_key(pkg_idx: usize, item_idx: usize) -> String { format!("g:{pkg_idx}:{item_idx}") }
-fn ns_key(pkg_idx: usize, name: &str)  -> String { format!("n:{pkg_idx}:{name}") }
+fn pkg_key(pkg_idx: usize) -> String {
+    format!("p:{pkg_idx}")
+}
+fn grp_key(pkg_idx: usize, item_idx: usize) -> String {
+    format!("g:{pkg_idx}:{item_idx}")
+}
+fn ns_key(pkg_idx: usize, name: &str) -> String {
+    format!("n:{pkg_idx}:{name}")
+}
 
 fn has_members(items: &[DocItem], item: &DocItem) -> bool {
     let simple = item_display_name(item);
-    items.iter().any(|i| i.meta.parent.as_deref() == Some(simple.as_str()))
+    items
+        .iter()
+        .any(|i| i.meta.parent.as_deref() == Some(simple.as_str()))
 }
 
 fn is_in_namespace(item: &DocItem, namespaces: &[String]) -> bool {
@@ -365,7 +434,10 @@ fn is_in_namespace(item: &DocItem, namespaces: &[String]) -> bool {
 }
 
 fn is_type_item(kind: &DocKind) -> bool {
-    matches!(kind, DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Typedef | DocKind::Enum)
+    matches!(
+        kind,
+        DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Typedef | DocKind::Enum
+    )
 }
 
 impl App {
@@ -395,7 +467,9 @@ impl App {
             app.expanded.insert(pkg_key(0));
         }
         app.rebuild_rows();
-        if !app.rows.is_empty() { app.list_state.select(Some(0)); }
+        if !app.rows.is_empty() {
+            app.list_state.select(Some(0));
+        }
         app
     }
 
@@ -411,17 +485,24 @@ impl App {
                 depth: 0,
                 label: format!("{} {}", pkg.name, pkg.version),
                 count: pkg.items.len(),
-                kind:  RowKind::Package { pkg_idx: pi },
+                kind: RowKind::Package { pkg_idx: pi },
             });
-            if !pexp { continue; }
+            if !pexp {
+                continue;
+            }
 
             let namespaces = derive_namespaces(&pkg.items);
 
             // 1. Type items at root (not in any namespace, not a class member).
-            let type_items: Vec<usize> = pkg.items.iter().enumerate()
-                .filter(|(_, it)| it.meta.parent.is_none()
-                    && is_type_item(&it.kind)
-                    && !is_in_namespace(it, &namespaces))
+            let type_items: Vec<usize> = pkg
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, it)| {
+                    it.meta.parent.is_none()
+                        && is_type_item(&it.kind)
+                        && !is_in_namespace(it, &namespaces)
+                })
                 .map(|(i, _)| i)
                 .collect();
 
@@ -438,11 +519,20 @@ impl App {
                     depth: 1,
                     label: ns.clone(),
                     count: ns_items.len(),
-                    kind:  RowKind::Namespace { pkg_idx: pi, name: ns.clone() },
+                    kind: RowKind::Namespace {
+                        pkg_idx: pi,
+                        name: ns.clone(),
+                    },
                 });
-                if !nexp { continue; }
+                if !nexp {
+                    continue;
+                }
                 for item in &ns_items {
-                    let ii = pkg.items.iter().position(|i| std::ptr::eq(i, *item)).unwrap();
+                    let ii = pkg
+                        .items
+                        .iter()
+                        .position(|i| std::ptr::eq(i, *item))
+                        .unwrap();
                     if is_type_item(&item.kind) && has_members(&pkg.items, item) {
                         let extra = group_or_leaf_rows(&pkg.items, pi, ii, 2, &self.expanded);
                         self.rows.extend(extra);
@@ -451,18 +541,26 @@ impl App {
                             depth: 2,
                             label: item_display_name(item),
                             count: 0,
-                            kind:  RowKind::Member { pkg_idx: pi, item_idx: ii },
+                            kind: RowKind::Member {
+                                pkg_idx: pi,
+                                item_idx: ii,
+                            },
                         });
                     }
                 }
             }
 
             // 3. Free symbols — not a class member, not in any namespace, not a type item.
-            let free_items: Vec<usize> = pkg.items.iter().enumerate()
-                .filter(|(_, it)| it.meta.parent.is_none()
-                    && !is_type_item(&it.kind)
-                    && it.kind != DocKind::Module
-                    && !is_in_namespace(it, &namespaces))
+            let free_items: Vec<usize> = pkg
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, it)| {
+                    it.meta.parent.is_none()
+                        && !is_type_item(&it.kind)
+                        && it.kind != DocKind::Module
+                        && !is_in_namespace(it, &namespaces)
+                })
                 .map(|(i, _)| i)
                 .collect();
 
@@ -472,12 +570,14 @@ impl App {
                     depth: 1,
                     label: item_display_name(item),
                     count: 0,
-                    kind:  RowKind::Symbol { pkg_idx: pi, item_idx: ii },
+                    kind: RowKind::Symbol {
+                        pkg_idx: pi,
+                        item_idx: ii,
+                    },
                 });
             }
         }
     }
-
 
     fn rebuild_filtered_rows(&mut self) {
         let q = self.query.to_ascii_lowercase();
@@ -490,13 +590,27 @@ impl App {
                     || item.name.to_ascii_lowercase().contains(&q)
                 {
                     let kind = if is_type_item(&item.kind) {
-                        RowKind::Group { pkg_idx: pi, item_idx: ii }
+                        RowKind::Group {
+                            pkg_idx: pi,
+                            item_idx: ii,
+                        }
                     } else if item.meta.parent.is_some() {
-                        RowKind::Member { pkg_idx: pi, item_idx: ii }
+                        RowKind::Member {
+                            pkg_idx: pi,
+                            item_idx: ii,
+                        }
                     } else {
-                        RowKind::Symbol { pkg_idx: pi, item_idx: ii }
+                        RowKind::Symbol {
+                            pkg_idx: pi,
+                            item_idx: ii,
+                        }
                     };
-                    matches.push(TreeRow { depth: 1, label: display, count: 0, kind });
+                    matches.push(TreeRow {
+                        depth: 1,
+                        label: display,
+                        count: 0,
+                        kind,
+                    });
                 }
             }
             // Namespace names.
@@ -505,12 +619,19 @@ impl App {
                 if ns.to_ascii_lowercase().contains(&q) {
                     let count = items_in_ns(&pkg.items, ns).len();
                     matches.push(TreeRow {
-                        depth: 1, label: ns.clone(), count,
-                        kind: RowKind::Namespace { pkg_idx: pi, name: ns.clone() },
+                        depth: 1,
+                        label: ns.clone(),
+                        count,
+                        kind: RowKind::Namespace {
+                            pkg_idx: pi,
+                            name: ns.clone(),
+                        },
                     });
                 }
             }
-            if matches.is_empty() { continue; }
+            if matches.is_empty() {
+                continue;
+            }
             self.rows.push(TreeRow {
                 depth: 0,
                 label: format!("{} {}", pkg.name, pkg.version),
@@ -526,24 +647,35 @@ impl App {
     }
 
     fn toggle_selected(&mut self) {
-        let Some(row) = self.selected_row() else { return };
+        let Some(row) = self.selected_row() else {
+            return;
+        };
         match row.kind.clone() {
             RowKind::Package { pkg_idx } => {
                 let k = pkg_key(pkg_idx);
-                if self.expanded.contains(&k) { self.expanded.remove(&k); }
-                else { self.expanded.insert(k); }
+                if self.expanded.contains(&k) {
+                    self.expanded.remove(&k);
+                } else {
+                    self.expanded.insert(k);
+                }
                 self.rebuild_rows();
             }
             RowKind::Namespace { pkg_idx, name } => {
                 let k = ns_key(pkg_idx, &name);
-                if self.expanded.contains(&k) { self.expanded.remove(&k); }
-                else { self.expanded.insert(k); }
+                if self.expanded.contains(&k) {
+                    self.expanded.remove(&k);
+                } else {
+                    self.expanded.insert(k);
+                }
                 self.rebuild_rows();
             }
             RowKind::Group { pkg_idx, item_idx } => {
                 let k = grp_key(pkg_idx, item_idx);
-                if self.expanded.contains(&k) { self.expanded.remove(&k); }
-                else { self.expanded.insert(k); }
+                if self.expanded.contains(&k) {
+                    self.expanded.remove(&k);
+                } else {
+                    self.expanded.insert(k);
+                }
                 self.rebuild_rows();
             }
             RowKind::Symbol { .. } | RowKind::Member { .. } => {}
@@ -551,13 +683,16 @@ impl App {
         // Keep selection in bounds after rebuild.
         let sel = self.list_state.selected().unwrap_or(0);
         if sel >= self.rows.len() {
-            self.list_state.select(Some(self.rows.len().saturating_sub(1)));
+            self.list_state
+                .select(Some(self.rows.len().saturating_sub(1)));
         }
     }
 
     fn move_sel(&mut self, delta: i32) {
         let n = self.rows.len();
-        if n == 0 { return; }
+        if n == 0 {
+            return;
+        }
         let cur = self.list_state.selected().unwrap_or(0) as i32;
         let next = (cur + delta).clamp(0, n as i32 - 1) as usize;
         self.list_state.select(Some(next));
@@ -566,8 +701,7 @@ impl App {
     }
 
     fn contains(area: Rect, x: u16, y: u16) -> bool {
-        x >= area.x && x < area.x + area.width
-        && y >= area.y && y < area.y + area.height
+        x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
     }
 
     fn selected_source_item(&self) -> Option<&DocItem> {
@@ -601,8 +735,14 @@ impl App {
             let path = self.selected_source_item().map(|i| i.file.clone());
             let total = if let Some(path) = path {
                 self.ensure_source_cache(&path);
-                self.source_cache.as_ref().map(|(_, l)| l.len()).unwrap_or(0) + 2
-            } else { 0 };
+                self.source_cache
+                    .as_ref()
+                    .map(|(_, l)| l.len())
+                    .unwrap_or(0)
+                    + 2
+            } else {
+                0
+            };
             total.saturating_sub(inner_h) as i32
         } else {
             let inner_w = self.detail_area.width.saturating_sub(2) as usize;
@@ -613,17 +753,22 @@ impl App {
     }
 
     fn activate_detail_link(&mut self, x: u16, y: u16) -> bool {
-        if !App::contains(self.detail_area, x, y) { return false; }
+        if !App::contains(self.detail_area, x, y) {
+            return false;
+        }
         let inner_w = self.detail_area.width.saturating_sub(2) as usize;
-        let visual_row = self.scroll as usize
-            + (y.saturating_sub(self.detail_area.y + 1)) as usize;
+        let visual_row = self.scroll as usize + (y.saturating_sub(self.detail_area.y + 1)) as usize;
         let lines = detail_lines(self);
         let line_idx = visual_to_logical(&lines, visual_row, inner_w);
         let col = x.saturating_sub(self.detail_area.x + 1) as usize;
-        let Some(link) = self.detail_links.iter()
+        let Some(link) = self
+            .detail_links
+            .iter()
             .find(|l| l.line == line_idx && col >= l.start_col && col < l.end_col)
             .cloned()
-        else { return false };
+        else {
+            return false;
+        };
         if link.is_hidden {
             self.external_item = Some((link.pkg_idx, link.item_idx));
             self.scroll = 0;
@@ -639,16 +784,29 @@ impl App {
         self.expanded.insert(pkg_key(pkg_idx));
         let pkg = &self.packages[pkg_idx];
         if let Some(parent_name) = pkg.items[item_idx].meta.parent.clone() {
-            if let Some(pi) = pkg.items.iter().position(|i| item_display_name(i) == parent_name) {
+            if let Some(pi) = pkg
+                .items
+                .iter()
+                .position(|i| item_display_name(i) == parent_name)
+            {
                 self.expanded.insert(grp_key(pkg_idx, pi));
             }
         }
         self.rebuild_rows();
         self.scroll = 0;
         if let Some(pos) = self.rows.iter().position(|r| match &r.kind {
-            RowKind::Group { pkg_idx: pi, item_idx: ii }
-            | RowKind::Symbol { pkg_idx: pi, item_idx: ii }
-            | RowKind::Member { pkg_idx: pi, item_idx: ii } => *pi == pkg_idx && *ii == item_idx,
+            RowKind::Group {
+                pkg_idx: pi,
+                item_idx: ii,
+            }
+            | RowKind::Symbol {
+                pkg_idx: pi,
+                item_idx: ii,
+            }
+            | RowKind::Member {
+                pkg_idx: pi,
+                item_idx: ii,
+            } => *pi == pkg_idx && *ii == item_idx,
             _ => false,
         }) {
             self.list_state.select(Some(pos));
@@ -686,7 +844,7 @@ fn render(app: &mut App, f: &mut Frame) {
         .split(panes[0]);
 
     app.filter_area = left[0];
-    app.tree_area   = left[1];
+    app.tree_area = left[1];
     app.detail_area = panes[1];
 
     render_filter(app, f);
@@ -695,7 +853,10 @@ fn render(app: &mut App, f: &mut Frame) {
 
     let hint = " / filter  ↑↓ navigate  Enter expand  ←→ panes  Tab source/docs  PgUp/PgDn scroll  q quit ";
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(COLOR_HINT)))),
+        Paragraph::new(Line::from(Span::styled(
+            hint,
+            Style::default().fg(COLOR_HINT),
+        ))),
         hint_area,
     );
 }
@@ -714,7 +875,10 @@ fn render_filter(app: &App, f: &mut Frame) {
     } else if app.query.is_empty() && !active {
         Span::styled(" filter… ", Style::default().fg(COLOR_HINT))
     } else {
-        Span::styled(format!(" {} ", app.query), Style::default().fg(Color::White))
+        Span::styled(
+            format!(" {} ", app.query),
+            Style::default().fg(Color::White),
+        )
     };
 
     let block = Block::default()
@@ -731,9 +895,16 @@ fn render_filter(app: &App, f: &mut Frame) {
             let pct = if total > 0 { done * 100 / total } else { 0 };
             let w = inner.width as usize;
             let filled = w * pct / 100;
-            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(w.saturating_sub(filled)));
+            let bar = format!(
+                "{}{}",
+                "█".repeat(filled),
+                "░".repeat(w.saturating_sub(filled))
+            );
             f.render_widget(
-                Paragraph::new(Span::styled(bar, Style::default().fg(Color::Rgb(80, 120, 80)))),
+                Paragraph::new(Span::styled(
+                    bar,
+                    Style::default().fg(Color::Rgb(80, 120, 80)),
+                )),
                 inner,
             );
         }
@@ -743,91 +914,119 @@ fn render_filter(app: &App, f: &mut Frame) {
 }
 
 fn render_tree(app: &mut App, f: &mut Frame) {
-    let border_style = Style::default().fg(
-        if app.focus == Focus::Tree { COLOR_ACTIVE } else { COLOR_BORDER }
-    );
+    let border_style = Style::default().fg(if app.focus == Focus::Tree {
+        COLOR_ACTIVE
+    } else {
+        COLOR_BORDER
+    });
     let block = Block::default()
         .title(" Packages ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style);
 
-    let items: Vec<ListItem> = app.rows.iter().map(|row| {
-        let indent = "  ".repeat(row.depth);
-        let line = match &row.kind {
-            RowKind::Package { pkg_idx } => {
-                let arrow = if app.expanded.contains(&pkg_key(*pkg_idx)) { "▼" } else { "▶" };
-                Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(format!("{arrow} "), Style::default().fg(COLOR_PKG)),
-                    Span::styled(row.label.clone(),
-                        Style::default().fg(COLOR_PKG).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!(" ({})", row.count),
-                        Style::default().fg(COLOR_HINT)),
-                ])
-            }
-            RowKind::Namespace { pkg_idx, name } => {
-                let arrow = if app.expanded.contains(&ns_key(*pkg_idx, name)) { "▼" } else { "▶" };
-                Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(format!("{arrow} "), Style::default().fg(COLOR_SECTION)),
-                    Span::styled(row.label.clone(), Style::default().fg(COLOR_SECTION)),
-                    Span::styled(" [namespace]".to_string(), Style::default().fg(COLOR_KIND)),
-                    Span::styled(format!(" ({})", row.count), Style::default().fg(COLOR_HINT)),
-                ])
-            }
-            RowKind::Group { pkg_idx, item_idx } => {
-                let item = &app.packages[*pkg_idx].items[*item_idx];
-                let kl = kind_label(&item.kind);
-                let arrow = if app.expanded.contains(&grp_key(*pkg_idx, *item_idx)) { "▼" } else { "▶" };
-                Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(format!("{arrow} "), Style::default().fg(COLOR_SYMBOL)),
-                    Span::styled(row.label.clone(),
-                        Style::default().fg(COLOR_SYMBOL).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!(" [{kl}]"), Style::default().fg(COLOR_KIND)),
-                    Span::styled(format!(" ({})", row.count), Style::default().fg(COLOR_HINT)),
-                ])
-            }
-            RowKind::Symbol { pkg_idx, item_idx } => {
-                let item = &app.packages[*pkg_idx].items[*item_idx];
-                let kl = kind_label(&item.kind);
-                Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(row.label.clone(), Style::default().fg(COLOR_SYMBOL)),
-                    Span::styled(format!(" [{kl}]"), Style::default().fg(COLOR_KIND)),
-                ])
-            }
-            RowKind::Member { pkg_idx, item_idx } => {
-                let item = &app.packages[*pkg_idx].items[*item_idx];
-                let kl = kind_label(&item.kind);
-                Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled("• ".to_string(), Style::default().fg(COLOR_HINT)),
-                    Span::styled(row.label.clone(), Style::default().fg(COLOR_SYMBOL)),
-                    Span::styled(format!(" [{kl}]"), Style::default().fg(COLOR_KIND)),
-                ])
-            }
-        };
-        ListItem::new(line)
-    }).collect();
+    let items: Vec<ListItem> = app
+        .rows
+        .iter()
+        .map(|row| {
+            let indent = "  ".repeat(row.depth);
+            let line = match &row.kind {
+                RowKind::Package { pkg_idx } => {
+                    let arrow = if app.expanded.contains(&pkg_key(*pkg_idx)) {
+                        "▼"
+                    } else {
+                        "▶"
+                    };
+                    Line::from(vec![
+                        Span::raw(indent),
+                        Span::styled(format!("{arrow} "), Style::default().fg(COLOR_PKG)),
+                        Span::styled(
+                            row.label.clone(),
+                            Style::default().fg(COLOR_PKG).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!(" ({})", row.count), Style::default().fg(COLOR_HINT)),
+                    ])
+                }
+                RowKind::Namespace { pkg_idx, name } => {
+                    let arrow = if app.expanded.contains(&ns_key(*pkg_idx, name)) {
+                        "▼"
+                    } else {
+                        "▶"
+                    };
+                    Line::from(vec![
+                        Span::raw(indent),
+                        Span::styled(format!("{arrow} "), Style::default().fg(COLOR_SECTION)),
+                        Span::styled(row.label.clone(), Style::default().fg(COLOR_SECTION)),
+                        Span::styled(" [namespace]".to_string(), Style::default().fg(COLOR_KIND)),
+                        Span::styled(format!(" ({})", row.count), Style::default().fg(COLOR_HINT)),
+                    ])
+                }
+                RowKind::Group { pkg_idx, item_idx } => {
+                    let item = &app.packages[*pkg_idx].items[*item_idx];
+                    let kl = kind_label(&item.kind);
+                    let arrow = if app.expanded.contains(&grp_key(*pkg_idx, *item_idx)) {
+                        "▼"
+                    } else {
+                        "▶"
+                    };
+                    Line::from(vec![
+                        Span::raw(indent),
+                        Span::styled(format!("{arrow} "), Style::default().fg(COLOR_SYMBOL)),
+                        Span::styled(
+                            row.label.clone(),
+                            Style::default()
+                                .fg(COLOR_SYMBOL)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!(" [{kl}]"), Style::default().fg(COLOR_KIND)),
+                        Span::styled(format!(" ({})", row.count), Style::default().fg(COLOR_HINT)),
+                    ])
+                }
+                RowKind::Symbol { pkg_idx, item_idx } => {
+                    let item = &app.packages[*pkg_idx].items[*item_idx];
+                    let kl = kind_label(&item.kind);
+                    Line::from(vec![
+                        Span::raw(indent),
+                        Span::styled(row.label.clone(), Style::default().fg(COLOR_SYMBOL)),
+                        Span::styled(format!(" [{kl}]"), Style::default().fg(COLOR_KIND)),
+                    ])
+                }
+                RowKind::Member { pkg_idx, item_idx } => {
+                    let item = &app.packages[*pkg_idx].items[*item_idx];
+                    let kl = kind_label(&item.kind);
+                    Line::from(vec![
+                        Span::raw(indent),
+                        Span::styled("• ".to_string(), Style::default().fg(COLOR_HINT)),
+                        Span::styled(row.label.clone(), Style::default().fg(COLOR_SYMBOL)),
+                        Span::styled(format!(" [{kl}]"), Style::default().fg(COLOR_KIND)),
+                    ])
+                }
+            };
+            ListItem::new(line)
+        })
+        .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default()
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
             .bg(Color::Rgb(40, 50, 70))
-            .add_modifier(Modifier::BOLD));
+            .add_modifier(Modifier::BOLD),
+    );
 
     f.render_stateful_widget(list, app.tree_area, &mut app.list_state);
 }
 
 /// Estimated total visual rows for `lines` when wrapped to `inner_width` columns.
 fn visual_row_count(lines: &[Line<'static>], inner_width: usize) -> usize {
-    if inner_width == 0 { return lines.len(); }
-    lines.iter().map(|line| {
-        let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-        chars.div_ceil(inner_width).max(1)
-    }).sum()
+    if inner_width == 0 {
+        return lines.len();
+    }
+    lines
+        .iter()
+        .map(|line| {
+            let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            chars.div_ceil(inner_width).max(1)
+        })
+        .sum()
 }
 
 /// Map a visual row index to the logical line index that contains it.
@@ -840,15 +1039,19 @@ fn visual_to_logical(lines: &[Line<'static>], visual_row: usize, inner_width: us
         let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
         let rows = chars.div_ceil(inner_width).max(1);
         v += rows;
-        if v > visual_row { return i; }
+        if v > visual_row {
+            return i;
+        }
     }
     lines.len().saturating_sub(1)
 }
 
 fn render_detail(app: &mut App, f: &mut Frame) {
-    let border_style = Style::default().fg(
-        if app.focus == Focus::Detail { COLOR_ACTIVE } else { COLOR_BORDER }
-    );
+    let border_style = Style::default().fg(if app.focus == Focus::Detail {
+        COLOR_ACTIVE
+    } else {
+        COLOR_BORDER
+    });
 
     let title = detail_title(app);
     let block = Block::default()
@@ -870,8 +1073,12 @@ fn render_detail(app: &mut App, f: &mut Frame) {
             app.ensure_source_cache(&path);
             if let Some((_, cached)) = &app.source_cache {
                 let lines = source_lines_windowed(
-                    cached, decl_line, &lang, &file_label,
-                    app.scroll as usize, inner.height as usize,
+                    cached,
+                    decl_line,
+                    &lang,
+                    &file_label,
+                    app.scroll as usize,
+                    inner.height as usize,
                 );
                 f.render_widget(Paragraph::new(lines), inner);
             }
@@ -885,14 +1092,16 @@ fn render_detail(app: &mut App, f: &mut Frame) {
         None
     } else {
         app.selected_row().and_then(|r| match &r.kind {
-            RowKind::Group  { pkg_idx, item_idx }
+            RowKind::Group { pkg_idx, item_idx }
             | RowKind::Symbol { pkg_idx, item_idx }
             | RowKind::Member { pkg_idx, item_idx } => Some((*pkg_idx, *item_idx)),
             _ => None,
         })
     };
     annotate_links(&mut lines, &app.sym_index, &mut app.detail_links, current);
-    let para = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((app.scroll, 0));
+    let para = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0));
     f.render_widget(para, inner);
 }
 
@@ -907,10 +1116,17 @@ fn detail_title(app: &App) -> String {
         Some(RowKind::Namespace { pkg_idx, name }) => {
             format!("{} — namespace {name}", app.packages[*pkg_idx].name)
         }
-        Some(RowKind::Group { pkg_idx, item_idx } | RowKind::Symbol { pkg_idx, item_idx }
-             | RowKind::Member { pkg_idx, item_idx }) => {
+        Some(
+            RowKind::Group { pkg_idx, item_idx }
+            | RowKind::Symbol { pkg_idx, item_idx }
+            | RowKind::Member { pkg_idx, item_idx },
+        ) => {
             let item = &app.packages[*pkg_idx].items[*item_idx];
-            let view = if app.show_source { "source" } else { kind_label(&item.kind) };
+            let view = if app.show_source {
+                "source"
+            } else {
+                kind_label(&item.kind)
+            };
             format!("{} [{}]", item_display_name(item), view)
         }
         None => "doc".to_string(),
@@ -939,7 +1155,9 @@ fn source_lines_windowed(
             1 => out.push(Line::raw("")),
             n => {
                 let abs = n - 2; // 0-indexed source line
-                if abs >= cached_lines.len() { break; }
+                if abs >= cached_lines.len() {
+                    break;
+                }
                 let line = &cached_lines[abs];
                 let is_decl = abs == decl_line;
                 let num_style = if is_decl {
@@ -954,14 +1172,19 @@ fn source_lines_windowed(
                 ];
                 let md = format!("```{fence}\n{line}\n```\n");
                 let rendered = tui_markdown::from_str(&md);
-                let code_spans: Vec<Span<'static>> = rendered.lines.into_iter()
+                let code_spans: Vec<Span<'static>> = rendered
+                    .lines
+                    .into_iter()
                     .find(|l| {
                         let t: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
                         !t.trim().starts_with("```")
                     })
-                    .map(|l| l.spans.into_iter()
-                        .map(|s| Span::styled(s.content.into_owned(), s.style))
-                        .collect())
+                    .map(|l| {
+                        l.spans
+                            .into_iter()
+                            .map(|s| Span::styled(s.content.into_owned(), s.style))
+                            .collect()
+                    })
                     .unwrap_or_else(|| vec![Span::raw(line.clone())]);
                 spans.extend(code_spans);
                 out.push(Line::from(spans));
@@ -970,7 +1193,6 @@ fn source_lines_windowed(
     }
     out
 }
-
 
 fn detail_lines(app: &App) -> Vec<Line<'static>> {
     let width = app.detail_area.width.saturating_sub(4) as usize;
@@ -988,11 +1210,15 @@ fn detail_lines(app: &App) -> Vec<Line<'static>> {
         Some(RowKind::Namespace { pkg_idx, name }) => {
             namespace_lines(&app.packages[pkg_idx], &name, width)
         }
-        Some(RowKind::Group { pkg_idx, item_idx }
-             | RowKind::Symbol { pkg_idx, item_idx }
-             | RowKind::Member { pkg_idx, item_idx }) => {
-            symbol_lines(&app.packages[pkg_idx].items[item_idx], &app.packages[pkg_idx].items, width)
-        }
+        Some(
+            RowKind::Group { pkg_idx, item_idx }
+            | RowKind::Symbol { pkg_idx, item_idx }
+            | RowKind::Member { pkg_idx, item_idx },
+        ) => symbol_lines(
+            &app.packages[pkg_idx].items[item_idx],
+            &app.packages[pkg_idx].items,
+            width,
+        ),
         None => vec![Line::raw("")],
     }
 }
@@ -1003,41 +1229,62 @@ fn namespace_lines(pkg: &PackageDoc, ns: &str, width: usize) -> Vec<Line<'static
     let mut out = Vec::new();
     out.push(Line::from(vec![
         Span::styled("namespace ".to_string(), Style::default().fg(COLOR_HINT)),
-        Span::styled(ns.to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            ns.to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
     out.push(Line::from(Span::styled(
-        "─".repeat(width.min(60)), Style::default().fg(COLOR_BORDER))));
+        "─".repeat(width.min(60)),
+        Style::default().fg(COLOR_BORDER),
+    )));
     out.push(Line::raw(""));
 
     let members = items_in_ns(&pkg.items, ns);
     if members.is_empty() {
-        out.push(Line::styled("No documented members.".to_string(),
-            Style::default().fg(COLOR_HINT)));
+        out.push(Line::styled(
+            "No documented members.".to_string(),
+            Style::default().fg(COLOR_HINT),
+        ));
         return out;
     }
 
     // Group by section within the namespace.
     for sec in Section::ALL {
-        let group: Vec<_> = members.iter()
+        let group: Vec<_> = members
+            .iter()
             .filter(|i| item_section(i) == Some(sec))
             .collect();
-        if group.is_empty() { continue; }
-        out.push(Line::styled(sec.label().to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+        if group.is_empty() {
+            continue;
+        }
+        out.push(Line::styled(
+            sec.label().to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
         for item in group {
             let kl = kind_label(&item.kind);
             let simple = item_display_name(item);
             out.push(Line::from(vec![
-                Span::styled(format!("  {simple}"),
-                    Style::default().fg(COLOR_SYMBOL).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("  {simple}"),
+                    Style::default()
+                        .fg(COLOR_SYMBOL)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(format!("  [{kl}]"), Style::default().fg(COLOR_KIND)),
             ]));
             if !item.brief.is_empty() {
                 let brief = render_math_lines(&item.brief);
                 for line in word_wrap(&brief, width.saturating_sub(6)) {
-                    out.push(Line::styled(format!("    {line}"),
-                        Style::default().fg(COLOR_BRIEF)));
+                    out.push(Line::styled(
+                        format!("    {line}"),
+                        Style::default().fg(COLOR_BRIEF),
+                    ));
                 }
             }
         }
@@ -1050,33 +1297,47 @@ fn pkg_overview_lines(pkg: &PackageDoc, width: usize) -> Vec<Line<'static>> {
     let mut out = Vec::new();
 
     out.push(Line::from(vec![
-        Span::styled(pkg.name.clone(),
-            Style::default().fg(COLOR_PKG).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("  {}", pkg.version),
-            Style::default().fg(COLOR_HINT)),
+        Span::styled(
+            pkg.name.clone(),
+            Style::default().fg(COLOR_PKG).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {}", pkg.version),
+            Style::default().fg(COLOR_HINT),
+        ),
     ]));
     out.push(Line::raw(""));
 
     // Section counts table
     for sec in Section::ALL {
-        let count = pkg.items.iter().filter(|i| item_section(i) == Some(sec)).count();
+        let count = pkg
+            .items
+            .iter()
+            .filter(|i| item_section(i) == Some(sec))
+            .count();
         if count > 0 {
             out.push(Line::from(vec![
-                Span::styled(format!("  {:.<24}", sec.label()),
-                    Style::default().fg(COLOR_SECTION)),
-                Span::styled(format!(" {count}"),
-                    Style::default().fg(COLOR_SYMBOL)),
+                Span::styled(
+                    format!("  {:.<24}", sec.label()),
+                    Style::default().fg(COLOR_SECTION),
+                ),
+                Span::styled(format!(" {count}"), Style::default().fg(COLOR_SYMBOL)),
             ]));
         }
     }
     out.push(Line::raw(""));
 
     if let Some(readme) = &pkg.readme {
-        out.push(Line::styled("README".to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+        out.push(Line::styled(
+            "README".to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
         out.push(Line::from(Span::styled(
             "─".repeat(width.min(60)),
-            Style::default().fg(COLOR_BORDER))));
+            Style::default().fg(COLOR_BORDER),
+        )));
         out.push(Line::raw(""));
         push_markdown_body(&mut out, readme);
     }
@@ -1088,10 +1349,16 @@ fn symbol_lines(item: &DocItem, all_items: &[DocItem], width: usize) -> Vec<Line
 
     // Name + kind badge
     out.push(Line::from(vec![
-        Span::styled(item_display_name(item),
-            Style::default().fg(COLOR_SYMBOL).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("  [{}]", kind_label(&item.kind)),
-            Style::default().fg(COLOR_KIND)),
+        Span::styled(
+            item_display_name(item),
+            Style::default()
+                .fg(COLOR_SYMBOL)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  [{}]", kind_label(&item.kind)),
+            Style::default().fg(COLOR_KIND),
+        ),
     ]));
 
     // Signature with syntax highlighting
@@ -1101,7 +1368,9 @@ fn symbol_lines(item: &DocItem, all_items: &[DocItem], width: usize) -> Vec<Line
     }
 
     out.push(Line::from(Span::styled(
-        "─".repeat(width.min(60)), Style::default().fg(COLOR_BORDER))));
+        "─".repeat(width.min(60)),
+        Style::default().fg(COLOR_BORDER),
+    )));
 
     // Brief (always single line — plain text is fine)
     if !item.brief.is_empty() {
@@ -1119,13 +1388,29 @@ fn symbol_lines(item: &DocItem, all_items: &[DocItem], width: usize) -> Vec<Line
     }
 
     // Params / returns / other tags
-    let params: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
-    let returns: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::Return).collect();
-    let see: Vec<_> = item.tags.iter().filter(|t| t.kind == TagKind::See).collect();
+    let params: Vec<_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Param)
+        .collect();
+    let returns: Vec<_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Return)
+        .collect();
+    let see: Vec<_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::See)
+        .collect();
 
     if !params.is_empty() {
-        out.push(Line::styled("Parameters".to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+        out.push(Line::styled(
+            "Parameters".to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
         for p in &params {
             let name = p.name.as_deref().unwrap_or("?");
             let desc = render_math_lines(&p.text);
@@ -1138,8 +1423,12 @@ fn symbol_lines(item: &DocItem, all_items: &[DocItem], width: usize) -> Vec<Line
     }
 
     if !returns.is_empty() {
-        out.push(Line::styled("Returns".to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+        out.push(Line::styled(
+            "Returns".to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
         for r in &returns {
             push_markdown_body(&mut out, &r.text);
         }
@@ -1147,15 +1436,26 @@ fn symbol_lines(item: &DocItem, all_items: &[DocItem], width: usize) -> Vec<Line
     }
 
     if !see.is_empty() {
-        out.push(Line::styled("See also".to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
-        let combined = see.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n\n");
+        out.push(Line::styled(
+            "See also".to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let combined = see
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         push_markdown_body(&mut out, &combined);
         out.push(Line::raw(""));
     }
 
     // Member table for class / struct / interface items.
-    if matches!(item.kind, DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Typedef) {
+    if matches!(
+        item.kind,
+        DocKind::Class | DocKind::Struct | DocKind::Interface | DocKind::Typedef
+    ) {
         let simple = item_display_name(item);
         let members = class_members(all_items, &simple);
         if !members.is_empty() {
@@ -1171,28 +1471,25 @@ fn lang_fence(lang: &DocLanguage) -> &'static str {
     // Unsupported ones return "" so the code block falls back to generic styling
     // rather than syntect trying and failing to find the syntax definition.
     match lang {
-        DocLanguage::C          => "c",
-        DocLanguage::Cpp        => "cpp",
-        DocLanguage::Rust       => "rust",
-        DocLanguage::Go         => "go",
-        DocLanguage::Python     => "python",
-        DocLanguage::Java       => "java",
-        DocLanguage::Kotlin     => "kotlin",
-        DocLanguage::Swift      => "swift",
-        DocLanguage::CSharp     => "cs",
+        DocLanguage::C => "c",
+        DocLanguage::Cpp => "cpp",
+        DocLanguage::Rust => "rust",
+        DocLanguage::Go => "go",
+        DocLanguage::Python => "python",
+        DocLanguage::Java => "java",
+        DocLanguage::Kotlin => "kotlin",
+        DocLanguage::Swift => "swift",
+        DocLanguage::CSharp => "cs",
         DocLanguage::TypeScript => "ts",
         DocLanguage::JavaScript => "js",
-        DocLanguage::D          => "d",
-        DocLanguage::Php        => "php",
-        DocLanguage::Ruby       => "ruby",
-        DocLanguage::Lua        => "lua",
-        DocLanguage::R          => "r",
-        DocLanguage::Haskell    => "haskell",
+        DocLanguage::D => "d",
+        DocLanguage::Php => "php",
+        DocLanguage::Ruby => "ruby",
+        DocLanguage::Lua => "lua",
+        DocLanguage::R => "r",
+        DocLanguage::Haskell => "haskell",
         // No bundled syntect syntax — use generic code block.
-        DocLanguage::Fortran
-        | DocLanguage::Ada
-        | DocLanguage::Zig
-        | DocLanguage::Unknown  => "",
+        DocLanguage::Fortran | DocLanguage::Ada | DocLanguage::Zig | DocLanguage::Unknown => "",
     }
 }
 
@@ -1216,7 +1513,9 @@ fn push_highlighted_code(out: &mut Vec<Line<'static>>, code: &str, lang: &DocLan
         let raw: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         let trimmed = raw.trim();
         // Skip lines that are purely fence markers (` ``` ` with optional lang tag).
-        if trimmed.starts_with("```") { continue; }
+        if trimmed.starts_with("```") {
+            continue;
+        }
         out.push(Line::from(
             line.spans
                 .into_iter()
@@ -1231,17 +1530,19 @@ fn render_member_table(out: &mut Vec<Line<'static>>, members: &[&DocItem], width
 
     // Group by access specifier bucket.
     let buckets: &[(&str, Option<Access>)] = &[
-        ("Public Functions",   Some(Access::Public)),
-        ("Protected Functions",Some(Access::Protected)),
-        ("Public Variables",   None), // variables without explicit access
-        ("Private Members",    Some(Access::Private)),
+        ("Public Functions", Some(Access::Public)),
+        ("Protected Functions", Some(Access::Protected)),
+        ("Public Variables", None), // variables without explicit access
+        ("Private Members", Some(Access::Private)),
     ];
 
     // Separate functions/subroutines from variables.
-    let fns: Vec<&&DocItem> = members.iter()
+    let fns: Vec<&&DocItem> = members
+        .iter()
         .filter(|m| matches!(m.kind, DocKind::Function | DocKind::Subroutine))
         .collect();
-    let vars: Vec<&&DocItem> = members.iter()
+    let vars: Vec<&&DocItem> = members
+        .iter()
         .filter(|m| !matches!(m.kind, DocKind::Function | DocKind::Subroutine))
         .collect();
 
@@ -1249,22 +1550,33 @@ fn render_member_table(out: &mut Vec<Line<'static>>, members: &[&DocItem], width
 
     // Public and protected functions.
     for (label, access) in [
-        ("Public Functions",    Some(Access::Public)),
+        ("Public Functions", Some(Access::Public)),
         ("Protected Functions", Some(Access::Protected)),
-        ("Private Functions",   Some(Access::Private)),
+        ("Private Functions", Some(Access::Private)),
     ] {
-        let group: Vec<_> = fns.iter()
-            .filter(|m| m.meta.access == access
-                || (access == Some(Access::Public) && m.meta.access.is_none()))
+        let group: Vec<_> = fns
+            .iter()
+            .filter(|m| {
+                m.meta.access == access
+                    || (access == Some(Access::Public) && m.meta.access.is_none())
+            })
             .collect();
-        if group.is_empty() { continue; }
+        if group.is_empty() {
+            continue;
+        }
         if !emitted {
             out.push(Line::from(Span::styled(
-                "─".repeat(width.min(60)), Style::default().fg(COLOR_BORDER))));
+                "─".repeat(width.min(60)),
+                Style::default().fg(COLOR_BORDER),
+            )));
         }
         emitted = true;
-        out.push(Line::styled(label.to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+        out.push(Line::styled(
+            label.to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
         for m in group {
             render_member_row(out, m, width);
         }
@@ -1275,10 +1587,16 @@ fn render_member_table(out: &mut Vec<Line<'static>>, members: &[&DocItem], width
     if !vars.is_empty() {
         if !emitted {
             out.push(Line::from(Span::styled(
-                "─".repeat(width.min(60)), Style::default().fg(COLOR_BORDER))));
+                "─".repeat(width.min(60)),
+                Style::default().fg(COLOR_BORDER),
+            )));
         }
-        out.push(Line::styled("Data Members".to_string(),
-            Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+        out.push(Line::styled(
+            "Data Members".to_string(),
+            Style::default()
+                .fg(COLOR_SECTION)
+                .add_modifier(Modifier::BOLD),
+        ));
         for m in &vars {
             render_member_row(out, m, width);
         }
@@ -1291,9 +1609,13 @@ fn render_member_row(out: &mut Vec<Line<'static>>, m: &DocItem, width: usize) {
     let simple = item_display_name(m);
     let kl = kind_label(&m.kind);
     let attrs = m.meta.attrs.join(" ");
-    let sig = if !m.signature.is_empty() { make_prototype(&m.signature) }
-              else if !attrs.is_empty()   { format!("{attrs} {};", simple) }
-              else                         { format!("{};", simple) };
+    let sig = if !m.signature.is_empty() {
+        make_prototype(&m.signature)
+    } else if !attrs.is_empty() {
+        format!("{attrs} {};", simple)
+    } else {
+        format!("{};", simple)
+    };
     // Indent + kind badge header
     out.push(Line::from(vec![
         Span::raw("  "),
@@ -1309,8 +1631,10 @@ fn render_member_row(out: &mut Vec<Line<'static>>, m: &DocItem, width: usize) {
     if !m.brief.is_empty() {
         let brief = render_math_lines(&m.brief);
         for line in word_wrap(&brief, width.saturating_sub(6)) {
-            out.push(Line::styled(format!("    {line}"),
-                Style::default().fg(COLOR_BRIEF)));
+            out.push(Line::styled(
+                format!("    {line}"),
+                Style::default().fg(COLOR_BRIEF),
+            ));
         }
     }
 }
@@ -1320,32 +1644,47 @@ fn render_member_row(out: &mut Vec<Line<'static>>, m: &DocItem, width: usize) {
 #[derive(Debug, Clone)]
 struct MarkdownTable {
     headers: Vec<String>,
-    rows:    Vec<Vec<String>>,
+    rows: Vec<Vec<String>>,
 }
 
 fn parse_markdown_table(lines: &[&str], start: usize) -> Option<(MarkdownTable, usize)> {
     let header = split_markdown_table_row(*lines.get(start)?)?;
-    let sep    = split_markdown_table_row(*lines.get(start + 1)?)?;
+    let sep = split_markdown_table_row(*lines.get(start + 1)?)?;
     if header.is_empty() || !sep.iter().all(|c| is_markdown_separator_cell(c)) {
         return None;
     }
     let mut rows = Vec::new();
     let mut i = start + 2;
     while let Some(line) = lines.get(i) {
-        let Some(cells) = split_markdown_table_row(line) else { break };
-        if cells.is_empty() { break }
+        let Some(cells) = split_markdown_table_row(line) else {
+            break;
+        };
+        if cells.is_empty() {
+            break;
+        }
         rows.push(cells);
         i += 1;
     }
-    Some((MarkdownTable { headers: header, rows }, i - start))
+    Some((
+        MarkdownTable {
+            headers: header,
+            rows,
+        },
+        i - start,
+    ))
 }
 
 fn split_markdown_table_row(line: &str) -> Option<Vec<String>> {
     let t = line.trim();
-    if !t.starts_with('|') || !t.ends_with('|') || t.matches('|').count() < 2 { return None; }
-    Some(t.trim_matches('|').split('|')
-        .map(|c| clean_markdown_table_cell(c.trim()))
-        .collect())
+    if !t.starts_with('|') || !t.ends_with('|') || t.matches('|').count() < 2 {
+        return None;
+    }
+    Some(
+        t.trim_matches('|')
+            .split('|')
+            .map(|c| clean_markdown_table_cell(c.trim()))
+            .collect(),
+    )
 }
 
 fn is_markdown_separator_cell(cell: &str) -> bool {
@@ -1354,7 +1693,11 @@ fn is_markdown_separator_cell(cell: &str) -> bool {
 }
 
 fn clean_markdown_table_cell(cell: &str) -> String {
-    cell.replace('`', "").replace("**", "").replace('*', "").trim().to_string()
+    cell.replace('`', "")
+        .replace("**", "")
+        .replace('*', "")
+        .trim()
+        .to_string()
 }
 
 fn push_markdown_table(out: &mut Vec<Line<'static>>, table: &MarkdownTable, width: usize) {
@@ -1362,7 +1705,12 @@ fn push_markdown_table(out: &mut Vec<Line<'static>>, table: &MarkdownTable, widt
         // Fallback: plain text
         let header = table.headers.join("  ");
         for w in word_wrap(&header, width) {
-            out.push(Line::styled(w, Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)));
+            out.push(Line::styled(
+                w,
+                Style::default()
+                    .fg(COLOR_SECTION)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
         for row in &table.rows {
             for w in word_wrap(&row.join("  "), width) {
@@ -1372,37 +1720,54 @@ fn push_markdown_table(out: &mut Vec<Line<'static>>, table: &MarkdownTable, widt
         return;
     }
 
-    let name_w = table.rows.iter().filter_map(|r| r.first())
+    let name_w = table
+        .rows
+        .iter()
+        .filter_map(|r| r.first())
         .map(|c| c.chars().count())
         .chain(table.headers.first().map(|c| c.chars().count()))
-        .max().unwrap_or(8).clamp(4, 20);
+        .max()
+        .unwrap_or(8)
+        .clamp(4, 20);
     let avail = width.saturating_sub(name_w + 8).max(16);
-    let desc_content = table.rows.iter().filter_map(|r| r.get(1))
+    let desc_content = table
+        .rows
+        .iter()
+        .filter_map(|r| r.get(1))
         .map(|c| c.chars().count())
         .chain(table.headers.get(1).map(|c| c.chars().count()))
-        .max().unwrap_or(16);
+        .max()
+        .unwrap_or(16);
     let desc_w = desc_content.clamp(16, avail.min(56));
 
     out.push(table_rule(name_w, desc_w, "┌", "┬", "┐"));
     out.push(table_row(
         table.headers.first().map(String::as_str).unwrap_or(""),
         table.headers.get(1).map(String::as_str).unwrap_or(""),
-        name_w, desc_w, true, true,
+        name_w,
+        desc_w,
+        true,
+        true,
     ));
     out.push(table_rule(name_w, desc_w, "├", "┼", "┤"));
     for row in &table.rows {
-        push_wrapped_table_row(out,
+        push_wrapped_table_row(
+            out,
             row.first().map(String::as_str).unwrap_or(""),
             row.get(1).map(String::as_str).unwrap_or(""),
-            name_w, desc_w);
+            name_w,
+            desc_w,
+        );
     }
     out.push(table_rule(name_w, desc_w, "└", "┴", "┘"));
 }
 
 fn push_wrapped_table_row(
     out: &mut Vec<Line<'static>>,
-    name: &str, text: &str,
-    name_w: usize, desc_w: usize,
+    name: &str,
+    text: &str,
+    name_w: usize,
+    desc_w: usize,
 ) {
     let wrapped = word_wrap(text, desc_w);
     if wrapped.is_empty() {
@@ -1416,19 +1781,26 @@ fn push_wrapped_table_row(
 }
 
 fn table_row(
-    name: &str, text: &str,
-    name_w: usize, desc_w: usize,
-    header: bool, show_label: bool,
+    name: &str,
+    text: &str,
+    name_w: usize,
+    desc_w: usize,
+    header: bool,
+    show_label: bool,
 ) -> Line<'static> {
     let name_style = if header {
-        Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(COLOR_SECTION)
+            .add_modifier(Modifier::BOLD)
     } else if show_label {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let text_style = if header {
-        Style::default().fg(COLOR_SECTION).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(COLOR_SECTION)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(COLOR_BRIEF)
     };
@@ -1442,9 +1814,19 @@ fn table_row(
     ])
 }
 
-fn table_rule(name_w: usize, desc_w: usize, l: &'static str, m: &'static str, r: &'static str) -> Line<'static> {
+fn table_rule(
+    name_w: usize,
+    desc_w: usize,
+    l: &'static str,
+    m: &'static str,
+    r: &'static str,
+) -> Line<'static> {
     Line::styled(
-        format!("  {l}{}{m}{}{r}", "─".repeat(name_w + 2), "─".repeat(desc_w + 2)),
+        format!(
+            "  {l}{}{m}{}{r}",
+            "─".repeat(name_w + 2),
+            "─".repeat(desc_w + 2)
+        ),
         Style::default().fg(Color::DarkGray),
     )
 }
@@ -1461,17 +1843,29 @@ impl tui_markdown::StyleSheet for OneDarkPro {
         use ratatui::style::{Color, Modifier, Style};
         match level {
             // Yellow — brightest, most prominent
-            1 => Style::default().fg(Color::Rgb(229, 192, 123)).add_modifier(Modifier::BOLD),
+            1 => Style::default()
+                .fg(Color::Rgb(229, 192, 123))
+                .add_modifier(Modifier::BOLD),
             // Green
-            2 => Style::default().fg(Color::Rgb(152, 195, 121)).add_modifier(Modifier::BOLD),
+            2 => Style::default()
+                .fg(Color::Rgb(152, 195, 121))
+                .add_modifier(Modifier::BOLD),
             // Blue
-            3 => Style::default().fg(Color::Rgb(97, 175, 239)).add_modifier(Modifier::BOLD),
+            3 => Style::default()
+                .fg(Color::Rgb(97, 175, 239))
+                .add_modifier(Modifier::BOLD),
             // Purple
-            4 => Style::default().fg(Color::Rgb(198, 120, 221)).add_modifier(Modifier::BOLD),
+            4 => Style::default()
+                .fg(Color::Rgb(198, 120, 221))
+                .add_modifier(Modifier::BOLD),
             // Cyan
-            5 => Style::default().fg(Color::Rgb(86, 182, 194)).add_modifier(Modifier::ITALIC),
+            5 => Style::default()
+                .fg(Color::Rgb(86, 182, 194))
+                .add_modifier(Modifier::ITALIC),
             // Red/orange — lowest level
-            _ => Style::default().fg(Color::Rgb(224, 108, 117)).add_modifier(Modifier::ITALIC),
+            _ => Style::default()
+                .fg(Color::Rgb(224, 108, 117))
+                .add_modifier(Modifier::ITALIC),
         }
     }
     fn code(&self) -> ratatui::style::Style {
@@ -1510,10 +1904,10 @@ fn styled_heading_line(level: u8, text: &str) -> Line<'static> {
     let (fg, bg) = match level {
         1 => (Color::Rgb(229, 192, 123), Color::Rgb(50, 44, 18)),
         2 => (Color::Rgb(152, 195, 121), Color::Rgb(24, 44, 20)),
-        3 => (Color::Rgb(97,  175, 239), Color::Rgb(18, 33, 50)),
+        3 => (Color::Rgb(97, 175, 239), Color::Rgb(18, 33, 50)),
         _ => (Color::Rgb(198, 120, 221), Color::Rgb(34, 18, 44)),
     };
-    let cap_style  = Style::default().fg(bg);
+    let cap_style = Style::default().fg(bg);
     let body_style = Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD);
     Line::from(vec![
         Span::styled("\u{E0B6}", cap_style),
@@ -1542,7 +1936,12 @@ fn push_fenced_code(out: &mut Vec<Line<'static>>, fence_lang: &str, code: &str, 
     let left_dashes = 3usize;
     let right_dashes = w.saturating_sub(left_dashes + lang_part.chars().count() + 2);
     out.push(Line::styled(
-        format!("┌{}{}{}┐", "─".repeat(left_dashes), lang_part, "─".repeat(right_dashes)),
+        format!(
+            "┌{}{}{}┐",
+            "─".repeat(left_dashes),
+            lang_part,
+            "─".repeat(right_dashes)
+        ),
         border,
     ));
 
@@ -1552,18 +1951,27 @@ fn push_fenced_code(out: &mut Vec<Line<'static>>, fence_lang: &str, code: &str, 
     let rendered = tui_markdown::from_str(&md_src);
     for line in rendered.lines {
         let raw: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        if raw.trim().starts_with("```") { continue; }
+        if raw.trim().starts_with("```") {
+            continue;
+        }
         let text_len: usize = raw.chars().count();
         let padding = " ".repeat(inner_w.saturating_sub(text_len));
         let mut spans: Vec<Span<'static>> = vec![Span::styled("│ ", border)];
-        spans.extend(line.spans.into_iter().map(|s| Span::styled(s.content.into_owned(), s.style)));
+        spans.extend(
+            line.spans
+                .into_iter()
+                .map(|s| Span::styled(s.content.into_owned(), s.style)),
+        );
         spans.push(Span::raw(padding));
         spans.push(Span::styled(" │", border));
         out.push(Line::from(spans));
     }
 
     // Bottom border: └───…───┘
-    out.push(Line::styled(format!("└{}┘", "─".repeat(w.saturating_sub(2))), border));
+    out.push(Line::styled(
+        format!("└{}┘", "─".repeat(w.saturating_sub(2))),
+        border,
+    ));
     out.push(Line::raw(""));
 }
 
@@ -1611,9 +2019,12 @@ fn push_markdown_body(out: &mut Vec<Line<'static>>, text: &str) {
         let block = raw[start..i].join("\n");
         let md = tui_markdown::from_str_with_options(&block, &opts);
         out.extend(md.lines.into_iter().map(|l| {
-            Line::from(l.spans.into_iter()
-                .map(|s| Span::styled(s.content.into_owned(), s.style))
-                .collect::<Vec<_>>())
+            Line::from(
+                l.spans
+                    .into_iter()
+                    .map(|s| Span::styled(s.content.into_owned(), s.style))
+                    .collect::<Vec<_>>(),
+            )
         }));
     }
 }
@@ -1626,12 +2037,18 @@ fn push_markdown_body(out: &mut Vec<Line<'static>>, text: &str) {
 /// `"typedef struct vec2"` → `"vec2"`, `"struct Point"` → `"Point"`.
 fn clean_item_name(name: &str) -> &str {
     for prefix in [
-        "typedef struct ", "typedef enum ", "typedef union ",
-        "struct ", "enum ", "union ",
+        "typedef struct ",
+        "typedef enum ",
+        "typedef union ",
+        "struct ",
+        "enum ",
+        "union ",
     ] {
         if let Some(rest) = name.strip_prefix(prefix) {
             let rest = rest.trim();
-            if !rest.is_empty() { return rest; }
+            if !rest.is_empty() {
+                return rest;
+            }
         }
     }
     name
@@ -1641,17 +2058,23 @@ fn clean_item_name(name: &str) -> &str {
 fn item_display_name(item: &DocItem) -> String {
     let base = clean_item_name(&item.name);
     // Take only the leaf name after :: or .
-    base.rsplit("::").next()
+    base.rsplit("::")
+        .next()
         .or_else(|| base.rsplit('.').next())
         .unwrap_or(base)
         .to_string()
 }
 
 fn word_wrap(text: &str, width: usize) -> Vec<String> {
-    if width == 0 { return vec![text.to_string()]; }
+    if width == 0 {
+        return vec![text.to_string()];
+    }
     let mut out = Vec::new();
     for raw_line in text.lines() {
-        if raw_line.is_empty() { out.push(String::new()); continue; }
+        if raw_line.is_empty() {
+            out.push(String::new());
+            continue;
+        }
         let mut line = String::new();
         for word in raw_line.split_whitespace() {
             if line.is_empty() {
@@ -1664,7 +2087,9 @@ fn word_wrap(text: &str, width: usize) -> Vec<String> {
                 line = word.to_string();
             }
         }
-        if !line.is_empty() { out.push(line); }
+        if !line.is_empty() {
+            out.push(line);
+        }
     }
     out
 }
@@ -1690,7 +2115,11 @@ pub fn browse(
     let result = run_loop(&mut terminal, &mut app, stdlib_rx);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
 
     result
@@ -1735,30 +2164,55 @@ fn run_loop(
                             app.query.clear();
                             app.focus = Focus::Tree;
                             app.rebuild_rows();
-                            if !app.rows.is_empty() { app.list_state.select(Some(0)); }
+                            if !app.rows.is_empty() {
+                                app.list_state.select(Some(0));
+                            }
                         }
-                        KeyCode::Enter | KeyCode::Right => { app.focus = Focus::Tree; }
+                        KeyCode::Enter | KeyCode::Right => {
+                            app.focus = Focus::Tree;
+                        }
                         KeyCode::Backspace => {
                             app.query.pop();
                             app.rebuild_rows();
-                            if !app.rows.is_empty() { app.list_state.select(Some(0)); }
+                            if !app.rows.is_empty() {
+                                app.list_state.select(Some(0));
+                            }
                         }
-                        KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE
-                                         || key.modifiers == KeyModifiers::SHIFT => {
+                        KeyCode::Char(c)
+                            if key.modifiers == KeyModifiers::NONE
+                                || key.modifiers == KeyModifiers::SHIFT =>
+                        {
                             app.query.push(c);
                             app.rebuild_rows();
-                            if !app.rows.is_empty() { app.list_state.select(Some(0)); }
+                            if !app.rows.is_empty() {
+                                app.list_state.select(Some(0));
+                            }
                         }
                         _ => {}
                     },
                     Focus::Tree => match key.code {
-                        KeyCode::Char('/') => { app.focus = Focus::Filter; }
-                        KeyCode::Right => { app.focus = Focus::Detail; app.show_source = false; }
-                        KeyCode::Left  => { app.focus = Focus::Filter; }
-                        KeyCode::Up | KeyCode::Char('k') => { app.move_sel(-1); }
-                        KeyCode::Down | KeyCode::Char('j') => { app.move_sel(1); }
-                        KeyCode::PageUp   => { app.move_sel(-10); }
-                        KeyCode::PageDown => { app.move_sel(10); }
+                        KeyCode::Char('/') => {
+                            app.focus = Focus::Filter;
+                        }
+                        KeyCode::Right => {
+                            app.focus = Focus::Detail;
+                            app.show_source = false;
+                        }
+                        KeyCode::Left => {
+                            app.focus = Focus::Filter;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            app.move_sel(-1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            app.move_sel(1);
+                        }
+                        KeyCode::PageUp => {
+                            app.move_sel(-10);
+                        }
+                        KeyCode::PageDown => {
+                            app.move_sel(10);
+                        }
                         KeyCode::Enter | KeyCode::Char(' ') => {
                             app.scroll = 0;
                             app.toggle_selected();
@@ -1766,16 +2220,26 @@ fn run_loop(
                         _ => {}
                     },
                     Focus::Detail => match key.code {
-                        KeyCode::Left  => { app.focus = Focus::Tree; }
+                        KeyCode::Left => {
+                            app.focus = Focus::Tree;
+                        }
                         // Tab toggles source ↔ docs view.
                         KeyCode::Tab => {
                             app.show_source = !app.show_source;
                             app.scroll = 0;
                         }
-                        KeyCode::Up | KeyCode::Char('k') => { app.scroll_detail(-1); }
-                        KeyCode::Down | KeyCode::Char('j') => { app.scroll_detail(1); }
-                        KeyCode::PageUp   => { app.scroll_detail(-10); }
-                        KeyCode::PageDown => { app.scroll_detail(10); }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            app.scroll_detail(-1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            app.scroll_detail(1);
+                        }
+                        KeyCode::PageUp => {
+                            app.scroll_detail(-10);
+                        }
+                        KeyCode::PageDown => {
+                            app.scroll_detail(10);
+                        }
                         _ => {}
                     },
                 }

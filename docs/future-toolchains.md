@@ -4,7 +4,7 @@ This document lists compilers, assemblers, debuggers, and language extensions wo
 templates for. Each entry includes what makes it interesting, what a template would require,
 and any known technical challenges.
 
-All templates are now hardcoded Rust in `crates/freight-core/src/toolchain/builtin/`.
+All templates are now hardcoded Rust in `crates/freight/src/toolchain/builtin/`.
 Items marked **[needs Rust]** require changes beyond a new template file.
 
 ---

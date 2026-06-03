@@ -599,12 +599,11 @@ fn resolve_version_dep(
             }
             // All freight-fetched deps (source, prebuilt, git, url) live in .deps/<name>/
             let dep_dir = project_dir.join(".pkgs").join(name);
-            let cached: Option<(PathBuf, &str)> =
-                if dep_dir.join(".freight-fetched").exists() {
-                    Some((dep_dir, ".pkgs"))
-                } else {
-                    None
-                };
+            let cached: Option<(PathBuf, &str)> = if dep_dir.join(".freight-fetched").exists() {
+                Some((dep_dir, ".pkgs"))
+            } else {
+                None
+            };
 
             if let Some((dep_dir, via)) = cached {
                 progress(BuildEvent::ResolvingDep {

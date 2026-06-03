@@ -4,7 +4,7 @@ A Cargo-inspired build tool and package manager for compiled languages that targ
 
 Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with a single declarative `freight.toml`, no Makefile or CMake required.
 
-![freight new, build, and run](https://raw.githubusercontent.com/TiniTinyTerminator/freight-workspace/main/tapes/freight-new.gif)
+![freight new, build, and run](https://raw.githubusercontent.com/freight-app/freight-workspace/main/tapes/freight-new.gif)
 
 ## Features
 
@@ -24,21 +24,21 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 - **freight registry** — `freight add <name>` resolves from [freight.dev](https://freight.dev); self-hostable with `freight-registry`
 - **Interactive package browser** — `freight add` (no args) opens a ratatui TUI package browser
 
-![freight add TUI — search, add, and remove packages interactively](https://raw.githubusercontent.com/TiniTinyTerminator/freight-workspace/main/tapes/freight-add-tui.gif)
+![freight add TUI — search, add, and remove packages interactively](https://raw.githubusercontent.com/freight-app/freight-workspace/main/tapes/freight-add-tui.gif)
 
 ## Installation
 
 **Prerequisites:** Rust toolchain (stable), and at least one of gcc/clang/gfortran/nasm on `$PATH`.
 
 ```sh
-git clone https://github.com/TiniTinyTerminator/freight.git
+git clone https://github.com/freight-app/Freight.git
 cd freight
 cargo install --path crates/freight
 ```
 
 ## Quick start
 
-![freight fetch and build with a registry dependency](https://raw.githubusercontent.com/TiniTinyTerminator/freight-workspace/main/tapes/freight-fetch-build.gif)
+![freight fetch and build with a registry dependency](https://raw.githubusercontent.com/freight-app/freight-workspace/main/tapes/freight-fetch-build.gif)
 
 ```sh
 freight new myapp --lang cpp
@@ -122,13 +122,14 @@ The `examples/` directory has fully buildable projects. See [`examples/README.md
 
 | Example | What it shows |
 |---|---|
-| `hello-cpp/` | Multi-file C++ with tests and a benchmark |
-| `with-deps/` | Path dependency (static lib) |
-| `cpp-modules/` | C++20 named modules, ASCII ray tracer |
-| `tri-lang/` | Fortran + C + C++ N-body gravity |
-| `with-cmake-dep/` | Foreign CMake dependency |
-| `with-git-dep/` | Git dependency cloned and built |
-| `doc-example/` | C, C++, Fortran libs — run `freight doc` to demo the TUI |
+| `cpp/hello/` | Multi-file C++ hello world |
+| `cpp/modules/` | C++20 named modules |
+| `cpp/multi-bin/` | Multiple binaries from one package |
+| `cpp/static-lib/` | Static library target |
+| `mixed/tri-lang/` | Fortran + C + C++ in one project |
+| `deps/cmake/` | Foreign CMake dependency |
+| `deps/git/` | Git dependency cloned and built |
+| `misc/doc/` | C, C++, Fortran libs — run `freight doc` to demo the TUI |
 
 ## Documentation
 

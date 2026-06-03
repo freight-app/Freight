@@ -47,11 +47,7 @@ use crate::toolchain::{
 /// Return true if `lang_key` is active in this manifest: either explicitly declared
 /// via `[language.X]`, or implicitly present because at least one source file has an
 /// extension handled by that language key (checked against `detected` compilers).
-pub(super) fn has_lang(
-    manifest: &Manifest,
-    lang_key: &str,
-    detected: &[DetectedCompiler],
-) -> bool {
+pub(super) fn has_lang(manifest: &Manifest, lang_key: &str, detected: &[DetectedCompiler]) -> bool {
     if manifest.language.contains_key(lang_key) {
         return true;
     }
@@ -234,7 +230,22 @@ mod tests {
         let include = dir.path().join("include");
         std::fs::create_dir_all(&include).unwrap();
 
-        let filtered = lsp_visible_include_dirs(dir.path(), vec![include.clone()]);
+        let filtered = lsp_visible_include_dirs(dir.path(), &[], vec![include.clone()]);
+        assert_eq!(filtered, vec![include]);
+    }
+
+    #[test]
+    fn lsp_include_filter_keeps_explicit_dep_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let dep = tempfile::tempdir().unwrap();
+        let include = dep.path().join("include");
+        std::fs::create_dir_all(&include).unwrap();
+
+        let filtered = lsp_visible_include_dirs(
+            dir.path(),
+            &[dep.path().to_path_buf()],
+            vec![include.clone()],
+        );
         assert_eq!(filtered, vec![include]);
     }
 
@@ -243,7 +254,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let filtered = lsp_visible_include_dirs(
             dir.path(),
-            vec![PathBuf::from("/usr/include"), PathBuf::from("/opt/local/include")],
+            &[],
+            vec![
+                PathBuf::from("/usr/include"),
+                PathBuf::from("/opt/local/include"),
+            ],
         );
         assert!(
             filtered.is_empty(),
@@ -730,6 +745,39 @@ pub fn generate_lsp_compile_commands_at(
     project_dir: &Path,
     profile: &str,
 ) -> Result<PathBuf, FreightError> {
+    if load_workspace_manifest(project_dir).is_some() {
+        return generate_lsp_workspace_compile_commands_at(project_dir, profile);
+    }
+    let commands = generate_lsp_compile_commands_for_project(project_dir, profile)?;
+    let dir = lsp_compile_commands_dir(project_dir, profile);
+    compile_commands::write_to(&dir.join("compile_commands.json"), &commands)?;
+    Ok(dir)
+}
+
+fn generate_lsp_workspace_compile_commands_at(
+    workspace_dir: &Path,
+    profile: &str,
+) -> Result<PathBuf, FreightError> {
+    let ws = load_workspace_manifest(workspace_dir)
+        .ok_or_else(|| FreightError::ManifestParse("not a workspace root".into()))?;
+    let mut commands = Vec::new();
+    for member in &ws.members {
+        let member_dir = workspace_dir.join(member.trim_end_matches('/'));
+        commands.extend(generate_lsp_compile_commands_for_project(
+            &member_dir,
+            profile,
+        )?);
+    }
+    commands.sort_by(|a, b| a.file.cmp(&b.file));
+    let dir = lsp_compile_commands_dir(workspace_dir, profile);
+    compile_commands::write_to(&dir.join("compile_commands.json"), &commands)?;
+    Ok(dir)
+}
+
+fn generate_lsp_compile_commands_for_project(
+    project_dir: &Path,
+    profile: &str,
+) -> Result<Vec<compile_commands::CompileCommand>, FreightError> {
     let ctx = load_project_at(project_dir, profile)?;
     let ProjectContext {
         project_dir,
@@ -743,12 +791,12 @@ pub fn generate_lsp_compile_commands_at(
     let resolution = features::resolve_features(&manifest.features, &[], true)?;
     let feature_defines = features::to_defines(&resolution.active);
 
-    let dep_includes = collect_dep_include_dirs(project_dir, manifest);
+    let (dep_includes, dep_roots) = collect_dep_include_dirs_and_roots(project_dir, manifest);
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(dep_includes);
-    let include_dirs = lsp_visible_include_dirs(project_dir, include_dirs);
+    let include_dirs = lsp_visible_include_dirs(project_dir, &dep_roots, include_dirs);
 
-    let commands = compile_commands::generate(
+    Ok(compile_commands::generate(
         project_dir,
         manifest,
         effective_backend,
@@ -758,10 +806,7 @@ pub fn generate_lsp_compile_commands_at(
         &include_dirs,
         &feature_defines,
         &[],
-    );
-    let dir = lsp_compile_commands_dir(project_dir, profile);
-    compile_commands::write_to(&dir.join("compile_commands.json"), &commands)?;
-    Ok(dir)
+    ))
 }
 
 fn lsp_compile_commands_dir(project_dir: &Path, profile: &str) -> PathBuf {
@@ -777,10 +822,18 @@ fn lsp_compile_commands_dir(project_dir: &Path, profile: &str) -> PathBuf {
         .join(format!("{:016x}", hasher.finish()))
 }
 
-fn lsp_visible_include_dirs(project_dir: &Path, include_dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+fn lsp_visible_include_dirs(
+    project_dir: &Path,
+    dep_roots: &[PathBuf],
+    include_dirs: Vec<PathBuf>,
+) -> Vec<PathBuf> {
     let project_root = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
+    let dep_roots: Vec<PathBuf> = dep_roots
+        .iter()
+        .map(|dir| dir.canonicalize().unwrap_or_else(|_| dir.clone()))
+        .collect();
     include_dirs
         .into_iter()
         .filter(|dir| {
@@ -788,7 +841,9 @@ fn lsp_visible_include_dirs(project_dir: &Path, include_dirs: Vec<PathBuf>) -> V
                 return true;
             }
             let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-            canonical.starts_with(&project_root) || is_standard_c_family_include_dir(&canonical)
+            canonical.starts_with(&project_root)
+                || is_standard_c_family_include_dir(&canonical)
+                || dep_roots.iter().any(|root| canonical.starts_with(root))
         })
         .collect()
 }
@@ -813,14 +868,23 @@ fn is_standard_c_family_include_dir(path: &Path) -> bool {
 /// `freight compile-commands` command produces complete `-I` flags even when
 /// the project has not been built yet.  Resolution errors are silently ignored.
 fn collect_dep_include_dirs(project_dir: &Path, manifest: &Manifest) -> Vec<PathBuf> {
+    collect_dep_include_dirs_and_roots(project_dir, manifest).0
+}
+
+fn collect_dep_include_dirs_and_roots(
+    project_dir: &Path,
+    manifest: &Manifest,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let empty = BTreeSet::new();
     let Ok(resolved) = resolve_dep_graph(project_dir, manifest, false, &empty) else {
-        return vec![];
+        return (vec![], vec![]);
     };
-    resolved
+    let roots = resolved.iter().map(|dep| dep.dir.clone()).collect();
+    let includes = resolved
         .iter()
         .flat_map(|dep| deps::dep_include_dirs(&dep.dir, &dep.manifest))
-        .collect()
+        .collect();
+    (includes, roots)
 }
 
 /// Emit assembly files for all sources of the project at the current working directory.

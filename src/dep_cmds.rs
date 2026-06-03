@@ -329,7 +329,10 @@ pub fn fetch_registry_deps(
         }
 
         // If already fetched, skip.
-        let sentinel = project_dir.join(".pkgs").join(name).join(".freight-fetched");
+        let sentinel = project_dir
+            .join(".pkgs")
+            .join(name)
+            .join(".freight-fetched");
         if sentinel.exists() {
             outcomes.push(RegistryDepOutcome {
                 name: name.clone(),

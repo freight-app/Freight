@@ -142,7 +142,7 @@ ensures that `main()` from one binary is not linked into another.
 | `[build-dependencies]` | All builds | Fetched and built **before** regular deps; any `bin/` in the installed output is prepended to PATH for all subsequent build steps |
 | `[dev-dependencies]` | Debug builds and `freight test` | Compiled and linked only when `--profile dev` (the default) or during test builds |
 
-`[build-dependencies]` is the right place for tools like `cmake`, `ninja`, `protoc`, `flex`, `bison`, and any other executables that are invoked *during* compilation but do not end up linked into your final binary. Freight builds and installs them first, then uses whatever binaries they produced (e.g. `.deps/cmake/bin/cmake`) for every cmake/make/meson/autotools dep build in the same project — so you can pin away from a system cmake that breaks an older library.
+`[build-dependencies]` is the right place for tools like `cmake`, `ninja`, `protoc`, `flex`, `bison`, and any other executables that are invoked *during* compilation but do not end up linked into your final binary. Freight builds and installs them first, then uses whatever binaries they produced (e.g. `.pkgs/cmake/bin/cmake`) for every cmake/make/meson/autotools dep build in the same project — so you can pin away from a system cmake that breaks an older library.
 
 ```toml
 [build-dependencies]
@@ -164,8 +164,8 @@ zstd = { version = "1.5" }
 For version-only dependencies, Freight tries each resolver in order and uses the first that succeeds:
 
 1. **pkg-config** — checks `pkg-config --modversion <name>` against the version constraint.
-2. **Conan** — runs `conan install <name>/<version>` into `.deps/conan/`.
-3. **vcpkg** — runs `vcpkg install <name>` into `.deps/vcpkg_installed/` using `VCPKG_DEFAULT_TRIPLET` (or a host default such as `x64-linux`).
+2. **Conan** — runs `conan install <name>/<version>` into `.pkgs/conan/`.
+3. **vcpkg** — runs `vcpkg install <name>` into `.pkgs/vcpkg_installed/` using `VCPKG_DEFAULT_TRIPLET` (or a host default such as `x64-linux`).
 4. **System-lib stub** — matches the name against the bundled stubs in `toolchains/system-libs/` (see below). If a stub matches, freight injects `-l{link_name}` directly. No package manager required.
 
 `VCPKG_DEFAULT_TRIPLET` controls the vcpkg triplet; set `VCPKG` to override the vcpkg executable path.
@@ -249,7 +249,7 @@ easyloggingpp = { git = "https://...", branch = "main" }   # track branch
 easyloggingpp = { git = "https://...", rev = "abc1234" }   # pin to commit
 ```
 
-Clones the repo into `.deps/<name>/`, then treats it exactly like a path dep — foreign build
+Clones the repo into `.pkgs/<name>/`, then treats it exactly like a path dep — foreign build
 system detection applies. Run `freight fetch` to clone before building.
 
 ### URL archive dependency
@@ -265,9 +265,9 @@ json = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.g
 ```
 
 Downloads the archive using `curl` (supports `https://`, `http://`, `ftp://`, and any other scheme
-curl handles), optionally verifies SHA-256, extracts to `.deps/<name>/` with `--strip-components=1`,
+curl handles), optionally verifies SHA-256, extracts to `.pkgs/<name>/` with `--strip-components=1`,
 then auto-detects the build system or treats as header-only if no source files are found. The
-sentinel `.deps/<name>/.freight-fetched` prevents re-downloading; `freight update <name>` invalidates it.
+sentinel `.pkgs/<name>/.freight-fetched` prevents re-downloading; `freight update <name>` invalidates it.
 
 For GitHub repos specifically: if you need to track a branch or make incremental updates, prefer
 `git = "https://github.com/..."` instead. `url` is for pinned release tarballs.

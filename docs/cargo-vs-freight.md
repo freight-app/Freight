@@ -140,7 +140,7 @@ ws2_32  = { system = "ws2_32", os = "windows" }
 
 | | Cargo | Freight |
 |---|---|---|
-| Output directory | `target/debug/` or `target/release/` | `target/debug/` or `target/release/` |
+| Output directory | `target/debug/` or `target/release/` | `target/dev/` or `target/release/` |
 | Incremental builds | Rustc-native | mtime + `.d` dep files |
 | Parallel compilation | Always on | `rayon`-parallel; C++20 modules use a DAG-ordered Kahn batch |
 | LTO | `lto = true` in profile | `lto = true` in profile |

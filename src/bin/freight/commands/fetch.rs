@@ -174,7 +174,10 @@ fn cmd_fetch(prebuilt: PrebuiltKind, triple: &str) {
     match fetch_registry_deps(&project_dir, &config) {
         Ok(outcomes) => {
             for o in outcomes {
-                let sentinel = project_dir.join(".pkgs").join(&o.name).join(".freight-fetched");
+                let sentinel = project_dir
+                    .join(".pkgs")
+                    .join(&o.name)
+                    .join(".freight-fetched");
                 if sentinel.exists() {
                     continue;
                 }
@@ -244,7 +247,10 @@ fn fetch_prebuilt_deps(
             continue;
         }
 
-        let sentinel = project_dir.join(".pkgs").join(name).join(".freight-fetched");
+        let sentinel = project_dir
+            .join(".pkgs")
+            .join(name)
+            .join(".freight-fetched");
         if sentinel.exists() {
             continue;
         }

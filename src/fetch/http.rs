@@ -34,9 +34,7 @@ pub fn fetch_url_dep(
     std::fs::create_dir_all(project_dir.join(".pkgs"))?;
 
     let ext = archive_ext(url);
-    let archive_path = project_dir
-        .join(".pkgs")
-        .join(format!("{name}.{ext}"));
+    let archive_path = project_dir.join(".pkgs").join(format!("{name}.{ext}"));
 
     download(url, &archive_path)?;
 

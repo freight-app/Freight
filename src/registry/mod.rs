@@ -93,10 +93,10 @@ pub struct UserProfile {
 }
 
 pub struct UserPackageEntry {
-    pub name:        String,
+    pub name: String,
     pub description: Option<String>,
-    pub version:     Option<String>,
-    pub channel:     Option<String>,
+    pub version: Option<String>,
+    pub channel: Option<String>,
 }
 
 /// Backward-compatibility alias. Prefer [`PackageRepo`].

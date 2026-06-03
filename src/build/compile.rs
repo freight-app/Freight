@@ -549,7 +549,10 @@ pub(crate) fn is_up_to_date(source: &Path, object: &Path, dep_file: &Path) -> bo
     if dep_file.exists() {
         if let Ok(contents) = fs::read_to_string(dep_file) {
             for dep_path in parse_dep_file(&contents) {
-                if mtime(Path::new(&dep_path)).map_or(false, |h| h >= obj_mtime) {
+                let Some(dep_mtime) = mtime(Path::new(&dep_path)) else {
+                    return false;
+                };
+                if dep_mtime >= obj_mtime {
                     return false;
                 }
             }
@@ -1225,6 +1228,29 @@ src  = "src/main.cpp"
         assert!(
             !is_up_to_date(&src, &obj, &dep),
             "stale header should trigger recompile"
+        );
+    }
+
+    #[test]
+    fn missing_dependency_entry_triggers_recompile() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("main.cpp");
+        let obj = dir.path().join("main.o");
+        let dep = dir.path().join("main.d");
+        let old_header = dir.path().join("old.hpp");
+
+        fs::write(&src, "").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&obj, "").unwrap();
+        fs::write(
+            &dep,
+            format!("main.o: {} {}\n", src.display(), old_header.display()),
+        )
+        .unwrap();
+
+        assert!(
+            !is_up_to_date(&src, &obj, &dep),
+            "missing dependency entries should trigger recompile"
         );
     }
 }

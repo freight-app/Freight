@@ -122,7 +122,13 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
                 TargetKind::StaticLib
             };
             let name = sanitize_name(&pkg_name);
-            (vec![TargetSpec { name, kind }], None, vec![], vec![], vec![])
+            (
+                vec![TargetSpec { name, kind }],
+                None,
+                vec![],
+                vec![],
+                vec![],
+            )
         };
 
     // Merge per-target / global LDADD deps from Makefile.am
@@ -367,7 +373,13 @@ struct TargetSpec {
 fn parse_makefile_am(
     content: &str,
     warnings: &mut Vec<String>,
-) -> (Vec<TargetSpec>, Option<String>, Vec<String>, Vec<String>, Vec<String>) {
+) -> (
+    Vec<TargetSpec>,
+    Option<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+) {
     let mut targets: Vec<TargetSpec> = Vec::new();
     let mut lang_std: Option<String> = None;
     let mut defines: Vec<String> = Vec::new();
@@ -492,9 +504,7 @@ fn parse_makefile_am(
             }
         }
         // AM_CONDITIONAL if/endif blocks — warn and still extract -l deps from body
-        else if line.starts_with("if ")
-            && !line.starts_with("ifeq")
-            && !line.starts_with("ifdef")
+        else if line.starts_with("if ") && !line.starts_with("ifeq") && !line.starts_with("ifdef")
         {
             let cond_name = line[3..].trim();
             warnings.push(format!(
@@ -991,8 +1001,7 @@ mod tests {
 
     #[test]
     fn parse_ac_arg_enable_and_with() {
-        let content =
-            "AC_ARG_ENABLE([tls], AS_HELP_STRING([--enable-tls], [Enable TLS]))\n\
+        let content = "AC_ARG_ENABLE([tls], AS_HELP_STRING([--enable-tls], [Enable TLS]))\n\
              AC_ARG_WITH([openssl], AS_HELP_STRING([--with-openssl], [Use OpenSSL]))\n";
         let mut w = vec![];
         let (_, _, _, _, features) = parse_configure_ac(content, &mut w);
@@ -1013,9 +1022,15 @@ mod tests {
             &["tls".to_string(), "openssl".to_string()],
             &[],
         );
-        assert!(toml.contains("[features]"), "expected [features] section:\n{toml}");
+        assert!(
+            toml.contains("[features]"),
+            "expected [features] section:\n{toml}"
+        );
         assert!(toml.contains("tls"), "expected tls feature:\n{toml}");
-        assert!(toml.contains("openssl"), "expected openssl feature:\n{toml}");
+        assert!(
+            toml.contains("openssl"),
+            "expected openssl feature:\n{toml}"
+        );
     }
 
     #[test]
@@ -1031,8 +1046,14 @@ mod tests {
             &[],
             &[],
         );
-        assert!(toml.contains("[build]"), "expected [build] section:\n{toml}");
-        assert!(toml.contains("HAVE_SSL"), "expected HAVE_SSL define:\n{toml}");
+        assert!(
+            toml.contains("[build]"),
+            "expected [build] section:\n{toml}"
+        );
+        assert!(
+            toml.contains("HAVE_SSL"),
+            "expected HAVE_SSL define:\n{toml}"
+        );
     }
 
     #[test]
@@ -1045,6 +1066,9 @@ mod tests {
             "expected AM_CONDITIONAL warning:\n{w:?}"
         );
         // Even inside the conditional block, ssl should be extracted from foo_LDADD
-        assert!(ldadd.contains(&"ssl".to_string()), "ldadd should contain ssl:\n{ldadd:?}");
+        assert!(
+            ldadd.contains(&"ssl".to_string()),
+            "ldadd should contain ssl:\n{ldadd:?}"
+        );
     }
 }

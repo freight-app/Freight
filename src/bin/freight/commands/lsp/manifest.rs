@@ -2,30 +2,95 @@
 
 use std::path::Path;
 
-use freight_core::manifest::{load_manifest_str, validate, validate_dep_compat};
+use freight_core::manifest::{
+    load_manifest_str, load_workspace_manifest_str, validate, validate_dep_compat, WorkspaceSection,
+};
 use freight_core::toolchain::CompilerTemplate;
 use serde_json::{json, Value};
 
 use super::protocol::parse_line_col;
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceInventory {
+    pub packages: Vec<WorkspacePackage>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspacePackage {
+    pub name: String,
+    pub path: String,
+    pub bins: Vec<String>,
+    pub lib: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
 
 pub fn manifest_diagnostics(text: &str, dir: &Path, templates: &[CompilerTemplate]) -> Vec<Value> {
+    if let Ok(workspace) = load_workspace_manifest_str(text) {
+        return workspace_diagnostics(text, dir, &workspace);
+    }
+
     let manifest = match load_manifest_str(text) {
         Ok(m) => m,
         Err(e) => {
             let (line, character) = parse_line_col(&e.to_string()).unwrap_or((0, 0));
-            return vec![diagnostic(line, character, "freight.toml could not be parsed", &e.to_string())];
+            return vec![diagnostic(
+                line,
+                character,
+                "freight.toml could not be parsed",
+                &e.to_string(),
+            )];
         }
     };
     let mut errors = validate(&manifest, templates);
     errors.extend(validate_dep_compat(&manifest, dir, templates));
-    errors.into_iter().map(|e| {
-        let line = line_for_context(text, &e.context);
-        diagnostic(line, 0, &e.context, &e.message)
-    }).collect()
+    errors
+        .into_iter()
+        .map(|e| {
+            let line = line_for_context(text, &e.context);
+            diagnostic(line, 0, &e.context, &e.message)
+        })
+        .collect()
+}
+
+fn workspace_diagnostics(text: &str, dir: &Path, workspace: &WorkspaceSection) -> Vec<Value> {
+    let mut diagnostics = Vec::new();
+    if workspace.members.is_empty() {
+        diagnostics.push(diagnostic(
+            line_for_context(text, "members"),
+            0,
+            "[workspace]",
+            "workspace.members must list at least one package directory",
+        ));
+        return diagnostics;
+    }
+
+    for member in &workspace.members {
+        let line =
+            line_for_member(text, member).unwrap_or_else(|| line_for_context(text, "members"));
+        if member.trim().is_empty() {
+            diagnostics.push(diagnostic(
+                line,
+                0,
+                "[workspace.members]",
+                "workspace member path must not be empty",
+            ));
+            continue;
+        }
+        let member_dir = dir.join(member.trim_end_matches('/'));
+        let manifest_path = member_dir.join("freight.toml");
+        if !manifest_path.is_file() {
+            diagnostics.push(diagnostic(
+                line,
+                0,
+                "[workspace.members]",
+                &format!("workspace member `{member}` does not contain a freight.toml"),
+            ));
+        }
+    }
+    diagnostics
 }
 
 pub fn diagnostic(line: usize, character: usize, code: &str, message: &str) -> Value {
@@ -46,145 +111,515 @@ fn line_for_context(text: &str, context: &str) -> usize {
     text.lines().position(|l| l.trim() == section).unwrap_or(0)
 }
 
+fn line_for_member(text: &str, member: &str) -> Option<usize> {
+    text.lines()
+        .position(|line| line.contains(member) && !line.trim_start().starts_with('#'))
+}
+
 // ---------------------------------------------------------------------------
 // Completion
 // ---------------------------------------------------------------------------
 
-pub fn completion_result(text: Option<&str>, pos: Option<(usize, usize)>) -> Value {
-    let section = text.zip(pos)
+pub fn completion_result(
+    text: Option<&str>,
+    pos: Option<(usize, usize)>,
+    inventory: Option<&WorkspaceInventory>,
+) -> Value {
+    let section = text
+        .zip(pos)
         .and_then(|(t, (line, _))| current_section(t, line))
         .unwrap_or_default();
 
     let labels: Vec<(&str, &str, &str)> = if section == "package" {
         vec![
-            ("name", "Package name", "Registry and build identity for this package."),
-            ("version", "SemVer package version", "Version published to the Freight registry."),
-            ("authors", "Package authors", "Array of author names or contacts."),
-            ("description", "Short package description", "Shown in registry/package help surfaces."),
-            ("license", "SPDX license", "Use an SPDX expression such as MIT or Apache-2.0."),
-            ("readme", "README path", "Relative path to package README content."),
-            ("repository", "Source repository URL", "Project homepage or source repository."),
-            ("supports", "Boolean platform support expression", "Gate the package before build resolution."),
-            ("keywords", "Registry search keywords", "Terms used by the package registry."),
-            ("provides", "Virtual slots", "Slots such as blas or cxx-stdlib used for conflict checks."),
+            (
+                "name",
+                "Package name",
+                "Registry and build identity for this package.",
+            ),
+            (
+                "version",
+                "SemVer package version",
+                "Version published to the Freight registry.",
+            ),
+            (
+                "authors",
+                "Package authors",
+                "Array of author names or contacts.",
+            ),
+            (
+                "description",
+                "Short package description",
+                "Shown in registry/package help surfaces.",
+            ),
+            (
+                "license",
+                "SPDX license",
+                "Use an SPDX expression such as MIT or Apache-2.0.",
+            ),
+            (
+                "readme",
+                "README path",
+                "Relative path to package README content.",
+            ),
+            (
+                "repository",
+                "Source repository URL",
+                "Project homepage or source repository.",
+            ),
+            (
+                "supports",
+                "Boolean platform support expression",
+                "Gate the package before build resolution.",
+            ),
+            (
+                "keywords",
+                "Registry search keywords",
+                "Terms used by the package registry.",
+            ),
+            (
+                "provides",
+                "Virtual slots",
+                "Slots such as blas or cxx-stdlib used for conflict checks.",
+            ),
         ]
     } else if section == "compiler" {
         vec![
-            ("backend", "Compiler backend", "auto, gcc, clang, clang++, hipcc, or a custom template name."),
+            (
+                "backend",
+                "Compiler backend",
+                "auto, gcc, clang, clang++, hipcc, or a custom template name.",
+            ),
             ("warnings", "Warning level", "none, default, all, or error."),
-            ("opt-level", "Optimization level", "Integer optimization level from 0 through 3."),
+            (
+                "opt-level",
+                "Optimization level",
+                "Integer optimization level from 0 through 3.",
+            ),
             ("debug", "Emit debug info", "Boolean debug-symbol toggle."),
-            ("defines", "Project-wide preprocessor defines", "Array of defines injected into every compile."),
-            ("flags", "Project-wide compiler flags", "Extra flags injected into every compile."),
-            ("includes", "Project include directories", "Include directories added to every compile."),
-            ("pch", "Precompiled header", "Header path compiled once and injected into supported languages."),
-            ("unity", "Unity build toggle", "Combine C-family sources by language for faster full builds."),
+            (
+                "defines",
+                "Project-wide preprocessor defines",
+                "Array of defines injected into every compile.",
+            ),
+            (
+                "flags",
+                "Project-wide compiler flags",
+                "Extra flags injected into every compile.",
+            ),
+            (
+                "includes",
+                "Project include directories",
+                "Include directories added to every compile.",
+            ),
+            (
+                "pch",
+                "Precompiled header",
+                "Header path compiled once and injected into supported languages.",
+            ),
+            (
+                "unity",
+                "Unity build toggle",
+                "Combine C-family sources by language for faster full builds.",
+            ),
         ]
     } else if section.contains("dependencies") {
         vec![
-            ("name = \"*\"", "Version dependency", "Resolve an explicitly named package from configured resolvers."),
-            ("name = { path = \"../lib\" }", "Local path dependency", "Include one local Freight package by manifest path."),
-            ("name = { git = \"https://example/lib.git\" }", "Git dependency", "Fetch and build an explicitly named git package."),
-            ("name = { url = \"https://example/lib.tar.gz\", sha256 = \"...\" }", "URL archive dependency", "Fetch and verify an explicitly named source archive."),
-            ("name = { version = \"1.0\", repo = \"pkg-config\" }", "Pinned resolver dependency", "Use a specific resolver or registry channel."),
-            ("features", "Dependency features", "Activate named features on this dependency."),
-            ("default-features", "Default feature toggle", "Disable default dependency features when false."),
-            ("optional", "Optional dependency", "Only active when selected by a feature."),
-            ("os", "OS filter", "Include this dependency only on matching OS/family keys."),
-            ("arch", "Architecture filter", "Include this dependency only on matching CPU architectures."),
-            ("targets", "Target triple filter", "Include this prebuilt dependency only for matching triples."),
-            ("type", "Foreign build type", "cmake, make, meson, autotools, scons, bazel, or none."),
-            ("include", "Exported include dirs", "Include dirs exposed by a foreign dependency."),
-            ("cmake-args", "CMake configure args", "Extra args passed to cmake configure."),
-            ("patches", "Patch files", "Patch files applied after fetching."),
-            ("channel", "Registry channel", "Fetch this dependency from a named channel."),
+            (
+                "name = \"*\"",
+                "Version dependency",
+                "Resolve an explicitly named package from configured resolvers.",
+            ),
+            (
+                "name = { path = \"../lib\" }",
+                "Local path dependency",
+                "Include one local Freight package by manifest path.",
+            ),
+            (
+                "name = { git = \"https://example/lib.git\" }",
+                "Git dependency",
+                "Fetch and build an explicitly named git package.",
+            ),
+            (
+                "name = { url = \"https://example/lib.tar.gz\", sha256 = \"...\" }",
+                "URL archive dependency",
+                "Fetch and verify an explicitly named source archive.",
+            ),
+            (
+                "name = { version = \"1.0\", repo = \"pkg-config\" }",
+                "Pinned resolver dependency",
+                "Use a specific resolver or registry channel.",
+            ),
+            (
+                "features",
+                "Dependency features",
+                "Activate named features on this dependency.",
+            ),
+            (
+                "default-features",
+                "Default feature toggle",
+                "Disable default dependency features when false.",
+            ),
+            (
+                "optional",
+                "Optional dependency",
+                "Only active when selected by a feature.",
+            ),
+            (
+                "os",
+                "OS filter",
+                "Include this dependency only on matching OS/family keys.",
+            ),
+            (
+                "arch",
+                "Architecture filter",
+                "Include this dependency only on matching CPU architectures.",
+            ),
+            (
+                "targets",
+                "Target triple filter",
+                "Include this prebuilt dependency only for matching triples.",
+            ),
+            (
+                "type",
+                "Foreign build type",
+                "cmake, make, meson, autotools, scons, bazel, or none.",
+            ),
+            (
+                "include",
+                "Exported include dirs",
+                "Include dirs exposed by a foreign dependency.",
+            ),
+            (
+                "cmake-args",
+                "CMake configure args",
+                "Extra args passed to cmake configure.",
+            ),
+            (
+                "patches",
+                "Patch files",
+                "Patch files applied after fetching.",
+            ),
+            (
+                "channel",
+                "Registry channel",
+                "Fetch this dependency from a named channel.",
+            ),
         ]
     } else if section.starts_with("language.") {
         vec![
-            ("std", "Language standard", "Standard such as c17, c++20, f2018, or a compiler-template value."),
-            ("stdlib", "C++ standard library selection", "libc++, libstdc++, or none for C++."),
+            (
+                "std",
+                "Language standard",
+                "Standard such as c17, c++20, f2018, or a compiler-template value.",
+            ),
+            (
+                "stdlib",
+                "C++ standard library selection",
+                "libc++, libstdc++, or none for C++.",
+            ),
         ]
     } else if section == "lib" {
         vec![
             ("type", "Library type", "static, shared, or header."),
-            ("srcs", "Library sources", "Source path or array of source paths for this library target."),
-            ("hdrs", "Public headers", "Headers whose parent dirs are exported to dependents."),
-            ("link", "Prebuilt link name", "System/prebuilt library name passed to the linker."),
+            (
+                "srcs",
+                "Library sources",
+                "Source path or array of source paths for this library target.",
+            ),
+            (
+                "hdrs",
+                "Public headers",
+                "Headers whose parent dirs are exported to dependents.",
+            ),
+            (
+                "link",
+                "Prebuilt link name",
+                "System/prebuilt library name passed to the linker.",
+            ),
         ]
     } else if section == "bin" {
         vec![
             ("name", "Binary name", "Executable target name."),
-            ("src", "Binary entry source", "Entry-point source file for this executable."),
+            (
+                "src",
+                "Binary entry source",
+                "Entry-point source file for this executable.",
+            ),
         ]
     } else if section.starts_with("profile.") {
         vec![
-            ("inherits", "Parent profile", "Inherit unset values from another named profile."),
-            ("opt-level", "Optimization level", "Integer optimization level from 0 through 3."),
-            ("debug", "Debug info toggle", "Emit debug information for this profile."),
+            (
+                "inherits",
+                "Parent profile",
+                "Inherit unset values from another named profile.",
+            ),
+            (
+                "opt-level",
+                "Optimization level",
+                "Integer optimization level from 0 through 3.",
+            ),
+            (
+                "debug",
+                "Debug info toggle",
+                "Emit debug information for this profile.",
+            ),
             ("lto", "Link-time optimization", "Enable or disable LTO."),
             ("strip", "Strip symbols", "Strip final artifacts when true."),
-            ("sanitize", "Sanitizers", "Array of sanitizer names for this profile."),
-            ("features", "Profile features", "Features activated automatically for this profile."),
+            (
+                "sanitize",
+                "Sanitizers",
+                "Array of sanitizer names for this profile.",
+            ),
+            (
+                "features",
+                "Profile features",
+                "Features activated automatically for this profile.",
+            ),
         ]
     } else if section == "target" {
         vec![
-            ("arch", "CPU architecture", "Override host CPU architecture for target-specific settings."),
-            ("cpu-extensions", "CPU extensions", "Array of CPU feature flags such as avx2 or fma."),
+            (
+                "arch",
+                "CPU architecture",
+                "Override host CPU architecture for target-specific settings.",
+            ),
+            (
+                "cpu-extensions",
+                "CPU extensions",
+                "Array of CPU feature flags such as avx2 or fma.",
+            ),
         ]
     } else if section == "formatter" || section == "linter" {
         vec![
-            ("name", "Tool name", "Pin a formatter/linter instead of auto-detecting."),
-            ("style", "Formatter style", "Common formatter setting resolved through the tool template."),
-            ("checks", "Linter checks", "Common linter setting resolved through the tool template."),
+            (
+                "name",
+                "Tool name",
+                "Pin a formatter/linter instead of auto-detecting.",
+            ),
+            (
+                "style",
+                "Formatter style",
+                "Common formatter setting resolved through the tool template.",
+            ),
+            (
+                "checks",
+                "Linter checks",
+                "Common linter setting resolved through the tool template.",
+            ),
         ]
     } else if section == "workspace" {
-        vec![("members", "Workspace members", "Relative paths to package directories.")]
+        vec![(
+            "members",
+            "Workspace members",
+            "Relative paths to package directories.",
+        )]
     } else if section.starts_with("os.") || section.starts_with("arch.") {
         vec![
-            ("srcs", "Conditional sources", "Glob patterns included only when this OS/arch is active."),
-            ("defines", "Conditional defines", "Defines injected only when this OS/arch is active."),
-            ("flags", "Conditional flags", "Compiler flags injected only when this OS/arch is active."),
-            ("includes", "Conditional includes", "Include paths injected only when this OS/arch is active."),
-            ("dependencies", "Conditional dependencies", "Dependencies included only when this OS/arch is active."),
-            ("language", "Conditional language settings", "Language overrides active only for this OS/arch."),
+            (
+                "srcs",
+                "Conditional sources",
+                "Glob patterns included only when this OS/arch is active.",
+            ),
+            (
+                "defines",
+                "Conditional defines",
+                "Defines injected only when this OS/arch is active.",
+            ),
+            (
+                "flags",
+                "Conditional flags",
+                "Compiler flags injected only when this OS/arch is active.",
+            ),
+            (
+                "includes",
+                "Conditional includes",
+                "Include paths injected only when this OS/arch is active.",
+            ),
+            (
+                "dependencies",
+                "Conditional dependencies",
+                "Dependencies included only when this OS/arch is active.",
+            ),
+            (
+                "language",
+                "Conditional language settings",
+                "Language overrides active only for this OS/arch.",
+            ),
         ]
     } else {
         vec![
-            ("[workspace]", "Workspace root", "Declare workspace member package paths."),
-            ("[package]", "Package metadata", "Name, version, registry metadata, and package support gates."),
-            ("[language.c]", "C language settings", "C standard and template-defined options."),
-            ("[language.cpp]", "C++ language settings", "C++ standard, stdlib, and template-defined options."),
-            ("[language.fortran]", "Fortran language settings", "Fortran standard and template-defined options."),
-            ("[language.asm]", "Assembly language settings", "Assembler template-defined options."),
-            ("[language.cuda]", "CUDA language settings", "CUDA standard/options when using CUDA sources."),
-            ("[language.hip]", "HIP language settings", "HIP standard/options when using HIP sources."),
-            ("[language.objc]", "Objective-C language settings", "Objective-C standard/options."),
-            ("[language.objcpp]", "Objective-C++ language settings", "Objective-C++ standard/options."),
+            (
+                "[workspace]",
+                "Workspace root",
+                "Declare workspace member package paths.",
+            ),
+            (
+                "[package]",
+                "Package metadata",
+                "Name, version, registry metadata, and package support gates.",
+            ),
+            (
+                "[language.c]",
+                "C language settings",
+                "C standard and template-defined options.",
+            ),
+            (
+                "[language.cpp]",
+                "C++ language settings",
+                "C++ standard, stdlib, and template-defined options.",
+            ),
+            (
+                "[language.fortran]",
+                "Fortran language settings",
+                "Fortran standard and template-defined options.",
+            ),
+            (
+                "[language.asm]",
+                "Assembly language settings",
+                "Assembler template-defined options.",
+            ),
+            (
+                "[language.cuda]",
+                "CUDA language settings",
+                "CUDA standard/options when using CUDA sources.",
+            ),
+            (
+                "[language.hip]",
+                "HIP language settings",
+                "HIP standard/options when using HIP sources.",
+            ),
+            (
+                "[language.objc]",
+                "Objective-C language settings",
+                "Objective-C standard/options.",
+            ),
+            (
+                "[language.objcpp]",
+                "Objective-C++ language settings",
+                "Objective-C++ standard/options.",
+            ),
             ("[[bin]]", "Binary target", "Executable target entry point."),
-            ("[lib]", "Library target", "Library artifact and exported headers."),
-            ("[dependencies]", "Runtime dependencies", "Packages explicitly included in this build."),
-            ("[build-dependencies]", "Build-time dependencies", "Tools fetched before regular build steps."),
-            ("[dev-dependencies]", "Dev dependencies", "Debug/test-only dependencies."),
-            ("[compiler]", "Compiler settings", "Backend, warnings, flags, includes, PCH, and unity settings."),
+            (
+                "[lib]",
+                "Library target",
+                "Library artifact and exported headers.",
+            ),
+            (
+                "[dependencies]",
+                "Runtime dependencies",
+                "Packages explicitly included in this build.",
+            ),
+            (
+                "[build-dependencies]",
+                "Build-time dependencies",
+                "Tools fetched before regular build steps.",
+            ),
+            (
+                "[dev-dependencies]",
+                "Dev dependencies",
+                "Debug/test-only dependencies.",
+            ),
+            (
+                "[compiler]",
+                "Compiler settings",
+                "Backend, warnings, flags, includes, PCH, and unity settings.",
+            ),
             ("[profile.dev]", "Debug profile", "Debug profile overrides."),
-            ("[profile.release]", "Release profile", "Release profile overrides."),
-            ("[features]", "Feature graph", "Feature names and dependency feature activation."),
-            ("[target]", "CPU target settings", "Architecture and CPU extension settings."),
-            ("[formatter]", "Formatter settings", "Project formatter requirements."),
-            ("[linter]", "Linter settings", "Project linter requirements."),
-            ("[os.linux]", "Linux-only settings", "Sources, defines, includes, deps, and language overrides for Linux."),
-            ("[arch.x86_64]", "x86_64-only settings", "Sources, defines, includes, deps, and language overrides for x86_64."),
+            (
+                "[profile.release]",
+                "Release profile",
+                "Release profile overrides.",
+            ),
+            (
+                "[features]",
+                "Feature graph",
+                "Feature names and dependency feature activation.",
+            ),
+            (
+                "[target]",
+                "CPU target settings",
+                "Architecture and CPU extension settings.",
+            ),
+            (
+                "[formatter]",
+                "Formatter settings",
+                "Project formatter requirements.",
+            ),
+            (
+                "[linter]",
+                "Linter settings",
+                "Project linter requirements.",
+            ),
+            (
+                "[os.linux]",
+                "Linux-only settings",
+                "Sources, defines, includes, deps, and language overrides for Linux.",
+            ),
+            (
+                "[arch.x86_64]",
+                "x86_64-only settings",
+                "Sources, defines, includes, deps, and language overrides for x86_64.",
+            ),
         ]
     };
 
-    let items: Vec<Value> = labels.into_iter().map(|(label, detail, docs)| {
-        json!({
-            "label": label, "kind": 10, "detail": detail,
-            "documentation": { "kind": "markdown", "value": docs },
-            "insertText": label
+    let mut items: Vec<Value> = labels
+        .into_iter()
+        .map(|(label, detail, docs)| {
+            json!({
+                "label": label, "kind": 10, "detail": detail,
+                "documentation": { "kind": "markdown", "value": docs },
+                "insertText": label
+            })
         })
-    }).collect();
+        .collect();
+    items.extend(inventory_completion_items(&section, inventory));
     json!({ "isIncomplete": false, "items": items })
+}
+
+fn inventory_completion_items(section: &str, inventory: Option<&WorkspaceInventory>) -> Vec<Value> {
+    let Some(inventory) = inventory else {
+        return vec![];
+    };
+    if section == "workspace" {
+        return inventory
+            .packages
+            .iter()
+            .map(|pkg| {
+                json!({
+                    "label": pkg.path,
+                    "kind": 18,
+                    "detail": format!("Workspace package {}", pkg.name),
+                    "documentation": {
+                        "kind": "markdown",
+                        "value": format!("Workspace member package `{}`.", pkg.name)
+                    },
+                    "insertText": format!("\"{}\"", pkg.path)
+                })
+            })
+            .collect();
+    }
+    if section.contains("dependencies") {
+        return inventory
+            .packages
+            .iter()
+            .filter(|pkg| pkg.lib.is_some())
+            .map(|pkg| {
+                json!({
+                    "label": pkg.name,
+                    "kind": 9,
+                    "detail": format!("Workspace library at {}", pkg.path),
+                    "documentation": {
+                        "kind": "markdown",
+                        "value": format!("Add explicit path dependency on workspace library `{}`.", pkg.name)
+                    },
+                    "insertText": format!("{} = {{ path = \"{}\" }}", pkg.name, pkg.path)
+                })
+            })
+            .collect();
+    }
+    vec![]
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +666,9 @@ pub fn hover_result(text: Option<&str>, pos: Option<(usize, usize)>) -> Option<V
 fn key_at_position(line_text: &str, character: usize) -> Option<&str> {
     let before_comment = line_text.split('#').next()?.trim();
     let key = before_comment.split('=').next()?.trim();
-    if key.is_empty() || character > before_comment.len().saturating_add(1) { return None; }
+    if key.is_empty() || character > before_comment.len().saturating_add(1) {
+        return None;
+    }
     Some(key.trim_matches('"'))
 }
 
@@ -290,7 +727,12 @@ pub fn signature_help_result(text: Option<&str>, pos: Option<(usize, usize)>) ->
     let line_until_pos = full_line.get(..character).unwrap_or(full_line);
     let spec = signature_spec_for_context(&section, line_until_pos)?;
     let active_parameter = active_parameter_for_signature(line_until_pos, spec.params);
-    Some(render_signature_help(spec.label, spec.params, active_parameter, spec.documentation))
+    Some(render_signature_help(
+        spec.label,
+        spec.params,
+        active_parameter,
+        spec.documentation,
+    ))
 }
 
 struct SignatureSpec {
@@ -300,7 +742,10 @@ struct SignatureSpec {
 }
 
 const PACKAGE_PARAMS: &[(&str, &str)] = &[
-    ("name", "Package name used by builds, dependencies, and the registry."),
+    (
+        "name",
+        "Package name used by builds, dependencies, and the registry.",
+    ),
     ("version", "SemVer package version."),
     ("authors", "Package authors."),
     ("description", "Short registry/package description."),
@@ -313,7 +758,10 @@ const PACKAGE_PARAMS: &[(&str, &str)] = &[
 ];
 
 const DEPENDENCY_PARAMS: &[(&str, &str)] = &[
-    ("version", "Version requirement resolved from pkg-config, system stubs, or a registry."),
+    (
+        "version",
+        "Version requirement resolved from pkg-config, system stubs, or a registry.",
+    ),
     ("path", "Explicit local Freight package path."),
     ("git", "Explicit git repository URL."),
     ("branch", "Git branch to check out."),
@@ -321,15 +769,27 @@ const DEPENDENCY_PARAMS: &[(&str, &str)] = &[
     ("rev", "Pinned git revision."),
     ("url", "Explicit source archive URL."),
     ("sha256", "Expected SHA-256 digest for a URL archive."),
-    ("repo", "Resolver override such as pkg-config, system, or a named registry."),
+    (
+        "repo",
+        "Resolver override such as pkg-config, system, or a named registry.",
+    ),
     ("features", "Dependency features to activate."),
-    ("default-features", "Whether default dependency features are active."),
-    ("optional", "Whether this dependency is only enabled through features."),
+    (
+        "default-features",
+        "Whether default dependency features are active.",
+    ),
+    (
+        "optional",
+        "Whether this dependency is only enabled through features.",
+    ),
     ("os", "OS or OS-family allowlist."),
     ("arch", "CPU architecture allowlist."),
     ("targets", "Target triple allowlist."),
     ("type", "Foreign build type."),
-    ("include", "Foreign dependency include dirs exported to dependents."),
+    (
+        "include",
+        "Foreign dependency include dirs exported to dependents.",
+    ),
     ("cmake-args", "Extra CMake configure arguments."),
     ("patches", "Patch files applied after fetching."),
     ("unity", "Override unity builds for this dependency."),
@@ -337,14 +797,20 @@ const DEPENDENCY_PARAMS: &[(&str, &str)] = &[
 ];
 
 const LANGUAGE_PARAMS: &[(&str, &str)] = &[
-    ("std", "Language standard checked against the active compiler template."),
+    (
+        "std",
+        "Language standard checked against the active compiler template.",
+    ),
     ("stdlib", "C++ standard library selection."),
 ];
 const LIB_PARAMS: &[(&str, &str)] = &[
     ("type", "Library artifact type: static, shared, or header."),
     ("srcs", "Library source file or source list."),
     ("hdrs", "Public headers exported to dependents."),
-    ("link", "Prebuilt or system library name passed to the linker."),
+    (
+        "link",
+        "Prebuilt or system library name passed to the linker.",
+    ),
 ];
 const BIN_PARAMS: &[(&str, &str)] = &[
     ("name", "Executable target name."),
@@ -400,27 +866,55 @@ fn signature_spec_for_context(section: &str, line_until_pos: &str) -> Option<Sig
     let (label, params, documentation) = if section == "package" {
         ("freight::package { string name, semver version, string[] authors, string description, spdx license, path readme, url repository, string[] keywords, expr supports, string[] provides }", PACKAGE_PARAMS, "Package metadata used by builds and the registry.")
     } else if section.starts_with("language.") {
-        ("freight::language { standard std, cxx-stdlib stdlib }", LANGUAGE_PARAMS, "Language settings for the active compiler template.")
+        (
+            "freight::language { standard std, cxx-stdlib stdlib }",
+            LANGUAGE_PARAMS,
+            "Language settings for the active compiler template.",
+        )
     } else if section == "lib" {
-        ("freight::lib { lib-kind type, path[] srcs, path[] hdrs, string link }", LIB_PARAMS, "Library target declaration.")
+        (
+            "freight::lib { lib-kind type, path[] srcs, path[] hdrs, string link }",
+            LIB_PARAMS,
+            "Library target declaration.",
+        )
     } else if section == "bin" {
-        ("freight::bin { string name, path src }", BIN_PARAMS, "Executable target declaration.")
+        (
+            "freight::bin { string name, path src }",
+            BIN_PARAMS,
+            "Executable target declaration.",
+        )
     } else if section == "compiler" {
         ("freight::compiler { backend backend, int opt-level, bool debug, warning-level warnings, string[] defines, string[] flags, path[] includes, path pch, bool unity }", COMPILER_PARAMS, "Compiler settings applied before profile and platform overlays.")
     } else if section.starts_with("profile.") {
         ("freight::profile { string inherits, int opt-level, bool debug, bool lto, bool strip, string[] sanitize, string[] features }", PROFILE_PARAMS, "Build profile overrides.")
     } else if section == "target" {
-        ("freight::target { arch arch, string[] cpu-extensions }", TARGET_PARAMS, "CPU target settings.")
+        (
+            "freight::target { arch arch, string[] cpu-extensions }",
+            TARGET_PARAMS,
+            "CPU target settings.",
+        )
     } else if section.starts_with("os.") || section.starts_with("arch.") {
         ("freight::platform { path[] srcs, string[] defines, string[] flags, path[] includes, table dependencies, table language }", CONDITIONAL_PARAMS, "OS or architecture conditional overlay.")
     } else if section == "workspace" {
-        ("freight::workspace { path[] members }", WORKSPACE_PARAMS, "Workspace root manifest.")
+        (
+            "freight::workspace { path[] members }",
+            WORKSPACE_PARAMS,
+            "Workspace root manifest.",
+        )
     } else if section == "formatter" || section == "linter" {
-        ("freight::tool { string name, string style, string checks }", TOOL_PARAMS, "Formatter or linter settings resolved through tool templates.")
+        (
+            "freight::tool { string name, string style, string checks }",
+            TOOL_PARAMS,
+            "Formatter or linter settings resolved through tool templates.",
+        )
     } else {
         return None;
     };
-    Some(SignatureSpec { label, params, documentation })
+    Some(SignatureSpec {
+        label,
+        params,
+        documentation,
+    })
 }
 
 fn render_signature_help(
@@ -429,12 +923,15 @@ fn render_signature_help(
     active_parameter: usize,
     documentation: &str,
 ) -> Value {
-    let parameters: Vec<Value> = params.iter().map(|(name, doc)| {
-        let range = parameter_label_range(label, name)
-            .map(|(s, e)| json!([s, e]))
-            .unwrap_or_else(|| json!(name));
-        json!({ "label": range, "documentation": { "kind": "markdown", "value": *doc } })
-    }).collect();
+    let parameters: Vec<Value> = params
+        .iter()
+        .map(|(name, doc)| {
+            let range = parameter_label_range(label, name)
+                .map(|(s, e)| json!([s, e]))
+                .unwrap_or_else(|| json!(name));
+            json!({ "label": range, "documentation": { "kind": "markdown", "value": *doc } })
+        })
+        .collect();
     let active = active_parameter.min(params.len().saturating_sub(1));
     json!({
         "signatures": [{
@@ -455,23 +952,46 @@ fn parameter_label_range(label: &str, param: &str) -> Option<(usize, usize)> {
 
 fn active_parameter_for_signature(line_until_pos: &str, params: &[(&str, &str)]) -> usize {
     if let Some(key) = inline_table_key(line_until_pos) {
-        return params.iter().position(|(n, _)| *n == key)
+        return params
+            .iter()
+            .position(|(n, _)| *n == key)
             .unwrap_or_else(|| comma_count_after_open_brace(line_until_pos));
     }
-    let key = line_until_pos.split('=').next().unwrap_or("").trim().trim_matches('"');
+    let key = line_until_pos
+        .split('=')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"');
     params.iter().position(|(n, _)| *n == key).unwrap_or(0)
 }
 
 fn inline_table_key(line_until_pos: &str) -> Option<&str> {
     let open = line_until_pos.rfind('{')?;
-    let key = line_until_pos[open + 1..].rsplit(',').next().unwrap_or("")
-        .split('=').next().unwrap_or("").trim().trim_matches('"');
-    if key.is_empty() { None } else { Some(key) }
+    let key = line_until_pos[open + 1..]
+        .rsplit(',')
+        .next()
+        .unwrap_or("")
+        .split('=')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"');
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
 }
 
 fn comma_count_after_open_brace(line_until_pos: &str) -> usize {
-    let Some(open) = line_until_pos.rfind('{') else { return 0; };
-    line_until_pos[open + 1..].chars().filter(|ch| *ch == ',').count()
+    let Some(open) = line_until_pos.rfind('{') else {
+        return 0;
+    };
+    line_until_pos[open + 1..]
+        .chars()
+        .filter(|ch| *ch == ',')
+        .count()
 }
 
 pub fn current_section(text: &str, line: usize) -> Option<String> {
@@ -486,4 +1006,99 @@ pub fn current_section(text: &str, line: usize) -> Option<String> {
         }
         None
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn workspace_manifest_does_not_require_package_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let member = tmp.path().join("core");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            member.join("freight.toml"),
+            r#"
+[package]
+name = "core"
+version = "0.1.0"
+
+[language.c]
+std = "c17"
+
+[lib]
+type = "header"
+hdrs = ["include/core.h"]
+"#,
+        )
+        .unwrap();
+
+        let diagnostics = manifest_diagnostics(
+            r#"
+[workspace]
+members = ["core"]
+"#,
+            tmp.path(),
+            &[],
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    }
+
+    #[test]
+    fn workspace_manifest_reports_missing_member_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let diagnostics = manifest_diagnostics(
+            r#"
+[workspace]
+members = ["missing"]
+"#,
+            tmp.path(),
+            &[],
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("does not contain a freight.toml"));
+    }
+
+    #[test]
+    fn dependency_completion_includes_workspace_library_paths() {
+        let inventory = WorkspaceInventory {
+            packages: vec![
+                WorkspacePackage {
+                    name: "core".to_string(),
+                    path: "core".to_string(),
+                    bins: vec![],
+                    lib: Some("Static".to_string()),
+                },
+                WorkspacePackage {
+                    name: "app".to_string(),
+                    path: "app".to_string(),
+                    bins: vec!["demo".to_string()],
+                    lib: None,
+                },
+            ],
+        };
+        let result = completion_result(
+            Some(
+                r#"
+[dependencies]
+"#,
+            ),
+            Some((2, 0)),
+            Some(&inventory),
+        );
+        let items = result["items"].as_array().unwrap();
+
+        assert!(items.iter().any(|item| {
+            item["label"] == json!("core")
+                && item["insertText"] == json!("core = { path = \"core\" }")
+        }));
+        assert!(!items.iter().any(|item| item["label"] == json!("app")));
+    }
 }

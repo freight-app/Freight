@@ -726,7 +726,10 @@ fn handle_option(args: &[&str], ex: &mut Extracted) {
     if SKIP.contains(&name.to_ascii_lowercase().as_str()) {
         return;
     }
-    let default_on = args.get(2).map(|v| v.eq_ignore_ascii_case("ON")).unwrap_or(false);
+    let default_on = args
+        .get(2)
+        .map(|v| v.eq_ignore_ascii_case("ON"))
+        .unwrap_or(false);
     if !ex.features.iter().any(|(n, _)| n == &name) {
         ex.features.push((name, default_on));
     }
@@ -741,7 +744,10 @@ fn handle_cmake_dependent_option(args: &[&str], ex: &mut Extracted) {
     if name.is_empty() || name.contains('$') {
         return;
     }
-    let default_on = args.get(2).map(|v| v.eq_ignore_ascii_case("ON")).unwrap_or(false);
+    let default_on = args
+        .get(2)
+        .map(|v| v.eq_ignore_ascii_case("ON"))
+        .unwrap_or(false);
     if !ex.features.iter().any(|(n, _)| n == &name) {
         ex.features.push((name, default_on));
     }
@@ -874,19 +880,18 @@ fn handle_cpm_add_package(args: &[&str], ex: &mut Extracted, warnings: &mut Vec<
 
 /// Parse GIT_REPOSITORY / URL / URL_HASH / GIT_TAG keyword-value pairs into a
 /// `FetchedDep`.  Returns `None` and pushes a warning if no source is found.
-fn parse_fetch_kv(
-    name: &str,
-    tail: &[&str],
-    warnings: &mut Vec<String>,
-) -> Option<FetchedDep> {
+fn parse_fetch_kv(name: &str, tail: &[&str], warnings: &mut Vec<String>) -> Option<FetchedDep> {
     let kv = keyword_value_pairs(tail);
     let git = kv.get("GIT_REPOSITORY").cloned();
     let url = kv.get("URL").cloned();
-    let sha256 = kv.get("URL_HASH").and_then(|h| {
-        h.strip_prefix("SHA256=")
-            .or_else(|| h.strip_prefix("sha256="))
-            .map(str::to_string)
-    }).or_else(|| kv.get("SHA256").cloned());
+    let sha256 = kv
+        .get("URL_HASH")
+        .and_then(|h| {
+            h.strip_prefix("SHA256=")
+                .or_else(|| h.strip_prefix("sha256="))
+                .map(str::to_string)
+        })
+        .or_else(|| kv.get("SHA256").cloned());
 
     let git_tag_str = kv.get("GIT_TAG").map(|s| s.as_str());
     let (tag, branch, rev) = match git_tag_str {
@@ -1632,7 +1637,9 @@ mod tests {
         let src = "if(NOT WIN32)\n  target_link_libraries(app z)\nendif()";
         let (ex, _) = extract_src(src);
         assert!(
-            ex.platform_deps.get("unix").map_or(false, |d| d.contains(&"z".to_string())),
+            ex.platform_deps
+                .get("unix")
+                .map_or(false, |d| d.contains(&"z".to_string())),
             "NOT WIN32 body should be mapped to unix platform deps"
         );
     }
@@ -1885,13 +1892,17 @@ FetchContent_MakeAvailable(fmt)
     fn fetchcontent_git_hash_becomes_rev() {
         let src = "FetchContent_Declare(mylib GIT_REPOSITORY https://github.com/x/y.git GIT_TAG a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2)";
         let (ex, _) = extract_src(src);
-        assert_eq!(ex.fetched_deps[0].rev.as_deref(), Some("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"));
+        assert_eq!(
+            ex.fetched_deps[0].rev.as_deref(),
+            Some("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
+        );
         assert!(ex.fetched_deps[0].tag.is_none());
     }
 
     #[test]
     fn fetchcontent_git_branch() {
-        let src = "FetchContent_Declare(mylib GIT_REPOSITORY https://github.com/x/y.git GIT_TAG main)";
+        let src =
+            "FetchContent_Declare(mylib GIT_REPOSITORY https://github.com/x/y.git GIT_TAG main)";
         let (ex, _) = extract_src(src);
         assert_eq!(ex.fetched_deps[0].branch.as_deref(), Some("main"));
         assert!(ex.fetched_deps[0].tag.is_none() && ex.fetched_deps[0].rev.is_none());
@@ -1931,7 +1942,11 @@ FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TA
 FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG 11.0.0)
 "#;
         let (ex, _) = extract_src(src);
-        assert_eq!(ex.fetched_deps.len(), 1, "duplicate declare should be ignored");
+        assert_eq!(
+            ex.fetched_deps.len(),
+            1,
+            "duplicate declare should be ignored"
+        );
         assert_eq!(ex.fetched_deps[0].tag.as_deref(), Some("10.2.1"));
     }
 
@@ -1945,7 +1960,10 @@ find_package(fmt REQUIRED)
 "#;
         let (ex, w) = extract_src(src);
         let toml = emit_toml("app", "0.1.0", &ex, &w);
-        assert!(toml.contains("git = "), "expected inline git dep, got:\n{toml}");
+        assert!(
+            toml.contains("git = "),
+            "expected inline git dep, got:\n{toml}"
+        );
         // Should not also appear as `fmt = "*"`
         assert!(!toml.contains("fmt = \"*\""));
     }
@@ -2105,9 +2123,13 @@ CPMAddPackage(
 
     #[test]
     fn cmake_internal_options_skipped() {
-        let src = "option(BUILD_TESTING \"Build tests\" OFF)\noption(BUILD_SHARED_LIBS \"Shared\" ON)";
+        let src =
+            "option(BUILD_TESTING \"Build tests\" OFF)\noption(BUILD_SHARED_LIBS \"Shared\" ON)";
         let (ex, _) = extract_src(src);
-        assert!(ex.features.is_empty(), "cmake internals must not appear in features");
+        assert!(
+            ex.features.is_empty(),
+            "cmake internals must not appear in features"
+        );
     }
 
     #[test]
@@ -2115,8 +2137,14 @@ CPMAddPackage(
         let src = "option(LOGGING \"Enable logging\" ON)\noption(TLS \"TLS support\" OFF)";
         let (ex, w) = extract_src(src);
         let toml = emit_toml("app", "0.1.0", &ex, &w);
-        assert!(toml.contains("[features]"), "expected [features] section:\n{toml}");
-        assert!(toml.contains("logging"), "expected logging feature:\n{toml}");
+        assert!(
+            toml.contains("[features]"),
+            "expected [features] section:\n{toml}"
+        );
+        assert!(
+            toml.contains("logging"),
+            "expected logging feature:\n{toml}"
+        );
         assert!(toml.contains("default"), "expected default array:\n{toml}");
     }
 }

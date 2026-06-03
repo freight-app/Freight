@@ -25,30 +25,41 @@ fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
         if next2!('$', '$') {
             let start = i;
             i += 2;
-            while i + 1 < n && !next2!('$', '$') { i += 1; }
+            while i + 1 < n && !next2!('$', '$') {
+                i += 1;
+            }
             let end = if i + 1 < n { i + 2 } else { n };
             push_region(&mut out, &mut regions, &chars[start..end]);
             i = end;
         } else if next2!('\\', '[') {
             let start = i;
             i += 2;
-            while i + 1 < n && !next2!('\\', ']') { i += 1; }
+            while i + 1 < n && !next2!('\\', ']') {
+                i += 1;
+            }
             let end = if i + 1 < n { i + 2 } else { n };
             push_region(&mut out, &mut regions, &chars[start..end]);
             i = end;
         } else if next2!('\\', '(') {
             let start = i;
             i += 2;
-            while i + 1 < n && !next2!('\\', ')') && chars[i] != '\n' { i += 1; }
+            while i + 1 < n && !next2!('\\', ')') && chars[i] != '\n' {
+                i += 1;
+            }
             let end = if i + 1 < n { i + 2 } else { n };
             push_region(&mut out, &mut regions, &chars[start..end]);
             i = end;
         } else if chars[i] == '$'
-            && chars.get(i + 1).map(|c| !c.is_whitespace() && *c != '$').unwrap_or(false)
+            && chars
+                .get(i + 1)
+                .map(|c| !c.is_whitespace() && *c != '$')
+                .unwrap_or(false)
         {
             let start = i;
             i += 1;
-            while i < n && chars[i] != '$' && chars[i] != '\n' { i += 1; }
+            while i < n && chars[i] != '$' && chars[i] != '\n' {
+                i += 1;
+            }
             if i < n && chars[i] == '$' {
                 let end = i + 1;
                 push_region(&mut out, &mut regions, &chars[start..end]);
@@ -68,10 +79,12 @@ fn protect_math(text: &str) -> (String, Vec<MathRegion>) {
 fn push_region(out: &mut String, regions: &mut Vec<MathRegion>, chars: &[char]) {
     let raw: String = chars.iter().collect();
     let placeholder = format!("@FREIGHTMATH{}@", regions.len());
-    regions.push(MathRegion { placeholder: placeholder.clone(), raw });
+    regions.push(MathRegion {
+        placeholder: placeholder.clone(),
+        raw,
+    });
     out.push_str(&placeholder);
 }
-
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

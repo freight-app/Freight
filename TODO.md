@@ -11,6 +11,28 @@ This file covers items not tracked elsewhere.
 
 ## High priority
 
+### LSP: workspace/package recognition
+
+- [x] Treat `[workspace]` manifests as first-class in `freight lsp` diagnostics instead of parsing
+  them as package manifests.
+- [x] Generate the hidden backend `compile_commands.json` for every workspace member, then point
+  clangd at the merged hidden DB instead of requiring a visible workspace-root file.
+- [x] Track `[[bin]]` and `[lib]` targets across workspace members so IDEs can offer target/package
+  choices for run, debug, build, and source navigation.
+- [x] Build the doc hover index across explicit path dependencies, not just workspace members
+  and the nearest manifest's `src/` tree. Workspace member indexing is done.
+- [x] Refresh the workspace compile DB and doc index when any member `freight.toml` changes.
+
+### LSP: native Fortran support
+
+- [ ] Treat `fortls` as a reference implementation and temporary passthrough, not a required
+  long-term extension dependency.
+- [ ] Add native Freight Fortran symbol indexing for modules, subroutines, functions, types,
+  interfaces, includes, and `use` associations.
+- [ ] Add native Fortran hover/completion/navigation using Freight's manifest-scoped source graph.
+- [ ] Keep `fortls` passthrough available behind a flag until native Freight Fortran support covers
+  common workflows.
+
 ### ~~Compiler version gating for language standards~~
 Done. `TemplateDef` now has `standard_min_versions`; `CompilerTemplate::check_standard_floor`
 checks the floor; `compile_one` rejects unsupported standards with `FreightError::OptionError`
@@ -56,8 +78,8 @@ per-platform define syntax).
 
 ## Testing
 
-- Integration test for mixed-language linking: build `examples/multi-lang` and
-  `examples/tri-lang` via the `freight-core` API; assert the binary exits 0.
+- Integration test for mixed-language linking: build `examples/mixed/c-cpp` and
+  `examples/mixed/tri-lang` via the `freight` API; assert the binary exits 0.
 - Unit test for `whole_program: true` branch in `compile.rs` / `link.rs`.
 - Unit test for language auto-detection via `has_lang` (extension → linker family).
 - Tests for compiler version gating once implemented.

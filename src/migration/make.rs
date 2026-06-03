@@ -693,7 +693,11 @@ fn parse_conditional_deps(content: &str) -> ConditionalDeps {
                 }
                 if depth == 1 {
                     let libs = filter_auto_detected(extract_libs_from_line(it));
-                    let target = if in_else { &mut else_libs } else { &mut then_libs };
+                    let target = if in_else {
+                        &mut else_libs
+                    } else {
+                        &mut then_libs
+                    };
                     for lib in libs {
                         if !target.contains(&lib) {
                             target.push(lib);
@@ -815,7 +819,8 @@ fn extract_pkgconfig_libs(s: &str) -> Vec<String> {
             if tok.starts_with("--") || tok == "pkg-config" {
                 continue;
             }
-            let pkg = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+            let pkg =
+                tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
             if !pkg.is_empty() && !deps.contains(&pkg.to_string()) {
                 deps.push(pkg.to_string());
             }
@@ -847,11 +852,17 @@ fn parse_ifdef_deps(content: &str, result: &mut ConditionalDeps) -> Vec<String> 
         let var_name = t[keyword_len..].trim().to_ascii_uppercase();
 
         // Try to classify the variable name by OS
-        let os_key: Option<&'static str> = if var_name.contains("WIN") || var_name.contains("MSVC") || var_name.contains("MINGW") {
+        let os_key: Option<&'static str> = if var_name.contains("WIN")
+            || var_name.contains("MSVC")
+            || var_name.contains("MINGW")
+        {
             Some("windows")
         } else if var_name.contains("LINUX") || var_name.contains("GNU") {
             Some("linux")
-        } else if var_name.contains("DARWIN") || var_name.contains("APPLE") || var_name.contains("MACOS") {
+        } else if var_name.contains("DARWIN")
+            || var_name.contains("APPLE")
+            || var_name.contains("MACOS")
+        {
             Some("macos")
         } else {
             None
@@ -865,7 +876,11 @@ fn parse_ifdef_deps(content: &str, result: &mut ConditionalDeps) -> Vec<String> 
 
         while i < lines.len() {
             let it = lines[i].trim();
-            if it.starts_with("ifeq") || it.starts_with("ifneq") || it.starts_with("ifdef") || it.starts_with("ifndef") {
+            if it.starts_with("ifeq")
+                || it.starts_with("ifneq")
+                || it.starts_with("ifdef")
+                || it.starts_with("ifndef")
+            {
                 depth += 1;
             } else if it.starts_with("endif") {
                 depth -= 1;
@@ -880,7 +895,11 @@ fn parse_ifdef_deps(content: &str, result: &mut ConditionalDeps) -> Vec<String> 
             }
             if depth == 1 {
                 let libs = filter_auto_detected(extract_libs_from_line(it));
-                let target = if in_else { &mut else_libs } else { &mut then_libs };
+                let target = if in_else {
+                    &mut else_libs
+                } else {
+                    &mut then_libs
+                };
                 for lib in libs {
                     if !target.contains(&lib) {
                         target.push(lib);
@@ -1342,20 +1361,35 @@ mod tests {
 
     #[test]
     fn classify_condition_windows() {
-        assert_eq!(classify_make_condition("($(OS),Windows_NT)"), Some("windows"));
-        assert_eq!(classify_make_condition("($(OS), Windows_NT)"), Some("windows"));
-        assert_eq!(classify_make_condition("\"$(OS)\" \"Windows_NT\""), Some("windows"));
+        assert_eq!(
+            classify_make_condition("($(OS),Windows_NT)"),
+            Some("windows")
+        );
+        assert_eq!(
+            classify_make_condition("($(OS), Windows_NT)"),
+            Some("windows")
+        );
+        assert_eq!(
+            classify_make_condition("\"$(OS)\" \"Windows_NT\""),
+            Some("windows")
+        );
     }
 
     #[test]
     fn classify_condition_linux() {
         assert_eq!(classify_make_condition("($(UNAME_S),Linux)"), Some("linux"));
-        assert_eq!(classify_make_condition("($(UNAME_S), linux)"), Some("linux"));
+        assert_eq!(
+            classify_make_condition("($(UNAME_S), linux)"),
+            Some("linux")
+        );
     }
 
     #[test]
     fn classify_condition_macos() {
-        assert_eq!(classify_make_condition("($(UNAME_S),Darwin)"), Some("macos"));
+        assert_eq!(
+            classify_make_condition("($(UNAME_S),Darwin)"),
+            Some("macos")
+        );
     }
 
     #[test]
@@ -1446,10 +1480,7 @@ mod tests {
             warnings: vec![],
         };
         let toml = emit_toml(&spec);
-        assert!(
-            toml.contains("ws2_32"),
-            "expected ws2_32 dep:\n{toml}"
-        );
+        assert!(toml.contains("ws2_32"), "expected ws2_32 dep:\n{toml}");
         // Should appear under an [os.windows.*] section, not [dependencies]
         assert!(
             !toml.contains("[dependencies]"),

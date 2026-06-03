@@ -12,87 +12,18 @@ freight/
 ├── Cargo.toml                  # workspace root
 ├── README.md
 ├── crates/
-│   ├── freight/                  # binary crate — CLI shells + clap dispatch
-│   │   └── src/
-│   │       ├── main.rs         # clap parse → commands::* dispatch
-│   │       ├── output.rs       # coloured print helpers (CLI-only)
-│   │       └── commands/       # one cmd_* shell per command, calls into freight-core
-│   │           ├── mod.rs
-│   │           ├── build.rs    # cmd_build, cmd_run, cmd_test, cmd_clean, cmd_watch
-│   │           ├── check.rs    # cmd_check + manifest summary printer
-│   │           ├── compile_commands.rs  # cmd_compile_commands
-│   │           ├── debug.rs    # cmd_debug
-│   │           ├── deps.rs     # cmd_add, remove, update, fetch, tree, search, info, login, publish, yank
-│   │           ├── doc.rs      # cmd_doc, cmd_man
-│   │           ├── fmt.rs      # cmd_fmt
-│   │           ├── install.rs  # cmd_install, cmd_package
-│   │           ├── lint.rs     # cmd_lint
-│   │           ├── new.rs      # cmd_new, cmd_init
-│   │           └── toolchain.rs # cmd_toolchain_list, cmd_toolchain_add, cmd_toolchain_use
-│   ├── freight-core/             # library crate — all build logic, no CLI / no printing of results
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── error.rs
-│   │       ├── new.rs          # scaffold_project / init_project (returns ScaffoldOutcome)
-│   │       ├── dep_cmds.rs     # manifest_add_dep, manifest_remove_dep, regen_lock, locate_project
-│   │       ├── lock.rs         # freight.lock read/write
-│   │       ├── manifest/       # freight.toml parsing + validation
-│   │       │   ├── mod.rs
-│   │       │   ├── types.rs
-│   │       │   ├── find.rs
-│   │       │   └── validate.rs
-│   │       ├── supports.rs     # shared `supports = "..."` expression parser + eval
-│   │       ├── toolchain/      # compiler detection + templates
-│   │       │   ├── mod.rs
-│   │       │   ├── template.rs
-│   │       │   ├── detect.rs
-│   │       │   ├── cache.rs    # GlobalConfig — ~/.freight/config.toml + local override
-│   │       │   ├── script.rs   # quick_kind pre-check, shared Rhai helpers
-│   │       │   ├── debugger.rs # DebuggerTemplate + detect_debuggers()
-│   │       │   ├── system_libs.rs # load_system_lib_stubs() — toolchains/system-libs/*.toml
-│   │       │   └── tool.rs     # ToolTemplate + DetectedTool (formatters + linters)
-│   │       ├── doc/            # documentation extraction and rendering
-│   │       │   ├── lib.rs      # OutputFormat enum + render() dispatch
-│   │       │   ├── extract.rs  # multi-language doc comment extractor
-│   │       │   ├── markdown.rs # math protection + Markdown conversion helpers
-│   │       │   ├── render_md.rs  # Markdown renderer (GFM, cross-document links)
-│   │       │   └── render_json.rs # JSON + MessagePack renderers for tooling/doc apps
-│   │       ├── registry/       # package registry client
-│   │       │   ├── mod.rs      # PackageRepo trait, PackageInfo/PackageVersion types, DEFAULT_REGISTRY_URL
-│   │       │   ├── freight_registry.rs  # FreightRegistry: HTTP lookup + search over /api/v1/
-│   │       │   └── repos.rs    # repo_by_name(), registries_in_order() — multi-registry dispatch
-│   │       ├── fetch/          # low-level download helpers
-│   │       │   ├── mod.rs
-│   │       │   ├── git.rs      # git clone / fetch for git = "..." deps
-│   │       │   └── http.rs     # curl-based download + SHA-256 verify for url = "..." deps
-│   │       ├── build/          # compilation + linking orchestration
-│   │       │   ├── mod.rs      # build_project, clean_project, test_project (pub functions)
-│   │       │   ├── compile.rs  # source → object, parallel via rayon
-│   │       │   ├── link.rs     # object → binary / .a / .so
-│   │       │   ├── discover.rs # walkdir source discovery
-│   │       │   ├── deps.rs     # dep graph resolution + topo sort
-│   │       │   ├── features.rs # Cargo-style [features] resolve + define generation
-│   │       │   └── modules.rs  # C++20 module scanner, DAG, phased compilation
-│   │       └── meta/           # foreign build system + package resolver integrations
-│   │           ├── mod.rs      # build_foreign_deps orchestrator, detect_build_system, invoke_build_system
-│   │           ├── cmake.rs    # CMake: Ninja generator, cross-compile SYSTEM_NAME/PROCESSOR, --parallel, --install
-│   │           ├── autotools.rs # Autotools: --host, parallel make, fast-build skip, Emscripten
-│   │           ├── pkg_config.rs # pkg-config + pkgconf fallback, cross-compile env var lookup, static mode
-│   │           ├── make.rs     # plain Makefile builds
-│   │           ├── meson.rs    # Meson builds
-│   │           ├── scons.rs    # SCons builds
-│   │           ├── bazel.rs    # Bazel builds
-│   │           ├── conan.rs    # Conan package manager integration
-│   │           └── system_pm.rs # host system package manager detection (apt/brew/dnf/…) for install hints
-│   ├── freight-doc/              # standalone doc generator binary (freight-doc CLI)
-│   │   └── src/
-│   │       └── main.rs         # freight-doc --format md|json|msgpack|all [DIR...] --out DIR
-│   └── freight-lsp/              # Language Server for freight.toml
+│   └── freight/                # package `freight`, library crate `freight_core`, CLI binary `freight`
 │       └── src/
-│           ├── lib.rs
-│           ├── position.rs     # text-based position mapping for diagnostics
-│           ├── completion.rs   # section-aware completions
-│           └── docs.rs         # hover docs keyed by dotted path
+│           ├── lib.rs          # build engine public API; emits BuildEvent, no CLI printing
+│           ├── bin/freight/    # clap dispatch, commands, LSP, DAP, TUI, output formatting
+│           ├── build/          # compile/link/dependency/workspace orchestration
+│           ├── manifest/       # freight.toml parsing, workspace parsing, validation
+│           ├── toolchain/      # compiler/debugger/tool template detection
+│           ├── registry/       # package registry clients and repo dispatch
+│           ├── fetch/          # git and URL/archive fetching into .pkgs/
+│           ├── doc/            # dependency documentation browser/rendering
+│           ├── meta/           # foreign build systems and package managers
+│           └── migration/      # CMake/Make/Autotools migration helpers
 ├── toolchains/                 # compiler, debugger, formatter, linter templates (.rhai) + system-lib stubs (.toml)
 │   ├── system-libs/            # freight.toml-compatible stubs for well-known OS libraries
 │   │   ├── pthread.toml        # Linux/macOS POSIX threads
@@ -152,19 +83,18 @@ freight/
 │   ├── tcc.rhai
 │   └── opencl.rhai          # requires_toolchain = ["cpp"]
 └── examples/                   # every example is buildable via `freight build`
-    ├── hello-cpp/
-    ├── multi-lang/
-    ├── with-deps/
-    ├── c-simple/
-    ├── multi-bin/
-    ├── cpp-modules/
-    ├── tri-lang/
-    ├── asm-hello/
-    ├── with-cmake-dep/
-    ├── with-make-dep/
-    ├── with-git-dep/
-    ├── with-external-deps/
-    └── doc-example/
+    ├── c/hello/
+    ├── cpp/hello/
+    ├── cpp/modules/
+    ├── cpp/multi-bin/
+    ├── assembly/hello/
+    ├── mixed/c-cpp/
+    ├── mixed/tri-lang/
+    ├── deps/cmake/
+    ├── deps/make/
+    ├── deps/git/
+    ├── deps/external/
+    └── misc/doc/
 ```
 
 ---
@@ -214,7 +144,7 @@ freight build
 | `regex` | 1 | Version extraction, doc comment scanning |
 | `semver` | 1 | Dependency version parsing |
 | `pulldown-cmark` | 0.12 | Markdown processing in `doc/markdown.rs` |
-| `thiserror` | 1 | Error types in `freight-core` |
+| `thiserror` | 1 | Error types in `freight` |
 | `tempfile` | 3 | Test helpers |
 | `clap_mangen` | 0.2 | Man page generation for `freight doc --man` |
 | `rhai` | 1 | Compiler template scripting engine |

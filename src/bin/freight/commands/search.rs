@@ -34,7 +34,10 @@ fn cmd_search(query: &str, repo: Option<&str>) {
     let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = if let Some(rname) = repo {
         match repo_by_name(rname, &config) {
             Ok(r) => vec![r],
-            Err(e) => { print_error(&e.to_string()); return; }
+            Err(e) => {
+                print_error(&e.to_string());
+                return;
+            }
         }
     } else {
         registries_in_order(&config)
@@ -49,7 +52,12 @@ fn cmd_search(query: &str, repo: Option<&str>) {
                 if profile.packages.is_empty() {
                     println!("  no packages published");
                 } else {
-                    println!("  {:<32}  {:<12}  {}", "package".bold(), "version".bold(), "description".bold());
+                    println!(
+                        "  {:<32}  {:<12}  {}",
+                        "package".bold(),
+                        "version".bold(),
+                        "description".bold()
+                    );
                     println!("  {}", "─".repeat(68).bright_black());
                     for p in &profile.packages {
                         println!(
@@ -73,7 +81,11 @@ fn cmd_search(query: &str, repo: Option<&str>) {
 
     let mut any = false;
     for r in &repos {
-        let label = if r.repo_key().is_empty() { "freight.dev" } else { r.repo_key() };
+        let label = if r.repo_key().is_empty() {
+            "freight.dev"
+        } else {
+            r.repo_key()
+        };
         match r.search(query) {
             Ok(results) if !results.is_empty() => {
                 if !any {
@@ -81,7 +93,12 @@ fn cmd_search(query: &str, repo: Option<&str>) {
                         println!("packages tagged  #{}", display_query.bright_blue());
                         println!("{}", "─".repeat(72).bright_black());
                     }
-                    println!("{:<32}  {:<12}  {}", "name".bold(), "latest".bold(), "description".bold());
+                    println!(
+                        "{:<32}  {:<12}  {}",
+                        "name".bold(),
+                        "latest".bold(),
+                        "description".bold()
+                    );
                     println!("{}", "─".repeat(72).bright_black());
                 }
                 for pkg in &results {
@@ -101,7 +118,9 @@ fn cmd_search(query: &str, repo: Option<&str>) {
                     print_status(label, &format!("no results for `{query}`"));
                 }
             }
-            Err(e) => { print_warning(&format!("{label}: {e}")); }
+            Err(e) => {
+                print_warning(&format!("{label}: {e}"));
+            }
         }
     }
 

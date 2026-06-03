@@ -16,8 +16,8 @@ use super::compile::object_path;
 /// Priority order for linker selection: the first language in this list that is
 /// active in the project wins the link step.
 const LINK_PRIORITY: &[&str] = &[
-    "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "zig",
-    "opencl", "ispc",
+    "cpp", "objcpp", "cuda", "hip", "sycl", "objc", "c", "fortran", "ada", "d", "zig", "opencl",
+    "ispc",
 ];
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -77,12 +77,11 @@ pub fn link_targets(
         // that otherwise produce no individual Compiling events during the compile step.
         if linker.template.linking.values().any(|l| l.whole_program) {
             // The "objects" list contains absolute source paths for whole-program langs.
-            for src in bin_objects.iter().filter(|p| {
-                p.extension().and_then(|e| e.to_str()) != Some("o")
-            }) {
-                progress(BuildEvent::Compiling {
-                    path: src.clone(),
-                });
+            for src in bin_objects
+                .iter()
+                .filter(|p| p.extension().and_then(|e| e.to_str()) != Some("o"))
+            {
+                progress(BuildEvent::Compiling { path: src.clone() });
             }
         }
         progress(BuildEvent::Linking {

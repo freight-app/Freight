@@ -28,7 +28,7 @@ $$\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$$
 ## Running
 
 ```sh
-cd examples/doc-example
+cd examples/misc/doc
 freight build
 freight doc
 ```

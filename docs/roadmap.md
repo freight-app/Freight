@@ -5,7 +5,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 ---
 
 ### CLI Bootstrap ✓ COMPLETE
-- [x] Cargo workspace: `freight` (bin) + `freight-core` (lib)
+- [x] Cargo workspace: `freight` (bin) + `freight` (lib)
 - [x] `clap` wiring — all subcommands stubbed
 - [x] `FreightError` enum with `thiserror`
 - [x] Coloured output helpers: success `✓`, warning `⚠`, error `✗`
@@ -53,7 +53,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Each bench binary is run 5 times; per-bench min / mean / max wall-clock table printed to stdout
 - [x] Workspace support — `freight bench` at workspace root runs benches for every member
 - [x] `BenchLinking`, `BenchRunning`, `BenchResult` events added to `BuildEvent` for GUI/TUI frontends
-- [x] `bench_project`, `bench_project_with`, `bench_project_at`, `bench_workspace_with` public API in `freight-core`
+- [x] `bench_project`, `bench_project_with`, `bench_project_at`, `bench_workspace_with` public API in `freight`
 
 ### Dependencies ✓ COMPLETE
 - [x] Path dependency resolution — compile dep, archive to `.a`, link into project
@@ -65,7 +65,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `supports.rs` — shared boolean platform-expression parser (`HostEnv`, `eval_supports()`) used by stubs and the `freight add` TUI
 - [x] Dependency graph with topological sort (Kahn's algorithm)
 - [x] Cycle detection with error
-- [x] `.deps/<name>/` folder convention for version-pinned deps
+- [x] `.pkgs/<name>/` folder convention for version-pinned deps
 - [x] Transitive dep checks — errors if a dep's dep is not present, does not fetch recursively
 - [x] Dep include dirs accumulated in topo order for multi-level dep builds
 - [x] `provides = [...]` slot-based substitution — shallower dep wins; same-depth conflict = hard `SlotConflict` error; root project (depth 0) always wins; dropped deps filtered before compilation
@@ -73,11 +73,11 @@ Feature branches follow the convention `feature/<name>` off `master`.
 ### Foreign Build System Integration ✓ COMPLETE
 - [x] Auto-detect foreign build system from dep directory — CMake > Meson > Autotools > SCons > Make
 - [x] CMake, Meson, Make, Autotools, SCons foreign deps: configure → build → install
-- [x] Git dependencies — `{ git = "https://..." }` clones into `.deps/<name>/`, then treated as path dep
+- [x] Git dependencies — `{ git = "https://..." }` clones into `.pkgs/<name>/`, then treated as path dep
 - [x] Foreign dep include + archive auto-discovery after build
 - [x] HTTP tarball deps — `{ http = "...", sha256 = "..." }` with SHA-256 verification
 - [x] GitHub release deps — `{ github = "owner/repo", tag = "v1.0" }` shorthand
-- [x] Download sentinel — `.deps/<name>/.freight-fetched` prevents re-downloading
+- [x] Download sentinel — `.pkgs/<name>/.freight-fetched` prevents re-downloading
 - [x] pkg-config deps — standalone or with system fallback
 - [x] `type = "none"` explicit header-only / prebuilt override
 - [x] Header-only auto-detection when no build system and no source files found
@@ -129,7 +129,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `freight doc` dependency TUI plus `freight doc --format md|json|msgpack|all`
 - [x] `freight doc --man [--out-dir DIR]` — man pages via clap_mangen
 - [x] `crates/freight-doc/` — standalone `freight-doc` binary
-- [x] `examples/doc-example/` — C, C++, Fortran sources with LaTeX math in comments; multi-lib project showcasing path deps in the TUI
+- [x] `examples/misc/doc/` — C, C++, Fortran sources with LaTeX math in comments; multi-lib project showcasing path deps in the TUI
 - [x] TUI DocView: colored rendering — item name (yellow/bold), signature (green), section labels (magenta/bold), table borders (dark gray), param names (cyan/bold)
 - [x] TUI DocView: box-drawing parameter table with separator row between each param, word-wrapped description column
 - [x] TUI DocView: brief shown between signature and parameters; body shown before param table
@@ -188,7 +188,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 
 ### Registry ✓ COMPLETE
 
-**Client (freight-core)**
+**Client (freight_core)**
 - [x] `freight.lock` read/write — deterministic dep pinning (version 1 format, sha256 checksums)
 - [x] `freight.lock` auto-generated on every `freight build`
 - [x] `freight tree` — dependency tree with dep type labels
@@ -227,7 +227,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 ### Language Server (in progress — `feature/lsp-server`)
 - [x] Crate scaffold: `crates/freight-lsp/` (lib + bin), `tower-lsp 0.20`, stdio transport
 - [x] Document store backed by `DashMap<Url, String>` — full-sync updates
-- [x] Diagnostics via `freight-core`'s `validate()` + `validate_dep_compat()`
+- [x] Diagnostics via `freight`'s `validate()` + `validate_dep_compat()`
 - [x] Completion: section-aware (section headers, `backend`, `warnings`, `std`, `lib.type`, field snippets)
 - [x] Hover docs keyed by dotted path (`compiler.backend`, `lib.type`, …)
 - [x] Go-to-definition for `path = "..."` dependencies
@@ -237,15 +237,15 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [ ] Code actions: "add `[[bin]]` target", "convert version dep → detailed table"
 
 ### Examples ✓ COMPLETE
-- [x] `hello-cpp/` — multi-file C++ with tests
-- [x] `multi-lang/` — C + C++ mixed project with tests
-- [x] `with-deps/` — path dependency (static lib)
-- [x] `c-simple/` — pure C, Collatz benchmark
-- [x] `multi-bin/` — two binaries from one source tree
-- [x] `cpp-modules/` — C++20 named modules, ASCII ray tracer
-- [x] `tri-lang/` — Fortran + C + C++ N-body gravity
-- [x] `asm-hello/` — C + NASM assembly
-- [x] `with-cmake-dep/` — foreign CMake dep (auto-detected)
-- [x] `with-make-dep/` — foreign Make dep (auto-detected)
-- [x] `with-git-dep/` — git dependency cloned and built automatically
-- [x] `doc-example/` — C, C++, Fortran sources with LaTeX math in doc comments
+- [x] `c/hello/` — pure C hello world
+- [x] `cpp/hello/` — multi-file C++ hello world
+- [x] `cpp/static-lib/` — path dependency/static library pattern
+- [x] `cpp/multi-bin/` — multiple binaries from one source tree
+- [x] `cpp/modules/` — C++20 named modules
+- [x] `mixed/c-cpp/` — C + C++ mixed project
+- [x] `mixed/tri-lang/` — Fortran + C + C++ N-body gravity
+- [x] `assembly/hello/` — C + NASM/GAS assembly
+- [x] `deps/cmake/` — foreign CMake dep (auto-detected)
+- [x] `deps/make/` — foreign Make dep (auto-detected)
+- [x] `deps/git/` — git dependency cloned and built automatically
+- [x] `misc/doc/` — C, C++, Fortran sources with LaTeX math in doc comments

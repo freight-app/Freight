@@ -18,7 +18,7 @@ source-based package manager (like Cargo), not a binary distribution.
 
 This document covers:
 - **Server** (`freight-registry` standalone repo) — the Axum HTTP service
-- **Client** (`freight-core`) — download, resolve, fetch
+- **Client** (`freight`) — download, resolve, fetch
 - **CLI** (`freight`) — wiring the stubs to the real API
 
 ---
@@ -49,7 +49,7 @@ freight add mylib@1.0                 freight publish
 └──────────────────────────────────────────────────┘
         │ tar.gz + SHA-256
         ▼
-.deps/<name>/   (extracted source)
+.pkgs/<name>/   (extracted source)
       └── build via foreign build system detection
 ```
 
@@ -59,8 +59,8 @@ freight add mylib@1.0                 freight publish
 
 A freight package is a source archive with `freight.toml` at the top level. It:
 - Must contain every source file needed to build
-- Must NOT contain `target/`, `.freight-build/`, or `.deps/`
-- Is produced by `freight publish` via `tar --exclude=target --exclude=.deps -czf`
+- Must NOT contain `target/`, `.freight-build/`, or `.pkgs/`
+- Is produced by `freight publish` via `tar --exclude=target --exclude=.pkgs -czf`
 - Is identified by `[package].name` + `[package].version` in the bundled `freight.toml`
 
 Semver versioning is enforced. The registry rejects non-semver versions at publish time.
@@ -247,7 +247,7 @@ from freight.dev with packages from private self-hosted registries.
 
 ---
 
-## Client-side changes (`freight-core`)
+## Client-side changes (`freight`)
 
 ### New module: `src/registry.rs`
 
@@ -265,7 +265,7 @@ impl RegistryClient {
     pub fn resolve_version(name, req) -> Result<(String, String), FreightError>
     //                                            ↑version  ↑sha256
 
-    /// Download and extract a specific version to .deps/<name>/.
+    /// Download and extract a specific version to .pkgs/<name>/.
     /// Skips if .freight-fetched sentinel already exists.
     pub fn fetch_dep(name, version, sha256, project_dir) -> Result<PathBuf, FreightError>
 
@@ -409,7 +409,7 @@ Goal: `freight publish` and `freight yank` work end-to-end with a test token.
 
 Goal: `freight build` on a project with a registry dep fetches and builds it automatically.
 
-- [ ] `freight-core/src/registry.rs`: `RegistryClient`, `fetch_dep`
+- [ ] `freight_core/src/registry.rs`: `RegistryClient`, `fetch_dep`
 - [ ] Wire `LockPackage` with `source = "registry+..."` into `build_foreign_deps`
 - [ ] `freight fetch` pre-fetches registry deps (same as git/http deps)
 - [ ] Integration test: publish a tiny C library, add it to a test project, `freight build`
@@ -444,7 +444,7 @@ Goal: package discovery works from the CLI.
 ## Open questions
 
 **1. Tarball bundling scope**
-Should `freight publish` bundle everything except `target/` and `.deps/`, or should
+Should `freight publish` bundle everything except `target/` and `.pkgs/`, or should
 `freight.toml` support an explicit `[publish] include = [...]` / `exclude = [...]`?
 Cargo uses include/exclude lists. v1 will use a fixed exclusion list; manifest keys
 can be added in v2 without breaking published packages.
