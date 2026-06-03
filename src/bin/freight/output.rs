@@ -2,7 +2,19 @@
 //! the same voice. Lives in the binary because the library has no business
 //! formatting for a terminal.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use owo_colors::OwoColorize;
+
+/// Set to `true` by `print_error`; checked by `main()` to decide the process
+/// exit code.  Using an atomic avoids threading a `&mut bool` through every
+/// command function.
+static HAD_ERROR: AtomicBool = AtomicBool::new(false);
+
+/// Returns `true` if any call to `print_error` has occurred in this process.
+pub fn had_error() -> bool {
+    HAD_ERROR.load(Ordering::Relaxed)
+}
 
 pub fn print_success(msg: &str) {
     println!("{} {}", "✓".green().bold(), msg);
@@ -13,6 +25,7 @@ pub fn print_warning(msg: &str) {
 }
 
 pub fn print_error(msg: &str) {
+    HAD_ERROR.store(true, Ordering::Relaxed);
     eprintln!("{} {}", "✗".red().bold(), msg);
 }
 

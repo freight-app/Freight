@@ -3,7 +3,6 @@ mod completion;
 mod output;
 mod tui;
 
-use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::completion::{print_completion_candidates, CompletionContext};
@@ -98,7 +97,7 @@ enum Commands {
     Complete { context: CompletionContext },
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -141,7 +140,9 @@ fn main() -> Result<()> {
         Commands::Complete { context } => print_completion_candidates(context),
     }
 
-    Ok(())
+    if crate::output::had_error() {
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
