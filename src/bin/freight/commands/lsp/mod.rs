@@ -780,11 +780,8 @@ impl Server {
         let doc_index = Arc::clone(&self.state.doc_index);
         thread::spawn(move || {
             while let Ok(Some(msg)) = read_lsp_message(&mut reader) {
-                if is_internal_passthrough_response(&msg) {
-                    continue;
-                }
-
-                // Intercept tagged hover responses and enrich with freight-doc markdown.
+                // Intercept tagged hover responses BEFORE the internal-ID filter,
+                // because hover IDs also start with "__freight_" and would be dropped.
                 let id_str = msg.get("id").and_then(Value::as_str).unwrap_or("").to_string();
                 if id_str.starts_with("__freight_hover_") {
                     if let Some(info) = pending_hovers.lock().unwrap().remove(&id_str) {
@@ -802,6 +799,10 @@ impl Server {
                         let _ = write_lsp_message(&mut *out.lock().unwrap(), &enriched);
                     }
                     // If the pending entry was already removed (e.g. timeout race), discard.
+                    continue;
+                }
+
+                if is_internal_passthrough_response(&msg) {
                     continue;
                 }
 
