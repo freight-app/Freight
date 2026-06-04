@@ -127,6 +127,206 @@ freight build
 
 ---
 
+## Build pipeline (Mermaid)
+
+```mermaid
+flowchart TD
+    Start["freight build"]
+
+    Start --> ParseManifest["1. Parse & validate freight.toml"]
+    ParseManifest --> DetectToolchain["2. Detect toolchain\nprobe $PATH + evaluate .rhai scripts\nconsult version cache"]
+    DetectToolchain --> ResolveFeatures["3. Resolve features\nexpand dep:name activations\nreject cycles"]
+    ResolveFeatures --> CollectDeps["4. Collect dependencies\nmerge base + os.* + arch.*\napply feature / os / arch filters"]
+    CollectDeps --> ResolveDeps["5. Resolve dep graph\ntopo-sort\n(see Dependency resolution diagram)"]
+    ResolveDeps --> FetchBuildDeps["6. Fetch build-dependencies\nprepend bin/ dirs to PATH"]
+    FetchBuildDeps --> ForeignDeps["7. Build foreign deps\ncmake / make / meson / autotools\nrayon parallel"]
+    ForeignDeps --> ProtoCodegen{"[language.proto]\ndeclared?"}
+    ProtoCodegen -->|yes| RunProtoc["8a. Run protoc on src/*.proto\ninject .pb.cc into compile list\nadd generated header dir"]
+    ProtoCodegen -->|no| DiscoverSrc
+    RunProtoc --> DiscoverSrc["8b. Discover sources\nwalk src/ by extension → language key\nSRC.src = entry-point (linker dedup only)"]
+    DiscoverSrc --> ModuleScan{"C++20 modules?"}
+    ModuleScan -->|yes| ScanModules["9a. Scan export module / import\nbuild module DAG\nbatch by topo-order (Kahn)"]
+    ModuleScan -->|no| Compile
+    ScanModules --> Compile["10. Compile\nrayon parallel (flat) or module batches\none .o (+ .pcm) per source file"]
+    Compile --> Link["11. Link\n.o + dep .a → binary / .a / .so\neach [[bin]] links its own entry-point .o only"]
+    Link --> Done["Done — emit BuildEvent::Finished"]
+```
+
+---
+
+## Dependency resolution
+
+```mermaid
+flowchart TD
+    Dep["Dependency entry in freight.toml"]
+
+    Dep --> HasPath{"path =?"}
+    HasPath -->|yes| PathDep["Local path dep\nauto-detect freight.toml vs foreign\nbuild in-place"]
+
+    HasPath -->|no| HasGit{"git =?"}
+    HasGit -->|yes| GitDep["Clone / update repo\nbranch / tag / rev\ncache under .pkgs/"]
+
+    HasGit -->|no| HasUrl{"url =?"}
+    HasUrl -->|yes| UrlDep["Download archive\nSHA-256 verify\nextract to .pkgs/"]
+
+    HasUrl -->|no| HasSystem{"system =?"}
+    HasSystem -->|yes| SystemDep["Link -l<name> directly\nno fetch, no build"]
+
+    HasSystem -->|no| VersionDep["Version dep\nconstraint: 1.2 / >=1.0 / *"]
+    VersionDep --> PkgConfig["1. pkg-config\nquery system for name + version"]
+    PkgConfig -->|found| UseSystem["use system library\n(-I, -L, -l from pkg-config)"]
+    PkgConfig -->|miss| Stubs["2. System stubs\nhardcoded map: pthread, m, ws2_32, dl, rt, …"]
+    Stubs -->|found| UseStub["link stub flags"]
+    Stubs -->|miss| Registry["3. Registry / .pkgs/ cache\nfetch from freight registry if absent"]
+    Registry --> UseCache["build from .pkgs/ → link .a"]
+```
+
+---
+
+## CLI commands
+
+```mermaid
+flowchart LR
+    subgraph Build["Build & run"]
+        B["freight build\n--release / --debug\n--jobs N / --features …"]
+        R["freight run -- args"]
+        T["freight test"]
+        F["freight fetch"]
+    end
+
+    subgraph Tools["Tooling"]
+        D["freight doc"]
+        M["freight migrate\ncmake / make / autotools"]
+        N["freight new name"]
+        U["freight update"]
+        P["freight publish"]
+    end
+
+    subgraph Servers["Servers (stdio)"]
+        L["freight lsp\nLSP multiplexer\n(clangd + fortls + asm-lsp)"]
+        DA["freight dap\nDAP proxy\n(lldb-dap / gdb-mi)"]
+    end
+```
+
+---
+
+## Compiler template evaluation
+
+```mermaid
+flowchart TD
+    Probe["Toolchain detection\nprobe $PATH: gcc, clang, gfortran, …\nrun version probe, consult version cache"]
+
+    Probe --> Load["Load .rhai script\ntoolchains/<vendor>/<compiler>.rhai\n#include _<vendor>-base.rhai"]
+
+    Load --> Ctx["Build ctx object\nctx.value, ctx.version\nctx.arch, ctx.os"]
+
+    Ctx --> Eval["Evaluate callbacks\ncompiler_option(name, fn(ctx))\nlanguage_option(lang, name, fn(ctx))\ncallback calls add_flag(s)"]
+
+    Eval --> Flags["Collect flags per source file\n-O2 / -g, -std=c++20, -march=…\n-fsanitize=…, -D<FEATURE>, …"]
+
+    Flags --> Cmd["Inject into compile command\none invocation per .o"]
+```
+
+---
+
+## DAP architecture
+
+### Adapter selection
+
+```mermaid
+flowchart TD
+    DapStart["freight dap (stdio)"]
+
+    DapStart --> Detect["Detect target binary\nread freight.toml in cwd"]
+    Detect --> Probe2{"Probe debuggers in $PATH"}
+
+    Probe2 -->|"lldb-vscode or lldb-dap"| LLDB["LLDB adapter\n(preferred on macOS + Linux)"]
+    Probe2 -->|"gdb"| GDB["GDB + MI adapter\n(Linux / Windows fallback)"]
+    Probe2 -->|"neither"| Err["Error: no debugger found"]
+```
+
+### Launch / attach sequence
+
+```mermaid
+sequenceDiagram
+    participant IDE as IDE (VS Code)
+    participant Freight as freight dap
+    participant Adapter as lldb-dap / gdb
+
+    IDE->>Freight: initialize {}
+    Freight->>Freight: detect binary + debugger
+    Freight-->>IDE: initialize response + capabilities
+
+    alt launch
+        IDE->>Freight: launch { program, args, cwd }
+        Freight->>Adapter: spawn adapter process
+        Freight->>Adapter: forward launch request
+        Adapter-->>Freight: launch response
+        Freight-->>IDE: launch response
+    else attach
+        IDE->>Freight: attach { pid }
+        Freight->>Adapter: spawn adapter process
+        Freight->>Adapter: forward attach { pid }
+        Adapter-->>Freight: attach response
+        Freight-->>IDE: attach response
+    end
+
+    loop debug session
+        IDE->>Freight: setBreakpoints / next / continue / …
+        Freight->>Adapter: forward
+        Adapter-->>Freight: response / event
+        Freight-->>IDE: forward
+    end
+
+    IDE->>Freight: disconnect
+    Freight->>Adapter: terminate
+```
+
+---
+
+## Registry server
+
+### HTTP router
+
+```mermaid
+flowchart LR
+    Client["freight / browser"]
+
+    Client --> Auth["POST /v1/auth/login"]
+    Client --> Publish["PUT /v1/packages/:name/:version"]
+    Client --> Download["GET /v1/packages/:name/:version/download"]
+    Client --> Search["GET /v1/packages?q=…"]
+    Client --> Meta["GET /v1/packages/:name"]
+    Client --> TokenMgmt["POST/DELETE /v1/tokens"]
+```
+
+### Publish wire format
+
+```mermaid
+flowchart LR
+    Wire["TCP stream"]
+    Wire --> JLen["u32 LE — JSON length"]
+    JLen --> JSON["JSON bytes\n{ name, version, deps, features, … }"]
+    JSON --> TLen["u32 LE — tarball length"]
+    TLen --> Tar["tarball bytes (source archive)"]
+```
+
+### Auth flow
+
+```mermaid
+flowchart TD
+    Login["Client: POST /v1/auth/login\n{ user, password_plaintext }"]
+    Login --> SHA["Client-side: SHA-256(plaintext)\n→ password_sha256"]
+    SHA --> Send["Send { user, password_sha256 }"]
+    Send --> Argon["Server: Argon2id verify\nArgon2id(sha256) vs stored hash"]
+    Argon -->|match| Token["Issue raw_token (random)\nstore token_hash = SHA-256(raw_token)\nreturn raw_token"]
+    Argon -->|mismatch| Reject["401 Unauthorized"]
+    Token --> Use["Client: Authorization: Bearer raw_token"]
+    Use --> Verify["Server: SHA-256(raw_token) vs token_hash"]
+```
+
+---
+
 > Architecture rules are maintained in **`CLAUDE.md`** under the "Architecture rules" section.
 
 ---
