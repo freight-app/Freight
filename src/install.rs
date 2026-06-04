@@ -14,28 +14,6 @@ use crate::vendor::parse_triple;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-/// Which native-installer format to produce on Windows.
-///
-/// `Auto` picks NSIS when no preference is given.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WindowsInstallerFormat {
-    /// Classic NSIS-based `.exe` installer (installs to Program Files, full trust).
-    Nsis,
-    /// MSIX package for the Windows App Installer / sandbox / Store.
-    /// Runs in a virtualised container; requires signing before sideloading.
-    Msix,
-}
-
-impl WindowsInstallerFormat {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "nsis" => Some(Self::Nsis),
-            "msix" => Some(Self::Msix),
-            _ => None,
-        }
-    }
-}
-
 pub struct InstallOptions {
     /// Installation prefix, e.g. `/usr/local`. The subdirectories `bin/`,
     /// `lib/`, `include/` are created beneath it.
@@ -611,18 +589,16 @@ fn create_tarball(parent: &Path, stem: &str, archive: &Path) -> Result<(), Freig
 /// - **macOS** → `.dmg` disk image via `hdiutil` (always available on macOS).
 ///   Bundles dylib dependencies; rewrites install names to `@executable_path/../lib/`.
 ///
-/// - **Windows / NSIS** → NSIS-based `.exe` installer via `makensis`.
-///   Installs to `Program Files`; full-trust. Requires `makensis` on PATH.
+/// - **Windows** → NSIS-based `.exe` installer via `makensis`.
+///   Installs to `Program Files`; full Win32 trust. Requires `makensis` on PATH.
 ///
-/// - **Windows / MSIX** → MSIX package via `makeappx.exe` (Windows SDK).
-///   Runs in a virtualised container; suitable for the Windows App Installer,
-///   Windows Sandbox, and the Microsoft Store. Packages are unsigned by
-///   default; use `signtool` to sign before distributing outside Developer Mode.
+/// Note: MSIX (Windows sandbox / Store) is a UWP deployment model, not just a
+/// packaging format — the app must be built against the UWP API surface. It is
+/// not exposed here; see `build_msix` if you need it for a UWP-targeted binary.
 pub fn installer_project(
     project_dir: &Path,
     release: bool,
     target: Option<&str>,
-    windows_format: Option<WindowsInstallerFormat>,
 ) -> Result<PathBuf, FreightError> {
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
@@ -683,10 +659,7 @@ pub fn installer_project(
     let output = match pkg_os.as_str() {
         "linux"   => build_deb(&manifest, &staging, &pkg_dir, &pkg_arch)?,
         "macos"   => build_dmg(&manifest, &staging, &pkg_dir)?,
-        "windows" => match windows_format.unwrap_or(WindowsInstallerFormat::Nsis) {
-            WindowsInstallerFormat::Nsis => build_nsis(&manifest, &staging, &pkg_dir)?,
-            WindowsInstallerFormat::Msix => build_msix(&manifest, &staging, &pkg_dir, &pkg_arch)?,
-        },
+        "windows" => build_nsis(&manifest, &staging, &pkg_dir)?,
         other => {
             return Err(FreightError::InstallFailed(format!(
                 "native installer not supported for target OS '{other}'"
@@ -1190,6 +1163,9 @@ SectionEnd
 }
 
 // ── Windows MSIX builder ──────────────────────────────────────────────────────
+// Not exposed through the CLI. MSIX is a UWP deployment model — the app must
+// be built against UWP APIs. These helpers are reserved for when UWP targeting
+// is implemented as a proper first-class build target.
 
 /// Build an MSIX package via `makeappx.exe` (part of the Windows SDK).
 ///
@@ -1209,6 +1185,7 @@ SectionEnd
 /// `makeappx.exe` on PATH (part of the Windows SDK / Visual Studio).
 /// On Windows: installed automatically with Visual Studio or the Windows SDK.
 /// In CI: available in `windows-latest` GitHub Actions runners.
+#[allow(dead_code)]
 fn build_msix(
     manifest: &crate::manifest::types::Manifest,
     staging: &Path,
@@ -1347,6 +1324,7 @@ fn build_msix(
 }
 
 /// Convert a semver string to the four-part `Major.Minor.Patch.0` required by MSIX Identity.
+#[allow(dead_code)]
 fn pad_version_to_four(v: &str) -> String {
     let parts: Vec<&str> = v.splitn(4, '.').collect();
     match parts.len() {
@@ -1358,6 +1336,7 @@ fn pad_version_to_four(v: &str) -> String {
 }
 
 /// Map Freight arch names to MSIX `ProcessorArchitecture` values.
+#[allow(dead_code)]
 fn msix_arch(arch: &str) -> &str {
     match arch {
         "x86_64"  => "x64",
@@ -1369,6 +1348,7 @@ fn msix_arch(arch: &str) -> &str {
 }
 
 /// Recursively copy a directory tree.
+#[allow(dead_code)]
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), FreightError> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
@@ -1389,6 +1369,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), FreightError> {
 /// Uses only `flate2` (already a crate dependency) for zlib compression.
 /// Each scanline uses PNG filter type 0 (None) so the raw pixel data is
 /// directly compressible.
+#[allow(dead_code)]
 fn solid_png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     use flate2::{write::ZlibEncoder, Compression};
 
@@ -1426,6 +1407,7 @@ fn solid_png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     out
 }
 
+#[allow(dead_code)]
 fn png_chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     out.extend_from_slice(tag);
