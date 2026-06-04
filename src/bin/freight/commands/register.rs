@@ -1,6 +1,6 @@
 use freight_core::registry::freight_registry::FreightRegistry;
 use freight_core::registry::DEFAULT_REGISTRY_URL;
-use freight_core::toolchain::cache::{freight_home, GlobalConfig, RegistryConfig};
+use freight_core::toolchain::cache::{Credentials, GlobalConfig, RegistryConfig};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
@@ -38,11 +38,9 @@ impl Args {
             {
                 Ok((uname, token)) => {
                     let name = super::common::registry_name_for(&url);
-                    match freight_core::toolchain::cache::GlobalConfig::save_credential(
-                        &url, &name, &token,
-                    ) {
+                    match Credentials::save(&name, &token) {
                         Ok(()) => crate::output::print_success(&format!(
-                            "registered as `{uname}` — token saved to ~/.freight/credentials.toml"
+                            "registered as `{uname}` — token stored in system keychain"
                         )),
                         Err(e) => {
                             crate::output::print_error(&e.to_string());
@@ -135,18 +133,15 @@ fn cmd_register(
     );
 
     match registry.register_user(&username, &password, email_arg, token_name_arg) {
-        Ok((_, token)) => match GlobalConfig::save_credential(&url, &reg_name, &token) {
+        Ok((_, token)) => match Credentials::save(&reg_name, &token) {
             Ok(()) => {
-                let creds_path = freight_home()
-                    .map(|h| h.join("credentials.toml").to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "~/.freight/credentials.toml".into());
                 print_success(&format!(
-                    "registered as `{username}` — token saved to {creds_path}"
+                    "registered as `{username}` — token stored in system keychain"
                 ));
             }
             Err(e) => {
                 print_success(&format!("registered as `{username}`"));
-                print_warning(&format!("could not save token automatically: {e}"));
+                print_warning(&format!("could not save token to keychain: {e}"));
             }
         },
         Err(e) => {

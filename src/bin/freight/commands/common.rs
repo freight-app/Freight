@@ -112,7 +112,6 @@ pub fn login_with_credentials(
     username: Option<&str>,
     password: Option<&str>,
 ) {
-    use freight_core::toolchain::cache::GlobalConfig;
     use sha2::{Digest, Sha256};
 
     let url = resolve_registry_url(registry_url);
@@ -182,9 +181,9 @@ pub fn login_with_credentials(
         }
     };
 
-    match GlobalConfig::save_credential(&url, &name, &token) {
+    match freight_core::toolchain::cache::Credentials::save(&name, &token) {
         Ok(()) => crate::output::print_success(&format!(
-            "logged in as `{username}` — token saved to ~/.freight/credentials.toml"
+            "logged in as `{username}` — token stored in system keychain"
         )),
         Err(e) => {
             crate::output::print_error(&e.to_string());

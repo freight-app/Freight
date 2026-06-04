@@ -115,14 +115,18 @@ fn cache_path() -> Option<PathBuf> {
 /// Registries are tried in the order they appear. The first one that returns
 /// a result for a given package name wins. The built-in `freight.dev` registry
 /// is appended after any configured entries if no entry named `"freight"` exists.
+///
+/// Tokens are **never** stored in config files — they live in the OS keychain.
+/// Use `Credentials::save` / `Credentials::load` / `Credentials::delete`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryConfig {
     /// Identifier used in `repo = "…"` dep fields and `--repo` CLI flag.
     pub name: String,
     /// Base URL of the registry HTTP API.
     pub url: String,
-    /// Optional bearer token for private registries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Bearer token populated at runtime from the OS keychain or env vars.
+    /// Never serialized to disk.
+    #[serde(skip)]
     pub token: Option<String>,
 }
 
@@ -174,95 +178,11 @@ impl GlobalConfig {
                 }
             }
         }
-        // Overlay tokens from ~/.freight/credentials.toml without clobbering
-        // other config settings. Credentials take priority over config.toml tokens.
-        if let Some(creds) = Self::load_credentials() {
-            for cred in creds {
-                if let Some(r) = config.registries.iter_mut().find(|r| r.url == cred.url) {
-                    if cred.token.is_some() {
-                        r.token = cred.token;
-                    }
-                } else {
-                    config.registries.push(cred);
-                }
-            }
+        // Populate tokens from env vars or the OS keychain (never from disk).
+        for reg in &mut config.registries {
+            reg.token = Credentials::load(&reg.name);
         }
         config
-    }
-
-    /// Load tokens from `~/.freight/credentials.toml`.
-    ///
-    /// Format (subset of registry config — only url + token required):
-    /// ```toml
-    /// [[registry]]
-    /// url   = "https://freight.dev"
-    /// token = "abc123"
-    /// ```
-    pub fn load_credentials() -> Option<Vec<RegistryConfig>> {
-        #[derive(serde::Deserialize)]
-        struct Creds {
-            #[serde(default, rename = "registry")]
-            registries: Vec<RegistryConfig>,
-        }
-        let path = freight_home()?.join("credentials.toml");
-        let data = std::fs::read_to_string(path).ok()?;
-        let c: Creds = toml_edit::de::from_str(&data).ok()?;
-        Some(c.registries)
-    }
-
-    /// Write or update a token for `registry_url` in `~/.freight/credentials.toml`.
-    pub fn save_credential(
-        registry_url: &str,
-        name: &str,
-        token: &str,
-    ) -> Result<(), crate::error::FreightError> {
-        #[derive(serde::Deserialize, serde::Serialize, Default)]
-        struct Creds {
-            #[serde(default, rename = "registry")]
-            registries: Vec<RegistryConfig>,
-        }
-
-        let path = freight_home()
-            .ok_or_else(|| {
-                crate::error::FreightError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "cannot determine ~/.freight directory",
-                ))
-            })?
-            .join("credentials.toml");
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let mut creds: Creds = path
-            .exists()
-            .then(|| std::fs::read_to_string(&path).ok())
-            .flatten()
-            .and_then(|data| toml_edit::de::from_str(&data).ok())
-            .unwrap_or_default();
-
-        if let Some(r) = creds.registries.iter_mut().find(|r| r.url == registry_url) {
-            r.token = Some(token.to_string());
-            if r.name.is_empty() {
-                r.name = name.to_string();
-            }
-        } else {
-            creds.registries.push(RegistryConfig {
-                name: name.to_string(),
-                url: registry_url.to_string(),
-                token: Some(token.to_string()),
-            });
-        }
-
-        let toml = toml_edit::ser::to_string_pretty(&creds).map_err(|e| {
-            crate::error::FreightError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })?;
-        std::fs::write(&path, toml)?;
-        Ok(())
     }
 
     /// Load the system-wide config from `/etc/freight/config.toml`
@@ -344,6 +264,66 @@ impl GlobalConfig {
 
     fn path() -> Option<PathBuf> {
         freight_home().map(|h| h.join("config.toml"))
+    }
+}
+
+// ── Keychain-backed credentials ───────────────────────────────────────────────
+
+/// Keychain-backed token store for registry authentication.
+///
+/// Tokens are stored in the OS credential store (macOS Keychain, GNOME Keyring /
+/// KDE Wallet via the Secret Service, Windows Credential Manager). They are never
+/// written to any plain-text file.
+///
+/// Lookup order for [`Credentials::load`]:
+/// 1. `FREIGHT_TOKEN_<NAME_UPPERCASE>` — e.g. `FREIGHT_TOKEN_FREIGHT`
+/// 2. `FREIGHT_TOKEN` — single-registry shorthand
+/// 3. OS keychain entry for service `"freight"`, account = registry name
+pub struct Credentials;
+
+impl Credentials {
+    const SERVICE: &'static str = "freight";
+
+    /// Store `token` in the OS keychain for the named registry.
+    pub fn save(registry_name: &str, token: &str) -> anyhow::Result<()> {
+        keyring_core::Entry::new(Self::SERVICE, registry_name)?.set_password(token)?;
+        Ok(())
+    }
+
+    /// Retrieve the token for `registry_name`, checking env vars first.
+    /// Returns `None` when no credential is found (not an error).
+    pub fn load(registry_name: &str) -> Option<String> {
+        // 1. FREIGHT_TOKEN_<NAME>
+        let env_key = format!(
+            "FREIGHT_TOKEN_{}",
+            registry_name.to_ascii_uppercase().replace('-', "_")
+        );
+        if let Ok(t) = std::env::var(&env_key) {
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+        // 2. FREIGHT_TOKEN
+        if let Ok(t) = std::env::var("FREIGHT_TOKEN") {
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+        // 3. OS keychain
+        keyring_core::Entry::new(Self::SERVICE, registry_name)
+            .ok()
+            .and_then(|e| e.get_password().ok())
+            .filter(|t| !t.is_empty())
+    }
+
+    /// Remove the token for `registry_name` from the OS keychain.
+    /// Returns `Ok(())` if the entry didn't exist.
+    pub fn delete(registry_name: &str) -> anyhow::Result<()> {
+        match keyring_core::Entry::new(Self::SERVICE, registry_name)?.delete_credential() {
+            Ok(()) => Ok(()),
+            Err(keyring_core::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

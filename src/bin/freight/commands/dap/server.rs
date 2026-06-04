@@ -236,12 +236,16 @@ fn build_outputs_for_dap(
     config: &Value,
     features: &[String],
 ) -> anyhow::Result<Vec<BuildOutput>> {
+    let profile_buf = config_string(config, "profile");
+    let profile = profile_buf
+        .as_deref()
+        .unwrap_or_else(|| if config_bool(config, "release").unwrap_or(false) { "release" } else { "dev" });
     let use_defaults = !config_bool(config, "noDefaultFeatures").unwrap_or(false);
     let package_buf = config_string(config, "package");
     let package = package_buf.as_deref();
     if load_workspace_manifest(project_dir).is_some() {
         return Ok(build_workspace_with(
-            "dev",
+            profile,
             package,
             features,
             use_defaults,
@@ -252,7 +256,7 @@ fn build_outputs_for_dap(
         anyhow::bail!("`package` can only be used when launching from a Freight workspace root");
     }
     Ok(vec![build_project_with(
-        "dev",
+        profile,
         features,
         use_defaults,
         &[],

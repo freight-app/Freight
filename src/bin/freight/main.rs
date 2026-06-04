@@ -74,8 +74,10 @@ enum Commands {
     /// Generate shell completion scripts
     #[command(visible_alias = "completion")]
     Completions(commands::completions::Args),
-    /// Authenticate with a registry and save the token
+    /// Authenticate with a registry and store the token in the system keychain
     Login(commands::login::Args),
+    /// Remove stored credentials for a registry from the system keychain
+    Logout(commands::logout::Args),
     /// Upload this package to a registry
     Publish(commands::publish::Args),
     /// Register a new account on a registry
@@ -129,6 +131,7 @@ fn main() {
             args.run(&mut cmd);
         }
         Commands::Login(args) => args.run(),
+        Commands::Logout(args) => args.run(),
         Commands::Publish(args) => args.run(),
         Commands::Register(args) => args.run(),
         Commands::Yank(args) => args.run(),

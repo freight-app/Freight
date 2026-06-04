@@ -19,6 +19,7 @@ pub mod info;
 pub mod install;
 pub mod lint;
 pub mod login;
+pub mod logout;
 pub mod lsp;
 pub mod migrate;
 pub mod new;

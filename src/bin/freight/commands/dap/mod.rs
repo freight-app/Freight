@@ -9,6 +9,8 @@
 mod connect;
 mod server;
 
+use std::path::PathBuf;
+
 #[derive(clap::Args)]
 pub struct Args {
     /// Connect to an already-running native DAP server and relay traffic.
@@ -20,6 +22,10 @@ pub struct Args {
     /// Attach to a running process instead of launching (skips build).
     #[arg(long)]
     pub attach: bool,
+
+    /// JSON launch configuration written by an editor before the native adapter starts.
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
 }
 
 impl Args {
@@ -30,7 +36,19 @@ impl Args {
             }
             return;
         }
-        let config = serde_json::json!({});
+        let config = match self.config.as_ref() {
+            Some(path) => match std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+            {
+                Some(value) => value,
+                None => {
+                    eprintln!("freight dap: could not read config {}", path.display());
+                    return;
+                }
+            },
+            None => serde_json::json!({}),
+        };
         if let Err(e) = server::launch_dap(&config, self.attach) {
             eprintln!("freight dap: {e}");
         }
