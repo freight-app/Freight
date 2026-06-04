@@ -164,7 +164,7 @@ fn cmd_publish(dry_run: bool, yes: bool, no_verify: bool, repo: Option<&str>) {
         description,
         license,
         &tarball,
-        Some(&checksum),
+        None,
         None,
     ) {
         Ok(()) => print_success(&format!("published `{name}@{version}`")),
@@ -521,7 +521,9 @@ fn build_source_tarball(
     project_dir: &Path,
     manifest: &Manifest,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let _ = manifest; // reserved for future include/exclude fields
+    let name = &manifest.package.name;
+    let version = &manifest.package.version;
+    let prefix = format!("{name}-{version}");
     let user_ignores = load_freightignore(project_dir);
     let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     let mut ar = tar::Builder::new(enc);
@@ -548,7 +550,7 @@ fn build_source_tarball(
         }
 
         if path.is_file() {
-            ar.append_path_with_name(path, rel)?;
+            ar.append_path_with_name(path, format!("{prefix}/{rel_str}"))?;
         }
     }
 
