@@ -57,10 +57,17 @@ pub struct Args {
     /// Accepted for compatibility with LSP clients that append --stdio.
     #[arg(long, hide = true)]
     pub stdio: bool,
+    /// Write PID to /tmp/freight-lsp-debug.pid and busy-wait until a debugger
+    /// attaches. Used by the VS Code extension in development mode.
+    #[arg(long, hide = true)]
+    pub wait_for_debugger: bool,
 }
 
 impl Args {
     pub fn run(self) {
+        if self.wait_for_debugger {
+            wait_for_debugger();
+        }
         // Build `out` first so we can share it with the log layer.
         let out = Arc::new(Mutex::new(io::stdout()));
         log::init_lsp_logging(Arc::clone(&out));
@@ -69,6 +76,43 @@ impl Args {
             eprintln!("freight lsp: {e}");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Debugger wait
+// ---------------------------------------------------------------------------
+
+/// Write PID to a well-known file and spin until a debugger attaches.
+/// Allows the VS Code extension to attach CodeLLDB before the LSP loop starts.
+fn wait_for_debugger() {
+    let pid = std::process::id();
+    let pid_file = "/tmp/freight-lsp-debug.pid";
+    let _ = std::fs::write(pid_file, pid.to_string());
+    eprintln!("freight lsp: waiting for debugger (PID {pid}) — attach now");
+
+    // Spin until TracerPid in /proc/self/status is non-zero (Linux).
+    // On other platforms just sleep 10 s and trust the user attached in time.
+    #[cfg(target_os = "linux")]
+    {
+        loop {
+            if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+                let attached = status.lines()
+                    .find(|l| l.starts_with("TracerPid:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+                if attached != 0 {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    std::thread::sleep(std::time::Duration::from_secs(10));
+
+    let _ = std::fs::remove_file(pid_file);
+    eprintln!("freight lsp: debugger attached, continuing");
 }
 
 // ---------------------------------------------------------------------------
