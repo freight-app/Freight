@@ -433,15 +433,35 @@ pub fn include_hover_markdown(header: &str, entry: &HeaderEntry) -> String {
     out
 }
 
-/// Parse an `#include` or `#import` directive from a line.
-/// Returns `(header_path, is_system)` where `is_system` is true for `<…>` includes.
+/// Parse a header or module import directive from a line.
+/// Returns `(header_path, is_system)` where `is_system` is true for `<…>` forms.
+///
+/// Handles:
+/// - `#include <header>` / `#include "header"` — C/C++ includes
+/// - `#import <header>` / `#import "header"` — ObjC / Clang module imports
+/// - `import <header>;` / `import "header";` — C++20 header units
+/// - `import module.name;` — C++20 named module imports (treated as system)
 pub fn parse_include_header(line: &str) -> Option<(String, bool)> {
     let line = line.trim();
-    let rest = line
-        .strip_prefix("#include")
-        .or_else(|| line.strip_prefix("#import"))
-        .or_else(|| line.strip_prefix("import"))?
-        .trim();
+
+    // #include / #import — preprocessor directives
+    let rest = if let Some(r) = line.strip_prefix("#include").or_else(|| line.strip_prefix("#import")) {
+        r.trim()
+    } else if let Some(r) = line.strip_prefix("import") {
+        // C++20: `import <header>;` / `import "header";` / `import module.name;`
+        let r = r.trim().trim_end_matches(';').trim();
+        if r.starts_with('<') || r.starts_with('"') {
+            r
+        } else {
+            // Named module: `import std.core` → treat as system, no file path
+            let name = r.split_whitespace().next()?.trim_end_matches(';');
+            if name.is_empty() || name.contains('{') { return None; }
+            return Some((name.to_string(), true));
+        }
+    } else {
+        return None;
+    };
+
     if rest.starts_with('<') {
         let header = rest.strip_prefix('<')?.split('>').next()?.to_string();
         Some((header, true))
@@ -689,6 +709,20 @@ hdrs = ["include/core.h"]
     #[test]
     fn parse_include_header_quotes() {
         assert_eq!(parse_include_header(r#"#include "myheader.h""#), Some(("myheader.h".into(), false)));
+    }
+
+    #[test]
+    fn parse_include_header_cpp20_header_unit() {
+        assert_eq!(parse_include_header("import <vector>;"), Some(("vector".into(), true)));
+        assert_eq!(parse_include_header(r#"import "mymodule.hpp";"#), Some(("mymodule.hpp".into(), false)));
+    }
+
+    #[test]
+    fn parse_include_header_cpp20_named_module() {
+        assert_eq!(parse_include_header("import std.core;"), Some(("std.core".into(), true)));
+        assert_eq!(parse_include_header("import mylib;"), Some(("mylib".into(), true)));
+        // export module declaration — not an import, should not match
+        assert_eq!(parse_include_header("export module mylib;"), None);
     }
 
 

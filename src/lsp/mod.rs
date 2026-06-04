@@ -509,7 +509,16 @@ impl Server {
             let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&header) {
                 e
             } else if is_system {
-                owned = self.state.header_index.lookup_system(&header)?;
+                // File-based system lookup (e.g. <vector> → /usr/include/c++/.../vector).
+                // Named C++20 modules (e.g. `import std.core`) won't be found this way;
+                // synthesise a System entry so we still show "← stdlib".
+                owned = self.state.header_index.lookup_system(&header)
+                    .unwrap_or_else(|| HeaderEntry {
+                        package_name: "stdlib".to_string(),
+                        package_version: None,
+                        full_path: std::path::PathBuf::new(),
+                        origin: HeaderOrigin::System,
+                    });
                 &owned
             } else {
                 continue;
