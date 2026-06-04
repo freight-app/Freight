@@ -68,7 +68,7 @@ fn select_dap_adapter(
     global_cfg: &GlobalConfig,
 ) -> anyhow::Result<(PathBuf, Vec<String>)> {
     if let Some(path) = config_string(config, "debuggerPath").filter(|p| !p.is_empty()) {
-        return select_explicit_dap_adapter(PathBuf::from(path), config);
+        return select_explicit_dap_adapter(PathBuf::from(path), config, global_cfg);
     }
 
     if debuggers.is_empty() {
@@ -91,14 +91,22 @@ fn select_dap_adapter(
     for debugger in &candidates {
         match debugger.template.name.as_str() {
             "gdb" | "cuda-gdb" => {
-                let args = gdb_dap_args();
+                let args = dap_args_for_debugger(
+                    debugger.template.name.as_str(),
+                    &gdb_dap_args(),
+                    config,
+                    global_cfg,
+                );
                 if probe_dap_support(&debugger.path, &args) {
                     return Ok((debugger.path.clone(), args));
                 }
             }
             "lldb" => {
                 if let Some(ref dap_bin) = debugger.dap_path {
-                    return Ok((dap_bin.clone(), vec![]));
+                    return Ok((
+                        dap_bin.clone(),
+                        dap_args_for_debugger("lldb", &[], config, global_cfg),
+                    ));
                 }
             }
             _ => {}
@@ -116,6 +124,7 @@ fn select_dap_adapter(
 fn select_explicit_dap_adapter(
     path: PathBuf,
     config: &Value,
+    global_cfg: &GlobalConfig,
 ) -> anyhow::Result<(PathBuf, Vec<String>)> {
     let path = resolve_debugger_path(path)
         .ok_or_else(|| anyhow::anyhow!("debuggerPath does not exist or is not executable"))?;
@@ -128,7 +137,10 @@ fn select_explicit_dap_adapter(
         || basename.contains("lldb-vscode")
     {
         if probe_dap_support(&path, &[]) {
-            return Ok((path, vec![]));
+            return Ok((
+                path,
+                dap_args_for_debugger(debugger.unwrap_or("lldb"), &[], config, global_cfg),
+            ));
         }
         anyhow::bail!(
             "debuggerPath did not respond as a native DAP adapter: {}",
@@ -137,14 +149,15 @@ fn select_explicit_dap_adapter(
     }
 
     if debugger == Some("gdb") || debugger == Some("cuda-gdb") || debugger.is_none() {
-        let args = gdb_dap_args();
+        let debugger_name = debugger.unwrap_or("gdb");
+        let args = dap_args_for_debugger(debugger_name, &gdb_dap_args(), config, global_cfg);
         if probe_dap_support(&path, &args) {
             return Ok((path, args));
         }
     }
 
     if debugger.is_none() && probe_dap_support(&path, &[]) {
-        return Ok((path, vec![]));
+        return Ok((path, dap_args_for_debugger("lldb", &[], config, global_cfg)));
     }
 
     anyhow::bail!(
@@ -178,6 +191,21 @@ fn gdb_dap_args() -> Vec<String> {
         "-iex".to_string(),
         "set debuginfod enabled off".to_string(),
     ]
+}
+
+fn dap_args_for_debugger(
+    debugger_name: &str,
+    base: &[String],
+    config: &Value,
+    global_cfg: &GlobalConfig,
+) -> Vec<String> {
+    let mut args = base.to_vec();
+    if let Some(instance) = global_cfg.debugger.debuggers.get(debugger_name) {
+        args.extend(instance.args.iter().cloned());
+    }
+    args.extend(config_string_array(config, "debuggerArgs"));
+    args.extend(config_string_array(config, "debugger_args"));
+    args
 }
 
 // ---------------------------------------------------------------------------
@@ -352,4 +380,241 @@ fn config_string_array(config: &Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freight_core::manifest::types::DebuggerInstanceConfig;
+    use freight_core::toolchain::debugger::{DapConfig, LaunchConfig};
+    use freight_core::toolchain::{DebuggerTemplate, DetectedDebugger};
+    use std::collections::HashMap;
+
+    #[test]
+    fn explicit_gdb_path_selects_gdb_dap_args() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gdb = write_fake_dap(&tmp, "gdb");
+        let config = json!({
+            "debugger": "gdb",
+            "debuggerPath": gdb,
+        });
+
+        let (bin, args) = select_dap_adapter(&[], &config, &GlobalConfig::default()).unwrap();
+
+        assert_eq!(bin, PathBuf::from(config["debuggerPath"].as_str().unwrap()));
+        assert_eq!(args, gdb_dap_args());
+    }
+
+    #[test]
+    fn explicit_cuda_gdb_path_uses_gdb_dap_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cuda_gdb = write_fake_dap(&tmp, "cuda-gdb");
+        let config = json!({
+            "debugger": "cuda-gdb",
+            "debuggerPath": cuda_gdb,
+        });
+
+        let (bin, args) = select_dap_adapter(&[], &config, &GlobalConfig::default()).unwrap();
+
+        assert_eq!(bin, PathBuf::from(config["debuggerPath"].as_str().unwrap()));
+        assert_eq!(args, gdb_dap_args());
+    }
+
+    #[test]
+    fn explicit_lldb_dap_path_uses_native_adapter_without_extra_args() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lldb_dap = write_fake_dap(&tmp, "lldb-dap");
+        let config = json!({
+            "debugger": "lldb",
+            "debuggerPath": lldb_dap,
+        });
+
+        let (bin, args) = select_dap_adapter(&[], &config, &GlobalConfig::default()).unwrap();
+
+        assert_eq!(bin, PathBuf::from(config["debuggerPath"].as_str().unwrap()));
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn detected_lldb_prefers_resolved_dap_adapter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lldb = write_fake_dap(&tmp, "lldb");
+        let lldb_dap = write_fake_dap(&tmp, "lldb-dap");
+        let debuggers = vec![detected_debugger("lldb", lldb, Some(lldb_dap.clone()))];
+        let config = json!({ "debugger": "lldb" });
+
+        let (bin, args) = select_dap_adapter(&debuggers, &config, &GlobalConfig::default()).unwrap();
+
+        assert_eq!(bin, lldb_dap);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn detected_gdb_is_probed_for_dap_support() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gdb = write_fake_dap(&tmp, "gdb");
+        let debuggers = vec![detected_debugger("gdb", gdb.clone(), None)];
+        let config = json!({ "debugger": "gdb" });
+
+        let (bin, args) = select_dap_adapter(&debuggers, &config, &GlobalConfig::default()).unwrap();
+
+        assert_eq!(bin, gdb);
+        assert_eq!(args, gdb_dap_args());
+    }
+
+    #[test]
+    fn global_default_debugger_is_used_when_config_omits_debugger() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gdb = write_fake_dap(&tmp, "gdb");
+        let lldb = write_fake_dap(&tmp, "lldb");
+        let lldb_dap = write_fake_dap(&tmp, "lldb-dap");
+        let debuggers = vec![
+            detected_debugger("gdb", gdb, None),
+            detected_debugger("lldb", lldb, Some(lldb_dap.clone())),
+        ];
+        let global = GlobalConfig {
+            default_debugger: Some("lldb".to_string()),
+            ..GlobalConfig::default()
+        };
+
+        let (bin, args) = select_dap_adapter(&debuggers, &json!({}), &global).unwrap();
+
+        assert_eq!(bin, lldb_dap);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn config_and_launch_debugger_args_are_appended_for_gdb() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gdb = write_fake_dap(&tmp, "gdb");
+        let debuggers = vec![detected_debugger("gdb", gdb.clone(), None)];
+        let mut global = GlobalConfig::default();
+        global.debugger.debuggers.insert(
+            "gdb".to_string(),
+            DebuggerInstanceConfig {
+                args: vec!["--config-arg".to_string()],
+                settings: HashMap::new(),
+            },
+        );
+        let config = json!({
+            "debugger": "gdb",
+            "debuggerArgs": ["--launch-arg"],
+        });
+
+        let (bin, args) = select_dap_adapter(&debuggers, &config, &global).unwrap();
+
+        let mut expected = gdb_dap_args();
+        expected.push("--config-arg".to_string());
+        expected.push("--launch-arg".to_string());
+        assert_eq!(bin, gdb);
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn config_and_launch_debugger_args_are_appended_for_lldb_dap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lldb = write_fake_dap(&tmp, "lldb");
+        let lldb_dap = write_fake_dap(&tmp, "lldb-dap");
+        let debuggers = vec![detected_debugger("lldb", lldb, Some(lldb_dap.clone()))];
+        let mut global = GlobalConfig::default();
+        global.debugger.debuggers.insert(
+            "lldb".to_string(),
+            DebuggerInstanceConfig {
+                args: vec!["--config-arg".to_string()],
+                settings: HashMap::new(),
+            },
+        );
+        let config = json!({
+            "debugger": "lldb",
+            "debuggerArgs": ["--launch-arg"],
+        });
+
+        let (bin, args) = select_dap_adapter(&debuggers, &config, &global).unwrap();
+
+        assert_eq!(bin, lldb_dap);
+        assert_eq!(args, vec!["--config-arg", "--launch-arg"]);
+    }
+
+    #[test]
+    fn explicit_non_dap_path_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let not_dap = write_fake_program(&tmp, "not-dap", "printf 'not dap\\n'\n");
+        let config = json!({
+            "debugger": "gdb",
+            "debuggerPath": not_dap,
+        });
+
+        let err = select_dap_adapter(&[], &config, &GlobalConfig::default()).unwrap_err();
+
+        assert!(err.to_string().contains("not DAP-capable"));
+    }
+
+    #[test]
+    fn release_flag_selects_release_profile_when_profile_is_absent() {
+        assert_eq!(profile_for_test(&json!({ "release": true })), "release");
+        assert_eq!(profile_for_test(&json!({ "release": false })), "dev");
+        assert_eq!(
+            profile_for_test(&json!({ "release": true, "profile": "custom" })),
+            "custom"
+        );
+    }
+
+    fn profile_for_test(config: &Value) -> String {
+        let profile_buf = config_string(config, "profile");
+        profile_buf
+            .as_deref()
+            .unwrap_or_else(|| {
+                if config_bool(config, "release").unwrap_or(false) {
+                    "release"
+                } else {
+                    "dev"
+                }
+            })
+            .to_string()
+    }
+
+    fn detected_debugger(name: &str, path: PathBuf, dap_path: Option<PathBuf>) -> DetectedDebugger {
+        DetectedDebugger {
+            template: DebuggerTemplate {
+                name: name.to_string(),
+                binary: name.to_string(),
+                version_arg: "--version".to_string(),
+                version_regex: ".*".to_string(),
+                launch: LaunchConfig {
+                    separator: String::new(),
+                },
+                dap: DapConfig::default(),
+                settings: HashMap::new(),
+                default_args: vec![],
+            },
+            version: "test".to_string(),
+            path,
+            dap_path,
+        }
+    }
+
+    fn write_fake_dap(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
+        write_fake_program(
+            tmp,
+            name,
+            "printf 'Content-Length: 2\\r\\n\\r\\n{}'\nsleep 1\n",
+        )
+    }
+
+    fn write_fake_program(tmp: &tempfile::TempDir, name: &str, body: &str) -> PathBuf {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&path, permissions).unwrap();
+        }
+        path
+    }
 }

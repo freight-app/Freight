@@ -1,7 +1,7 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use freight_core::doc::docify::extract::extract_dir;
+use freight_core::doc::extract_dir;
 use sha2::{Digest, Sha256};
 
 use freight_core::build::{build_project_with, test_project_with};
@@ -616,7 +616,7 @@ fn upload_docs(registry: &FreightRegistry, name: &str, version: &str, project_di
         return;
     }
     print_status("uploading", &format!("docs ({} symbols)", items.len()));
-    match freight_core::doc::docify::to_msgpack(&items) {
+    match freight_core::doc::to_msgpack(&items) {
         Ok(blob) => {
             if let Err(e) = registry.upload_docs(name, version, &blob) {
                 print_warning(&format!("docs upload failed (non-fatal): {e}"));

@@ -336,6 +336,13 @@ impl Server {
             return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
         }
 
+        if let Some((line, col)) = position(&msg) {
+            let file = path_from_uri(&uri)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| uri.to_string());
+            tracing::debug!(file, line, col, "hover request");
+        }
+
         // 1. #include / #import hover — show package origin.
         if let Some(hover) = self.include_hover(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), hover);
@@ -357,7 +364,7 @@ impl Server {
         let header = parse_include_header(line_text)?;
         let entry = self.state.header_index.lookup(&header)?;
         let md = include_hover_markdown(&header, entry);
-        tracing::debug!(header, package = entry.package_name.as_str(), "include hover");
+        tracing::debug!(header, package = entry.package_name.as_str(), line, "include hover");
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
     }
 
@@ -377,7 +384,13 @@ impl Server {
                 index.lookup(&word)
             })?;
 
-        tracing::debug!(symbol = item.name.as_str(), file = %item.file.display(), line, "doc-index hover");
+        tracing::debug!(
+            symbol = item.name.as_str(),
+            file = %item.file.display(),
+            cursor_line = line,
+            cursor_col = character,
+            "doc-index hover"
+        );
         let markdown = item_to_markdown(item);
         Some(json!({ "contents": { "kind": "markdown", "value": markdown } }))
     }

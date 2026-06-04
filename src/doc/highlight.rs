@@ -1,4 +1,4 @@
-use crate::doc::docify::extract::DocLanguage;
+use crate::doc::DocLanguage;
 use ratatui::text::{Line, Span};
 
 fn lang_fence(lang: &DocLanguage) -> &'static str {

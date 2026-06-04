@@ -11,6 +11,19 @@ This file covers items not tracked elsewhere.
 
 ## High priority
 
+### DAP: additional debugger backends
+
+- [ ] Keep `freight dap` focused on GDB-family (`gdb`, `cuda-gdb`) and LLDB-family
+  (`lldb-dap` / `lldb-vscode`) for the current editor MVP.
+- [ ] Investigate DAP support for remaining debugger templates:
+  - `rr`: replay debugging through GDB DAP or an rr-aware adapter flow.
+  - `cdb`: Windows Console Debugger DAP path, if available through VS Code
+    debug adapters or Debugging Tools for Windows.
+  - `windbg`: WinDbg DAP path, including whether this should be direct or
+    VS Code adapter-mediated.
+- [ ] Add fake-adapter unit tests and real smoke-test notes before exposing any
+  new backend in VS Code or Neovim.
+
 ### LSP: workspace/package recognition
 
 - [x] Treat `[workspace]` manifests as first-class in `freight lsp` diagnostics instead of parsing

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 
-use super::extract::{DocItem, DocKind, DocLanguage, DocSet, DocTag, TagKind};
+use super::lang::{DocItem, DocKind, DocLanguage, DocSet, DocTag, TagKind};
 
 /// Write the documentation as a set of inter-linked Markdown files.
 ///
@@ -520,13 +520,13 @@ fn render_class_page(cls: &str, items: &[&DocItem], sym: &SymbolIndex, page: &st
         .iter()
         .copied()
         .filter(|i| matches!(i.kind, DocKind::Function | DocKind::Subroutine))
-        .filter(|i| !matches!(i.meta.access, Some(super::extract::Access::Private)))
+        .filter(|i| !matches!(i.meta.access, Some(super::lang::Access::Private)))
         .collect();
     let pub_vars: Vec<&DocItem> = members
         .iter()
         .copied()
         .filter(|i| matches!(i.kind, DocKind::Variable))
-        .filter(|i| !matches!(i.meta.access, Some(super::extract::Access::Private)))
+        .filter(|i| !matches!(i.meta.access, Some(super::lang::Access::Private)))
         .collect();
 
     if !pub_fns.is_empty() {
@@ -1167,7 +1167,7 @@ pub fn md_heading_anchor(kind: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::extract::{DocLanguage, DocMeta};
+    use super::super::lang::{DocLanguage, DocMeta};
     use super::*;
 
     #[test]

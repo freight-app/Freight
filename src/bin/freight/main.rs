@@ -1,5 +1,7 @@
 mod commands;
 mod completion;
+mod dap;
+mod lsp;
 mod output;
 mod tui;
 
@@ -39,7 +41,7 @@ enum Commands {
     /// Build (debug) and launch an interactive debugger session
     Debug(commands::debug::Args),
     /// Start Freight's Debug Adapter Protocol server over stdio
-    Dap(commands::dap::Args),
+    Dap(dap::Args),
     /// Watch source files and rebuild on changes
     Watch(commands::watch::Args),
     /// Add a dependency
@@ -91,7 +93,7 @@ enum Commands {
     /// Import a project from another build system into freight
     Migrate(commands::migrate::Args),
     /// Start the freight.toml language server and clangd passthrough
-    Lsp(commands::lsp::Args),
+    Lsp(lsp::Args),
     /// Manage compiler toolchains
     Toolchain(commands::toolchain::Args),
     /// Internal helper used by generated shell completion scripts
@@ -105,7 +107,7 @@ fn main() {
     // For non-LSP commands, initialise a stderr logger when FREIGHT_LOG is set.
     // (The lsp command sets up its own subscriber that forwards to VS Code.)
     if !matches!(cli.command, Commands::Lsp(_)) {
-        commands::lsp::log::init_stderr_logging();
+        lsp::log::init_stderr_logging();
     }
 
     match cli.command {

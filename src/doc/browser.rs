@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::doc::docify::extract::{DocItem, DocKind, DocLanguage, TagKind};
+use crate::doc::{DocItem, DocKind, DocLanguage, TagKind};
 
 use crate::doc::latex::render_math_lines;
 use crate::doc::stdlib::StdlibMsg;
@@ -1513,7 +1513,7 @@ fn push_highlighted_code(out: &mut Vec<Line<'static>>, code: &str, lang: &DocLan
 }
 
 fn render_member_table(out: &mut Vec<Line<'static>>, members: &[&DocItem], width: usize) {
-    use crate::doc::docify::extract::Access;
+    use crate::doc::Access;
 
     // Group by access specifier bucket.
     let buckets: &[(&str, Option<Access>)] = &[

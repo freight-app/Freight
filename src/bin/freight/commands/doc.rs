@@ -20,7 +20,7 @@ impl Args {
     }
 }
 
-use freight_core::doc::docify::extract::{extract_dir, extract_file, DocSet};
+use freight_core::doc::{extract_dir, extract_file, DocSet};
 use freight_core::doc::{self, collect_stdlib, DocDependency, PackageDoc, StdlibMsg};
 use freight_core::manifest::types::{Dependency, Manifest};
 use freight_core::manifest::{find_manifest_dir, load_manifest};
@@ -281,7 +281,7 @@ fn open_dependency_tui() -> anyhow::Result<()> {
 fn extract_pkg_items(
     dir: &Path,
     manifest: Option<&freight_core::manifest::types::Manifest>,
-) -> Vec<freight_core::doc::docify::extract::DocItem> {
+) -> Vec<freight_core::doc::DocItem> {
     // Collect candidate files from public headers.
     let hdr_files: Vec<PathBuf> = manifest
         .and_then(|m| m.lib.as_ref())
