@@ -1097,12 +1097,30 @@ impl Server {
                     if id_str.starts_with("__freight_inlayhint_") {
                         if let Some(ref p) = pending {
                             if let Some((orig_id, our_hints)) = p.lock().unwrap().remove(id_str) {
-                                // Merge our include hints into clangd's result.
-                                let clangd_hints = msg
+                                // Collect the line numbers freight already covers
+                                // (#include / import lines) so clangd's hints on
+                                // those same lines are dropped in favour of ours.
+                                let our_lines: std::collections::HashSet<u64> = our_hints
+                                    .iter()
+                                    .filter_map(|h| {
+                                        h.get("position")?.get("line")?.as_u64()
+                                    })
+                                    .collect();
+
+                                let clangd_hints: Vec<Value> = msg
                                     .get("result")
                                     .and_then(Value::as_array)
                                     .cloned()
-                                    .unwrap_or_default();
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .filter(|h| {
+                                        let line = h.get("position")
+                                            .and_then(|p| p.get("line"))
+                                            .and_then(Value::as_u64);
+                                        !matches!(line, Some(l) if our_lines.contains(&l))
+                                    })
+                                    .collect();
+
                                 let mut merged = clangd_hints;
                                 merged.extend(our_hints);
                                 if let Some(obj) = msg.as_object_mut() {
