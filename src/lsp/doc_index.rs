@@ -8,9 +8,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use freight_core::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};
-use freight_core::manifest::load_manifest;
-use freight_core::manifest::types::Manifest;
+use crate::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};
+use crate::manifest::load_manifest;
+use crate::manifest::types::Manifest;
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------

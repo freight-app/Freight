@@ -10,10 +10,10 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use freight_core::build::{build_project_with, build_workspace_with, BuildOutput};
-use freight_core::event::silent;
-use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
-use freight_core::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
+use crate::build::{build_project_with, build_workspace_with, BuildOutput};
+use crate::event::silent;
+use crate::manifest::{find_manifest_dir, load_workspace_manifest};
+use crate::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ fn exec_adapter(bin: &Path, args: &[String]) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 fn select_dap_adapter(
-    debuggers: &[freight_core::toolchain::DetectedDebugger],
+    debuggers: &[crate::toolchain::DetectedDebugger],
     config: &Value,
     global_cfg: &GlobalConfig,
 ) -> anyhow::Result<(PathBuf, Vec<String>)> {
@@ -389,9 +389,9 @@ fn config_string_array(config: &Value, key: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use freight_core::manifest::types::DebuggerInstanceConfig;
-    use freight_core::toolchain::debugger::{DapConfig, LaunchConfig};
-    use freight_core::toolchain::{DebuggerTemplate, DetectedDebugger};
+    use crate::manifest::types::DebuggerInstanceConfig;
+    use crate::toolchain::debugger::{DapConfig, LaunchConfig};
+    use crate::toolchain::{DebuggerTemplate, DetectedDebugger};
     use std::collections::HashMap;
 
     #[test]

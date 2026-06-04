@@ -2,7 +2,7 @@
 //! source files (clangd, fortls, asm-lsp passthroughs).
 
 mod doc_index;
-pub(crate) mod log;
+pub mod log;
 mod manifest;
 mod protocol;
 
@@ -13,10 +13,10 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use freight_core::build::generate_lsp_compile_commands_at;
-use freight_core::manifest::types::{Dependency, Manifest};
-use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
-use freight_core::toolchain::{detect_all_cached, load_all_templates};
+use crate::build::generate_lsp_compile_commands_at;
+use crate::manifest::types::{Dependency, Manifest};
+use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
+use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
 use doc_index::{
@@ -86,7 +86,7 @@ struct ServerState {
     manifest_dir: Option<PathBuf>,
     compile_commands_dir: Option<PathBuf>,
     docs: HashMap<String, String>,
-    templates: Vec<freight_core::toolchain::CompilerTemplate>,
+    templates: Vec<crate::toolchain::CompilerTemplate>,
     clangd: Option<Passthrough>,
     fortls: Option<Passthrough>,
     asm_lsp: Option<Passthrough>,
@@ -428,7 +428,7 @@ impl Server {
 
         // Detected compiler families available on this machine.
         let toolchains: Vec<Value> = {
-            use freight_core::toolchain::group_into_toolchains;
+            use crate::toolchain::group_into_toolchains;
             let detected = detect_all_cached(&self.state.templates);
             let groups = group_into_toolchains(detected);
             groups.toolchains.iter().map(|tc| {

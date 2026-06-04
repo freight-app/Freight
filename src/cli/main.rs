@@ -1,9 +1,9 @@
 mod commands;
 mod completion;
-mod dap;
-mod lsp;
 mod output;
 mod tui;
+
+use freight_core::{dap, lsp};
 
 use clap::{CommandFactory, Parser, Subcommand};
 

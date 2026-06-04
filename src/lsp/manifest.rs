@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
-use freight_core::manifest::{
+use crate::manifest::{
     load_manifest_str, load_workspace_manifest_str, validate, validate_dep_compat, WorkspaceSection,
 };
-use freight_core::toolchain::CompilerTemplate;
+use crate::toolchain::CompilerTemplate;
 use serde_json::{json, Value};
 
 use super::protocol::parse_line_col;
