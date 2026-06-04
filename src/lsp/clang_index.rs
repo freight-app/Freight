@@ -106,7 +106,15 @@ impl TuCache {
     }
 
     pub fn set_cc_dir(&mut self, cc_dir: Option<PathBuf>) {
+        if self.cc_dir == cc_dir {
+            return;
+        }
         self.cc_dir = cc_dir;
+        // Reparse every open TU now that we have compile flags.
+        let paths: Vec<PathBuf> = self.tus.keys().cloned().collect();
+        for path in paths {
+            self.open(&path);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -174,7 +182,11 @@ impl TuCache {
             // clang uses 1-based line/column.
             let loc = clang_getLocation(tu, file, line + 1, col + 1);
             let cursor = clang_getCursor(tu, loc);
-            if clang_Cursor_isNull(cursor) != 0 {
+            let ck = clang_getCursorKind(cursor);
+            if clang_Cursor_isNull(cursor) != 0
+                || ck == CXCursor_TranslationUnit
+                || ck == CXCursor_InvalidFile
+            {
                 return None;
             }
 
@@ -479,10 +491,6 @@ extern "C" fn on_symbol(
     let col = unsafe { &mut *(data as *mut SymbolCollector) };
     let kind = unsafe { clang_getCursorKind(cursor) };
 
-    // Only visit top-level declarations — don't recurse into bodies.
-    if unsafe { clang_isDeclaration(kind) } == 0 {
-        return CXChildVisit_Continue;
-    }
     // Skip cursors from other files (headers etc.).
     let loc = unsafe { clang_getCursorLocation(cursor) };
     let mut file: CXFile = std::ptr::null_mut();
@@ -490,7 +498,27 @@ extern "C" fn on_symbol(
     let mut col_num: u32 = 0;
     let mut offset: u32 = 0;
     unsafe { clang_getSpellingLocation(loc, &mut file, &mut line, &mut col_num, &mut offset) };
-    if file != col.source_file || line == 0 {
+    if file != col.source_file {
+        // Not from our source file — skip but don't recurse.
+        return CXChildVisit_Continue;
+    }
+
+    // Recurse into containers so we find symbols in namespaces and classes.
+    #[allow(non_upper_case_globals)]
+    let is_container = matches!(
+        kind,
+        CXCursor_Namespace
+            | CXCursor_ClassDecl
+            | CXCursor_StructDecl
+            | CXCursor_ClassTemplate
+            | CXCursor_ClassTemplatePartialSpecialization
+            | CXCursor_UnionDecl
+    );
+    if is_container {
+        return CXChildVisit_Recurse;
+    }
+
+    if unsafe { clang_isDeclaration(kind) } == 0 || line == 0 {
         return CXChildVisit_Continue;
     }
 
@@ -517,7 +545,7 @@ extern "C" fn on_symbol(
         line: line - 1,
     });
 
-    // Don't recurse into struct/class bodies — their members are separate decls.
+    // Don't recurse into function bodies.
     CXChildVisit_Continue
 }
 
