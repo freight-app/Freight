@@ -5,10 +5,10 @@
 //! at the cursor position and return formatted Markdown documentation before
 //! falling back to the passthrough language server (clangd/fortls/asm-lsp).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use freight_core::doc::docify::extract::{extract_dir, extract_file, DocItem, DocLanguage, TagKind};
+use freight_core::doc::docify::lang::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};
 use freight_core::manifest::load_manifest;
 use freight_core::manifest::types::Manifest;
 use serde_json::{json, Value};
@@ -17,37 +17,60 @@ use serde_json::{json, Value};
 // DocIndex
 // ---------------------------------------------------------------------------
 
-/// Flat lookup table: symbol name → first matching DocItem.
+/// Symbol documentation index built from docified sources.
 ///
-/// Names are stored lowercased for case-insensitive lookup (C++ symbols that
-/// differ only in case are rare and the hover UX is best-effort anyway).
+/// Supports two lookup strategies:
+/// - by name (case-insensitive, for word-under-cursor fallback)
+/// - by file + line (for precise position-based hover)
 pub struct DocIndex {
-    /// Lower-case symbol name → owned item.
-    by_name: HashMap<String, DocItem>,
+    items: Vec<DocItem>,
+    /// Lower-case symbol name → index into `items`.
+    by_name: HashMap<String, usize>,
+    /// Canonical file path → (doc-comment start line → index into `items`).
+    by_location: HashMap<PathBuf, BTreeMap<usize, usize>>,
 }
 
 impl DocIndex {
     pub fn build_freight_packages<'a>(package_dirs: impl IntoIterator<Item = &'a Path>) -> Self {
-        let mut by_name: HashMap<String, DocItem> = HashMap::new();
+        let mut items: Vec<DocItem> = Vec::new();
+        let mut by_name: HashMap<String, usize> = HashMap::new();
+        let mut by_location: HashMap<PathBuf, BTreeMap<usize, usize>> = HashMap::new();
         for package_dir in package_dirs {
             let manifest = load_manifest(package_dir).ok();
             for item in extract_pkg_items(package_dir, manifest.as_ref()) {
                 if item.brief.is_empty() && item.body.is_empty() {
                     continue;
                 }
+                let idx = items.len();
                 let key = simple_name(&item.name).to_ascii_lowercase();
-                by_name.entry(key).or_insert(item);
+                // name map: first occurrence wins
+                by_name.entry(key).or_insert(idx);
+                // location map: keyed by canonical file path + doc-comment start line
+                if item.line > 0 {
+                    let canonical = item.file.canonicalize().unwrap_or_else(|_| item.file.clone());
+                    by_location.entry(canonical).or_default().insert(item.line, idx);
+                }
+                items.push(item);
             }
         }
-        Self { by_name }
+        Self { items, by_name, by_location }
     }
 
     pub fn lookup(&self, name: &str) -> Option<&DocItem> {
-        self.by_name.get(&name.to_ascii_lowercase())
+        self.by_name.get(&name.to_ascii_lowercase()).and_then(|&i| self.items.get(i))
+    }
+
+    /// Find the doc item whose doc-comment is nearest at or before `line` in `file`.
+    pub fn lookup_by_location(&self, file: &Path, line: usize) -> Option<&DocItem> {
+        let canonical = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+        let tree = self.by_location.get(&canonical)?;
+        // Walk backwards from line to find the nearest item at or before the cursor.
+        let (_, &idx) = tree.range(..=line + 5).next_back()?;
+        self.items.get(idx)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_name.is_empty()
+        self.items.is_empty()
     }
 }
 
@@ -99,12 +122,18 @@ fn extract_pkg_items(dir: &Path, manifest: Option<&Manifest>) -> Vec<DocItem> {
         return items;
     }
 
-    let fallback = dir.join("src");
-    if fallback.is_dir() {
-        extract_dir(&fallback).items
-    } else {
-        extract_dir(dir).items
+    // Scan all conventional source/header directories, deduplicating.
+    let candidates = ["src", "include", "inc"];
+    let mut items = Vec::new();
+    let mut any = false;
+    for name in candidates {
+        let d = dir.join(name);
+        if d.is_dir() {
+            items.extend(extract_dir(&d).items);
+            any = true;
+        }
     }
+    if any { items } else { extract_dir(dir).items }
 }
 
 // ---------------------------------------------------------------------------
@@ -659,10 +688,18 @@ pub fn reformat_clangd_hover(text: &str) -> String {
 pub fn item_to_markdown(item: &DocItem) -> String {
     let mut out = String::new();
 
-    // Symbol name heading
+    // Symbol name heading with kind label and optional parent class.
     let display_name = simple_name(&item.name);
     if !display_name.is_empty() {
-        out.push_str(&format!("### `{display_name}`\n\n"));
+        let kind_label = item.kind.label();
+        if let Some(parent) = item.meta.parent.as_deref().filter(|p| !p.is_empty()) {
+            let parent_simple = simple_name(parent);
+            out.push_str(&format!("### `{display_name}`  `{kind_label} in {parent_simple}`\n\n"));
+        } else if !matches!(item.kind, DocKind::Unknown) {
+            out.push_str(&format!("### `{display_name}`  `{kind_label}`\n\n"));
+        } else {
+            out.push_str(&format!("### `{display_name}`\n\n"));
+        }
     }
 
     // Fenced code block for the signature.

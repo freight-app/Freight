@@ -1,10 +1,10 @@
-pub mod extract;
+pub mod lang;
 pub mod markdown;
 pub mod render_md;
 
 // ── Public re-exports ────────────────────────────────────────────────────────
 
-pub use extract::{
+pub use lang::{
     extract_dir, extract_dir_with, extract_file, Access, DocExtractor, DocItem, DocKind,
     DocLanguage, DocMeta, DocSet, DocTag, ExtractorRegistry, TagKind,
 };

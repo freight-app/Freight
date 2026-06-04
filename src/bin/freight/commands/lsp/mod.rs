@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -21,7 +20,7 @@ use freight_core::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
 use doc_index::{
-    enrich_hover_response, include_hover_markdown, item_to_markdown, parse_include_header, word_at,
+    include_hover_markdown, item_to_markdown, parse_include_header, word_at,
     DocIndex, HeaderDirSpec, HeaderIndex, HeaderOrigin,
 };
 use manifest::{
@@ -82,14 +81,6 @@ struct Server {
     state: ServerState,
 }
 
-/// Context stored while waiting for clangd to respond to a hover request.
-struct PendingHover {
-    original_id: Value,
-    uri: String,
-    line: usize,
-    col: usize,
-}
-
 struct ServerState {
     root_dir: PathBuf,
     manifest_dir: Option<PathBuf>,
@@ -103,9 +94,6 @@ struct ServerState {
     doc_index: Arc<Mutex<Option<DocIndex>>>,
     /// Header → package mapping for `#include` hover.
     header_index: HeaderIndex,
-    /// Pending clangd hover requests waiting for enrichment.
-    pending_hovers: Arc<Mutex<HashMap<String, PendingHover>>>,
-    hover_seq: Arc<AtomicU64>,
     workspace_inventory: WorkspaceInventory,
 }
 
@@ -144,8 +132,6 @@ impl Server {
                 asm_lsp: None,
                 doc_index: Arc::new(Mutex::new(None)),
                 header_index: HeaderIndex::default(),
-                pending_hovers: Arc::new(Mutex::new(HashMap::new())),
-                hover_seq: Arc::new(AtomicU64::new(0)),
                 workspace_inventory: WorkspaceInventory::default(),
             },
         }
@@ -355,15 +341,9 @@ impl Server {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 2. DocIndex — rich markdown from docified symbols; no clangd round-trip.
-        if let Some(hover) = self.doc_hover(&uri, &msg) {
-            return self.respond(msg.get("id").cloned(), hover);
-        }
-
-        // 3. Forward to clangd with a tagged ID so we can intercept and enrich
-        //    the response with freight-doc markdown or at minimum reformat raw
-        //    Doxygen tags.
-        self.forward_hover_with_enrichment(msg)
+        // 2. DocIndex — position-based then name-based lookup; null on miss.
+        let hover = self.doc_hover(&uri, &msg);
+        self.respond(msg.get("id").cloned(), hover.unwrap_or(Value::Null))
     }
 
     fn include_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
@@ -387,48 +367,19 @@ impl Server {
         let (line, character) = position(msg)?;
         let path = path_from_uri(uri)?;
         let text = std::fs::read_to_string(&path).ok()?;
-        let word = word_at(&text, line, character)?;
-        let item = index.lookup(&word)?;
-        tracing::debug!(symbol = word.as_str(), file = %item.file.display(), "doc-index hover hit");
+
+        // Position-based: find the item whose doc comment is at or just before the cursor line.
+        let item = index
+            .lookup_by_location(&path, line)
+            .or_else(|| {
+                // Name-based fallback: extract word under cursor and look it up.
+                let word = word_at(&text, line, character)?;
+                index.lookup(&word)
+            })?;
+
+        tracing::debug!(symbol = item.name.as_str(), file = %item.file.display(), line, "doc-index hover");
         let markdown = item_to_markdown(item);
         Some(json!({ "contents": { "kind": "markdown", "value": markdown } }))
-    }
-
-    /// Forward a hover request to clangd using a tagged ID so the passthrough
-    /// read thread can intercept the response and enrich it with DocIndex
-    /// markdown or reformatted Doxygen before sending it to the client.
-    fn forward_hover_with_enrichment(&mut self, msg: Value) -> io::Result<()> {
-        let Some(uri) = text_document_uri(&msg) else {
-            return self.forward_or_null(msg);
-        };
-        let Some(kind) = source_server_for_uri(&uri) else {
-            return self.forward_or_null(msg);
-        };
-
-        let original_id = match msg.get("id").cloned() {
-            Some(id) => id,
-            None => return self.forward_or_null(msg),
-        };
-        let seq = self.state.hover_seq.fetch_add(1, Ordering::Relaxed);
-        let tagged_id = format!("__freight_hover_{seq}");
-
-        let (line, col) = position(&msg).unwrap_or((0, 0));
-        tracing::debug!(uri, line, col, seq, "forwarding hover to clangd");
-        self.state.pending_hovers.lock().unwrap().insert(
-            tagged_id.clone(),
-            PendingHover { original_id: original_id.clone(), uri, line, col },
-        );
-
-        let mut tagged_msg = msg.clone();
-        if let Some(obj) = tagged_msg.as_object_mut() {
-            obj.insert("id".to_string(), json!(tagged_id));
-        }
-        if self.forward_to_passthrough(kind, &tagged_msg)? {
-            return Ok(());
-        }
-        // Passthrough unavailable — clean up and respond null.
-        self.state.pending_hovers.lock().unwrap().remove(&tagged_id);
-        self.respond(Some(original_id), Value::Null)
     }
 
     fn handle_signature_help_or_forward(&mut self, msg: Value) -> io::Result<()> {
@@ -876,59 +827,11 @@ impl Server {
             .and_then(|r| r.get("capabilities"))
             .cloned();
         let out = Arc::clone(&self.out);
-        let pending_hovers = Arc::clone(&self.state.pending_hovers);
-        let doc_index = Arc::clone(&self.state.doc_index);
         thread::spawn(move || {
             while let Ok(Some(msg)) = read_lsp_message(&mut reader) {
-                // Intercept tagged hover responses BEFORE the internal-ID filter,
-                // because hover IDs also start with "__freight_" and would be dropped.
-                let id_str = msg.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                if id_str.starts_with("__freight_hover_") {
-                    if let Some(info) = pending_hovers.lock().unwrap().remove(&id_str) {
-                        // Try to look up the symbol from file + position.
-                        let word = path_from_uri(&info.uri)
-                            .and_then(|p| std::fs::read_to_string(p).ok())
-                            .and_then(|text| word_at(&text, info.line, info.col));
-
-                        // Log raw clangd hover text before enrichment.
-                        if let Some(raw) = msg
-                            .pointer("/result/contents/value")
-                            .and_then(Value::as_str)
-                        {
-                            tracing::trace!(
-                                symbol = word.as_deref().unwrap_or("?"),
-                                "clangd raw hover:\n{raw}"
-                            );
-                        }
-
-                        let guard = doc_index.lock().unwrap();
-                        let mut enriched = enrich_hover_response(&msg, word.as_deref(), &*guard);
-                        drop(guard);
-
-                        // Log the enriched markdown that will be sent to VS Code.
-                        if let Some(md) = enriched
-                            .pointer("/result/contents/value")
-                            .and_then(Value::as_str)
-                        {
-                            tracing::debug!(
-                                symbol = word.as_deref().unwrap_or("?"),
-                                "enriched hover:\n{md}"
-                            );
-                        }
-                        // Restore original client ID.
-                        if let Some(obj) = enriched.as_object_mut() {
-                            obj.insert("id".to_string(), info.original_id);
-                        }
-                        let _ = write_lsp_message(&mut *out.lock().unwrap(), &enriched);
-                    }
-                    // If the pending entry was already removed (e.g. timeout race), discard.
-                    continue;
-                }
-
                 if is_internal_passthrough_response(&msg) {
                     continue;
                 }
-
                 let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
             }
         });
