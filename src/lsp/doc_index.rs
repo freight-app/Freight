@@ -224,39 +224,41 @@ impl HeaderIndex {
             let pkg_version = manifest.as_ref().map(|m| m.package.version.clone());
             let dep_key = spec.dep_key.clone();
 
-            // Declared public headers from [lib].hdrs
-            if let Some(hdrs) = manifest
+            // For non-Own packages: [lib].hdrs is the authoritative public API.
+            // Only fall back to walking include/ when no hdrs are declared.
+            let lib_hdrs = manifest
                 .as_ref()
                 .and_then(|m| m.lib.as_ref())
-                .map(|l| &l.hdrs)
-            {
-                for hdr in hdrs {
+                .map(|l| l.hdrs.as_slice())
+                .unwrap_or(&[]);
+
+            if spec.origin != HeaderOrigin::Own && !lib_hdrs.is_empty() {
+                for hdr in lib_hdrs {
                     let full = dir.join(hdr);
                     if full.is_file() {
-                        let entry = HeaderEntry {
+                        insert_header(&mut by_path, hdr, HeaderEntry {
                             package_name: pkg_name.clone(),
                             package_version: pkg_version.clone(),
                             full_path: full,
                             origin: spec.origin.clone(),
                             dep_key: dep_key.clone(),
-                        };
-                        insert_header(&mut by_path, hdr, entry);
+                        });
                     }
                 }
-            }
-
-            // include/ directory (all packages)
-            let include_dir = dir.join("include");
-            if include_dir.is_dir() {
-                walk_headers(
-                    &include_dir,
-                    &include_dir,
-                    &pkg_name,
-                    &pkg_version,
-                    spec.origin.clone(),
-                    &dep_key,
-                    &mut by_path,
-                );
+            } else if spec.origin != HeaderOrigin::Own {
+                // No lib.hdrs declared — walk include/ as a best-effort fallback.
+                let include_dir = dir.join("include");
+                if include_dir.is_dir() {
+                    walk_headers(
+                        &include_dir,
+                        &include_dir,
+                        &pkg_name,
+                        &pkg_version,
+                        spec.origin.clone(),
+                        &dep_key,
+                        &mut by_path,
+                    );
+                }
             }
 
             // For the project itself: also walk [compiler].includes dirs and src/.
