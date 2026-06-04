@@ -220,7 +220,10 @@ impl Server {
                 "textDocument/hover" => self.handle_hover_or_forward(msg)?,
                 "textDocument/signatureHelp" => self.handle_signature_help_or_forward(msg)?,
                 "textDocument/codeAction" => self.handle_code_action_or_forward(msg)?,
-                "textDocument/inlayHint" => self.handle_inlay_hints(msg)?,
+                "textDocument/inlayHint"   => self.handle_inlay_hints(msg)?,
+                "textDocument/definition"  => self.handle_definition_or_forward(msg)?,
+                "textDocument/declaration" => self.handle_definition_or_forward(msg)?,
+                "textDocument/documentLink" => self.handle_document_links(msg)?,
                 "freight/workspaceInfo" => self.handle_workspace_info(msg)?,
                 "freight/setConfig"     => self.handle_set_config(msg)?,
                 _ => self.forward_or_null(msg)?,
@@ -455,6 +458,95 @@ impl Server {
             "include hover"
         );
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
+    }
+
+    /// Go-to-definition / go-to-declaration on an `#include` line:
+    /// jump directly to the header file. Falls through to clangd for non-include lines.
+    fn handle_definition_or_forward(&mut self, msg: Value) -> io::Result<()> {
+        let Some(uri) = text_document_uri(&msg) else {
+            return self.forward_or_null(msg);
+        };
+        if let Some((line, _)) = position(&msg) {
+            if let Some(location) = self.include_definition(&uri, line) {
+                return self.respond(msg.get("id").cloned(), location);
+            }
+        }
+        self.forward_by_uri(&uri, &msg)
+    }
+
+    fn include_definition(&self, uri: &str, line: usize) -> Option<Value> {
+        let path = path_from_uri(uri)?;
+        let text = std::fs::read_to_string(&path).ok()?;
+        let line_text = text.lines().nth(line)?;
+        let (header, is_system) = parse_include_header(line_text)?;
+
+        let full_path = if let Some(e) = self.state.header_index.lookup(&header) {
+            e.full_path.clone()
+        } else if is_system {
+            self.state.header_index.lookup_system(&header)?.full_path
+        } else {
+            return None;
+        };
+
+        if full_path.as_os_str().is_empty() || !full_path.exists() {
+            return None;
+        }
+        let target_uri = uri_from_path(&full_path);
+        tracing::debug!(header, target = %full_path.display(), "include definition");
+        Some(json!({
+            "uri": target_uri,
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }
+        }))
+    }
+
+    /// Document links for the entire file: freight provides links for
+    /// `#include`/`import` lines; clangd is not involved.
+    fn handle_document_links(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned();
+        let links = self.compute_document_links(&msg).unwrap_or_default();
+        self.respond(id, Value::Array(links))
+    }
+
+    fn compute_document_links(&self, msg: &Value) -> Option<Vec<Value>> {
+        let uri = text_document_uri(msg)?;
+        let path = path_from_uri(&uri)?;
+        let text = std::fs::read_to_string(&path).ok()?;
+
+        let mut links = Vec::new();
+        for (idx, line_text) in text.lines().enumerate() {
+            let Some((header, is_system)) = parse_include_header(line_text) else {
+                continue;
+            };
+
+            let full_path = if let Some(e) = self.state.header_index.lookup(&header) {
+                e.full_path.clone()
+            } else if is_system {
+                match self.state.header_index.lookup_system(&header) {
+                    Some(e) => e.full_path,
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+
+            if full_path.as_os_str().is_empty() || !full_path.exists() {
+                continue;
+            }
+
+            // Range covers just the header name inside the delimiters.
+            let trimmed = line_text.trim();
+            let name_start = line_text.find(&header).unwrap_or(0);
+            let name_end = name_start + header.len();
+            links.push(json!({
+                "range": {
+                    "start": { "line": idx, "character": name_start },
+                    "end":   { "line": idx, "character": name_end }
+                },
+                "target": uri_from_path(&full_path),
+                "tooltip": trimmed
+            }));
+        }
+        Some(links)
     }
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {

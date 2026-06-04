@@ -104,8 +104,13 @@ pub fn merge_capability_object(into: &mut Value, from: &Value) {
             merge_completion_provider(into_obj, value);
         } else if key == "signatureHelpProvider" {
             merge_signature_help_provider(into_obj, value);
-        } else if key == "hoverProvider" {
-            into_obj.insert(key.clone(), json!(true));
+        } else if key == "hoverProvider"
+            || key == "definitionProvider"
+            || key == "declarationProvider"
+            || key == "documentLinkProvider"
+            || key == "inlayHintProvider"
+        {
+            into_obj.insert(key.clone(), value.clone());
         } else if key == "textDocumentSync" {
             into_obj.insert(key.clone(), value.clone());
         } else {
@@ -196,7 +201,10 @@ pub fn freight_capabilities() -> Value {
             "retriggerCharacters": [","]
         },
         "hoverProvider": true,
-        "inlayHintProvider": true
+        "inlayHintProvider": true,
+        "definitionProvider": true,
+        "declarationProvider": true,
+        "documentLinkProvider": { "resolveProvider": false }
     })
 }
 
