@@ -397,6 +397,14 @@ pub fn reformat_clangd_hover(text: &str) -> String {
         (text, "")
     };
 
+    // Clangd appends a second ---\n``` block (the declaration snippet) after the
+    // doc comment text.  Split it off so it doesn't bleed into tag parsing.
+    let (doc_text, sig_block) = if let Some(pos) = doc_part.rfind("\n---\n```") {
+        (&doc_part[..pos], Some(doc_part[pos + 5..].trim()))
+    } else {
+        (doc_part, None)
+    };
+
     let mut out = String::new();
 
     // Keep the signature section unchanged (already a code block or header).
@@ -405,7 +413,7 @@ pub fn reformat_clangd_hover(text: &str) -> String {
         out.push_str("\n\n---\n\n");
     }
 
-    if doc_part.is_empty() {
+    if doc_text.is_empty() && sig_block.is_none() {
         return out.trim_end_matches("\n\n---\n\n").to_string();
     }
 
@@ -448,7 +456,7 @@ pub fn reformat_clangd_hover(text: &str) -> String {
         }
     };
 
-    for raw_line in doc_part.lines() {
+    for raw_line in doc_text.lines() {
         let line = raw_line.trim();
         // Detect @tag or \tag at the start of a line
         if let Some(rest) = line.strip_prefix('@').or_else(|| line.strip_prefix('\\')) {
@@ -502,6 +510,37 @@ pub fn reformat_clangd_hover(text: &str) -> String {
         }
     }
     flush_tag(&mut current_tag, &mut s);
+
+    // When @param docs are present, remove clangd's auto-generated "Parameters:"
+    // + typed-bullet block from body — it duplicates the richer @param section.
+    if !s.params.is_empty() || !s.tparam.is_empty() {
+        let mut filtered: Vec<String> = Vec::new();
+        let mut skip = false;
+        for line in &s.body {
+            let t = line.trim();
+            if t == "Parameters:" {
+                skip = true;
+                continue;
+            }
+            if skip {
+                // keep skipping blank lines and typed-bullet lines like `- `size_t ...``
+                if t.is_empty() || t.starts_with("- `") {
+                    continue;
+                }
+                skip = false;
+            }
+            filtered.push(line.clone());
+        }
+        while filtered.first().map_or(false, |l: &String| l.trim().is_empty()) { filtered.remove(0); }
+        while filtered.last().map_or(false, |l: &String| l.trim().is_empty()) { filtered.pop(); }
+        s.body = filtered;
+    }
+
+    // Suppress `→ type` brief when @returns tags are present (redundant).
+    let return_hint_only = s.brief.len() == 1 && s.brief[0].starts_with('→');
+    if return_hint_only && !s.returns.is_empty() {
+        s.brief.clear();
+    }
 
     // Render sections
 
@@ -597,6 +636,16 @@ pub fn reformat_clangd_hover(text: &str) -> String {
         let refs: Vec<String> = s.sees.iter().map(|t| format!("`{}`", t.trim())).collect();
         out.push_str(&refs.join(", "));
         out.push('\n');
+    }
+
+    // Declaration snippet clangd appended after the second `---` separator.
+    if let Some(block) = sig_block {
+        if !block.is_empty() {
+            let trimmed = out.trim_end().to_string();
+            out = trimmed;
+            out.push_str("\n\n---\n\n");
+            out.push_str(block);
+        }
     }
 
     out.trim_end().to_string()
