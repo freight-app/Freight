@@ -1,7 +1,6 @@
 //! `freight lsp` — Language Server Protocol multiplexer for freight.toml and
 //! source files (clangd, fortls, asm-lsp passthroughs).
 
-mod clang_index;
 mod doc_index;
 pub mod log;
 mod manifest;
@@ -20,7 +19,6 @@ use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest}
 use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
-use clang_index::{hover_info_to_markdown, AstInlayHint, DefinitionLocation, InclusionInfo, TuCache, TuSymbol};
 use doc_index::{
     include_hover_markdown, include_inlay_label, item_to_markdown, parse_include_header, word_at,
     DocIndex, HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
@@ -98,7 +96,8 @@ fn wait_for_debugger() {
     {
         loop {
             if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-                let attached = status.lines()
+                let attached = status
+                    .lines()
                     .find(|l| l.starts_with("TracerPid:"))
                     .and_then(|l| l.split_whitespace().nth(1))
                     .and_then(|v| v.parse::<u32>().ok())
@@ -144,8 +143,6 @@ struct ServerState {
     /// Pending inlay-hint intercepts: rewritten-id → (original-id, our-hints).
     /// Shared with the clangd reader thread so it can merge and forward.
     clangd_pending: Arc<Mutex<HashMap<String, (Value, Vec<Value>)>>>,
-    /// libclang TU cache — None when libclang is not available at runtime.
-    tu_cache: Option<TuCache>,
 }
 
 struct Passthrough {
@@ -185,7 +182,6 @@ impl Server {
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
-                tu_cache: TuCache::try_new(None),
             },
         }
     }
@@ -202,8 +198,8 @@ impl Server {
                 continue;
             }
             match level_for_method(method) {
-                tracing::Level::INFO  => tracing::info!(method, "← client"),
-                _                     => tracing::debug!(method, "← client"),
+                tracing::Level::INFO => tracing::info!(method, "← client"),
+                _ => tracing::debug!(method, "← client"),
             }
             match method {
                 "initialize" => self.handle_initialize(msg)?,
@@ -225,12 +221,12 @@ impl Server {
                 "textDocument/hover" => self.handle_hover_or_forward(msg)?,
                 "textDocument/signatureHelp" => self.handle_signature_help_or_forward(msg)?,
                 "textDocument/codeAction" => self.handle_code_action_or_forward(msg)?,
-                "textDocument/inlayHint"   => self.handle_inlay_hints(msg)?,
-                "textDocument/definition"  => self.handle_definition_or_forward(msg)?,
+                "textDocument/inlayHint" => self.handle_inlay_hints(msg)?,
+                "textDocument/definition" => self.handle_definition_or_forward(msg)?,
                 "textDocument/declaration" => self.handle_definition_or_forward(msg)?,
                 "textDocument/documentLink" => self.handle_document_links(msg)?,
                 "freight/workspaceInfo" => self.handle_workspace_info(msg)?,
-                "freight/setConfig"     => self.handle_set_config(msg)?,
+                "freight/setConfig" => self.handle_set_config(msg)?,
                 _ => self.forward_or_null(msg)?,
             }
         }
@@ -299,14 +295,6 @@ impl Server {
                     }
                 }
             }
-            // Parse a TU for C/C++ files.
-            if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
-                if let Some(path) = path_from_uri(&uri) {
-                    if let Some(cache) = self.state.tu_cache.as_mut() {
-                        cache.open(&path);
-                    }
-                }
-            }
         }
         self.forward_by_text_document(&msg)
     }
@@ -316,14 +304,6 @@ impl Server {
             return self.forward_to_all_passthroughs(&msg);
         };
         if !is_freight_manifest_uri(&uri) {
-            // Reparse C/C++ TU on change (reads from disk — matches last save).
-            if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
-                if let Some(path) = path_from_uri(&uri) {
-                    if let Some(cache) = self.state.tu_cache.as_mut() {
-                        cache.open(&path);
-                    }
-                }
-            }
             return self.forward_by_uri(&uri, &msg);
         }
         if let Some(text) = changed_full_text(&msg) {
@@ -338,21 +318,6 @@ impl Server {
             return self.forward_to_all_passthroughs(&msg);
         };
         if !is_freight_manifest_uri(&uri) {
-            // Reparse TU and run clang-tidy for C/C++ files.
-            if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
-                if let Some(path) = path_from_uri(&uri) {
-                    if let Some(cache) = self.state.tu_cache.as_mut() {
-                        cache.open(&path);
-                    }
-                    if let Some(cc_dir) = self.state.compile_commands_dir.clone() {
-                        let out = Arc::clone(&self.out);
-                        let uri_clone = uri.clone();
-                        thread::spawn(move || {
-                            run_clang_tidy(&path, &cc_dir, uri_clone, out);
-                        });
-                    }
-                }
-            }
             return self.forward_by_uri(&uri, &msg);
         }
         if let Some(text) = msg
@@ -379,13 +344,6 @@ impl Server {
             self.state.docs.remove(&uri);
             self.publish_diagnostics(&uri, vec![])?;
             return Ok(());
-        }
-        if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
-            if let Some(path) = path_from_uri(&uri) {
-                if let Some(cache) = self.state.tu_cache.as_mut() {
-                    cache.close(&path);
-                }
-            }
         }
         self.forward_by_uri(&uri, &msg)
     }
@@ -461,28 +419,16 @@ impl Server {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 2. libclang AST hover for C/C++ — cursor-accurate type + doc comment.
-        if let Some(hover) = self.clang_hover(&uri, &msg) {
-            return self.respond(msg.get("id").cloned(), hover);
-        }
-
-        // 3. TU symbol table lookup (for name hover when cursor is not on a decl).
-        if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
-            if let Some(hover) = self.tu_symbol_hover(&uri, &msg) {
-                return self.respond(msg.get("id").cloned(), hover);
-            }
-        }
-
-        // 4. DocIndex — position-based then name-based lookup (Fortran, asm, …).
+        // 2. DocIndex — position-based then name-based lookup.
         if let Some(hover) = self.doc_hover(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 5. Forward to passthrough for anything not covered above.
+        // 3. Fall back to the language-specific passthrough server on a DocIndex miss.
         match source_server_for_uri(&uri) {
-            Some(SourceServer::Fortls) | Some(SourceServer::AsmLsp) => {
-                self.forward_by_uri(&uri, &msg)
-            }
+            Some(SourceServer::Clangd)
+            | Some(SourceServer::Fortls)
+            | Some(SourceServer::AsmLsp) => self.forward_by_uri(&uri, &msg),
             _ => self.respond(msg.get("id").cloned(), Value::Null),
         }
     }
@@ -490,18 +436,11 @@ impl Server {
     fn include_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, _) = position(msg)?;
         let path = path_from_uri(uri)?;
-
-        // If a TU is loaded, use libclang's exact resolution — no line parsing.
-        if let Some(info) = self.state.tu_cache.as_ref()
-            .and_then(|c| c.inclusion_at(&path, line as u32))
-        {
-            return self.hover_from_inclusion_info(info, line);
-        }
-
-        // Fallback: text-based parsing + HeaderIndex lookup.
         let text = std::fs::read_to_string(&path).ok()?;
         let line_text = text.lines().nth(line)?;
         let (header, is_system) = parse_include_header(line_text)?;
+
+        // Try package index first, then system dirs for angle-bracket includes.
         let owned;
         let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&header) {
             e
@@ -509,101 +448,18 @@ impl Server {
             owned = self.state.header_index.lookup_system(&header)?;
             &owned
         } else {
+            
             return None;
         };
-        tracing::debug!(header, line, "include hover (text fallback)");
-        Some(json!({ "contents": { "kind": "markdown", "value": include_hover_markdown(&header, entry) } }))
-    }
 
-    fn hover_from_inclusion_info(&self, info: &InclusionInfo, line: usize) -> Option<Value> {
-        let filename = info.full_path.file_name()?.to_string_lossy().into_owned();
-        let owned;
-        let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&filename) {
-            e
-        } else if info.is_system {
-            owned = self.state.header_index.lookup_system(&filename).unwrap_or_else(|| {
-                HeaderEntry {
-                    package_name: "stdlib".to_string(),
-                    package_version: None,
-                    full_path: info.full_path.clone(),
-                    origin: HeaderOrigin::System,
-                }
-            });
-            &owned
-        } else {
-            return None;
-        };
-        tracing::debug!(header = filename.as_str(), line, "include hover (libclang)");
-        Some(json!({ "contents": { "kind": "markdown", "value": include_hover_markdown(&filename, entry) } }))
-    }
-
-    /// Name-based hover from the TU symbol table — fires when `clang_hover`
-    /// returns nothing (cursor position doesn't resolve to a declaration).
-    fn tu_symbol_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, character) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let text = std::fs::read_to_string(&path).ok()?;
-        let word = word_at(&text, line, character)?;
-        let symbols = self.state.tu_cache.as_ref()?.symbols_for(&path)?;
-        let sym: &TuSymbol = symbols.iter().find(|s| {
-            s.name.to_ascii_lowercase() == word.to_ascii_lowercase()
-        })?;
-        let mut md = String::new();
-        if let Some(t) = &sym.type_str {
-            md.push_str(&format!("```cpp\n{}: {}\n```", sym.name, t));
-        } else {
-            md.push_str(&format!("```cpp\n{}\n```", sym.name));
-        }
-        if let Some(doc) = &sym.brief_doc {
-            md.push_str("\n\n");
-            md.push_str(doc);
-        }
-        tracing::debug!(symbol = sym.name.as_str(), "TU symbol hover");
-        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
-    }
-
-    fn clang_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
-        if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
-            return None;
-        }
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let info = self.state.tu_cache.as_ref()?.hover(&path, line as u32, col as u32)?;
-        let md = hover_info_to_markdown(&info);
+        let md = include_hover_markdown(&header, entry);
         tracing::debug!(
-            symbol = info.display_name.as_str(),
+            header = header.as_str(),
+            package = entry.package_name.as_str(),
             line,
-            col,
-            "libclang hover hit"
+            "include hover"
         );
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
-    }
-
-    fn clang_definition(&self, uri: &str, msg: &Value) -> Option<Value> {
-        if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
-            return None;
-        }
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let DefinitionLocation {
-            path: def_path,
-            line: def_line,
-            col: def_col,
-        } = self.state.tu_cache.as_ref()?.definition(&path, line as u32, col as u32)?;
-        let target_uri = uri_from_path(&def_path);
-        tracing::debug!(
-            target = %def_path.display(),
-            def_line,
-            def_col,
-            "libclang definition hit"
-        );
-        Some(json!({
-            "uri": target_uri,
-            "range": {
-                "start": { "line": def_line, "character": def_col },
-                "end":   { "line": def_line, "character": def_col }
-            }
-        }))
     }
 
     /// Go-to-definition / go-to-declaration on an `#include` line:
@@ -617,35 +473,15 @@ impl Server {
                 return self.respond(msg.get("id").cloned(), location);
             }
         }
-        // libclang AST definition for C/C++ — falls back to clangd if TU unavailable.
-        if let Some(location) = self.clang_definition(&uri, &msg) {
-            return self.respond(msg.get("id").cloned(), location);
-        }
         self.forward_by_uri(&uri, &msg)
     }
 
     fn include_definition(&self, uri: &str, line: usize) -> Option<Value> {
         let path = path_from_uri(uri)?;
-
-        // libclang exact resolution.
-        if let Some(info) = self.state.tu_cache.as_ref()
-            .and_then(|c| c.inclusion_at(&path, line as u32))
-        {
-            let fp = &info.full_path;
-            if fp.as_os_str().is_empty() || !fp.exists() {
-                return None;
-            }
-            tracing::debug!(target = %fp.display(), line, "include definition (libclang)");
-            return Some(json!({
-                "uri": uri_from_path(fp),
-                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }
-            }));
-        }
-
-        // Fallback: text parse + HeaderIndex.
         let text = std::fs::read_to_string(&path).ok()?;
         let line_text = text.lines().nth(line)?;
         let (header, is_system) = parse_include_header(line_text)?;
+
         let full_path = if let Some(e) = self.state.header_index.lookup(&header) {
             e.full_path.clone()
         } else if is_system {
@@ -653,12 +489,14 @@ impl Server {
         } else {
             return None;
         };
+
         if full_path.as_os_str().is_empty() || !full_path.exists() {
             return None;
         }
-        tracing::debug!(header, target = %full_path.display(), "include definition (text fallback)");
+        let target_uri = uri_from_path(&full_path);
+        tracing::debug!(header, target = %full_path.display(), "include definition");
         Some(json!({
-            "uri": uri_from_path(&full_path),
+            "uri": target_uri,
             "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }
         }))
     }
@@ -676,51 +514,38 @@ impl Server {
         let path = path_from_uri(&uri)?;
         let text = std::fs::read_to_string(&path).ok()?;
 
-        // Use libclang inclusions map when available — exact, no regex parsing.
-        let tu_inclusions = self.state.tu_cache.as_ref()
-            .and_then(|c| c.inclusions_for(&path));
-
         let mut links = Vec::new();
         for (idx, line_text) in text.lines().enumerate() {
-            let full_path: PathBuf = if let Some(inc_map) = tu_inclusions {
-                match inc_map.get(&(idx as u32)) {
-                    Some(info) => info.full_path.clone(),
+            let Some((header, is_system)) = parse_include_header(line_text) else {
+                continue;
+            };
+
+            let full_path = if let Some(e) = self.state.header_index.lookup(&header) {
+                e.full_path.clone()
+            } else if is_system {
+                match self.state.header_index.lookup_system(&header) {
+                    Some(e) => e.full_path,
                     None => continue,
                 }
             } else {
-                // Text fallback.
-                let Some((header, is_system)) = parse_include_header(line_text) else {
-                    continue;
-                };
-                if let Some(e) = self.state.header_index.lookup(&header) {
-                    e.full_path.clone()
-                } else if is_system {
-                    match self.state.header_index.lookup_system(&header) {
-                        Some(e) => e.full_path,
-                        None => continue,
-                    }
-                } else {
-                    continue
-                }
+                continue;
             };
 
             if full_path.as_os_str().is_empty() || !full_path.exists() {
                 continue;
             }
 
-            // Range covers the header name inside its delimiters.
-            let filename = full_path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let name_start = line_text.find(filename.as_str()).unwrap_or(0);
-            let name_end = name_start + filename.len();
+            // Range covers just the header name inside the delimiters.
+            let trimmed = line_text.trim();
+            let name_start = line_text.find(&header).unwrap_or(0);
+            let name_end = name_start + header.len();
             links.push(json!({
                 "range": {
                     "start": { "line": idx, "character": name_start },
                     "end":   { "line": idx, "character": name_end }
                 },
                 "target": uri_from_path(&full_path),
-                "tooltip": line_text.trim()
+                "tooltip": trimmed
             }));
         }
         Some(links)
@@ -728,67 +553,38 @@ impl Server {
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        // Include-origin hints (freight-owned, all languages).
-        let include_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
+        let our_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
 
+        // If clangd is running for this file, forward the request under a
+        // rewritten ID. The reader thread will merge our hints into its
+        // response and forward to the client. If clangd is absent, respond directly.
         let uri = text_document_uri(&msg);
-        let is_clangd_file = uri.as_deref()
+        let goes_to_clangd = uri
+            .as_deref()
             .map(|u| matches!(source_server_for_uri(u), Some(SourceServer::Clangd)))
             .unwrap_or(false);
 
-        if is_clangd_file {
-            let path = uri.as_deref().and_then(path_from_uri);
-            let tu_ready = path.as_ref().map(|p| {
-                self.state.tu_cache.as_ref()
-                    .map(|c| c.has_tu(p))
-                    .unwrap_or(false)
-            }).unwrap_or(false);
-
-            if tu_ready {
-                // TU loaded: compute AST hints directly (param names + auto types).
-                // No clangd round-trip needed.
-                let ast_hints = self.compute_ast_inlay_hints(&msg).unwrap_or_default();
-                let mut all = include_hints;
-                all.extend(ast_hints);
-                return self.respond(Some(id), Value::Array(all));
-            }
-
-            // TU not ready yet: fall back to the clangd merge pipeline.
-            if self.state.clangd.is_some() {
-                let orig_id_str = match &id {
-                    Value::Number(n) => n.to_string(),
-                    Value::String(s) => s.clone(),
-                    _ => "0".to_string(),
-                };
-                let rewritten = format!("__freight_inlayhint_{orig_id_str}");
-                self.state.clangd_pending.lock().unwrap()
-                    .insert(rewritten.clone(), (id, include_hints));
-                let mut fwd = msg;
-                fwd.as_object_mut().unwrap().insert("id".to_string(), json!(rewritten));
-                return self.forward_to_passthrough(SourceServer::Clangd, &fwd).map(|_| ());
-            }
+        if goes_to_clangd && self.state.clangd.is_some() {
+            let orig_id_str = match &id {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => "0".to_string(),
+            };
+            let rewritten = format!("__freight_inlayhint_{orig_id_str}");
+            self.state
+                .clangd_pending
+                .lock()
+                .unwrap()
+                .insert(rewritten.clone(), (id, our_hints));
+            let mut fwd = msg;
+            fwd.as_object_mut()
+                .unwrap()
+                .insert("id".to_string(), json!(rewritten));
+            self.forward_to_passthrough(SourceServer::Clangd, &fwd)?;
+        } else {
+            self.respond(Some(id), Value::Array(our_hints))?;
         }
-
-        self.respond(Some(id), Value::Array(include_hints))
-    }
-
-    fn compute_ast_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
-        let uri = text_document_uri(msg)?;
-        let path = path_from_uri(&uri)?;
-        let range = msg.get("params")?.get("range")?;
-        let start_line = range.get("start")?.get("line")?.as_u64()? as u32;
-        let end_line = range.get("end")?.get("line")?.as_u64()? as u32;
-
-        let hints = self.state.tu_cache.as_ref()?
-            .ast_inlay_hints(&path, start_line, end_line)?;
-
-        Some(hints.into_iter().map(|h: AstInlayHint| json!({
-            "position":     { "line": h.line, "character": h.col },
-            "label":        h.label,
-            "kind":         h.kind,
-            "paddingLeft":  h.padding_left,
-            "paddingRight": h.padding_right,
-        })).collect())
+        Ok(())
     }
 
     fn compute_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
@@ -800,66 +596,49 @@ impl Server {
         let start_line = range.get("start")?.get("line")?.as_u64()? as usize;
         let end_line = range.get("end")?.get("line")?.as_u64()? as usize;
 
-        let tu_inclusions = self.state.tu_cache.as_ref()
-            .and_then(|c| c.inclusions_for(&path));
-
         let mut hints = Vec::new();
         for (idx, line_text) in text.lines().enumerate() {
             if idx < start_line || idx > end_line {
                 continue;
             }
+            let Some((header, is_system)) = parse_include_header(line_text) else {
+                continue;
+            };
 
-            // Resolve via libclang or text fallback.
-            let (entry_owned, header_name): (Option<HeaderEntry>, String) =
-                if let Some(inc_map) = tu_inclusions {
-                    let Some(info) = inc_map.get(&(idx as u32)) else { continue };
-                    let fname = info.full_path.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    if let Some(e) = self.state.header_index.lookup(&fname) {
-                        (Some(e.clone()), fname)
-                    } else if info.is_system {
-                        let e = self.state.header_index.lookup_system(&fname)
-                            .unwrap_or_else(|| HeaderEntry {
-                                package_name: "stdlib".to_string(),
-                                package_version: None,
-                                full_path: info.full_path.clone(),
-                                origin: HeaderOrigin::System,
-                            });
-                        (Some(e), fname)
-                    } else {
-                        continue;
-                    }
-                } else {
-                    let Some((header, is_system)) = parse_include_header(line_text) else {
-                        continue;
-                    };
-                    if let Some(e) = self.state.header_index.lookup(&header) {
-                        (Some(e.clone()), header)
-                    } else if is_system {
-                        let e = self.state.header_index.lookup_system(&header)
-                            .unwrap_or_else(|| HeaderEntry {
-                                package_name: "stdlib".to_string(),
-                                package_version: None,
-                                full_path: PathBuf::new(),
-                                origin: HeaderOrigin::System,
-                            });
-                        (Some(e), header)
-                    } else {
-                        continue;
-                    }
-                };
+            let owned;
+            let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&header) {
+                e
+            } else if is_system {
+                // File-based system lookup (e.g. <vector> → /usr/include/c++/.../vector).
+                // Named C++20 modules (e.g. `import std.core`) won't be found this way;
+                // synthesise a System entry so we still show "← stdlib".
+                owned = self
+                    .state
+                    .header_index
+                    .lookup_system(&header)
+                    .unwrap_or_else(|| HeaderEntry {
+                        package_name: "stdlib".to_string(),
+                        package_version: None,
+                        full_path: std::path::PathBuf::new(),
+                        origin: HeaderOrigin::System,
+                        dep_key: None,
+                    });
+                &owned
+            } else {
+                continue;
+            };
 
-            let Some(entry) = entry_owned else { continue };
-            let label = include_inlay_label(&entry);
+            let label = include_inlay_label(entry);
+            // Position at end of line.
+            let col = line_text.len();
             hints.push(json!({
-                "position": { "line": idx, "character": line_text.len() },
+                "position": { "line": idx, "character": col },
                 "label": label,
-                "kind": 2,
+                "kind": 2,       // Parameter kind — renders as dimmed text
                 "paddingLeft": true,
                 "tooltip": {
                     "kind": "markdown",
-                    "value": include_hover_markdown(&header_name, &entry)
+                    "value": include_hover_markdown(&header, entry)
                 }
             }));
         }
@@ -912,7 +691,11 @@ impl Server {
             .lookup_by_location(&path, line)
             .filter(|item| {
                 word.as_deref()
-                    .map(|w| item.name.to_ascii_lowercase().ends_with(&w.to_ascii_lowercase()))
+                    .map(|w| {
+                        item.name
+                            .to_ascii_lowercase()
+                            .ends_with(&w.to_ascii_lowercase())
+                    })
                     .unwrap_or(true)
             })
             .or_else(|| {
@@ -996,7 +779,9 @@ impl Server {
         };
 
         // Current sysroot from the active manifest's [compiler] section.
-        let manifest_dir = self.active_manifest_dir().unwrap_or_else(|| self.state.root_dir.clone());
+        let manifest_dir = self
+            .active_manifest_dir()
+            .unwrap_or_else(|| self.state.root_dir.clone());
         let current_sysroot: Option<String> = load_manifest(&manifest_dir)
             .ok()
             .and_then(|m| m.compiler.sysroot);
@@ -1019,7 +804,7 @@ impl Server {
     fn handle_set_config(&self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        let key   = params.get("key").and_then(Value::as_str).unwrap_or("");
+        let key = params.get("key").and_then(Value::as_str).unwrap_or("");
         let value = params.get("value");
 
         let manifest_dir = match self.active_manifest_dir() {
@@ -1035,7 +820,6 @@ impl Server {
             Err(e) => self.respond(id, json!({"error": e.to_string()})),
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1201,9 +985,6 @@ impl Server {
         };
         if let Ok(dir) = generate_lsp_compile_commands_at(&dir, &self.args.profile) {
             tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
-            if let Some(cache) = self.state.tu_cache.as_mut() {
-                cache.set_cc_dir(Some(dir.clone()));
-            }
             self.state.compile_commands_dir = Some(dir);
         }
         self.refresh_doc_index();
@@ -1244,23 +1025,15 @@ impl Server {
             "params": { "items": item_count }
         }));
 
-        // HeaderIndex — tag each dir with its origin.
-        let is_workspace = self.root_is_workspace();
-        let header_specs: Vec<HeaderDirSpec<'_>> = package_dirs
-            .iter()
-            .map(|dir| {
-                // Workspace members live directly under base; path deps are elsewhere.
-                let origin = if is_workspace && dir.parent() == Some(base.as_path()) {
-                    HeaderOrigin::Workspace
-                } else {
-                    HeaderOrigin::Project
-                };
-                HeaderDirSpec { path: dir.as_path(), origin }
-            })
-            .collect();
+        // HeaderIndex — build from the manifest graph so origins carry dep-key context.
+        let header_specs = build_header_specs(&base, self.root_is_workspace());
 
         let pkgs_dir = base.join(".pkgs");
-        let pkgs_opt = if pkgs_dir.is_dir() { Some(pkgs_dir.as_path()) } else { None };
+        let pkgs_opt = if pkgs_dir.is_dir() {
+            Some(pkgs_dir.as_path())
+        } else {
+            None
+        };
         self.state.header_index = HeaderIndex::build(&header_specs, pkgs_opt);
     }
 
@@ -1430,9 +1203,7 @@ impl Server {
                                 // those same lines are dropped in favour of ours.
                                 let our_lines: std::collections::HashSet<u64> = our_hints
                                     .iter()
-                                    .filter_map(|h| {
-                                        h.get("position")?.get("line")?.as_u64()
-                                    })
+                                    .filter_map(|h| h.get("position")?.get("line")?.as_u64())
                                     .collect();
 
                                 let clangd_hints: Vec<Value> = msg
@@ -1442,7 +1213,8 @@ impl Server {
                                     .unwrap_or_default()
                                     .into_iter()
                                     .filter(|h| {
-                                        let line = h.get("position")
+                                        let line = h
+                                            .get("position")
                                             .and_then(|p| p.get("line"))
                                             .and_then(Value::as_u64);
                                         !matches!(line, Some(l) if our_lines.contains(&l))
@@ -1574,124 +1346,85 @@ fn push_doc_package_dir(out: &mut Vec<PathBuf>, dir: PathBuf) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// clang-tidy on-save runner
-// ---------------------------------------------------------------------------
+/// Build `HeaderDirSpec` entries from the freight manifest graph rooted at `base`.
+///
+/// - `base` itself (or workspace root) → `Own`
+/// - Path dependencies → `PathDep` with their dep key
+/// - Workspace members → `Workspace`
+fn build_header_specs(base: &Path, is_workspace: bool) -> Vec<HeaderDirSpec<'_>> {
+    let mut specs: Vec<(PathBuf, HeaderOrigin, Option<String>)> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-/// Spawn `clang-tidy <file> -p <cc_dir>`, parse its output, and push
-/// `textDocument/publishDiagnostics` with `source = "clang-tidy"`.
-/// Runs entirely in a background thread; errors are logged and silently dropped.
-fn run_clang_tidy(
-    file: &Path,
-    cc_dir: &Path,
-    uri: String,
-    out: Arc<Mutex<io::Stdout>>,
-) {
-    let output = match std::process::Command::new("clang-tidy")
-        .arg(file)
-        .arg("-p")
-        .arg(cc_dir)
-        .arg("--quiet") // suppress "N warnings generated" summary
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::debug!(error = %e, "clang-tidy not available or failed to launch");
+    let push = |specs: &mut Vec<(PathBuf, HeaderOrigin, Option<String>)>,
+                seen: &mut std::collections::HashSet<PathBuf>,
+                dir: PathBuf,
+                origin: HeaderOrigin,
+                dep_key: Option<String>| {
+        if !dir.is_dir() {
             return;
+        }
+        let canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+        if seen.insert(canon) {
+            specs.push((dir, origin, dep_key));
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
-
-    let diagnostics = parse_clang_tidy_output(&combined, file);
-
-    let msg = json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/publishDiagnostics",
-        "params": {
-            "uri": uri,
-            "source": "clang-tidy",
-            "diagnostics": diagnostics
+    if is_workspace {
+        // Workspace root is not a package; add each member as Own and collect their path deps.
+        if let Some(ws) = load_workspace_manifest(base) {
+            for member_path in &ws.members {
+                let member_dir = base.join(member_path);
+                push(&mut specs, &mut seen, member_dir.clone(), HeaderOrigin::Own, None);
+                // Path deps of this workspace member
+                if let Ok(manifest) = load_manifest(&member_dir) {
+                    collect_path_dep_specs(&member_dir, &manifest, &mut specs, &mut seen);
+                }
+            }
         }
-    });
-    let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
-    tracing::debug!(
-        file = %file.display(),
-        count = diagnostics.as_array().map(|a| a.len()).unwrap_or(0),
-        "clang-tidy diagnostics published"
-    );
-}
-
-/// Parse clang-tidy text output into LSP diagnostic objects.
-///
-/// Format: `<file>:<line>:<col>: <severity>: <message> [<check>]`
-fn parse_clang_tidy_output(text: &str, source_file: &Path) -> Value {
-    let mut diagnostics = Vec::new();
-    let file_str = source_file.to_string_lossy();
-
-    for line in text.lines() {
-        // Must start with the source file path to avoid picking up notes from
-        // other files or clangd's own include chains.
-        if !line.starts_with(file_str.as_ref()) {
-            continue;
+    } else {
+        push(&mut specs, &mut seen, base.to_path_buf(), HeaderOrigin::Own, None);
+        if let Ok(manifest) = load_manifest(base) {
+            collect_path_dep_specs(base, &manifest, &mut specs, &mut seen);
         }
-
-        // `<file>:<line>:<col>: <severity>: <message> [<check>]`
-        let rest = &line[file_str.len()..];
-        let mut parts = rest.splitn(4, ':');
-        let line_num: u32 = match parts.next().and_then(|s| s.trim_start_matches(':').trim().parse().ok()) {
-            Some(n) => n,
-            None => continue,
-        };
-        let col_num: u32 = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(1);
-        let remainder = match parts.next() {
-            Some(r) => r.trim(),
-            None => continue,
-        };
-
-        // `<severity>: <message> [<check>]`
-        let (severity_str, message_and_check) = match remainder.split_once(':') {
-            Some(p) => p,
-            None => continue,
-        };
-        let severity_str = severity_str.trim();
-        let severity: u32 = match severity_str {
-            "error" => 1,
-            "warning" => 2,
-            "note" | "remark" => 3,
-            _ => continue, // skip lines that don't look like diagnostics
-        };
-        if severity == 3 {
-            continue; // notes are clutter; skip them
-        }
-
-        let msg_text = message_and_check.trim();
-        // Extract the optional check name in brackets at the end.
-        let (message, code) = if let Some(bracket) = msg_text.rfind('[') {
-            let check = msg_text[bracket + 1..].trim_end_matches(']').trim().to_string();
-            (msg_text[..bracket].trim().to_string(), Some(check))
-        } else {
-            (msg_text.to_string(), None)
-        };
-
-        let mut diag = json!({
-            "range": {
-                "start": { "line": line_num.saturating_sub(1), "character": col_num.saturating_sub(1) },
-                "end":   { "line": line_num.saturating_sub(1), "character": col_num.saturating_sub(1) }
-            },
-            "severity": severity,
-            "source": "clang-tidy",
-            "message": message
-        });
-        if let Some(c) = code {
-            diag.as_object_mut().unwrap().insert("code".to_string(), json!(c));
-        }
-        diagnostics.push(diag);
     }
 
-    Value::Array(diagnostics)
+    // We need owned PathBufs to survive the borrow. Allocate and leak refs.
+    // (HeaderDirSpec<'_> holds &'_ Path — we need a stable backing store.)
+    // Use a boxed slice to pin the paths.
+    specs
+        .into_iter()
+        .map(|(dir, origin, dep_key)| {
+            // Safety: HeaderDirSpec borrows a path. We need the path to outlive
+            // the Vec. Box it and leak — this is an LSP process, memory is fine.
+            let boxed: Box<Path> = dir.into_boxed_path();
+            let path: &'static Path = Box::leak(boxed);
+            HeaderDirSpec { path, origin, dep_key }
+        })
+        .collect()
+}
+
+fn collect_path_dep_specs(
+    project_dir: &Path,
+    manifest: &Manifest,
+    specs: &mut Vec<(PathBuf, HeaderOrigin, Option<String>)>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) {
+    for (dep_key, dep) in manifest
+        .effective_dependencies()
+        .into_iter()
+        .chain(manifest.dev_dependencies.iter().map(|(k, v)| (k.clone(), v.clone())))
+    {
+        let Dependency::Detailed(detail) = dep else { continue };
+        let Some(rel_path) = detail.path else { continue };
+        let dep_dir = project_dir.join(&rel_path);
+        if !dep_dir.is_dir() {
+            continue;
+        }
+        let canon = dep_dir.canonicalize().unwrap_or_else(|_| dep_dir.clone());
+        if seen.insert(canon) {
+            specs.push((dep_dir, HeaderOrigin::PathDep, Some(dep_key)));
+        }
+    }
 }
 
 fn level_for_method(method: &str) -> tracing::Level {

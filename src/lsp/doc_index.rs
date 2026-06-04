@@ -8,10 +8,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use crate::doc::{extract_dir, extract_file, DocItem, DocLanguage, TagKind};
+use crate::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};
 use crate::manifest::load_manifest;
 use crate::manifest::types::Manifest;
-
 
 // ---------------------------------------------------------------------------
 // DocIndex
@@ -47,17 +46,29 @@ impl DocIndex {
                 by_name.entry(key).or_insert(idx);
                 // location map: keyed by canonical file path + doc-comment start line
                 if item.line > 0 {
-                    let canonical = item.file.canonicalize().unwrap_or_else(|_| item.file.clone());
-                    by_location.entry(canonical).or_default().insert(item.line, idx);
+                    let canonical = item
+                        .file
+                        .canonicalize()
+                        .unwrap_or_else(|_| item.file.clone());
+                    by_location
+                        .entry(canonical)
+                        .or_default()
+                        .insert(item.line, idx);
                 }
                 items.push(item);
             }
         }
-        Self { items, by_name, by_location }
+        Self {
+            items,
+            by_name,
+            by_location,
+        }
     }
 
     pub fn lookup(&self, name: &str) -> Option<&DocItem> {
-        self.by_name.get(&name.to_ascii_lowercase()).and_then(|&i| self.items.get(i))
+        self.by_name
+            .get(&name.to_ascii_lowercase())
+            .and_then(|&i| self.items.get(i))
     }
 
     /// Find the doc item whose doc-comment is nearest at or before `line` in `file`.
@@ -137,7 +148,11 @@ fn extract_pkg_items(dir: &Path, manifest: Option<&Manifest>) -> Vec<DocItem> {
             any = true;
         }
     }
-    if any { items } else { extract_dir(dir).items }
+    if any {
+        items
+    } else {
+        extract_dir(dir).items
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -147,12 +162,14 @@ fn extract_pkg_items(dir: &Path, manifest: Option<&Manifest>) -> Vec<DocItem> {
 /// Where a package's headers came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderOrigin {
+    /// The current project itself (headers in its `include/`, `src/`, or `[compiler].includes`).
+    Own,
     /// Workspace member (sibling crate in the same `freight.toml` workspace).
     Workspace,
     /// Path dependency declared in the current project's `[dependencies]`.
-    Project,
+    PathDep,
     /// Installed by `freight fetch` into the project's `.pkgs/` cache.
-    Local,
+    Fetched,
     /// System-installed (found on the compiler's default include path).
     System,
 }
@@ -163,6 +180,8 @@ pub struct HeaderEntry {
     pub package_version: Option<String>,
     pub full_path: PathBuf,
     pub origin: HeaderOrigin,
+    /// The key used in `[dependencies]` for this entry (e.g. `"mylib"`).
+    pub dep_key: Option<String>,
 }
 
 /// Maps include-path variants → package origin.
@@ -179,12 +198,14 @@ pub struct HeaderIndex {
 pub struct HeaderDirSpec<'a> {
     pub path: &'a Path,
     pub origin: HeaderOrigin,
+    /// The dep key from `[dependencies]` — `None` for the project itself.
+    pub dep_key: Option<String>,
 }
 
 impl HeaderIndex {
     /// Build the index from:
-    /// - `package_dirs`: workspace members and path deps, tagged with their origin
-    /// - `pkgs_dir`: the `.pkgs/` directory (freight-installed packages → `Local`)
+    /// - `package_dirs`: workspace members, path deps, and the project itself
+    /// - `pkgs_dir`: the `.pkgs/` directory (freight-fetched packages → `Fetched`)
     pub fn build(package_dirs: &[HeaderDirSpec<'_>], pkgs_dir: Option<&Path>) -> Self {
         let mut by_path = HashMap::new();
 
@@ -195,12 +216,20 @@ impl HeaderIndex {
                 .as_ref()
                 .map(|m| m.package.name.clone())
                 .unwrap_or_else(|| {
-                    dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string()
+                    dir.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string()
                 });
             let pkg_version = manifest.as_ref().map(|m| m.package.version.clone());
+            let dep_key = spec.dep_key.clone();
 
-            // Declared public headers
-            if let Some(hdrs) = manifest.as_ref().and_then(|m| m.lib.as_ref()).map(|l| &l.hdrs) {
+            // Declared public headers from [lib].hdrs
+            if let Some(hdrs) = manifest
+                .as_ref()
+                .and_then(|m| m.lib.as_ref())
+                .map(|l| &l.hdrs)
+            {
                 for hdr in hdrs {
                     let full = dir.join(hdr);
                     if full.is_file() {
@@ -209,20 +238,60 @@ impl HeaderIndex {
                             package_version: pkg_version.clone(),
                             full_path: full,
                             origin: spec.origin.clone(),
+                            dep_key: dep_key.clone(),
                         };
                         insert_header(&mut by_path, hdr, entry);
                     }
                 }
             }
 
-            // include/ directory
+            // include/ directory (all packages)
             let include_dir = dir.join("include");
             if include_dir.is_dir() {
-                walk_include_dir(
-                    &include_dir, &include_dir,
-                    &pkg_name, &pkg_version,
-                    spec.origin.clone(), &mut by_path,
+                walk_headers(
+                    &include_dir,
+                    &include_dir,
+                    &pkg_name,
+                    &pkg_version,
+                    spec.origin.clone(),
+                    &dep_key,
+                    &mut by_path,
                 );
+            }
+
+            // For the project itself: also walk [compiler].includes dirs and src/.
+            // These are where relative #include "..." paths live.
+            if spec.origin == HeaderOrigin::Own {
+                // [compiler].includes — authoritative per-project extra include dirs
+                if let Some(ref m) = manifest {
+                    for inc in &m.compiler.includes {
+                        let inc_dir = dir.join(inc);
+                        if inc_dir.is_dir() {
+                            walk_headers(
+                                &inc_dir,
+                                &inc_dir,
+                                &pkg_name,
+                                &pkg_version,
+                                HeaderOrigin::Own,
+                                &dep_key,
+                                &mut by_path,
+                            );
+                        }
+                    }
+                }
+                // src/ — relative includes like #include "utils.h"
+                let src_dir = dir.join("src");
+                if src_dir.is_dir() {
+                    walk_headers(
+                        &src_dir,
+                        &src_dir,
+                        &pkg_name,
+                        &pkg_version,
+                        HeaderOrigin::Own,
+                        &dep_key,
+                        &mut by_path,
+                    );
+                }
             }
         }
 
@@ -233,21 +302,32 @@ impl HeaderIndex {
                 if !pkg_dir.is_dir() {
                     continue;
                 }
-                let dir_name = pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                let dir_name = pkg_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
                 let (pkg_name, pkg_version) = split_name_version(&dir_name);
                 let include_dir = pkg_dir.join("include");
                 if include_dir.is_dir() {
-                    walk_include_dir(
-                        &include_dir, &include_dir,
-                        pkg_name, &Some(pkg_version.to_string()),
-                        HeaderOrigin::Local, &mut by_path,
+                    walk_headers(
+                        &include_dir,
+                        &include_dir,
+                        pkg_name,
+                        &Some(pkg_version.to_string()),
+                        HeaderOrigin::Fetched,
+                        &None,
+                        &mut by_path,
                     );
                 }
             }
         }
 
         let system_dirs = probe_system_include_dirs();
-        Self { by_path, system_dirs }
+        Self {
+            by_path,
+            system_dirs,
+        }
     }
 
     /// Look up a header by its include path (e.g. `"zlib.h"` or `"zlib/zlib.h"`).
@@ -272,6 +352,7 @@ impl HeaderIndex {
                     package_version: None,
                     full_path: candidate,
                     origin: HeaderOrigin::System,
+                    dep_key: None,
                 });
             }
         }
@@ -285,7 +366,10 @@ impl HeaderIndex {
 
 impl Default for HeaderIndex {
     fn default() -> Self {
-        Self { by_path: HashMap::new(), system_dirs: probe_system_include_dirs() }
+        Self {
+            by_path: HashMap::new(),
+            system_dirs: probe_system_include_dirs(),
+        }
     }
 }
 
@@ -328,10 +412,7 @@ fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
                 // Strip any trailing " (framework directory)" annotation (macOS clang)
-                let path_str = trimmed
-                    .split_once(" (")
-                    .map(|(p, _)| p)
-                    .unwrap_or(trimmed);
+                let path_str = trimmed.split_once(" (").map(|(p, _)| p).unwrap_or(trimmed);
                 let p = PathBuf::from(path_str);
                 if p.is_dir() {
                     dirs.push(p);
@@ -342,19 +423,22 @@ fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
     Some(dirs)
 }
 
-fn walk_include_dir(
+fn walk_headers(
     root: &Path,
     dir: &Path,
     pkg_name: &str,
     pkg_version: &Option<String>,
     origin: HeaderOrigin,
+    dep_key: &Option<String>,
     out: &mut HashMap<String, HeaderEntry>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            walk_include_dir(root, &path, pkg_name, pkg_version, origin.clone(), out);
+            walk_headers(root, &path, pkg_name, pkg_version, origin.clone(), dep_key, out);
         } else if is_header(&path) {
             let rel = path.strip_prefix(root).unwrap_or(&path);
             let entry = HeaderEntry {
@@ -362,6 +446,7 @@ fn walk_include_dir(
                 package_version: pkg_version.clone(),
                 full_path: path.clone(),
                 origin: origin.clone(),
+                dep_key: dep_key.clone(),
             };
             insert_header(out, &rel.to_string_lossy(), entry);
         }
@@ -380,6 +465,7 @@ fn insert_header(map: &mut HashMap<String, HeaderEntry>, rel_path: &str, entry: 
         package_version: entry.package_version.clone(),
         full_path: entry.full_path.clone(),
         origin: entry.origin.clone(),
+        dep_key: entry.dep_key.clone(),
     });
     if !basename.is_empty() {
         map.entry(basename).or_insert(entry);
@@ -420,18 +506,86 @@ pub fn include_hover_markdown(header: &str, entry: &HeaderEntry) -> String {
         entry.package_name.clone()
     };
 
-    let origin_label = match entry.origin {
-        HeaderOrigin::Workspace => format!("$workspace/{name_ver}"),
-        HeaderOrigin::Project   => format!("$project/{name_ver}"),
-        HeaderOrigin::Local     => format!("$local/{name_ver}"),
-        HeaderOrigin::System    => "$system".to_string(),
+    let origin_label = match &entry.origin {
+        HeaderOrigin::Own => format!("[this project]/{name_ver}"),
+        HeaderOrigin::Workspace => format!("[workspace]/{name_ver}"),
+        HeaderOrigin::PathDep => {
+            if let Some(key) = &entry.dep_key {
+                format!("[dep: {key}]/{name_ver}")
+            } else {
+                format!("[path dep]/{name_ver}")
+            }
+        }
+        HeaderOrigin::Fetched => format!("[fetched]/{name_ver}"),
+        HeaderOrigin::System => "[system]".to_string(),
     };
 
     let mut out = String::new();
-    out.push_str(&format!("**`{header}`**  `{origin_label}`\n\n"));
-    let path_str = entry.full_path.to_string_lossy();
+    out.push_str(&format!("**`{origin_label}::{header}`**\n\n"));
+    let path_str = display_include_path(&entry.full_path);
     out.push_str(&format!("`{path_str}`"));
     out
+}
+
+fn display_include_path(path: &Path) -> String {
+    if let Some(rel) = relative_to_freight_package(path) {
+        return rel;
+    }
+    if let Some(rel) = relative_to_pkgs_package(path) {
+        return rel;
+    }
+    if let Some(rel) = relative_to_include_root(path) {
+        return rel;
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn relative_to_freight_package(path: &Path) -> Option<String> {
+    for ancestor in path.ancestors() {
+        if ancestor.join("freight.toml").is_file() {
+            return path
+                .strip_prefix(ancestor)
+                .ok()
+                .map(|rel| rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    None
+}
+
+fn relative_to_pkgs_package(path: &Path) -> Option<String> {
+    let parts: Vec<_> = path.components().collect();
+    let pkgs_idx = parts
+        .iter()
+        .position(|component| component.as_os_str() == ".pkgs")?;
+    let pkg_idx = pkgs_idx + 1;
+    if pkg_idx >= parts.len() {
+        return None;
+    }
+
+    let pkg_root: PathBuf = parts[..=pkg_idx].iter().collect();
+    let pkg_name = parts[pkg_idx].as_os_str().to_string_lossy();
+    let rel = path.strip_prefix(&pkg_root).ok()?;
+    Some(format!(
+        "{}/{}",
+        pkg_name,
+        rel.to_string_lossy().replace('\\', "/")
+    ))
+}
+
+fn relative_to_include_root(path: &Path) -> Option<String> {
+    let parts: Vec<_> = path.components().collect();
+    let include_idx = parts
+        .iter()
+        .rposition(|component| component.as_os_str() == "include")?;
+    let rel_start = include_idx + 1;
+    if rel_start >= parts.len() {
+        return None;
+    }
+    let rel: PathBuf = parts[rel_start..].iter().collect();
+    Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// Parse a header or module import directive from a line.
@@ -446,7 +600,10 @@ pub fn parse_include_header(line: &str) -> Option<(String, bool)> {
     let line = line.trim();
 
     // #include / #import — preprocessor directives
-    let rest = if let Some(r) = line.strip_prefix("#include").or_else(|| line.strip_prefix("#import")) {
+    let rest = if let Some(r) = line
+        .strip_prefix("#include")
+        .or_else(|| line.strip_prefix("#import"))
+    {
         r.trim()
     } else if let Some(r) = line.strip_prefix("import") {
         // C++20: `import <header>;` / `import "header";` / `import module.name;`
@@ -456,7 +613,9 @@ pub fn parse_include_header(line: &str) -> Option<(String, bool)> {
         } else {
             // Named module: `import std.core` → treat as system, no file path
             let name = r.split_whitespace().next()?.trim_end_matches(';');
-            if name.is_empty() || name.contains('{') { return None; }
+            if name.is_empty() || name.contains('{') {
+                return None;
+            }
             return Some((name.to_string(), true));
         }
     } else {
@@ -474,7 +633,7 @@ pub fn parse_include_header(line: &str) -> Option<(String, bool)> {
     }
 }
 // ---------------------------------------------------------------------------
-// Markdown rendering 
+// Markdown rendering
 // ---------------------------------------------------------------------------
 
 /// Short label for an inlay hint: `← pkg-version` or `← stdlib`.
@@ -501,9 +660,9 @@ pub fn item_to_markdown(item: &DocItem) -> String {
     let mut out = String::new();
 
     // Fenced code block for the signature.
-    if !item.signature.is_empty() {
+    if let Some(signature) = hover_signature(item) {
         let lang = lang_id(item.lang.clone());
-        out.push_str(&format!("```{lang}\n{}\n```\n\n", item.signature.trim()));
+        out.push_str(&format!("```{lang}\n{signature}\n```\n\n"));
     }
 
     // Brief (first paragraph of doc comment).
@@ -519,23 +678,57 @@ pub fn item_to_markdown(item: &DocItem) -> String {
     }
 
     // Structured tags
-    let params: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::Param).collect();
-    let tparams: Vec<&_> = item.tags.iter().filter(|t| {
-        matches!(&t.kind, TagKind::Other(s) if s.eq_ignore_ascii_case("tparam"))
-    }).collect();
-    let returns: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::Return).collect();
+    let params: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Param)
+        .collect();
+    let tparams: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| matches!(&t.kind, TagKind::Other(s) if s.eq_ignore_ascii_case("tparam")))
+        .collect();
+    let returns: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Return)
+        .collect();
     let throws: Vec<&_> = item.tags.iter().filter(|t| {
         matches!(&t.kind, TagKind::Other(s) if s.eq_ignore_ascii_case("throws") || s.eq_ignore_ascii_case("exception"))
     }).collect();
-    let examples: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::Example).collect();
-    let sees: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::See).collect();
-    let notes: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::Note).collect();
-    let warnings: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::Warning).collect();
-    let deprecated: Vec<&_> = item.tags.iter().filter(|t| t.kind == TagKind::Deprecated).collect();
+    let examples: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Example)
+        .collect();
+    let sees: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::See)
+        .collect();
+    let notes: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Note)
+        .collect();
+    let warnings: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Warning)
+        .collect();
+    let deprecated: Vec<&_> = item
+        .tags
+        .iter()
+        .filter(|t| t.kind == TagKind::Deprecated)
+        .collect();
 
     if !deprecated.is_empty() {
         out.push_str("> ⚠️ **Deprecated**");
-        if let Some(text) = deprecated.first().map(|t| t.text.trim()).filter(|t| !t.is_empty()) {
+        if let Some(text) = deprecated
+            .first()
+            .map(|t| t.text.trim())
+            .filter(|t| !t.is_empty())
+        {
             out.push_str(&format!(": {text}"));
         }
         out.push_str("\n\n");
@@ -599,7 +792,10 @@ pub fn item_to_markdown(item: &DocItem) -> String {
 
     if !sees.is_empty() {
         out.push_str("**See also**: ");
-        let refs: Vec<String> = sees.iter().map(|t| format!("`{}`", t.text.trim())).collect();
+        let refs: Vec<String> = sees
+            .iter()
+            .map(|t| format!("`{}`", t.text.trim()))
+            .collect();
         out.push_str(&refs.join(", "));
         out.push('\n');
     }
@@ -650,6 +846,97 @@ fn simple_name(name: &str) -> &str {
     name.rsplit("::").next().unwrap_or(name)
 }
 
+fn hover_signature(item: &DocItem) -> Option<String> {
+    let signature = if matches!(item.kind, DocKind::Variable)
+        && matches!(item.lang, DocLanguage::C | DocLanguage::Cpp)
+    {
+        concise_c_like_variable_signature(&item.signature, &item.name)
+            .unwrap_or_else(|| item.display_signature())
+    } else {
+        item.display_signature()
+    };
+
+    let signature = signature.trim();
+    if signature.is_empty() {
+        None
+    } else {
+        Some(signature.to_string())
+    }
+}
+
+fn concise_c_like_variable_signature(raw: &str, name: &str) -> Option<String> {
+    let line = raw.lines().find(|line| !line.trim().is_empty())?.trim();
+    let ident = simple_name(name);
+    if ident.is_empty() {
+        return None;
+    }
+
+    let name_end = find_top_level_ident_end(line, ident)?;
+    let mut concise = line[..name_end].trim_end().to_string();
+    concise = strip_c_variable_storage(&concise).to_string();
+    if concise.is_empty() {
+        None
+    } else {
+        Some(concise)
+    }
+}
+
+fn find_top_level_ident_end(line: &str, ident: &str) -> Option<usize> {
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+
+    for (idx, ch) in line.char_indices() {
+        match ch {
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
+        }
+
+        if angle_depth != 0 || paren_depth != 0 || bracket_depth != 0 {
+            continue;
+        }
+        if !line[idx..].starts_with(ident) {
+            continue;
+        }
+
+        let before = line[..idx].chars().next_back();
+        let after = line[idx + ident.len()..].chars().next();
+        if before.is_some_and(is_ident_char) || after.is_some_and(is_ident_char) {
+            continue;
+        }
+        return Some(idx + ident.len());
+    }
+    None
+}
+
+fn is_ident_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn strip_c_variable_storage(mut signature: &str) -> &str {
+    loop {
+        let trimmed = signature.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("static ") {
+            signature = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("extern ") {
+            signature = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("inline ") {
+            signature = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("mutable ") {
+            signature = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("thread_local ") {
+            signature = rest;
+        } else {
+            return trimmed.trim_end();
+        }
+    }
+}
+
 fn lang_id(lang: DocLanguage) -> &'static str {
     match lang {
         DocLanguage::C => "c",
@@ -658,6 +945,7 @@ fn lang_id(lang: DocLanguage) -> &'static str {
         DocLanguage::Rust => "rust",
         DocLanguage::Ada => "ada",
         DocLanguage::D => "d",
+        DocLanguage::Zig => "zig",
         _ => "text",
     }
 }
@@ -692,8 +980,16 @@ hdrs = ["include/core.h"]
 "#,
         )
         .unwrap();
-        std::fs::write(tmp.path().join("include/core.h"), "/// Public API.\nint core_public(void);").unwrap();
-        std::fs::write(tmp.path().join("src/private.c"), "/// Private implementation.\nint core_private(void) { return 1; }").unwrap();
+        std::fs::write(
+            tmp.path().join("include/core.h"),
+            "/// Public API.\nint core_public(void);",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("src/private.c"),
+            "/// Private implementation.\nint core_private(void) { return 1; }",
+        )
+        .unwrap();
 
         let index = DocIndex::build_freight_packages([tmp.path()]);
 
@@ -703,30 +999,49 @@ hdrs = ["include/core.h"]
 
     #[test]
     fn parse_include_header_angle_brackets() {
-        assert_eq!(parse_include_header("#include <zlib.h>"), Some(("zlib.h".into(), true)));
-        assert_eq!(parse_include_header("  #include  <foo/bar.h>"), Some(("foo/bar.h".into(), true)));
+        assert_eq!(
+            parse_include_header("#include <zlib.h>"),
+            Some(("zlib.h".into(), true))
+        );
+        assert_eq!(
+            parse_include_header("  #include  <foo/bar.h>"),
+            Some(("foo/bar.h".into(), true))
+        );
     }
 
     #[test]
     fn parse_include_header_quotes() {
-        assert_eq!(parse_include_header(r#"#include "myheader.h""#), Some(("myheader.h".into(), false)));
+        assert_eq!(
+            parse_include_header(r#"#include "myheader.h""#),
+            Some(("myheader.h".into(), false))
+        );
     }
 
     #[test]
     fn parse_include_header_cpp20_header_unit() {
-        assert_eq!(parse_include_header("import <vector>;"), Some(("vector".into(), true)));
-        assert_eq!(parse_include_header(r#"import "mymodule.hpp";"#), Some(("mymodule.hpp".into(), false)));
+        assert_eq!(
+            parse_include_header("import <vector>;"),
+            Some(("vector".into(), true))
+        );
+        assert_eq!(
+            parse_include_header(r#"import "mymodule.hpp";"#),
+            Some(("mymodule.hpp".into(), false))
+        );
     }
 
     #[test]
     fn parse_include_header_cpp20_named_module() {
-        assert_eq!(parse_include_header("import std.core;"), Some(("std.core".into(), true)));
-        assert_eq!(parse_include_header("import mylib;"), Some(("mylib".into(), true)));
+        assert_eq!(
+            parse_include_header("import std.core;"),
+            Some(("std.core".into(), true))
+        );
+        assert_eq!(
+            parse_include_header("import mylib;"),
+            Some(("mylib".into(), true))
+        );
         // export module declaration — not an import, should not match
         assert_eq!(parse_include_header("export module mylib;"), None);
     }
-
-
 
     #[test]
     fn header_index_lookup_by_basename() {
@@ -739,11 +1054,111 @@ hdrs = ["include/core.h"]
         .unwrap();
         std::fs::write(tmp.path().join("include/mylib/api.h"), "// header").unwrap();
 
-        let specs = [HeaderDirSpec { path: tmp.path(), origin: HeaderOrigin::Project }];
+        let specs = [HeaderDirSpec {
+            path: tmp.path(),
+            origin: HeaderOrigin::PathDep,
+            dep_key: Some("mylib".to_string()),
+        }];
         let index = HeaderIndex::build(&specs, None);
         assert!(index.lookup("api.h").is_some());
         assert!(index.lookup("mylib/api.h").is_some());
         assert_eq!(index.lookup("api.h").unwrap().package_name, "mylib");
-        assert_eq!(index.lookup("api.h").unwrap().origin, HeaderOrigin::Project);
+        assert_eq!(index.lookup("api.h").unwrap().origin, HeaderOrigin::PathDep);
+    }
+
+    #[test]
+    fn include_hover_uses_relative_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let header = tmp.path().join("include/mylib/api.h");
+        std::fs::create_dir_all(header.parent().unwrap()).unwrap();
+        std::fs::write(
+            tmp.path().join("freight.toml"),
+            "[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(&header, "// header").unwrap();
+
+        let md = include_hover_markdown(
+            "mylib/api.h",
+            &HeaderEntry {
+                package_name: "mylib".to_string(),
+                package_version: Some("1.0.0".to_string()),
+                full_path: header,
+                origin: HeaderOrigin::PathDep,
+                dep_key: Some("mylib".to_string()),
+            },
+        );
+
+        assert!(md.contains("`include/mylib/api.h`"));
+        assert!(!md.contains(tmp.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn hover_markdown_uses_highlighted_concise_cpp_variable_signature() {
+        let item = test_item(
+            "data",
+            DocKind::Variable,
+            DocLanguage::Cpp,
+            "std::vector<double> data = {2., 4., 4.};",
+        );
+
+        let md = item_to_markdown(&item);
+
+        assert!(md.starts_with("```cpp\nstd::vector<double> data\n```\n\n"));
+        assert!(!md.contains("{2."));
+    }
+
+    #[test]
+    fn hover_signature_strips_cpp_direct_initializer_args() {
+        let item = test_item(
+            "tada",
+            DocKind::Variable,
+            DocLanguage::Cpp,
+            "std::pair<double, double> tada(mean(data), variance(data));",
+        );
+
+        assert_eq!(
+            hover_signature(&item).as_deref(),
+            Some("std::pair<double, double> tada")
+        );
+    }
+
+    #[test]
+    fn hover_signature_removes_c_like_storage_class() {
+        let item = test_item(
+            "cout",
+            DocKind::Variable,
+            DocLanguage::Cpp,
+            "extern ostream cout;",
+        );
+
+        assert_eq!(hover_signature(&item).as_deref(), Some("ostream cout"));
+    }
+
+    #[test]
+    fn hover_markdown_uses_language_specific_fence() {
+        let item = test_item(
+            "parse",
+            DocKind::Function,
+            DocLanguage::Zig,
+            "pub fn parse(value: []const u8) void {",
+        );
+
+        assert!(item_to_markdown(&item).starts_with("```zig\n"));
+    }
+
+    fn test_item(name: &str, kind: DocKind, lang: DocLanguage, signature: &str) -> DocItem {
+        DocItem {
+            name: name.to_string(),
+            kind,
+            brief: "Docs.".to_string(),
+            body: String::new(),
+            tags: Vec::new(),
+            file: PathBuf::from("src/main.cpp"),
+            line: 1,
+            lang,
+            signature: signature.to_string(),
+            meta: Default::default(),
+        }
     }
 }
