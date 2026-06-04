@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use freight_core::install::{install_project, installer_project, package_project, InstallOptions, InstalledKind};
+use freight_core::install::{
+    install_project, installer_project, package_project,
+    InstallOptions, InstalledKind, WindowsInstallerFormat,
+};
 use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
@@ -48,12 +51,15 @@ pub struct PackageArgs {
     /// Omit for a native build. Unsupported combinations are skipped with a warning.
     #[arg(long, value_name = "TRIPLES", value_delimiter = ',')]
     pub target: Vec<String>,
-    /// Bundle transitive shared-library dependencies alongside the binary so
-    /// the archive runs on machines that don't have those libraries installed.
-    /// Uses ldd (Linux), otool -L (macOS), or dumpbin (Windows) to discover
-    /// dependencies; excludes system libs (libc, libm, kernel DLLs, etc.).
+    /// Produce a native installer instead of a plain archive.
+    /// On Linux: .deb; on macOS: .dmg; on Windows: NSIS .exe by default.
     #[arg(long)]
     pub installer: bool,
+    /// Windows installer format when --installer is set.
+    /// `nsis` (default): classic Program Files installer.
+    /// `msix`: sandboxed package for Windows App Installer / Windows Sandbox / Store.
+    #[arg(long, value_name = "FORMAT", default_value = "nsis")]
+    pub installer_format: String,
     #[command(flatten)]
     pub build: super::common::BuildFlags,
 }
@@ -61,7 +67,17 @@ pub struct PackageArgs {
 impl PackageArgs {
     pub fn run(self) {
         self.build.apply();
-        cmd_package(self.release, &self.target, self.installer);
+        let win_fmt = WindowsInstallerFormat::from_str(&self.installer_format);
+        if self.installer && win_fmt.is_none()
+            && !self.installer_format.eq_ignore_ascii_case("nsis")
+        {
+            eprintln!(
+                "error: unknown --installer-format '{}'; valid values: nsis, msix",
+                self.installer_format
+            );
+            std::process::exit(1);
+        }
+        cmd_package(self.release, &self.target, self.installer, win_fmt);
     }
 }
 
@@ -154,13 +170,18 @@ pub fn cmd_install(
     }
 }
 
-pub fn cmd_package(release: bool, targets: &[String], installer: bool) {
+pub fn cmd_package(
+    release: bool,
+    targets: &[String],
+    installer: bool,
+    win_fmt: Option<WindowsInstallerFormat>,
+) {
     let cwd = std::env::current_dir().expect("cannot read cwd");
     let project_dir = find_manifest_dir(&cwd).unwrap_or(cwd);
 
     let pack = |target: Option<&str>| {
         if installer {
-            installer_project(&project_dir, release, target)
+            installer_project(&project_dir, release, target, win_fmt.clone())
         } else {
             package_project(&project_dir, release, target)
         }

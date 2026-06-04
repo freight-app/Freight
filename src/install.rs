@@ -14,6 +14,28 @@ use crate::vendor::parse_triple;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/// Which native-installer format to produce on Windows.
+///
+/// `Auto` picks NSIS when no preference is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowsInstallerFormat {
+    /// Classic NSIS-based `.exe` installer (installs to Program Files, full trust).
+    Nsis,
+    /// MSIX package for the Windows App Installer / sandbox / Store.
+    /// Runs in a virtualised container; requires signing before sideloading.
+    Msix,
+}
+
+impl WindowsInstallerFormat {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "nsis" => Some(Self::Nsis),
+            "msix" => Some(Self::Msix),
+            _ => None,
+        }
+    }
+}
+
 pub struct InstallOptions {
     /// Installation prefix, e.g. `/usr/local`. The subdirectories `bin/`,
     /// `lib/`, `include/` are created beneath it.
@@ -589,13 +611,18 @@ fn create_tarball(parent: &Path, stem: &str, archive: &Path) -> Result<(), Freig
 /// - **macOS** → `.dmg` disk image via `hdiutil` (always available on macOS).
 ///   Bundles dylib dependencies; rewrites install names to `@executable_path/../lib/`.
 ///
-/// - **Windows** → NSIS-based `.exe` installer via `makensis`.
-///   Bundles DLL dependencies. If `makensis` is not on PATH, the function
-///   returns an error with installation instructions.
+/// - **Windows / NSIS** → NSIS-based `.exe` installer via `makensis`.
+///   Installs to `Program Files`; full-trust. Requires `makensis` on PATH.
+///
+/// - **Windows / MSIX** → MSIX package via `makeappx.exe` (Windows SDK).
+///   Runs in a virtualised container; suitable for the Windows App Installer,
+///   Windows Sandbox, and the Microsoft Store. Packages are unsigned by
+///   default; use `signtool` to sign before distributing outside Developer Mode.
 pub fn installer_project(
     project_dir: &Path,
     release: bool,
     target: Option<&str>,
+    windows_format: Option<WindowsInstallerFormat>,
 ) -> Result<PathBuf, FreightError> {
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
@@ -656,7 +683,10 @@ pub fn installer_project(
     let output = match pkg_os.as_str() {
         "linux"   => build_deb(&manifest, &staging, &pkg_dir, &pkg_arch)?,
         "macos"   => build_dmg(&manifest, &staging, &pkg_dir)?,
-        "windows" => build_nsis(&manifest, &staging, &pkg_dir)?,
+        "windows" => match windows_format.unwrap_or(WindowsInstallerFormat::Nsis) {
+            WindowsInstallerFormat::Nsis => build_nsis(&manifest, &staging, &pkg_dir)?,
+            WindowsInstallerFormat::Msix => build_msix(&manifest, &staging, &pkg_dir, &pkg_arch)?,
+        },
         other => {
             return Err(FreightError::InstallFailed(format!(
                 "native installer not supported for target OS '{other}'"
@@ -1157,6 +1187,254 @@ SectionEnd
         return Err(FreightError::InstallFailed("makensis exited with non-zero status".into()));
     }
     Ok(exe_path)
+}
+
+// ── Windows MSIX builder ──────────────────────────────────────────────────────
+
+/// Build an MSIX package via `makeappx.exe` (part of the Windows SDK).
+///
+/// The package runs in Windows' virtualised app container, making it suitable
+/// for the Microsoft Store, Windows App Installer, and Windows Sandbox.
+///
+/// # Signing
+/// The produced `.msix` is **unsigned**. To sideload it without the Microsoft
+/// Store, either:
+/// - Enable **Developer Mode** in Windows Settings → System → For developers, or
+/// - Sign with `signtool.exe` using a trusted certificate:
+///   ```
+///   signtool sign /fd SHA256 /a myapp-1.0.msix
+///   ```
+///
+/// # Requires
+/// `makeappx.exe` on PATH (part of the Windows SDK / Visual Studio).
+/// On Windows: installed automatically with Visual Studio or the Windows SDK.
+/// In CI: available in `windows-latest` GitHub Actions runners.
+fn build_msix(
+    manifest: &crate::manifest::types::Manifest,
+    staging: &Path,
+    pkg_dir: &Path,
+    pkg_arch: &str,
+) -> Result<PathBuf, FreightError> {
+    let name    = &manifest.package.name;
+    let version = &manifest.package.version;
+
+    // MSIX Identity/@Version must be a four-part dotted number.
+    let msix_version = pad_version_to_four(version);
+    let msix_arch    = msix_arch(pkg_arch);
+    let publisher    = manifest.package.authors.first()
+        .map(|a| format!("CN={a}"))
+        .unwrap_or_else(|| format!("CN={name}"));
+    let description  = if manifest.package.description.is_empty() {
+        name.clone()
+    } else {
+        manifest.package.description.clone()
+    };
+
+    let first_bin = manifest.bins.first()
+        .map(|b| format!("bin\\{}.exe", b.name))
+        .unwrap_or_else(|| format!("bin\\{name}.exe"));
+
+    // Create a temporary staging dir that holds all MSIX contents.
+    let msix_stage = pkg_dir.join(format!("{name}-{version}-msix-stage"));
+    if msix_stage.exists() {
+        fs::remove_dir_all(&msix_stage)?;
+    }
+
+    // Copy the installed layout (bin/, lib/) into the MSIX staging root.
+    copy_dir_all(staging, &msix_stage)?;
+
+    // Write placeholder logo assets.
+    let assets_dir = msix_stage.join("assets");
+    fs::create_dir_all(&assets_dir)?;
+    fs::write(assets_dir.join("logo44.png"),  &solid_png(44,  44,  [0x00, 0x78, 0xd7]))?;
+    fs::write(assets_dir.join("logo150.png"), &solid_png(150, 150, [0x00, 0x78, 0xd7]))?;
+
+    // AppxManifest.xml
+    let manifest_xml = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  IgnorableNamespaces="uap">
+
+  <Identity
+    Name="{name}"
+    Version="{msix_version}"
+    Publisher="{publisher}"
+    ProcessorArchitecture="{msix_arch}" />
+
+  <Properties>
+    <DisplayName>{name}</DisplayName>
+    <PublisherDisplayName>{publisher}</PublisherDisplayName>
+    <Logo>assets\logo150.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop"
+      MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="{first_bin}"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="{name}"
+        Description="{description}"
+        BackgroundColor="transparent"
+        Square44x44Logo="assets\logo44.png"
+        Square150x150Logo="assets\logo150.png" />
+    </Application>
+  </Applications>
+
+</Package>
+"#,
+        name        = name,
+        msix_version = msix_version,
+        publisher   = publisher,
+        msix_arch   = msix_arch,
+        first_bin   = first_bin,
+        description = description,
+    );
+    fs::write(msix_stage.join("AppxManifest.xml"), manifest_xml.as_bytes())?;
+
+    // [Content_Types].xml — makeappx generates this automatically, but
+    // providing it lets us pre-declare every extension in the package.
+    let content_types = r#"<?xml version="1.0" encoding="utf-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="exe"  ContentType="application/octet-stream" />
+  <Default Extension="dll"  ContentType="application/octet-stream" />
+  <Default Extension="png"  ContentType="image/png" />
+  <Override PartName="/AppxManifest.xml"
+    ContentType="application/vnd.ms-appx.manifest+xml" />
+</Types>
+"#;
+    fs::write(msix_stage.join("[Content_Types].xml"), content_types.as_bytes())?;
+
+    let msix_path = pkg_dir.join(format!("{name}-{version}.msix"));
+
+    let status = std::process::Command::new("makeappx")
+        .args([
+            "pack",
+            "/d", &msix_stage.to_string_lossy(),
+            "/p", &msix_path.to_string_lossy(),
+            "/nv",    // skip validation so unsigned builds work
+            "/o",     // overwrite if exists
+        ])
+        .status()
+        .map_err(|_| FreightError::InstallFailed(
+            "makeappx.exe not found — install the Windows SDK or Visual Studio.\n  \
+             In GitHub Actions use windows-latest; it ships with the SDK.".into()
+        ))?;
+
+    fs::remove_dir_all(&msix_stage)?;
+
+    if !status.success() {
+        return Err(FreightError::InstallFailed("makeappx exited with non-zero status".into()));
+    }
+
+    eprintln!(
+        "note: {name}-{version}.msix is unsigned.\n      \
+         To sideload without the Store, enable Developer Mode or sign with:\n      \
+         signtool sign /fd SHA256 /a {name}-{version}.msix"
+    );
+
+    Ok(msix_path)
+}
+
+/// Convert a semver string to the four-part `Major.Minor.Patch.0` required by MSIX Identity.
+fn pad_version_to_four(v: &str) -> String {
+    let parts: Vec<&str> = v.splitn(4, '.').collect();
+    match parts.len() {
+        1 => format!("{}.0.0.0", parts[0]),
+        2 => format!("{}.{}.0.0", parts[0], parts[1]),
+        3 => format!("{}.{}.{}.0", parts[0], parts[1], parts[2]),
+        _ => v.to_string(),
+    }
+}
+
+/// Map Freight arch names to MSIX `ProcessorArchitecture` values.
+fn msix_arch(arch: &str) -> &str {
+    match arch {
+        "x86_64"  => "x64",
+        "aarch64" => "arm64",
+        "i686" | "i386" | "x86" => "x86",
+        "arm"     => "arm",
+        _         => "neutral",
+    }
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), FreightError> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Generate a solid-colour RGB PNG of the given dimensions.
+///
+/// Uses only `flate2` (already a crate dependency) for zlib compression.
+/// Each scanline uses PNG filter type 0 (None) so the raw pixel data is
+/// directly compressible.
+fn solid_png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
+    use flate2::{write::ZlibEncoder, Compression};
+
+    // Raw image data: filter_byte(0) + width * RGB per scanline.
+    let row_len = 1 + (width as usize) * 3;
+    let mut raw = vec![0u8; (height as usize) * row_len];
+    for y in 0..height as usize {
+        let base = y * row_len;
+        // raw[base] = 0  (filter type: None — already zero)
+        for x in 0..width as usize {
+            let p = base + 1 + x * 3;
+            raw[p]     = rgb[0];
+            raw[p + 1] = rgb[1];
+            raw[p + 2] = rgb[2];
+        }
+    }
+
+    let mut zlib = ZlibEncoder::new(Vec::new(), Compression::default());
+    std::io::Write::write_all(&mut zlib, &raw).expect("in-memory write");
+    let idat_data = zlib.finish().expect("zlib finish");
+
+    let mut out = Vec::new();
+    out.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+
+    // IHDR: width(4) + height(4) + bit_depth(1) + colour_type(2=RGB) + compress/filter/interlace
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8]  = 8;  // bit depth
+    ihdr[9]  = 2;  // colour type: RGB
+    // bytes 10–12 remain 0 (compression=0, filter=0, interlace=0)
+    png_chunk(&mut out, b"IHDR", &ihdr);
+    png_chunk(&mut out, b"IDAT", &idat_data);
+    png_chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+fn png_chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(tag);
+    out.extend_from_slice(data);
+    // CRC32 over tag + data using the standard IEEE 802.3 polynomial.
+    let mut crc_input = Vec::with_capacity(4 + data.len());
+    crc_input.extend_from_slice(tag);
+    crc_input.extend_from_slice(data);
+    out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
 }
 
 fn run_ldconfig(lib_dir: &Path) {
