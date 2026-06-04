@@ -520,29 +520,29 @@ pub fn item_to_markdown(item: &DocItem) -> String {
         out.push_str("\n\n");
     }
 
-    // Parameters, template params, returns, and throws in a single table.
-    let has_table = !params.is_empty() || !tparams.is_empty()
-        || !returns.is_empty() || !throws.is_empty();
-    if has_table {
-        out.push_str("| | |\n|---|---|\n");
+    if !params.is_empty() || !tparams.is_empty() {
         for tag in &tparams {
             let name = tag.name.as_deref().unwrap_or("_");
-            let desc = escape_table_cell(tag.text.trim());
-            out.push_str(&format!("| `<{name}>` | {desc} |\n"));
+            out.push_str(&format!("- `<{name}>` — {}\n", tag.text.trim()));
         }
         for tag in &params {
             let name = tag.name.as_deref().unwrap_or("_");
-            let desc = escape_table_cell(tag.text.trim());
-            out.push_str(&format!("| `{name}` | {desc} |\n"));
+            out.push_str(&format!("- `{name}` — {}\n", tag.text.trim()));
         }
+        out.push('\n');
+    }
+
+    if !returns.is_empty() {
         for tag in &returns {
-            let desc = escape_table_cell(tag.text.trim());
-            out.push_str(&format!("| **returns** | {desc} |\n"));
+            out.push_str(&format!("**Returns** {}\n", tag.text.trim()));
         }
+        out.push('\n');
+    }
+
+    if !throws.is_empty() {
         for tag in &throws {
             let name = tag.name.as_deref().unwrap_or("_");
-            let desc = escape_table_cell(tag.text.trim());
-            out.push_str(&format!("| `throws {name}` | {desc} |\n"));
+            out.push_str(&format!("- `throws {name}` — {}\n", tag.text.trim()));
         }
         out.push('\n');
     }
@@ -623,11 +623,6 @@ pub fn word_at(text: &str, line: usize, character: usize) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn escape_table_cell(s: &str) -> String {
-    // Collapse newlines to spaces and escape pipe characters so the cell stays on one row.
-    s.replace('\n', " ").replace('|', "\\|")
-}
 
 fn simple_name(name: &str) -> &str {
     let name = name.trim_start_matches('~');
