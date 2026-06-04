@@ -95,6 +95,9 @@ struct ServerState {
     /// Header → package mapping for `#include` hover.
     header_index: HeaderIndex,
     workspace_inventory: WorkspaceInventory,
+    /// Pending inlay-hint intercepts: rewritten-id → (original-id, our-hints).
+    /// Shared with the clangd reader thread so it can merge and forward.
+    clangd_pending: Arc<Mutex<HashMap<String, (Value, Vec<Value>)>>>,
 }
 
 struct Passthrough {
@@ -133,6 +136,7 @@ impl Server {
                 doc_index: Arc::new(Mutex::new(None)),
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
+                clangd_pending: Arc::new(Mutex::new(HashMap::new())),
             },
         }
     }
@@ -372,11 +376,9 @@ impl Server {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 3. For non-C/C++ files (Fortran, assembly, …) fall back to the
-        //    language-specific passthrough server on a DocIndex miss.
-        //    C/C++ hover is DocIndex-only; clangd is kept for diagnostics only.
+        // 3. Fall back to the language-specific passthrough server on a DocIndex miss.
         match source_server_for_uri(&uri) {
-            Some(SourceServer::Fortls) | Some(SourceServer::AsmLsp) => {
+            Some(SourceServer::Clangd) | Some(SourceServer::Fortls) | Some(SourceServer::AsmLsp) => {
                 self.forward_by_uri(&uri, &msg)
             }
             _ => self.respond(msg.get("id").cloned(), Value::Null),
@@ -412,9 +414,33 @@ impl Server {
     }
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
-        let id = msg.get("id").cloned();
-        let hints = self.compute_inlay_hints(&msg).unwrap_or_default();
-        self.respond(id, Value::Array(hints))
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let our_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
+
+        // If clangd is running for this file, forward the request under a
+        // rewritten ID. The reader thread will merge our hints into its
+        // response and forward to the client. If clangd is absent, respond directly.
+        let uri = text_document_uri(&msg);
+        let goes_to_clangd = uri.as_deref()
+            .map(|u| matches!(source_server_for_uri(u), Some(SourceServer::Clangd)))
+            .unwrap_or(false);
+
+        if goes_to_clangd && self.state.clangd.is_some() {
+            let orig_id_str = match &id {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => "0".to_string(),
+            };
+            let rewritten = format!("__freight_inlayhint_{orig_id_str}");
+            self.state.clangd_pending.lock().unwrap()
+                .insert(rewritten.clone(), (id, our_hints));
+            let mut fwd = msg;
+            fwd.as_object_mut().unwrap().insert("id".to_string(), json!(rewritten));
+            self.forward_to_passthrough(SourceServer::Clangd, &fwd)?;
+        } else {
+            self.respond(Some(id), Value::Array(our_hints))?;
+        }
+        Ok(())
     }
 
     fn compute_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
@@ -906,6 +932,7 @@ impl Server {
         let dir = self.compile_commands_dir()?;
         let root = self.active_manifest_dir()?;
         let compile_commands_arg = format!("--compile-commands-dir={}", dir.display());
+        let pending = Arc::clone(&self.state.clangd_pending);
         let (server, caps) = self.start_passthrough_in(
             "clangd",
             &self.args.clangd,
@@ -917,6 +944,7 @@ impl Server {
             INTERNAL_CLANGD_INIT_ID,
             initialize_msg,
             Some(&root),
+            Some(pending),
         )?;
         self.state.clangd = Some(server);
         caps
@@ -948,6 +976,7 @@ impl Server {
             INTERNAL_FORTLS_INIT_ID,
             initialize_msg,
             Some(&root),
+            None,
         )?;
         self.state.fortls = Some(server);
         caps
@@ -964,6 +993,7 @@ impl Server {
             INTERNAL_ASM_LSP_INIT_ID,
             initialize_msg,
             Some(&root),
+            None,
         )?;
         self.state.asm_lsp = Some(server);
         caps
@@ -977,6 +1007,7 @@ impl Server {
         init_id: &str,
         initialize_msg: &Value,
         cwd: Option<&Path>,
+        pending: Option<Arc<Mutex<HashMap<String, (Value, Vec<Value>)>>>>,
     ) -> Option<(Passthrough, Option<Value>)> {
         let mut cmd = Command::new(command);
         cmd.args(args)
@@ -1007,7 +1038,30 @@ impl Server {
             .cloned();
         let out = Arc::clone(&self.out);
         thread::spawn(move || {
-            while let Ok(Some(msg)) = read_lsp_message(&mut reader) {
+            while let Ok(Some(mut msg)) = read_lsp_message(&mut reader) {
+                // Check if this is an intercepted inlay-hint response.
+                if let Some(id_str) = msg.get("id").and_then(Value::as_str) {
+                    if id_str.starts_with("__freight_inlayhint_") {
+                        if let Some(ref p) = pending {
+                            if let Some((orig_id, our_hints)) = p.lock().unwrap().remove(id_str) {
+                                // Merge our include hints into clangd's result.
+                                let clangd_hints = msg
+                                    .get("result")
+                                    .and_then(Value::as_array)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let mut merged = clangd_hints;
+                                merged.extend(our_hints);
+                                if let Some(obj) = msg.as_object_mut() {
+                                    obj.insert("id".to_string(), orig_id);
+                                    obj.insert("result".to_string(), Value::Array(merged));
+                                }
+                                let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
+                            }
+                        }
+                        continue;
+                    }
+                }
                 if is_internal_passthrough_response(&msg) {
                     continue;
                 }
