@@ -578,25 +578,20 @@ fn create_tarball(parent: &Path, stem: &str, archive: &Path) -> Result<(), Freig
     Ok(())
 }
 
-// ── Installer (self-contained bundle) ─────────────────────────────────────────
+// ── Native installer (.deb / .dmg / NSIS .exe) ───────────────────────────────
 
-/// Like [`package_project`], but also collects the binary's transitive shared-
-/// library dependencies and bundles them into `lib/` so the archive runs on a
-/// machine that doesn't have those libraries installed.
+/// Build a native installer for the target platform:
 ///
-/// Layout inside the archive:
-/// ```text
-/// myapp-1.0-x86_64-linux-installer/
-/// ├── bin/myapp          ← the built binary (or .exe on Windows)
-/// ├── lib/               ← bundled .so / .dylib / .dll dependencies
-/// │   ├── libfoo.so.1
-/// │   └── …
-/// └── myapp              ← launcher script (Linux/macOS) that sets LD_LIBRARY_PATH
-/// ```
+/// - **Linux** → `.deb` package (pure Rust, no external tools required).
+///   Installs to `/usr/local/bin` and `/usr/local/lib` by default.
+///   Bundles transitive shared-lib dependencies that are not part of glibc.
 ///
-/// Windows targets: DLLs are copied into `bin/` next to the executable (the
-/// Windows DLL search order already checks the exe directory first), so no
-/// wrapper script is needed.
+/// - **macOS** → `.dmg` disk image via `hdiutil` (always available on macOS).
+///   Bundles dylib dependencies; rewrites install names to `@executable_path/../lib/`.
+///
+/// - **Windows** → NSIS-based `.exe` installer via `makensis`.
+///   Bundles DLL dependencies. If `makensis` is not on PATH, the function
+///   returns an error with installation instructions.
 pub fn installer_project(
     project_dir: &Path,
     release: bool,
@@ -618,20 +613,18 @@ pub fn installer_project(
             )
         });
 
-    let stem = format!(
-        "{}-{}-{}-{}-installer",
-        manifest.package.name, manifest.package.version, pkg_arch, pkg_os,
-    );
-
     let pkg_dir = project_dir.join("target").join("package");
     fs::create_dir_all(&pkg_dir)?;
 
-    let staging = pkg_dir.join(&stem);
+    // Install into a staging dir with a /usr/local-style layout.
+    let stage_name = format!(
+        "{}-{}-{}-{}-stage",
+        manifest.package.name, manifest.package.version, pkg_arch, pkg_os,
+    );
+    let staging = pkg_dir.join(&stage_name);
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
     }
-
-    // 1. Install built outputs into staging (bin/, lib/, include/).
     install_project(
         project_dir,
         &InstallOptions {
@@ -643,71 +636,75 @@ pub fn installer_project(
         },
     )?;
 
-    // 2. Collect transitive shared-lib deps for every installed binary and
-    //    copy them into staging/lib/.
-    let bundled_lib_dir = staging.join("lib");
-    fs::create_dir_all(&bundled_lib_dir)?;
-
-    let bin_dir = staging.join("bin");
-    if bin_dir.is_dir() {
-        for entry in fs::read_dir(&bin_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                let deps = collect_shared_deps(&path, &pkg_os)?;
-                for dep in deps {
-                    let fname = dep.file_name().unwrap_or_default();
-                    let dst = if pkg_os == "windows" {
-                        // DLLs go beside the exe so Windows search order finds them.
-                        bin_dir.join(fname)
-                    } else {
-                        bundled_lib_dir.join(fname)
-                    };
-                    if !dst.exists() {
-                        fs::copy(&dep, &dst).map_err(|e| {
-                            FreightError::InstallFailed(format!(
-                                "bundling {}: {e}",
-                                dep.display()
-                            ))
-                        })?;
-                    }
-                }
-
-                // 3. Write a launcher script (Linux/macOS) so the binary finds
-                //    its bundled libs without requiring LD_LIBRARY_PATH from the caller.
-                if pkg_os != "windows" {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        write_launcher_script(&staging, name, &pkg_os)?;
-                    }
-                }
-
-                // 4. macOS: rewrite dylib install names to @executable_path/../lib/.
-                if pkg_os == "macos" {
-                    rewrite_macos_rpaths(&path, &bundled_lib_dir)?;
+    // Bundle transitive shared-lib deps.
+    bundle_shared_deps(&staging, &pkg_os)?;
+    // macOS: rewrite dylib install names so they resolve relative to the bundle.
+    if pkg_os == "macos" {
+        let bin_dir = staging.join("bin");
+        let lib_dir = staging.join("lib");
+        if bin_dir.is_dir() {
+            for entry in fs::read_dir(&bin_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    rewrite_macos_rpaths(&path, &lib_dir)?;
                 }
             }
         }
     }
 
-    // 5. Archive and clean up staging dir.
-    let archive = if pkg_os == "windows" {
-        let archive = pkg_dir.join(format!("{stem}.zip"));
-        create_zip_archive(&pkg_dir, &stem, &archive)?;
-        archive
-    } else {
-        let archive = pkg_dir.join(format!("{stem}.tar.gz"));
-        create_tarball(&pkg_dir, &stem, &archive)?;
-        archive
+    let output = match pkg_os.as_str() {
+        "linux"   => build_deb(&manifest, &staging, &pkg_dir, &pkg_arch)?,
+        "macos"   => build_dmg(&manifest, &staging, &pkg_dir)?,
+        "windows" => build_nsis(&manifest, &staging, &pkg_dir)?,
+        other => {
+            return Err(FreightError::InstallFailed(format!(
+                "native installer not supported for target OS '{other}'"
+            )));
+        }
     };
-    fs::remove_dir_all(&staging)?;
 
-    Ok(archive)
+    fs::remove_dir_all(&staging)?;
+    Ok(output)
 }
 
-// ── Shared-lib dependency collection ─────────────────────────────────────────
+// ── Shared-lib bundling ───────────────────────────────────────────────────────
 
-/// Paths to system-provided libraries that we never bundle.
-/// Bundling libc, libm, or ld-linux would break on glibc version mismatches.
+/// Copy transitive shared-lib dependencies for every binary in `staging/bin/`
+/// into `staging/lib/` (Linux/macOS) or `staging/bin/` (Windows).
+fn bundle_shared_deps(staging: &Path, pkg_os: &str) -> Result<(), FreightError> {
+    let bin_dir = staging.join("bin");
+    if !bin_dir.is_dir() {
+        return Ok(());
+    }
+    let lib_dir = staging.join("lib");
+    fs::create_dir_all(&lib_dir)?;
+
+    for entry in fs::read_dir(&bin_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let deps = collect_shared_deps(&path, pkg_os)?;
+        for dep in deps {
+            let fname = dep.file_name().unwrap_or_default();
+            let dst = if pkg_os == "windows" {
+                bin_dir.join(fname)
+            } else {
+                lib_dir.join(fname)
+            };
+            if !dst.exists() {
+                fs::copy(&dep, &dst).map_err(|e| {
+                    FreightError::InstallFailed(format!("bundling {}: {e}", dep.display()))
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Paths to system-provided libraries that should never be bundled.
 fn is_system_lib(path: &Path, target_os: &str) -> bool {
     let name = path
         .file_name()
@@ -717,23 +714,19 @@ fn is_system_lib(path: &Path, target_os: &str) -> bool {
 
     match target_os {
         "linux" => {
-            // glibc and kernel-interface libs must come from the host.
             let skip = [
                 "libc.so", "libm.so", "libdl.so", "libpthread.so", "librt.so",
                 "libresolv.so", "libutil.so", "libnss_", "libnsl.so",
-                "libgcc_s.so",  // ABI-compatible on all modern distros
-                "ld-linux", "linux-vdso", "linux-gate",
+                "libgcc_s.so", "ld-linux", "linux-vdso", "linux-gate",
             ];
             skip.iter().any(|s| name.starts_with(s))
         }
         "macos" => {
-            // Apple system frameworks and /usr/lib dylibs.
             path.starts_with("/usr/lib")
                 || path.starts_with("/System/")
                 || path.starts_with("/Library/Apple/")
         }
         "windows" => {
-            // Windows system DLLs (system32 and friends).
             let skip = [
                 "kernel32.dll", "user32.dll", "gdi32.dll", "ole32.dll",
                 "oleaut32.dll", "ntdll.dll", "advapi32.dll", "shell32.dll",
@@ -746,55 +739,41 @@ fn is_system_lib(path: &Path, target_os: &str) -> bool {
     }
 }
 
-/// Run the appropriate tool to collect the binary's shared-lib dependencies.
-///
-/// Returns absolute paths to library files that should be bundled.
 fn collect_shared_deps(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
     match target_os {
-        "linux" => collect_shared_deps_ldd(binary, target_os),
-        "macos" => collect_shared_deps_otool(binary, target_os),
-        "windows" => collect_shared_deps_dumpbin(binary, target_os),
+        "linux"   => collect_deps_ldd(binary, target_os),
+        "macos"   => collect_deps_otool(binary, target_os),
+        "windows" => collect_deps_dumpbin(binary, target_os),
         other => {
-            eprintln!("warning: shared-lib collection not supported on {other}; bundling no deps");
+            eprintln!("warning: shared-lib collection not supported on {other}");
             Ok(vec![])
         }
     }
 }
 
-fn collect_shared_deps_ldd(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
+fn collect_deps_ldd(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
     let out = std::process::Command::new("ldd")
         .arg(binary)
         .output()
         .map_err(|e| FreightError::InstallFailed(format!("ldd not found: {e}")))?;
-
     if !out.status.success() {
-        // Static binaries or non-ELF files cause ldd to exit non-zero; treat as no deps.
         return Ok(vec![]);
     }
-
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut deps = Vec::new();
-
-    // ldd output lines are one of:
-    //   linux-vdso.so.1 (0x…)
-    //   libfoo.so.1 => /lib/x86_64-linux-gnu/libfoo.so.1 (0x…)
-    //   /lib64/ld-linux-x86-64.so.2 (0x…)
     for line in stdout.lines() {
         let line = line.trim();
-        let path = if let Some(idx) = line.find("=>") {
-            // "name => /path (0x…)"
+        let path_str = if let Some(idx) = line.find("=>") {
             let after = line[idx + 2..].trim();
             after.split_whitespace().next().filter(|&p| p != "not")
         } else {
-            // bare "/lib64/ld-linux…" line
             let p = match line.split_whitespace().next() {
                 Some(p) => p,
                 None => continue,
             };
             if p.starts_with('/') { Some(p) } else { None }
         };
-
-        if let Some(p) = path {
+        if let Some(p) = path_str {
             let pb = PathBuf::from(p);
             if pb.exists() && !is_system_lib(&pb, target_os) {
                 deps.push(pb);
@@ -804,19 +783,13 @@ fn collect_shared_deps_ldd(binary: &Path, target_os: &str) -> Result<Vec<PathBuf
     Ok(deps)
 }
 
-fn collect_shared_deps_otool(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
+fn collect_deps_otool(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
     let out = std::process::Command::new("otool")
         .args(["-L", &binary.to_string_lossy()])
         .output()
         .map_err(|e| FreightError::InstallFailed(format!("otool not found: {e}")))?;
-
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut deps = Vec::new();
-
-    // otool -L output:
-    //   binary:
-    //     /usr/lib/libSystem.B.dylib (compatibility version …)
-    //     /usr/local/lib/libfoo.1.dylib (…)
     for line in stdout.lines().skip(1) {
         let line = line.trim();
         if let Some(path_str) = line.split(' ').next() {
@@ -829,23 +802,16 @@ fn collect_shared_deps_otool(binary: &Path, target_os: &str) -> Result<Vec<PathB
     Ok(deps)
 }
 
-fn collect_shared_deps_dumpbin(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
-    // dumpbin is part of MSVC; may not be present in all CI environments.
+fn collect_deps_dumpbin(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
     let out = match std::process::Command::new("dumpbin")
         .args(["/DEPENDENTS", &binary.to_string_lossy()])
         .output()
     {
         Ok(o) => o,
-        Err(_) => {
-            eprintln!("warning: dumpbin not found; falling back to ldd for DLL detection");
-            return collect_shared_deps_ldd(binary, target_os);
-        }
+        Err(_) => return collect_deps_ldd(binary, target_os),
     };
-
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut deps = Vec::new();
-
-    // Parse the "Image has the following dependencies:" section.
     let mut in_section = false;
     for line in stdout.lines() {
         let line = line.trim();
@@ -857,56 +823,19 @@ fn collect_shared_deps_dumpbin(binary: &Path, target_os: &str) -> Result<Vec<Pat
             if line.is_empty() {
                 break;
             }
-            if line.ends_with(".dll") || line.ends_with(".DLL") {
-                // Resolve the DLL via PATH (same search order Windows uses).
-                if let Some(resolved) = resolve_dll_on_path(line) {
-                    if !is_system_lib(&resolved, target_os) {
-                        deps.push(resolved);
+            if line.to_ascii_lowercase().ends_with(".dll") {
+                let path_var = std::env::var("PATH").unwrap_or_default();
+                for dir in std::env::split_paths(&path_var) {
+                    let candidate = dir.join(line);
+                    if candidate.exists() && !is_system_lib(&candidate, target_os) {
+                        deps.push(candidate);
+                        break;
                     }
                 }
             }
         }
     }
     Ok(deps)
-}
-
-fn resolve_dll_on_path(dll_name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var("PATH").ok()?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(dll_name);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-// ── Launcher script ───────────────────────────────────────────────────────────
-
-fn write_launcher_script(staging: &Path, bin_name: &str, target_os: &str) -> Result<(), FreightError> {
-    // Strip .exe suffix for the script name (shouldn't happen for Linux/macOS but be safe).
-    let script_name = bin_name.trim_end_matches(".exe");
-    let script_path = staging.join(script_name);
-
-    let lib_var = if target_os == "macos" { "DYLD_LIBRARY_PATH" } else { "LD_LIBRARY_PATH" };
-
-    let content = format!(
-        "#!/bin/sh\n\
-         DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n\
-         export {lib_var}=\"$DIR/lib${{{}:+:${{{}}}}}\"\n\
-         exec \"$DIR/bin/{bin_name}\" \"$@\"\n",
-        lib_var, lib_var,
-    );
-
-    fs::write(&script_path, content)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
-    }
-
-    Ok(())
 }
 
 // ── macOS rpath rewriting ─────────────────────────────────────────────────────
@@ -919,7 +848,7 @@ fn rewrite_macos_rpaths(binary: &Path, bundled_lib_dir: &Path) -> Result<(), Fre
         let entry = entry?;
         let lib = entry.path();
         if lib.extension().map_or(false, |e| e == "dylib") {
-            let old = lib.to_string_lossy();
+            let old = lib.to_string_lossy().into_owned();
             let new = format!(
                 "@executable_path/../lib/{}",
                 lib.file_name().unwrap_or_default().to_string_lossy()
@@ -930,6 +859,304 @@ fn rewrite_macos_rpaths(binary: &Path, bundled_lib_dir: &Path) -> Result<(), Fre
         }
     }
     Ok(())
+}
+
+// ── Linux .deb builder ────────────────────────────────────────────────────────
+
+/// Build a `.deb` package from the staging directory.
+///
+/// The `.deb` format is an `ar` archive containing three members:
+/// `debian-binary`, `control.tar.gz`, and `data.tar.gz`.
+fn build_deb(
+    manifest: &crate::manifest::types::Manifest,
+    staging: &Path,
+    pkg_dir: &Path,
+    pkg_arch: &str,
+) -> Result<PathBuf, FreightError> {
+    let name    = &manifest.package.name;
+    let version = &manifest.package.version;
+    let deb_arch = deb_arch(pkg_arch);
+
+    // Compute installed size in KiB.
+    let installed_kb = dir_size_kb(staging);
+
+    let maintainer = manifest.package.authors.first()
+        .cloned()
+        .unwrap_or_else(|| "Unknown".to_string());
+    let description = if manifest.package.description.is_empty() {
+        name.clone()
+    } else {
+        manifest.package.description.clone()
+    };
+
+    // ── control.tar.gz ────────────────────────────────────────────────────────
+    let control = format!(
+        "Package: {name}\n\
+         Version: {version}\n\
+         Architecture: {deb_arch}\n\
+         Maintainer: {maintainer}\n\
+         Installed-Size: {installed_kb}\n\
+         Description: {description}\n"
+    );
+
+    let control_tar_gz = {
+        let mut buf = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut buf, flate2::Compression::default());
+            let mut ar = tar::Builder::new(enc);
+            let data = control.as_bytes();
+            let mut header = tar::Header::new_gnu();
+            header.set_path("./control")?;
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_mtime(0);
+            header.set_uid(0);
+            header.set_gid(0);
+            header.set_cksum();
+            ar.append(&header, data)?;
+            ar.into_inner()?.finish()?;
+        }
+        buf
+    };
+
+    // ── data.tar.gz ───────────────────────────────────────────────────────────
+    // Map staging layout (bin/, lib/, include/) into /usr/local/{bin,lib,include}.
+    let data_tar_gz = {
+        let mut buf = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut buf, flate2::Compression::default());
+            let mut ar = tar::Builder::new(enc);
+            append_dir_to_tar(&mut ar, staging, staging, "/usr/local")?;
+            ar.into_inner()?.finish()?;
+        }
+        buf
+    };
+
+    // ── ar archive ────────────────────────────────────────────────────────────
+    let deb_path = pkg_dir.join(format!("{name}_{version}_{deb_arch}.deb"));
+    let mut out = fs::File::create(&deb_path)?;
+
+    // ar global header
+    out.write_all(b"!<arch>\n")?;
+    write_ar_member(&mut out, "debian-binary", b"2.0\n")?;
+    write_ar_member(&mut out, "control.tar.gz", &control_tar_gz)?;
+    write_ar_member(&mut out, "data.tar.gz", &data_tar_gz)?;
+
+    Ok(deb_path)
+}
+
+/// Map Freight arch names to Debian arch names.
+fn deb_arch(arch: &str) -> &str {
+    match arch {
+        "x86_64"  => "amd64",
+        "aarch64" => "arm64",
+        "i686" | "i386" => "i386",
+        "arm"     => "armhf",
+        "riscv64" => "riscv64",
+        other     => other,
+    }
+}
+
+/// Recursively walk `dir` and append every file to `ar` under `dest_prefix`.
+fn append_dir_to_tar<W: Write>(
+    ar: &mut tar::Builder<W>,
+    root: &Path,
+    dir: &Path,
+    dest_prefix: &str,
+) -> Result<(), FreightError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path.strip_prefix(root).unwrap_or(&path);
+        let rel_str = rel.components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        let ar_path = format!("{dest_prefix}/{rel_str}");
+
+        if path.is_dir() {
+            append_dir_to_tar(ar, root, &path, dest_prefix)?;
+        } else if path.is_file() {
+            let mut f = fs::File::open(&path)?;
+            let meta = f.metadata()?;
+            let mut header = tar::Header::new_gnu();
+            header.set_path(&ar_path)?;
+            header.set_size(meta.len());
+            header.set_mtime(0);
+            header.set_uid(0);
+            header.set_gid(0);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                header.set_mode(meta.permissions().mode());
+            }
+            #[cfg(not(unix))]
+            header.set_mode(0o644);
+            header.set_cksum();
+            ar.append(&mut header, &mut f)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write one member into an `ar` archive.
+fn write_ar_member<W: Write>(w: &mut W, name: &str, data: &[u8]) -> Result<(), FreightError> {
+    // ar member header: 60 bytes, all ASCII, space-padded.
+    let mut header = [b' '; 60];
+    // Name field (16 bytes)
+    let name_bytes = name.as_bytes();
+    let len = name_bytes.len().min(16);
+    header[..len].copy_from_slice(&name_bytes[..len]);
+    // Timestamp (12 bytes) at offset 16 — leave as spaces (= 0).
+    // UID / GID (6 bytes each) at 28/34 — spaces = 0.
+    // File mode (8 bytes) at 40.
+    let mode = b"100644  ";
+    header[40..48].copy_from_slice(mode);
+    // File size (10 bytes) at 48.
+    let size_str = format!("{:<10}", data.len());
+    header[48..58].copy_from_slice(size_str.as_bytes());
+    // End-of-header magic at 58–59.
+    header[58] = b'`';
+    header[59] = b'\n';
+
+    w.write_all(&header)?;
+    w.write_all(data)?;
+    // ar requires each member to start on a 2-byte boundary.
+    if data.len() % 2 != 0 {
+        w.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+fn dir_size_kb(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                total += fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            } else if path.is_dir() {
+                total += dir_size_kb(&path) * 1024;
+            }
+        }
+    }
+    (total + 1023) / 1024
+}
+
+// ── macOS .dmg builder ────────────────────────────────────────────────────────
+
+/// Create a `.dmg` disk image from the staging directory using `hdiutil`.
+fn build_dmg(
+    manifest: &crate::manifest::types::Manifest,
+    staging: &Path,
+    pkg_dir: &Path,
+) -> Result<PathBuf, FreightError> {
+    let name    = &manifest.package.name;
+    let version = &manifest.package.version;
+    let dmg_path = pkg_dir.join(format!("{name}-{version}.dmg"));
+
+    let vol_name = format!("{name} {version}");
+    let status = std::process::Command::new("hdiutil")
+        .args([
+            "create",
+            "-volname",  &vol_name,
+            "-srcfolder", &staging.to_string_lossy(),
+            "-ov",
+            "-format", "UDZO",
+            &dmg_path.to_string_lossy(),
+        ])
+        .status()
+        .map_err(|e| FreightError::InstallFailed(format!(
+            "hdiutil not found — is this a macOS host? ({e})"
+        )))?;
+
+    if !status.success() {
+        return Err(FreightError::InstallFailed("hdiutil exited with non-zero status".into()));
+    }
+    Ok(dmg_path)
+}
+
+// ── Windows NSIS .exe builder ─────────────────────────────────────────────────
+
+/// Generate an NSIS installer script and run `makensis` to produce a `.exe`.
+///
+/// Requires NSIS to be installed (`makensis` on PATH).
+/// On Windows: `winget install NSIS.NSIS` or `choco install nsis`.
+/// On Linux (cross): `apt install nsis`.
+fn build_nsis(
+    manifest: &crate::manifest::types::Manifest,
+    staging: &Path,
+    pkg_dir: &Path,
+) -> Result<PathBuf, FreightError> {
+    let name    = &manifest.package.name;
+    let version = &manifest.package.version;
+    let exe_path = pkg_dir.join(format!("{name}-{version}-setup.exe"));
+
+    // Find the first binary to use as the main shortcut target.
+    let first_bin = manifest.bins.first()
+        .map(|b| format!("bin\\{}.exe", b.name))
+        .unwrap_or_else(|| format!("bin\\{name}.exe"));
+
+    let nsi = format!(
+        r#"!include "MUI2.nsh"
+Unicode true
+
+Name "{name} {version}"
+OutFile "{out}"
+InstallDir "$PROGRAMFILES64\{name}"
+InstallDirRegKey HKLM "Software\{name}" "Install_Dir"
+RequestExecutionLevel admin
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
+
+Section "Install"
+  SetOutPath "$INSTDIR"
+  File /r "{staging}\*"
+  CreateShortcut "$DESKTOP\{name}.lnk" "$INSTDIR\{first_bin}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{name}" \
+    "DisplayName" "{name} {version}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{name}" \
+    "UninstallString" "$INSTDIR\Uninstall.exe"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+SectionEnd
+
+Section "Uninstall"
+  RMDir /r "$INSTDIR"
+  Delete "$DESKTOP\{name}.lnk"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{name}"
+SectionEnd
+"#,
+        name = name,
+        version = version,
+        out = exe_path.to_string_lossy().replace('/', "\\"),
+        staging = staging.to_string_lossy().replace('/', "\\"),
+        first_bin = first_bin,
+    );
+
+    let nsi_path = pkg_dir.join(format!("{name}-{version}.nsi"));
+    fs::write(&nsi_path, &nsi)?;
+
+    let status = std::process::Command::new("makensis")
+        .arg(&nsi_path)
+        .status()
+        .map_err(|_| FreightError::InstallFailed(
+            "makensis not found — install NSIS first:\n  \
+             Windows: winget install NSIS.NSIS\n  \
+             Linux:   apt install nsis".into()
+        ))?;
+
+    let _ = fs::remove_file(&nsi_path);
+
+    if !status.success() {
+        return Err(FreightError::InstallFailed("makensis exited with non-zero status".into()));
+    }
+    Ok(exe_path)
 }
 
 fn run_ldconfig(lib_dir: &Path) {
