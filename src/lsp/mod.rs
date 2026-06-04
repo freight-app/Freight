@@ -148,7 +148,10 @@ impl Server {
                 }
                 continue;
             }
-            tracing::debug!(method, "← client");
+            match level_for_method(method) {
+                tracing::Level::INFO  => tracing::info!(method, "← client"),
+                _                     => tracing::debug!(method, "← client"),
+            }
             match method {
                 "initialize" => self.handle_initialize(msg)?,
                 "initialized" => {
@@ -381,12 +384,42 @@ impl Server {
 
     fn doc_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
         let guard = self.state.doc_index.lock().unwrap();
-        let index = guard.as_ref().filter(|i| !i.is_empty())?;
-        let (line, character) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let text = std::fs::read_to_string(&path).ok()?;
+        let index = match guard.as_ref() {
+            Some(idx) if !idx.is_empty() => idx,
+            Some(_) => {
+                tracing::info!("doc-index hover: index is empty — no items indexed");
+                return None;
+            }
+            None => {
+                tracing::info!("doc-index hover: index not built yet");
+                return None;
+            }
+        };
+
+        let Some((line, character)) = position(msg) else {
+            tracing::debug!("doc-index hover: no position in message");
+            return None;
+        };
+        let Some(path) = path_from_uri(uri) else {
+            tracing::debug!(uri, "doc-index hover: could not resolve path from uri");
+            return None;
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::debug!(path = %path.display(), error = %e, "doc-index hover: could not read file");
+                return None;
+            }
+        };
 
         let word = word_at(&text, line, character);
+        tracing::debug!(
+            word = word.as_deref().unwrap_or("(none)"),
+            line,
+            col = character,
+            index_items = index.len(),
+            "doc-index hover lookup"
+        );
 
         // Position-based: find the item whose doc comment is nearest before the cursor.
         // Validate that the word under cursor matches the item's simple name so we don't
@@ -399,19 +432,36 @@ impl Server {
                     .unwrap_or(true)
             })
             .or_else(|| {
-                // Name-based fallback: word under cursor looked up in the index.
-                index.lookup(word.as_deref()?)
-            })?;
+                let w = word.as_deref()?;
+                let found = index.lookup(w);
+                if found.is_none() {
+                    tracing::debug!(word = w, "doc-index hover: name lookup miss");
+                }
+                found
+            });
 
-        tracing::debug!(
-            symbol = item.name.as_str(),
-            file = %item.file.display(),
-            cursor_line = line,
-            cursor_col = character,
-            "doc-index hover"
-        );
-        let markdown = item_to_markdown(item);
-        Some(json!({ "contents": { "kind": "markdown", "value": markdown } }))
+        match item {
+            Some(item) => {
+                tracing::info!(
+                    symbol = item.name.as_str(),
+                    source_file = %item.file.display(),
+                    cursor_line = line,
+                    cursor_col = character,
+                    "doc-index hover hit"
+                );
+                let markdown = item_to_markdown(item);
+                Some(json!({ "contents": { "kind": "markdown", "value": markdown } }))
+            }
+            None => {
+                tracing::info!(
+                    word = word.as_deref().unwrap_or("(none)"),
+                    line,
+                    col = character,
+                    "doc-index hover: no match"
+                );
+                None
+            }
+        }
     }
 
     fn handle_signature_help_or_forward(&mut self, msg: Value) -> io::Result<()> {
@@ -686,8 +736,12 @@ impl Server {
         let new_index = DocIndex::build_freight_packages(package_refs.iter().copied());
         tracing::info!(
             packages = package_dirs.len(),
+            items = new_index.len(),
             "doc index rebuilt"
         );
+        for dir in &package_dirs {
+            tracing::debug!(path = %dir.display(), "doc index package dir");
+        }
         *self.state.doc_index.lock().unwrap() = Some(new_index);
 
         // HeaderIndex — tag each dir with its origin.
@@ -971,6 +1025,18 @@ fn push_doc_package_dir(out: &mut Vec<PathBuf>, dir: PathBuf) {
         .any(|existing| existing.canonicalize().unwrap_or_else(|_| existing.clone()) == canonical)
     {
         out.push(canonical);
+    }
+}
+
+fn level_for_method(method: &str) -> tracing::Level {
+    match method {
+        "textDocument/hover"
+        | "textDocument/didOpen"
+        | "textDocument/didSave"
+        | "initialize"
+        | "initialized"
+        | "shutdown" => tracing::Level::INFO,
+        _ => tracing::Level::DEBUG,
     }
 }
 

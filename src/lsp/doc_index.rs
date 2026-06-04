@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};
 use crate::manifest::load_manifest;
 use crate::manifest::types::Manifest;
-use serde_json::{json, Value};
+
 
 // ---------------------------------------------------------------------------
 // DocIndex
@@ -67,6 +67,10 @@ impl DocIndex {
         // Walk backwards from line to find the nearest item at or before the cursor.
         let (_, &idx) = tree.range(..=line + 5).next_back()?;
         self.items.get(idx)
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
     }
 
     pub fn is_empty(&self) -> bool {
