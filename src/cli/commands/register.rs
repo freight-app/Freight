@@ -1,6 +1,6 @@
-use freight_core::registry::freight_registry::FreightRegistry;
-use freight_core::registry::DEFAULT_REGISTRY_URL;
-use freight_core::toolchain::cache::{Credentials, GlobalConfig, RegistryConfig};
+use freight::registry::freight_registry::FreightRegistry;
+use freight::registry::DEFAULT_REGISTRY_URL;
+use freight::toolchain::cache::{Credentials, GlobalConfig, RegistryConfig};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 

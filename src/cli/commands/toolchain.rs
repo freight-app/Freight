@@ -1,5 +1,5 @@
-use freight_core::toolchain::detect::DetectedCompiler;
-use freight_core::toolchain::{
+use freight::toolchain::detect::DetectedCompiler;
+use freight::toolchain::{
     backend_matches, detect_all_cached, detect_debuggers, group_into_toolchains,
     load_all_templates, load_debugger_templates, toolchain_use,
 };

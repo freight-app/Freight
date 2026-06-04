@@ -20,11 +20,11 @@ impl Args {
     }
 }
 
-use freight_core::doc::{extract_dir, extract_file, DocSet};
-use freight_core::doc::{self, collect_stdlib, DocDependency, PackageDoc, StdlibMsg};
-use freight_core::manifest::types::{Dependency, Manifest};
-use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::toolchain::freight_home;
+use freight::doc::{extract_dir, extract_file, DocSet};
+use freight::doc::{self, collect_stdlib, DocDependency, PackageDoc, StdlibMsg};
+use freight::manifest::types::{Dependency, Manifest};
+use freight::manifest::{find_manifest_dir, load_manifest};
+use freight::toolchain::freight_home;
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
@@ -280,8 +280,8 @@ fn open_dependency_tui() -> anyhow::Result<()> {
 /// Falls back to `[lib] srcs`, then `src/`.
 fn extract_pkg_items(
     dir: &Path,
-    manifest: Option<&freight_core::manifest::types::Manifest>,
-) -> Vec<freight_core::doc::DocItem> {
+    manifest: Option<&freight::manifest::types::Manifest>,
+) -> Vec<freight::doc::DocItem> {
     // Collect candidate files from public headers.
     let hdr_files: Vec<PathBuf> = manifest
         .and_then(|m| m.lib.as_ref())
@@ -400,7 +400,7 @@ fn dependency_summary(
                 dir.exists().then_some(dir),
             )
         }
-        Dependency::Detailed(d) if freight_core::manifest::types::is_platform_dep(name) => (
+        Dependency::Detailed(d) if freight::manifest::types::is_platform_dep(name) => (
             "platform".to_string(),
             d.version.clone().unwrap_or_else(|| "*".into()),
             name.to_string(),
@@ -496,7 +496,7 @@ fn manifest_version(dir: &Path) -> Option<String> {
     load_manifest(dir).ok().map(|m| m.package.version)
 }
 
-fn git_ref(d: &freight_core::manifest::types::DetailedDep) -> String {
+fn git_ref(d: &freight::manifest::types::DetailedDep) -> String {
     d.rev
         .as_deref()
         .or(d.tag.as_deref())

@@ -1,12 +1,12 @@
-use freight_core::dep_cmds::{
+use freight::dep_cmds::{
     fetch_git_deps, fetch_package_deps, fetch_registry_deps, fetch_url_deps, GitDepAction,
     PackageDepAction, RegistryDepAction,
 };
-use freight_core::manifest::load_manifest;
-use freight_core::manifest::types::{Dependency, Manifest};
-use freight_core::registry::freight_registry::FreightRegistry;
-use freight_core::registry::host_triple;
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::manifest::load_manifest;
+use freight::manifest::types::{Dependency, Manifest};
+use freight::registry::freight_registry::FreightRegistry;
+use freight::registry::host_triple;
+use freight::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
@@ -61,7 +61,7 @@ fn cmd_fetch(prebuilt: PrebuiltKind, triple: &str) {
 
     for (name, dep) in &manifest.dependencies {
         match dep {
-            Dependency::Detailed(_) if freight_core::manifest::types::is_platform_dep(name) => {
+            Dependency::Detailed(_) if freight::manifest::types::is_platform_dep(name) => {
                 print_status("skip", &format!("{name} (platform)"));
             }
             Dependency::Detailed(d) if d.path.is_some() && d.dep_type.is_none() => {
@@ -232,7 +232,7 @@ fn fetch_prebuilt_deps(
                     && d.path.is_none()
                     && d.git.is_none()
                     && d.url.is_none()
-                    && !freight_core::manifest::types::is_platform_dep(name) =>
+                    && !freight::manifest::types::is_platform_dep(name) =>
             {
                 (
                     d.version.as_deref().unwrap(),

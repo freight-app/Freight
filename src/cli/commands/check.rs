@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use freight_core::error::FreightError;
+use freight::error::FreightError;
 
 #[derive(clap::Args)]
 pub struct Args {}
@@ -10,11 +10,11 @@ impl Args {
         cmd_check();
     }
 }
-use freight_core::manifest::{
+use freight::manifest::{
     find_manifest_dir, load_manifest, load_workspace_manifest, validate, validate_dep_compat,
     Manifest,
 };
-use freight_core::toolchain::load_all_templates;
+use freight::toolchain::load_all_templates;
 
 use crate::output::{print_error, print_status, print_success};
 
@@ -57,7 +57,7 @@ pub fn cmd_check() {
     check_one(&manifest_dir, &templates);
 }
 
-fn check_one(manifest_dir: &Path, templates: &[freight_core::toolchain::CompilerTemplate]) -> bool {
+fn check_one(manifest_dir: &Path, templates: &[freight::toolchain::CompilerTemplate]) -> bool {
     let manifest = match load_manifest(manifest_dir) {
         Ok(m) => m,
         Err(FreightError::ManifestParse(msg)) => {

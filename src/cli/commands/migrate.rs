@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use freight_core::migration::autotools::{import_autotools, purge_autotools};
-use freight_core::migration::cmake::{import_cmake, purge_cmake};
-use freight_core::migration::make::{import_make, purge_make};
+use freight::migration::autotools::{import_autotools, purge_autotools};
+use freight::migration::cmake::{import_cmake, purge_cmake};
+use freight::migration::make::{import_make, purge_make};
 
 use crate::output::{print_error, print_status, print_warning};
 

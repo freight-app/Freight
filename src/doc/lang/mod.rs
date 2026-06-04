@@ -4,6 +4,7 @@ use walkdir::WalkDir;
 use serde::{Deserialize, Serialize};
 
 mod ada;
+mod asm;
 pub mod common;
 mod cpp;
 mod d;
@@ -552,6 +553,7 @@ impl Default for ExtractorRegistry {
         r.register(Box::new(d::DExtractor));
         r.register(Box::new(ada::AdaExtractor));
         r.register(Box::new(zig::ZigExtractor));
+        r.register(Box::new(asm::AsmExtractor));
         r
     }
 }

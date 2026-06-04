@@ -1,6 +1,6 @@
-use freight_core::dep_cmds::{fetch_url_deps, invalidate_url_dep, update_git_deps, GitDepAction};
-use freight_core::manifest::load_manifest;
-use freight_core::manifest::types::Dependency;
+use freight::dep_cmds::{fetch_url_deps, invalidate_url_dep, update_git_deps, GitDepAction};
+use freight::manifest::load_manifest;
+use freight::manifest::types::Dependency;
 
 use crate::output::{print_error, print_status, print_success};
 

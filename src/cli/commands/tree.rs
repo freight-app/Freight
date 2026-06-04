@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use freight_core::dep_cmds::{locate_project, DetailedDep};
-use freight_core::manifest::types::{Dependency, Manifest};
-use freight_core::manifest::{load_manifest, load_workspace_manifest};
+use freight::dep_cmds::{locate_project, DetailedDep};
+use freight::manifest::types::{Dependency, Manifest};
+use freight::manifest::{load_manifest, load_workspace_manifest};
 
 use crate::output::{print_error, render_dot_graph, render_mermaid_graph, GraphEdge, GraphFormat};
 use owo_colors::OwoColorize;
@@ -97,7 +97,7 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str) {
             Dependency::Simple(ver) => {
                 print_package_dep(&branch, name, ver);
             }
-            Dependency::Detailed(d) if freight_core::manifest::types::is_platform_dep(name) => {
+            Dependency::Detailed(d) if freight::manifest::types::is_platform_dep(name) => {
                 print_platform_dep(&branch, name, d);
             }
             Dependency::Detailed(d) if d.path.is_some() => {

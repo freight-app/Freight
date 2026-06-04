@@ -6,7 +6,7 @@ license     = "Apache-2.0"
 description = "Build tool and package manager for C/C++/Fortran/CUDA/Ada/assembly"
 
 [lib]
-name = "freight_core"
+name = "freight"
 path = "src/lib.rs"
 
 [[bin]]

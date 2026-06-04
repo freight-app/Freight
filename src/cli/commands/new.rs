@@ -1,4 +1,4 @@
-use freight_core::new::{init_project, scaffold_project, ScaffoldOutcome};
+use freight::new::{init_project, scaffold_project, ScaffoldOutcome};
 
 use crate::output::{print_error, print_success};
 

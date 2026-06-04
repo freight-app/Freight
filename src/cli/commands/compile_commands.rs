@@ -1,5 +1,5 @@
-use freight_core::build::{compile_commands, generate_compile_commands_at};
-use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
+use freight::build::{compile_commands, generate_compile_commands_at};
+use freight::manifest::{find_manifest_dir, load_workspace_manifest};
 
 use crate::output::{print_error, print_success};
 

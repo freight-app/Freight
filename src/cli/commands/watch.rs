@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-use freight_core::build::build_project_with;
-use freight_core::manifest::find_manifest_dir;
+use freight::build::build_project_with;
+use freight::manifest::find_manifest_dir;
 
 use crate::output::{print_error, print_success};
 

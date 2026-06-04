@@ -32,10 +32,10 @@ impl Args {
     }
 }
 
-use freight_core::build::{build_project_with, BuildOutput};
-use freight_core::event::silent;
-use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
+use freight::build::{build_project_with, BuildOutput};
+use freight::event::silent;
+use freight::manifest::{find_manifest_dir, load_manifest};
+use freight::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
 
 use crate::output::{print_error, print_success, print_warning};
 
@@ -166,8 +166,8 @@ pub fn cmd_debug(
 
 fn gen_launch_json(
     project_dir: &Path,
-    manifest: &freight_core::manifest::types::Manifest,
-    debuggers: &[freight_core::toolchain::DetectedDebugger],
+    manifest: &freight::manifest::types::Manifest,
+    debuggers: &[freight::toolchain::DetectedDebugger],
 ) {
     let vscode_dir = project_dir.join(".vscode");
     if let Err(e) = std::fs::create_dir_all(&vscode_dir) {
@@ -235,7 +235,7 @@ fn select_binary(
     output: &BuildOutput,
     project_dir: &Path,
     filter: Option<&str>,
-    manifest: &freight_core::manifest::types::Manifest,
+    manifest: &freight::manifest::types::Manifest,
 ) -> Result<PathBuf, String> {
     let candidates: Vec<PathBuf> = if let Some(name) = filter {
         output

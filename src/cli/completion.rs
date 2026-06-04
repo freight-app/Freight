@@ -1,5 +1,5 @@
 use clap::{Command, ValueEnum};
-use freight_core::toolchain::{detect_all_cached, group_into_toolchains, load_all_templates};
+use freight::toolchain::{detect_all_cached, group_into_toolchains, load_all_templates};
 use std::io::{self, Write};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]

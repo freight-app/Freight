@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use freight_core::dep_cmds::{regen_lock, RegenLockOutcome};
-use freight_core::manifest::find_manifest_dir;
+use freight::dep_cmds::{regen_lock, RegenLockOutcome};
+use freight::manifest::find_manifest_dir;
 
 use crate::output::{print_error, print_warning};
 
@@ -81,7 +81,7 @@ pub fn refresh_lock(project_dir: &Path) {
 /// Resolve the registry URL from the explicit flag, first configured registry,
 /// or the default freight.dev URL.
 pub fn resolve_registry_url(registry: Option<&str>) -> String {
-    use freight_core::toolchain::cache::GlobalConfig;
+    use freight::toolchain::cache::GlobalConfig;
     registry
         .map(str::to_string)
         .or_else(|| {
@@ -96,7 +96,7 @@ pub fn resolve_registry_url(registry: Option<&str>) -> String {
 
 /// Return the configured registry name for a URL, falling back to "freight".
 pub fn registry_name_for(url: &str) -> String {
-    use freight_core::toolchain::cache::GlobalConfig;
+    use freight::toolchain::cache::GlobalConfig;
     GlobalConfig::load()
         .registries
         .iter()
@@ -181,7 +181,7 @@ pub fn login_with_credentials(
         }
     };
 
-    match freight_core::toolchain::cache::Credentials::save(&name, &token) {
+    match freight::toolchain::cache::Credentials::save(&name, &token) {
         Ok(()) => crate::output::print_success(&format!(
             "logged in as `{username}` — token stored in system keychain"
         )),

@@ -2,8 +2,8 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use freight_core::build::{build_project_at, build_project_with};
-use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
+use freight::build::{build_project_at, build_project_with};
+use freight::manifest::{find_manifest_dir, load_workspace_manifest};
 
 use crate::output::print_error;
 
@@ -114,7 +114,7 @@ pub fn cmd_run(
     run_binary(output, bin, run_args);
 }
 
-fn run_binary(output: freight_core::build::BuildOutput, bin: Option<&str>, run_args: &[String]) {
+fn run_binary(output: freight::build::BuildOutput, bin: Option<&str>, run_args: &[String]) {
     let candidate: Option<std::path::PathBuf> = match bin {
         Some(name) => {
             let matched: Vec<_> = output

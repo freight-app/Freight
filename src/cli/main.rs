@@ -3,7 +3,7 @@ mod completion;
 mod output;
 mod tui;
 
-use freight_core::{dap, lsp};
+use freight::{dap, lsp};
 
 use clap::{CommandFactory, Parser, Subcommand};
 

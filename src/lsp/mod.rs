@@ -348,9 +348,20 @@ impl Server {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 2. DocIndex — position-based then name-based lookup; null on miss.
-        let hover = self.doc_hover(&uri, &msg);
-        self.respond(msg.get("id").cloned(), hover.unwrap_or(Value::Null))
+        // 2. DocIndex — position-based then name-based lookup.
+        if let Some(hover) = self.doc_hover(&uri, &msg) {
+            return self.respond(msg.get("id").cloned(), hover);
+        }
+
+        // 3. For non-C/C++ files (Fortran, assembly, …) fall back to the
+        //    language-specific passthrough server on a DocIndex miss.
+        //    C/C++ hover is DocIndex-only; clangd is kept for diagnostics only.
+        match source_server_for_uri(&uri) {
+            Some(SourceServer::Fortls) | Some(SourceServer::AsmLsp) => {
+                self.forward_by_uri(&uri, &msg)
+            }
+            _ => self.respond(msg.get("id").cloned(), Value::Null),
+        }
     }
 
     fn include_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
@@ -375,13 +386,21 @@ impl Server {
         let path = path_from_uri(uri)?;
         let text = std::fs::read_to_string(&path).ok()?;
 
-        // Position-based: find the item whose doc comment is at or just before the cursor line.
+        let word = word_at(&text, line, character);
+
+        // Position-based: find the item whose doc comment is nearest before the cursor.
+        // Validate that the word under cursor matches the item's simple name so we don't
+        // return the wrong item when the cursor is inside a long function body.
         let item = index
             .lookup_by_location(&path, line)
+            .filter(|item| {
+                word.as_deref()
+                    .map(|w| item.name.to_ascii_lowercase().ends_with(&w.to_ascii_lowercase()))
+                    .unwrap_or(true)
+            })
             .or_else(|| {
-                // Name-based fallback: extract word under cursor and look it up.
-                let word = word_at(&text, line, character)?;
-                index.lookup(&word)
+                // Name-based fallback: word under cursor looked up in the index.
+                index.lookup(word.as_deref()?)
             })?;
 
         tracing::debug!(

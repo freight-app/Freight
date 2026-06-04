@@ -22,9 +22,9 @@ use ratatui::{
 // tui_markdown is declared at the crate root via Cargo.toml
 use tui_markdown;
 
-use freight_core::registry::repos::{registries_in_order, repo_by_name};
-use freight_core::registry::{PackageInfo, PackageVersion};
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::registry::repos::{registries_in_order, repo_by_name};
+use freight::registry::{PackageInfo, PackageVersion};
+use freight::toolchain::cache::GlobalConfig;
 
 use super::common::{enter_tui, leave_tui};
 
@@ -95,7 +95,7 @@ struct App {
     readme: Option<String>,
     readme_cache: HashMap<String, Option<String>>,
     pending_readme: Option<String>,
-    versions_cache: HashMap<String, Vec<freight_core::registry::PackageVersion>>,
+    versions_cache: HashMap<String, Vec<freight::registry::PackageVersion>>,
     pending_detail: Option<String>,
     last_selection: Instant,
     scroll: u16,
@@ -613,8 +613,8 @@ impl App {
 
     /// Add the currently highlighted package to freight.toml without leaving the browser.
     fn install_selected(&mut self) {
-        use freight_core::dep_cmds::{manifest_add_dep, manifest_remove_dep};
-        use freight_core::manifest::types::Dependency;
+        use freight::dep_cmds::{manifest_add_dep, manifest_remove_dep};
+        use freight::manifest::types::Dependency;
 
         let Some(info) = &self.detail else { return };
         let name = info.name.clone();
@@ -729,9 +729,9 @@ fn spawn_detail_request(
 }
 
 fn fetch_package_owners(repo: Option<&str>, name: &str) -> Vec<String> {
-    use freight_core::registry::repos::{registries_in_order, repo_by_name};
-    let config = freight_core::toolchain::cache::GlobalConfig::load();
-    let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = match repo {
+    use freight::registry::repos::{registries_in_order, repo_by_name};
+    let config = freight::toolchain::cache::GlobalConfig::load();
+    let repos: Vec<Box<dyn freight::registry::PackageRepo>> = match repo {
         Some(repo_name) => repo_by_name(repo_name, &config)
             .ok()
             .map(|r| vec![r])
@@ -749,7 +749,7 @@ fn fetch_package_owners(repo: Option<&str>, name: &str) -> Vec<String> {
 
 fn fetch_full_package_info(repo: Option<&str>, name: &str) -> anyhow::Result<Option<PackageInfo>> {
     let config = GlobalConfig::load();
-    let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = match repo {
+    let repos: Vec<Box<dyn freight::registry::PackageRepo>> = match repo {
         Some(repo_name) => vec![repo_by_name(repo_name, &config)?],
         None => registries_in_order(&config),
     };
@@ -763,7 +763,7 @@ fn fetch_full_package_info(repo: Option<&str>, name: &str) -> anyhow::Result<Opt
 
 fn search_packages(repo: Option<&str>, query: &str) -> anyhow::Result<Vec<PackageInfo>> {
     let config = GlobalConfig::load();
-    let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = match repo {
+    let repos: Vec<Box<dyn freight::registry::PackageRepo>> = match repo {
         Some(name) => vec![repo_by_name(name, &config)?],
         None => registries_in_order(&config),
     };
@@ -785,7 +785,7 @@ fn search_packages(repo: Option<&str>, query: &str) -> anyhow::Result<Vec<Packag
 /// Read the current project's freight.toml and return all dependency names.
 /// Silently returns an empty set when no manifest is found or it can't be parsed.
 fn load_installed_deps() -> std::collections::HashSet<String> {
-    use freight_core::manifest::{find_manifest_dir, load_manifest};
+    use freight::manifest::{find_manifest_dir, load_manifest};
     let mut set = std::collections::HashSet::new();
     let cwd = std::env::current_dir().unwrap_or_default();
     let Some(dir) = find_manifest_dir(&cwd) else {
@@ -805,7 +805,7 @@ fn load_installed_deps() -> std::collections::HashSet<String> {
 
 fn fetch_package_readme(repo: Option<&str>, name: &str) -> anyhow::Result<Option<String>> {
     let config = GlobalConfig::load();
-    let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = match repo {
+    let repos: Vec<Box<dyn freight::registry::PackageRepo>> = match repo {
         Some(repo_name) => vec![repo_by_name(repo_name, &config)?],
         None => registries_in_order(&config),
     };
@@ -836,7 +836,7 @@ fn run_loop(
     // Collect names of deps already in the project's freight.toml.
     let installed = load_installed_deps();
     let manifest_path =
-        freight_core::manifest::find_manifest_dir(&std::env::current_dir().unwrap_or_default())
+        freight::manifest::find_manifest_dir(&std::env::current_dir().unwrap_or_default())
             .map(|d| d.join("freight.toml"));
 
     let mut app = App::new(

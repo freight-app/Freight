@@ -1,4 +1,4 @@
-use freight_core::dep_cmds::manifest_remove_dep;
+use freight::dep_cmds::manifest_remove_dep;
 
 use crate::output::{print_error, print_success};
 

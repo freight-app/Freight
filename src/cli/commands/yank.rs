@@ -1,6 +1,6 @@
-use freight_core::manifest::load_manifest;
-use freight_core::registry::freight_registry::FreightRegistry;
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::manifest::load_manifest;
+use freight::registry::freight_registry::FreightRegistry;
+use freight::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_status, print_success};
 

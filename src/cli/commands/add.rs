@@ -1,8 +1,8 @@
-use freight_core::dep_cmds::{fetch_git_deps, manifest_add_dep, DetailedDep, GitDepAction};
-use freight_core::manifest::find_manifest_dir;
-use freight_core::manifest::types::Dependency;
-use freight_core::registry::repos::{registries_in_order, repo_by_name};
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::dep_cmds::{fetch_git_deps, manifest_add_dep, DetailedDep, GitDepAction};
+use freight::manifest::find_manifest_dir;
+use freight::manifest::types::Dependency;
+use freight::registry::repos::{registries_in_order, repo_by_name};
+use freight::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 

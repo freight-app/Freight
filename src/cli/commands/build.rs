@@ -64,11 +64,11 @@ impl Args {
     }
 }
 
-use freight_core::build::{
+use freight::build::{
     build_project_with, build_workspace_with, emit_asm_project_with, resolve_dep_graph, ResolvedDep,
 };
-use freight_core::event::{BuildEvent, Progress};
-use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
+use freight::event::{BuildEvent, Progress};
+use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 
 use crate::output::{
     print_error, print_status, print_success, print_warning, render_dot_graph,

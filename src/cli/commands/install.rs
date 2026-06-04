@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use freight_core::install::{install_project, installer_project, package_project, InstallOptions, InstalledKind};
-use freight_core::manifest::{find_manifest_dir, load_workspace_manifest};
+use freight::install::{install_project, installer_project, package_project, InstallOptions, InstalledKind};
+use freight::manifest::{find_manifest_dir, load_workspace_manifest};
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 

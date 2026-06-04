@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use freight_core::dep_cmds::locate_project;
-use freight_core::manifest::types::{Dependency, Manifest};
-use freight_core::registry::repos::{registries_in_order, repo_by_name};
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::dep_cmds::locate_project;
+use freight::manifest::types::{Dependency, Manifest};
+use freight::registry::repos::{registries_in_order, repo_by_name};
+use freight::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_status, print_warning};
 use owo_colors::OwoColorize;
@@ -27,14 +27,14 @@ fn cmd_info(package: Option<&str>, repo: Option<&str>) {
         let config = {
             let mut cfg = GlobalConfig::load();
             let cwd = std::env::current_dir().unwrap_or_default();
-            if let Some(proj) = freight_core::manifest::find_manifest_dir(&cwd) {
+            if let Some(proj) = freight::manifest::find_manifest_dir(&cwd) {
                 if let Some(local) = GlobalConfig::load_local(&proj) {
                     cfg.apply_local(local);
                 }
             }
             cfg
         };
-        let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = if let Some(rname) = repo {
+        let repos: Vec<Box<dyn freight::registry::PackageRepo>> = if let Some(rname) = repo {
             match repo_by_name(rname, &config) {
                 Ok(r) => vec![r],
                 Err(e) => {

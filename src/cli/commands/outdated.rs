@@ -1,7 +1,7 @@
-use freight_core::manifest::types::Dependency;
-use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::registry::repos::{registries_in_order, repo_by_name};
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::manifest::types::Dependency;
+use freight::manifest::{find_manifest_dir, load_manifest};
+use freight::registry::repos::{registries_in_order, repo_by_name};
+use freight::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_warning};
 use owo_colors::OwoColorize;
@@ -73,7 +73,7 @@ fn cmd_outdated(repo: Option<&str>) {
                     && d.path.is_none()
                     && d.git.is_none()
                     && d.url.is_none()
-                    && !freight_core::manifest::types::is_platform_dep(name) =>
+                    && !freight::manifest::types::is_platform_dep(name) =>
             {
                 let ver = d.version.as_deref().unwrap();
                 if ver.is_empty() || ver == "*" {
@@ -106,7 +106,7 @@ fn cmd_outdated(repo: Option<&str>) {
     let mut any_error = false;
 
     for dep in &registry_deps {
-        let repos: Vec<Box<dyn freight_core::registry::PackageRepo>> = if let Some(rname) = repo {
+        let repos: Vec<Box<dyn freight::registry::PackageRepo>> = if let Some(rname) = repo {
             match repo_by_name(rname, &config) {
                 Ok(r) => vec![r],
                 Err(e) => {

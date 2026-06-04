@@ -1,4 +1,4 @@
-use freight_core::build::{clean_project, clean_workspace};
+use freight::build::{clean_project, clean_workspace};
 
 use crate::output::{print_error, print_success};
 

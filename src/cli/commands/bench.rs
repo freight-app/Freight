@@ -1,4 +1,4 @@
-use freight_core::build::{bench_project_with, bench_workspace_with, BenchResult};
+use freight::build::{bench_project_with, bench_workspace_with, BenchResult};
 
 use crate::output::print_error;
 

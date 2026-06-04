@@ -1,16 +1,16 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use freight_core::doc::extract_dir;
+use freight::doc::extract_dir;
 use sha2::{Digest, Sha256};
 
-use freight_core::build::{build_project_with, test_project_with};
-use freight_core::event::silent;
-use freight_core::manifest::types::Manifest;
-use freight_core::manifest::{find_manifest_dir, load_manifest};
-use freight_core::registry::freight_registry::FreightRegistry;
-use freight_core::registry::host_triple;
-use freight_core::toolchain::cache::GlobalConfig;
+use freight::build::{build_project_with, test_project_with};
+use freight::event::silent;
+use freight::manifest::types::Manifest;
+use freight::manifest::{find_manifest_dir, load_manifest};
+use freight::registry::freight_registry::FreightRegistry;
+use freight::registry::host_triple;
+use freight::toolchain::cache::GlobalConfig;
 
 use crate::output::{print_error, print_status, print_success, print_warning};
 
@@ -616,7 +616,7 @@ fn upload_docs(registry: &FreightRegistry, name: &str, version: &str, project_di
         return;
     }
     print_status("uploading", &format!("docs ({} symbols)", items.len()));
-    match freight_core::doc::to_msgpack(&items) {
+    match freight::doc::to_msgpack(&items) {
         Ok(blob) => {
             if let Err(e) = registry.upload_docs(name, version, &blob) {
                 print_warning(&format!("docs upload failed (non-fatal): {e}"));

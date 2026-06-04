@@ -15,9 +15,9 @@ impl Args {
     }
 }
 
-use freight_core::manifest::types::Manifest;
-use freight_core::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
-use freight_core::toolchain::{
+use freight::manifest::types::Manifest;
+use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
+use freight::toolchain::{
     collect_sources, detect_tools, load_formatter_templates, select_formatter, DetectedTool,
 };
 
