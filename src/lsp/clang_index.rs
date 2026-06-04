@@ -32,6 +32,19 @@ pub struct DefinitionLocation {
     pub col: u32,
 }
 
+/// A single inlay hint produced from the AST (parameter name or deduced type).
+pub struct AstInlayHint {
+    /// 0-based line.
+    pub line: u32,
+    /// 0-based column (position *before* which the hint is inserted).
+    pub col: u32,
+    pub label: String,
+    /// 1 = Type, 2 = Parameter (LSP InlayHintKind).
+    pub kind: u32,
+    pub padding_left: bool,
+    pub padding_right: bool,
+}
+
 // ---------------------------------------------------------------------------
 // TuCache
 // ---------------------------------------------------------------------------
@@ -228,6 +241,37 @@ impl TuCache {
     }
 
     // -----------------------------------------------------------------------
+    // AST inlay hints (Phase 4)
+    // -----------------------------------------------------------------------
+
+    /// Returns `true` if a parsed TU exists for `path`.
+    pub fn has_tu(&self, path: &Path) -> bool {
+        self.tus.contains_key(path)
+    }
+
+    /// Walk the AST in `[start_line, end_line]` (0-based) and collect:
+    /// - parameter name hints at call-expression argument positions
+    /// - deduced-type hints on `auto` variable declarations
+    pub fn ast_inlay_hints(
+        &self,
+        path: &Path,
+        start_line: u32,
+        end_line: u32,
+    ) -> Option<Vec<AstInlayHint>> {
+        let tu = *self.tus.get(path)?;
+        let root = unsafe { clang_getTranslationUnitCursor(tu) };
+        let mut v = HintVisitor {
+            hints: Vec::new(),
+            start_line,
+            end_line,
+        };
+        unsafe {
+            clang_visitChildren(root, hint_visitor, &mut v as *mut _ as CXClientData);
+        }
+        Some(v.hints)
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 
@@ -281,6 +325,151 @@ impl Drop for TuCache {
         }
         unsafe { clang_disposeIndex(self.index) };
     }
+}
+
+// ---------------------------------------------------------------------------
+// AST visitor for inlay hints
+// ---------------------------------------------------------------------------
+
+struct HintVisitor {
+    hints: Vec<AstInlayHint>,
+    start_line: u32,
+    end_line: u32,
+}
+
+extern "C" fn hint_visitor(
+    cursor: CXCursor,
+    _parent: CXCursor,
+    data: CXClientData,
+) -> CXChildVisitResult {
+    let v = unsafe { &mut *(data as *mut HintVisitor) };
+    let kind = unsafe { clang_getCursorKind(cursor) };
+
+    // Skip invalid / unexposed cursors entirely.
+    if unsafe { clang_isInvalid(kind) } != 0 {
+        return CXChildVisit_Continue;
+    }
+
+    let loc = unsafe { clang_getCursorLocation(cursor) };
+    // Skip nodes that live inside system headers — no hints needed there.
+    if unsafe { clang_Location_isInSystemHeader(loc) } != 0 {
+        return CXChildVisit_Continue;
+    }
+
+    let mut file: CXFile = std::ptr::null_mut();
+    let mut line: u32 = 0;
+    let mut col: u32 = 0;
+    let mut offset: u32 = 0;
+    unsafe { clang_getSpellingLocation(loc, &mut file, &mut line, &mut col, &mut offset) };
+    if line == 0 {
+        return CXChildVisit_Recurse;
+    }
+    let line0 = line - 1;
+
+    if line0 > v.end_line {
+        // Node starts after our range — skip its subtree too.
+        return CXChildVisit_Continue;
+    }
+
+    if line0 >= v.start_line {
+        #[allow(non_upper_case_globals)]
+        match kind {
+            CXCursor_CallExpr => collect_param_hints(cursor, v),
+            CXCursor_VarDecl => collect_auto_type_hint(cursor, v),
+            _ => {}
+        }
+    }
+
+    CXChildVisit_Recurse
+}
+
+fn collect_param_hints(call_expr: CXCursor, v: &mut HintVisitor) {
+    let num_args = unsafe { clang_Cursor_getNumArguments(call_expr) };
+    if num_args <= 0 {
+        return;
+    }
+
+    // Get the function/method declaration to read parameter names.
+    let func_ref = unsafe { clang_getCursorReferenced(call_expr) };
+    if unsafe { clang_Cursor_isNull(func_ref) } != 0 {
+        return;
+    }
+    let func_num_params = unsafe { clang_Cursor_getNumArguments(func_ref) };
+    if func_num_params <= 0 {
+        return;
+    }
+
+    let n = (num_args as u32).min(func_num_params as u32);
+    for i in 0..n {
+        let arg_cursor = unsafe { clang_Cursor_getArgument(call_expr, i) };
+        let param_cursor = unsafe { clang_Cursor_getArgument(func_ref, i) };
+        if unsafe { clang_Cursor_isNull(param_cursor) } != 0 {
+            continue;
+        }
+
+        let param_name = unsafe { cx_string(clang_getCursorSpelling(param_cursor)) };
+        // Skip unnamed, underscore-prefixed, or single-char params.
+        if param_name.is_empty() || param_name.starts_with('_') || param_name.len() == 1 {
+            continue;
+        }
+
+        let arg_loc = unsafe { clang_getCursorLocation(arg_cursor) };
+        let mut file: CXFile = std::ptr::null_mut();
+        let mut line: u32 = 0;
+        let mut col: u32 = 0;
+        let mut offset: u32 = 0;
+        unsafe { clang_getSpellingLocation(arg_loc, &mut file, &mut line, &mut col, &mut offset) };
+        if line == 0 || file.is_null() {
+            continue;
+        }
+
+        v.hints.push(AstInlayHint {
+            line: line - 1,
+            col: col - 1,
+            label: format!("{param_name}:"),
+            kind: 2,
+            padding_left: false,
+            padding_right: true,
+        });
+    }
+}
+
+fn collect_auto_type_hint(var_decl: CXCursor, v: &mut HintVisitor) {
+    let ty = unsafe { clang_getCursorType(var_decl) };
+    if ty.kind == CXType_Invalid {
+        return;
+    }
+    // Only emit when the declared type contains "auto".
+    let ty_spell = unsafe { cx_string(clang_getTypeSpelling(ty)) };
+    if !ty_spell.contains("auto") {
+        return;
+    }
+    // Get the canonical (deduced) type.
+    let canonical = unsafe { clang_getCanonicalType(ty) };
+    let deduced = unsafe { cx_string(clang_getTypeSpelling(canonical)) };
+    if deduced.is_empty() || deduced.contains("auto") {
+        return;
+    }
+
+    let name_loc = unsafe { clang_getCursorLocation(var_decl) };
+    let spelling = unsafe { cx_string(clang_getCursorSpelling(var_decl)) };
+    let mut file: CXFile = std::ptr::null_mut();
+    let mut line: u32 = 0;
+    let mut col: u32 = 0;
+    let mut offset: u32 = 0;
+    unsafe { clang_getSpellingLocation(name_loc, &mut file, &mut line, &mut col, &mut offset) };
+    if line == 0 || file.is_null() {
+        return;
+    }
+
+    v.hints.push(AstInlayHint {
+        line: line - 1,
+        col: col - 1 + spelling.len() as u32,
+        label: format!(": {deduced}"),
+        kind: 1,
+        padding_left: true,
+        padding_right: false,
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -31,40 +31,30 @@ hints with direct AST queries via `libclang` (`clang-sys` crate). clangd stays a
 the subprocess for diagnostics and completions where it adds the most value.
 
 **Phase 1 — TU lifecycle (prerequisite)**
-- [ ] Add `clang-sys` + `clang` crates to `Cargo.toml` (dynamic link, feature-gated
-  `libclang` so freight still builds without LLVM installed, falling back to the
-  existing proxy path).
-- [ ] Add `ClangIndex` (wraps `CXIndex`) and `TuCache` (`HashMap<PathBuf, CXTranslationUnit>`)
-  to `ServerState`.
-- [ ] On `textDocument/didOpen` + `textDocument/didChange` (debounced ~300 ms): reparse
-  the TU for C/C++ files using `compile_commands.json` flags. Store in `TuCache`.
-- [ ] On `textDocument/didClose`: drop the TU from `TuCache`.
+- [x] Add `clang-sys` (runtime dlopen) to `Cargo.toml` — no link-time dep on libclang.
+- [x] `TuCache` in `src/lsp/clang_index.rs` — `CXIndex` + per-file `CXTranslationUnit` map.
+- [x] Open/reparse TU on `didOpen`/`didChange`; drop on `didClose`.
 
-**Phase 2 — Hover via libclang**
-- [ ] On `textDocument/hover` for a C/C++ file: look up the TU, call
-  `clang_getCursor` at the position, query type + spelling + declaration.
-- [ ] Build a hover markdown card from the cursor: declaration spelling, type string,
-  brief doc comment (`clang_Cursor_getBriefCommentText`).
-- [ ] Fall back to DocIndex lookup (existing path) when no TU is available.
-- [ ] Remove the clangd hover forwarding for C/C++ (freight now owns it).
+**Phase 2 — Hover via libclang** ✓
+- [x] `clang_getCursor` → `getCursorReferenced` → spelling + type string + brief doc.
+- [x] Falls back to DocIndex → fortls/asm-lsp on miss.
 
-**Phase 3 — Go-to-definition via libclang**
-- [ ] Replace the current clangd-forwarded definition with `clang_getCursorDefinition`
-  on the TU cursor at the requested position.
-- [ ] Keep the `#include` line intercept as-is (that's already freight-owned).
+**Phase 3 — Go-to-definition via libclang** ✓
+- [x] `clang_getCursorDefinition` / `getCursorReferenced` with spelling location.
+- [x] `#include` line intercept still freight-owned as before.
 
-**Phase 4 — Inlay hints via libclang**
-- [ ] Drop the `clangd_pending` ID-rewrite / merge pipeline for C/C++ inlay hints.
-- [ ] Compute parameter name hints and deduced type hints directly from the TU AST
-  (walk children, check `CXCursor_CallExpr` arg positions, `clang_getResultType`).
-- [ ] Keep include-origin hints exactly as they are (those never touched the AST).
+**Phase 4 — Inlay hints via libclang** ✓
+- [x] AST visitor (`clang_visitChildren`) for `CXCursor_CallExpr` → parameter name hints
+  and `CXCursor_VarDecl` with `auto` → deduced-type hints.
+- [x] When TU is loaded, respond directly (no clangd round-trip).
+- [x] `clangd_pending` merge pipeline kept as fallback when TU is not yet parsed.
+- [x] Include-origin hints unchanged.
 
-**Phase 5 — clang-tidy diagnostics**
-- [ ] On `textDocument/didSave` for C/C++ files: spawn `clang-tidy <file> -p <cc>`
-  in the background.
-- [ ] Parse structured output (or `--export-fixes` JSON); emit
-  `textDocument/publishDiagnostics` with `source = "clang-tidy"`.
-- [ ] Merge alongside clangd diagnostics (separate source tag so VS Code shows both).
+**Phase 5 — clang-tidy diagnostics** ✓
+- [x] On `textDocument/didSave` for C/C++ files: spawn `clang-tidy <file> -p <cc_dir>`
+  in a background thread.
+- [x] Parse text output (`<file>:<line>:<col>: <sev>: <msg> [<check>]`).
+- [x] Emit `textDocument/publishDiagnostics` with `source = "clang-tidy"`.
 
 **What stays as clangd subprocess:**
 - Diagnostics (clangd's error recovery and incremental reparse is better)

@@ -20,7 +20,7 @@ use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest}
 use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
-use clang_index::{hover_info_to_markdown, DefinitionLocation, TuCache};
+use clang_index::{hover_info_to_markdown, AstInlayHint, DefinitionLocation, TuCache};
 use doc_index::{
     include_hover_markdown, include_inlay_label, item_to_markdown, parse_include_header, word_at,
     DocIndex, HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
@@ -338,6 +338,21 @@ impl Server {
             return self.forward_to_all_passthroughs(&msg);
         };
         if !is_freight_manifest_uri(&uri) {
+            // Reparse TU and run clang-tidy for C/C++ files.
+            if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
+                if let Some(path) = path_from_uri(&uri) {
+                    if let Some(cache) = self.state.tu_cache.as_mut() {
+                        cache.open(&path);
+                    }
+                    if let Some(cc_dir) = self.state.compile_commands_dir.clone() {
+                        let out = Arc::clone(&self.out);
+                        let uri_clone = uri.clone();
+                        thread::spawn(move || {
+                            run_clang_tidy(&path, &cc_dir, uri_clone, out);
+                        });
+                    }
+                }
+            }
             return self.forward_by_uri(&uri, &msg);
         }
         if let Some(text) = msg
@@ -632,32 +647,67 @@ impl Server {
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let our_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
+        // Include-origin hints (freight-owned, all languages).
+        let include_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
 
-        // If clangd is running for this file, forward the request under a
-        // rewritten ID. The reader thread will merge our hints into its
-        // response and forward to the client. If clangd is absent, respond directly.
         let uri = text_document_uri(&msg);
-        let goes_to_clangd = uri.as_deref()
+        let is_clangd_file = uri.as_deref()
             .map(|u| matches!(source_server_for_uri(u), Some(SourceServer::Clangd)))
             .unwrap_or(false);
 
-        if goes_to_clangd && self.state.clangd.is_some() {
-            let orig_id_str = match &id {
-                Value::Number(n) => n.to_string(),
-                Value::String(s) => s.clone(),
-                _ => "0".to_string(),
-            };
-            let rewritten = format!("__freight_inlayhint_{orig_id_str}");
-            self.state.clangd_pending.lock().unwrap()
-                .insert(rewritten.clone(), (id, our_hints));
-            let mut fwd = msg;
-            fwd.as_object_mut().unwrap().insert("id".to_string(), json!(rewritten));
-            self.forward_to_passthrough(SourceServer::Clangd, &fwd)?;
-        } else {
-            self.respond(Some(id), Value::Array(our_hints))?;
+        if is_clangd_file {
+            let path = uri.as_deref().and_then(path_from_uri);
+            let tu_ready = path.as_ref().map(|p| {
+                self.state.tu_cache.as_ref()
+                    .map(|c| c.has_tu(p))
+                    .unwrap_or(false)
+            }).unwrap_or(false);
+
+            if tu_ready {
+                // TU loaded: compute AST hints directly (param names + auto types).
+                // No clangd round-trip needed.
+                let ast_hints = self.compute_ast_inlay_hints(&msg).unwrap_or_default();
+                let mut all = include_hints;
+                all.extend(ast_hints);
+                return self.respond(Some(id), Value::Array(all));
+            }
+
+            // TU not ready yet: fall back to the clangd merge pipeline.
+            if self.state.clangd.is_some() {
+                let orig_id_str = match &id {
+                    Value::Number(n) => n.to_string(),
+                    Value::String(s) => s.clone(),
+                    _ => "0".to_string(),
+                };
+                let rewritten = format!("__freight_inlayhint_{orig_id_str}");
+                self.state.clangd_pending.lock().unwrap()
+                    .insert(rewritten.clone(), (id, include_hints));
+                let mut fwd = msg;
+                fwd.as_object_mut().unwrap().insert("id".to_string(), json!(rewritten));
+                return self.forward_to_passthrough(SourceServer::Clangd, &fwd).map(|_| ());
+            }
         }
-        Ok(())
+
+        self.respond(Some(id), Value::Array(include_hints))
+    }
+
+    fn compute_ast_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
+        let uri = text_document_uri(msg)?;
+        let path = path_from_uri(&uri)?;
+        let range = msg.get("params")?.get("range")?;
+        let start_line = range.get("start")?.get("line")?.as_u64()? as u32;
+        let end_line = range.get("end")?.get("line")?.as_u64()? as u32;
+
+        let hints = self.state.tu_cache.as_ref()?
+            .ast_inlay_hints(&path, start_line, end_line)?;
+
+        Some(hints.into_iter().map(|h: AstInlayHint| json!({
+            "position":     { "line": h.line, "character": h.col },
+            "label":        h.label,
+            "kind":         h.kind,
+            "paddingLeft":  h.padding_left,
+            "paddingRight": h.padding_right,
+        })).collect())
     }
 
     fn compute_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
@@ -1420,6 +1470,126 @@ fn push_doc_package_dir(out: &mut Vec<PathBuf>, dir: PathBuf) {
     {
         out.push(canonical);
     }
+}
+
+// ---------------------------------------------------------------------------
+// clang-tidy on-save runner
+// ---------------------------------------------------------------------------
+
+/// Spawn `clang-tidy <file> -p <cc_dir>`, parse its output, and push
+/// `textDocument/publishDiagnostics` with `source = "clang-tidy"`.
+/// Runs entirely in a background thread; errors are logged and silently dropped.
+fn run_clang_tidy(
+    file: &Path,
+    cc_dir: &Path,
+    uri: String,
+    out: Arc<Mutex<io::Stdout>>,
+) {
+    let output = match std::process::Command::new("clang-tidy")
+        .arg(file)
+        .arg("-p")
+        .arg(cc_dir)
+        .arg("--quiet") // suppress "N warnings generated" summary
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::debug!(error = %e, "clang-tidy not available or failed to launch");
+            return;
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    let diagnostics = parse_clang_tidy_output(&combined, file);
+
+    let msg = json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": uri,
+            "source": "clang-tidy",
+            "diagnostics": diagnostics
+        }
+    });
+    let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
+    tracing::debug!(
+        file = %file.display(),
+        count = diagnostics.as_array().map(|a| a.len()).unwrap_or(0),
+        "clang-tidy diagnostics published"
+    );
+}
+
+/// Parse clang-tidy text output into LSP diagnostic objects.
+///
+/// Format: `<file>:<line>:<col>: <severity>: <message> [<check>]`
+fn parse_clang_tidy_output(text: &str, source_file: &Path) -> Value {
+    let mut diagnostics = Vec::new();
+    let file_str = source_file.to_string_lossy();
+
+    for line in text.lines() {
+        // Must start with the source file path to avoid picking up notes from
+        // other files or clangd's own include chains.
+        if !line.starts_with(file_str.as_ref()) {
+            continue;
+        }
+
+        // `<file>:<line>:<col>: <severity>: <message> [<check>]`
+        let rest = &line[file_str.len()..];
+        let mut parts = rest.splitn(4, ':');
+        let line_num: u32 = match parts.next().and_then(|s| s.trim_start_matches(':').trim().parse().ok()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let col_num: u32 = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(1);
+        let remainder = match parts.next() {
+            Some(r) => r.trim(),
+            None => continue,
+        };
+
+        // `<severity>: <message> [<check>]`
+        let (severity_str, message_and_check) = match remainder.split_once(':') {
+            Some(p) => p,
+            None => continue,
+        };
+        let severity_str = severity_str.trim();
+        let severity: u32 = match severity_str {
+            "error" => 1,
+            "warning" => 2,
+            "note" | "remark" => 3,
+            _ => continue, // skip lines that don't look like diagnostics
+        };
+        if severity == 3 {
+            continue; // notes are clutter; skip them
+        }
+
+        let msg_text = message_and_check.trim();
+        // Extract the optional check name in brackets at the end.
+        let (message, code) = if let Some(bracket) = msg_text.rfind('[') {
+            let check = msg_text[bracket + 1..].trim_end_matches(']').trim().to_string();
+            (msg_text[..bracket].trim().to_string(), Some(check))
+        } else {
+            (msg_text.to_string(), None)
+        };
+
+        let mut diag = json!({
+            "range": {
+                "start": { "line": line_num.saturating_sub(1), "character": col_num.saturating_sub(1) },
+                "end":   { "line": line_num.saturating_sub(1), "character": col_num.saturating_sub(1) }
+            },
+            "severity": severity,
+            "source": "clang-tidy",
+            "message": message
+        });
+        if let Some(c) = code {
+            diag.as_object_mut().unwrap().insert("code".to_string(), json!(c));
+        }
+        diagnostics.push(diag);
+    }
+
+    Value::Array(diagnostics)
 }
 
 fn level_for_method(method: &str) -> tracing::Level {
