@@ -82,21 +82,27 @@ pub fn make_progress() -> Progress {
     use std::sync::Arc;
     Arc::new(|event| match event {
         BuildEvent::BuildStarted { name, profile } => {
+            tracing::info!(name, profile, "build started");
             print_status("Building", &format!("{name} [{profile}]"));
         }
         BuildEvent::Compiling { path } => {
+            tracing::debug!(file = %path.display(), "compiling");
             print_status("Compiling", &path.display().to_string());
         }
         BuildEvent::Fresh { path } => {
+            tracing::trace!(file = %path.display(), "fresh (skipped)");
             println!("{:>12} {}", "Fresh".dimmed(), path.display());
         }
         BuildEvent::Linking { name } => {
+            tracing::info!(name, "linking");
             print_status("Linking", &name);
         }
         BuildEvent::Archiving { name } => {
+            tracing::info!(name, "archiving");
             print_status("Archiving", &name);
         }
         BuildEvent::RunningScript { cached } => {
+            tracing::debug!(cached, "running build script");
             if cached {
                 println!("{:>12} build script (cached)", "Running".dimmed());
             } else {
@@ -104,15 +110,19 @@ pub fn make_progress() -> Progress {
             }
         }
         BuildEvent::FetchingDep { name, source } => {
+            tracing::info!(name, source, "fetching dep");
             print_status("Fetching", &format!("{name} ({source})"));
         }
         BuildEvent::ResolvingDep { name, via } => {
+            tracing::debug!(name, via, "resolving dep");
             println!("{:>12} {} ({})", "Resolving".dimmed(), name, via);
         }
         BuildEvent::BuildingForeignDep { name, backend } => {
+            tracing::info!(name, backend, "building foreign dep");
             print_status("Building", &format!("{name} ({backend})"));
         }
         BuildEvent::Warning(msg) => {
+            tracing::warn!("{msg}");
             print_warning(&msg);
         }
         BuildEvent::TestLinking { name } => {

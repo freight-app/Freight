@@ -2,6 +2,7 @@
 //! source files (clangd, fortls, asm-lsp passthroughs).
 
 mod doc_index;
+pub(crate) mod log;
 mod manifest;
 mod protocol;
 
@@ -61,7 +62,11 @@ pub struct Args {
 
 impl Args {
     pub fn run(self) {
-        if let Err(e) = Server::new(self).run() {
+        // Build `out` first so we can share it with the log layer.
+        let out = Arc::new(Mutex::new(io::stdout()));
+        log::init_lsp_logging(Arc::clone(&out));
+        tracing::info!("freight lsp starting");
+        if let Err(e) = Server::with_out(self, out).run() {
             eprintln!("freight lsp: {e}");
         }
     }
@@ -121,13 +126,13 @@ pub(crate) enum SourceServer {
 // ---------------------------------------------------------------------------
 
 impl Server {
-    fn new(args: Args) -> Self {
+    fn with_out(args: Args, out: Arc<Mutex<io::Stdout>>) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let manifest_dir = find_manifest_dir(&cwd);
         let root_dir = manifest_dir.clone().unwrap_or(cwd);
         Self {
             args,
-            out: Arc::new(Mutex::new(io::stdout())),
+            out,
             state: ServerState {
                 root_dir,
                 manifest_dir,
@@ -157,6 +162,7 @@ impl Server {
                 }
                 continue;
             }
+            tracing::debug!(method, "← client");
             match method {
                 "initialize" => self.handle_initialize(msg)?,
                 "initialized" => {
@@ -182,6 +188,7 @@ impl Server {
                 _ => self.forward_or_null(msg)?,
             }
         }
+        tracing::info!("freight lsp shutting down");
         self.kill_passthroughs();
         Ok(())
     }
@@ -370,6 +377,7 @@ impl Server {
         let header = parse_include_header(line_text)?;
         let entry = self.state.header_index.lookup(&header)?;
         let md = include_hover_markdown(&header, entry);
+        tracing::debug!(header, package = entry.package_name.as_str(), "include hover");
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
     }
 
@@ -381,6 +389,7 @@ impl Server {
         let text = std::fs::read_to_string(&path).ok()?;
         let word = word_at(&text, line, character)?;
         let item = index.lookup(&word)?;
+        tracing::debug!(symbol = word.as_str(), file = %item.file.display(), "doc-index hover hit");
         let markdown = item_to_markdown(item);
         Some(json!({ "contents": { "kind": "markdown", "value": markdown } }))
     }
@@ -404,6 +413,7 @@ impl Server {
         let tagged_id = format!("__freight_hover_{seq}");
 
         let (line, col) = position(&msg).unwrap_or((0, 0));
+        tracing::debug!(uri, line, col, seq, "forwarding hover to clangd");
         self.state.pending_hovers.lock().unwrap().insert(
             tagged_id.clone(),
             PendingHover { original_id: original_id.clone(), uri, line, col },
@@ -668,6 +678,7 @@ impl Server {
             return;
         };
         if let Ok(dir) = generate_lsp_compile_commands_at(&dir, &self.args.profile) {
+            tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
             self.state.compile_commands_dir = Some(dir);
         }
         self.refresh_doc_index();
@@ -690,6 +701,10 @@ impl Server {
 
         // DocIndex — built synchronously; typically well under a second.
         let new_index = DocIndex::build_freight_packages(package_refs.iter().copied());
+        tracing::info!(
+            packages = package_dirs.len(),
+            "doc index rebuilt"
+        );
         *self.state.doc_index.lock().unwrap() = Some(new_index);
 
         // HeaderIndex — tag each dir with its origin.
@@ -874,9 +889,32 @@ impl Server {
                         let word = path_from_uri(&info.uri)
                             .and_then(|p| std::fs::read_to_string(p).ok())
                             .and_then(|text| word_at(&text, info.line, info.col));
+
+                        // Log raw clangd hover text before enrichment.
+                        if let Some(raw) = msg
+                            .pointer("/result/contents/value")
+                            .and_then(Value::as_str)
+                        {
+                            tracing::trace!(
+                                symbol = word.as_deref().unwrap_or("?"),
+                                "clangd raw hover:\n{raw}"
+                            );
+                        }
+
                         let guard = doc_index.lock().unwrap();
                         let mut enriched = enrich_hover_response(&msg, word.as_deref(), &*guard);
                         drop(guard);
+
+                        // Log the enriched markdown that will be sent to VS Code.
+                        if let Some(md) = enriched
+                            .pointer("/result/contents/value")
+                            .and_then(Value::as_str)
+                        {
+                            tracing::debug!(
+                                symbol = word.as_deref().unwrap_or("?"),
+                                "enriched hover:\n{md}"
+                            );
+                        }
                         // Restore original client ID.
                         if let Some(obj) = enriched.as_object_mut() {
                             obj.insert("id".to_string(), info.original_id);

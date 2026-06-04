@@ -57,6 +57,8 @@ image          = { version = "0.25", optional = true }
 mathjax-svg-rs = { version = "0.4", optional = true }
 resvg          = { version = "0.47", optional = true }
 tui-markdown = "0.3.7"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"

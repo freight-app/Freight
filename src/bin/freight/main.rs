@@ -102,6 +102,12 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
+    // For non-LSP commands, initialise a stderr logger when FREIGHT_LOG is set.
+    // (The lsp command sets up its own subscriber that forwards to VS Code.)
+    if !matches!(cli.command, Commands::Lsp(_)) {
+        commands::lsp::log::init_stderr_logging();
+    }
+
     match cli.command {
         Commands::New(args) => args.run(),
         Commands::Init(args) => args.run(),
