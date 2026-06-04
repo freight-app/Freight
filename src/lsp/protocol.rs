@@ -195,7 +195,8 @@ pub fn freight_capabilities() -> Value {
             "triggerCharacters": ["{", "=", ","],
             "retriggerCharacters": [","]
         },
-        "hoverProvider": true
+        "hoverProvider": true,
+        "inlayHintProvider": true
     })
 }
 

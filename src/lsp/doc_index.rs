@@ -170,6 +170,8 @@ pub struct HeaderEntry {
 /// are indexed so lookups work for both `<zlib.h>` and `<zlib/zlib.h>`.
 pub struct HeaderIndex {
     by_path: HashMap<String, HeaderEntry>,
+    /// Compiler system include directories (probed once at build time).
+    system_dirs: Vec<PathBuf>,
 }
 
 /// A package directory together with where it came from.
@@ -243,7 +245,8 @@ impl HeaderIndex {
             }
         }
 
-        Self { by_path }
+        let system_dirs = probe_system_include_dirs();
+        Self { by_path, system_dirs }
     }
 
     /// Look up a header by its include path (e.g. `"zlib.h"` or `"zlib/zlib.h"`).
@@ -257,6 +260,23 @@ impl HeaderIndex {
         self.by_path.get(basename)
     }
 
+    /// Look up a header in the compiler's system include directories.
+    /// Returns a synthetic `System` entry if found, `None` otherwise.
+    pub fn lookup_system(&self, header: &str) -> Option<HeaderEntry> {
+        for dir in &self.system_dirs {
+            let candidate = dir.join(header);
+            if candidate.exists() {
+                return Some(HeaderEntry {
+                    package_name: "stdlib".to_string(),
+                    package_version: None,
+                    full_path: candidate,
+                    origin: HeaderOrigin::System,
+                });
+            }
+        }
+        None
+    }
+
     pub fn is_empty(&self) -> bool {
         self.by_path.is_empty()
     }
@@ -264,8 +284,61 @@ impl HeaderIndex {
 
 impl Default for HeaderIndex {
     fn default() -> Self {
-        Self { by_path: HashMap::new() }
+        Self { by_path: HashMap::new(), system_dirs: probe_system_include_dirs() }
     }
+}
+
+/// Probe the default C++ compiler for its system include search paths.
+/// Parses the `#include <...> search starts here:` block from `gcc -v` output.
+fn probe_system_include_dirs() -> Vec<PathBuf> {
+    let compilers = ["c++", "g++", "clang++", "cc", "gcc", "clang"];
+    for compiler in compilers {
+        if let Some(dirs) = try_probe_compiler(compiler) {
+            if !dirs.is_empty() {
+                return dirs;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
+    let out = std::process::Command::new(compiler)
+        .args(["-xc++", "-E", "-v", "/dev/null"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut dirs = Vec::new();
+    let mut in_block = false;
+
+    for line in stderr.lines() {
+        if line.contains("#include <...> search starts here") {
+            in_block = true;
+            continue;
+        }
+        if in_block {
+            if line.starts_with("End of search list") {
+                break;
+            }
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                // Strip any trailing " (framework directory)" annotation (macOS clang)
+                let path_str = trimmed
+                    .split_once(" (")
+                    .map(|(p, _)| p)
+                    .unwrap_or(trimmed);
+                let p = PathBuf::from(path_str);
+                if p.is_dir() {
+                    dirs.push(p);
+                }
+            }
+        }
+    }
+    Some(dirs)
 }
 
 fn walk_include_dir(
@@ -360,17 +433,21 @@ pub fn include_hover_markdown(header: &str, entry: &HeaderEntry) -> String {
     out
 }
 
-/// Parse an `#include` or `#import` directive from a line, returning the header path.
-pub fn parse_include_header(line: &str) -> Option<String> {
+/// Parse an `#include` or `#import` directive from a line.
+/// Returns `(header_path, is_system)` where `is_system` is true for `<…>` includes.
+pub fn parse_include_header(line: &str) -> Option<(String, bool)> {
     let line = line.trim();
     let rest = line
         .strip_prefix("#include")
-        .or_else(|| line.strip_prefix("#import"))?
+        .or_else(|| line.strip_prefix("#import"))
+        .or_else(|| line.strip_prefix("import"))?
         .trim();
     if rest.starts_with('<') {
-        rest.strip_prefix('<')?.split('>').next().map(str::to_string)
+        let header = rest.strip_prefix('<')?.split('>').next()?.to_string();
+        Some((header, true))
     } else if rest.starts_with('"') {
-        rest.strip_prefix('"')?.split('"').next().map(str::to_string)
+        let header = rest.strip_prefix('"')?.split('"').next()?.to_string();
+        Some((header, false))
     } else {
         None
     }
@@ -378,6 +455,25 @@ pub fn parse_include_header(line: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Markdown rendering 
 // ---------------------------------------------------------------------------
+
+/// Short label for an inlay hint: `← pkg-version` or `← stdlib`.
+pub fn include_inlay_label(entry: &HeaderEntry) -> String {
+    let label = match entry.origin {
+        HeaderOrigin::System => "stdlib".to_string(),
+        _ => {
+            if let Some(ref ver) = entry.package_version {
+                if ver.is_empty() {
+                    entry.package_name.clone()
+                } else {
+                    format!("{}-{ver}", entry.package_name)
+                }
+            } else {
+                entry.package_name.clone()
+            }
+        }
+    };
+    format!("← {label}")
+}
 
 /// Render a `DocItem` to a Markdown string suitable for an LSP hover response.
 pub fn item_to_markdown(item: &DocItem) -> String {
@@ -603,13 +699,13 @@ hdrs = ["include/core.h"]
 
     #[test]
     fn parse_include_header_angle_brackets() {
-        assert_eq!(parse_include_header("#include <zlib.h>").as_deref(), Some("zlib.h"));
-        assert_eq!(parse_include_header("  #include  <foo/bar.h>").as_deref(), Some("foo/bar.h"));
+        assert_eq!(parse_include_header("#include <zlib.h>"), Some(("zlib.h".into(), true)));
+        assert_eq!(parse_include_header("  #include  <foo/bar.h>"), Some(("foo/bar.h".into(), true)));
     }
 
     #[test]
     fn parse_include_header_quotes() {
-        assert_eq!(parse_include_header(r#"#include "myheader.h""#).as_deref(), Some("myheader.h"));
+        assert_eq!(parse_include_header(r#"#include "myheader.h""#), Some(("myheader.h".into(), false)));
     }
 
 

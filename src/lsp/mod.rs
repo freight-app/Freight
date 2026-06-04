@@ -20,8 +20,8 @@ use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
 use doc_index::{
-    include_hover_markdown, item_to_markdown, parse_include_header, word_at,
-    DocIndex, HeaderDirSpec, HeaderIndex, HeaderOrigin,
+    include_hover_markdown, include_inlay_label, item_to_markdown, parse_include_header, word_at,
+    DocIndex, HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
 };
 use manifest::{
     completion_result, hover_result, manifest_diagnostics, signature_help_result,
@@ -172,6 +172,7 @@ impl Server {
                 "textDocument/hover" => self.handle_hover_or_forward(msg)?,
                 "textDocument/signatureHelp" => self.handle_signature_help_or_forward(msg)?,
                 "textDocument/codeAction" => self.handle_code_action_or_forward(msg)?,
+                "textDocument/inlayHint" => self.handle_inlay_hints(msg)?,
                 "freight/workspaceInfo" => self.handle_workspace_info(msg)?,
                 "freight/setConfig"     => self.handle_set_config(msg)?,
                 _ => self.forward_or_null(msg)?,
@@ -383,18 +384,82 @@ impl Server {
     }
 
     fn include_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
-        if self.state.header_index.is_empty() {
-            return None;
-        }
         let (line, _) = position(msg)?;
         let path = path_from_uri(uri)?;
         let text = std::fs::read_to_string(&path).ok()?;
         let line_text = text.lines().nth(line)?;
-        let header = parse_include_header(line_text)?;
-        let entry = self.state.header_index.lookup(&header)?;
+        let (header, is_system) = parse_include_header(line_text)?;
+
+        // Try package index first, then system dirs for angle-bracket includes.
+        let owned;
+        let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&header) {
+            e
+        } else if is_system {
+            owned = self.state.header_index.lookup_system(&header)?;
+            &owned
+        } else {
+            return None;
+        };
+
         let md = include_hover_markdown(&header, entry);
-        tracing::debug!(header, package = entry.package_name.as_str(), line, "include hover");
+        tracing::debug!(
+            header = header.as_str(),
+            package = entry.package_name.as_str(),
+            line,
+            "include hover"
+        );
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
+    }
+
+    fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned();
+        let hints = self.compute_inlay_hints(&msg).unwrap_or_default();
+        self.respond(id, Value::Array(hints))
+    }
+
+    fn compute_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
+        let uri = text_document_uri(msg)?;
+        let path = path_from_uri(&uri)?;
+        let text = std::fs::read_to_string(&path).ok()?;
+
+        let range = msg.get("params")?.get("range")?;
+        let start_line = range.get("start")?.get("line")?.as_u64()? as usize;
+        let end_line = range.get("end")?.get("line")?.as_u64()? as usize;
+
+        let mut hints = Vec::new();
+        for (idx, line_text) in text.lines().enumerate() {
+            if idx < start_line || idx > end_line {
+                continue;
+            }
+            let Some((header, is_system)) = parse_include_header(line_text) else {
+                continue;
+            };
+
+            let owned;
+            let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&header) {
+                e
+            } else if is_system {
+                owned = self.state.header_index.lookup_system(&header)?;
+                &owned
+            } else {
+                continue;
+            };
+
+            let label = include_inlay_label(entry);
+            // Position at end of line.
+            let col = line_text.len();
+            hints.push(json!({
+                "position": { "line": idx, "character": col },
+                "label": label,
+                "kind": 2,       // Parameter kind — renders as dimmed text
+                "paddingLeft": true,
+                "tooltip": {
+                    "kind": "markdown",
+                    "value": include_hover_markdown(&header, entry)
+                }
+            }));
+        }
+        Some(hints)
     }
 
     fn doc_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
