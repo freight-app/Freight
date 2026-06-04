@@ -227,6 +227,21 @@ impl Server {
                 self.publish_manifest_diagnostics(&uri)?;
                 return Ok(());
             }
+            // If we don't have a manifest dir yet, try to find one from the opened file.
+            if self.state.manifest_dir.is_none() {
+                if let Some(path) = path_from_uri(&uri) {
+                    if let Some(parent) = path.parent() {
+                        if let Some(found) = find_manifest_dir(parent) {
+                            tracing::info!(
+                                path = %found.display(),
+                                "manifest dir discovered from opened file"
+                            );
+                            self.state.manifest_dir = Some(found);
+                            self.refresh_compile_commands();
+                        }
+                    }
+                }
+            }
         }
         self.forward_by_text_document(&msg)
     }
@@ -708,6 +723,11 @@ impl Server {
 
     fn refresh_compile_commands(&mut self) {
         let Some(dir) = self.active_manifest_dir() else {
+            tracing::info!(
+                root_dir = %self.state.root_dir.display(),
+                manifest_dir = ?self.state.manifest_dir,
+                "no manifest dir — skipping compile commands and doc index"
+            );
             return;
         };
         if let Ok(dir) = generate_lsp_compile_commands_at(&dir, &self.args.profile) {
