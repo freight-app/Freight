@@ -51,7 +51,12 @@ impl Args {
                 self.no_verify,
             );
         } else {
-            cmd_publish(self.dry_run, self.yes, self.no_verify, self.registry.as_deref());
+            cmd_publish(
+                self.dry_run,
+                self.yes,
+                self.no_verify,
+                self.registry.as_deref(),
+            );
         }
     }
 }
@@ -592,7 +597,11 @@ fn build_source_tarball(
                 header.set_size(cleaned.len() as u64);
                 header.set_mode(0o644);
                 header.set_cksum();
-                ar.append_data(&mut header, format!("{prefix}/{rel_str}"), cleaned.as_slice())?;
+                ar.append_data(
+                    &mut header,
+                    format!("{prefix}/{rel_str}"),
+                    cleaned.as_slice(),
+                )?;
             } else {
                 ar.append_path_with_name(path, format!("{prefix}/{rel_str}"))?;
             }

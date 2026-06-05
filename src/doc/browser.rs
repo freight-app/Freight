@@ -220,9 +220,9 @@ enum RowKind {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 struct App {
-    /// Visible packages — shown in the sidebar tree.
+    /// Visible packages, including project docs, dependencies, and loaded stdlib docs.
     packages: Vec<PackageDoc>,
-    /// Hidden packages (stdlib, etc.) — in sym_index but not in the tree.
+    /// Hidden packages are link targets that should not appear in the sidebar tree.
     hidden: Vec<PackageDoc>,
     expanded: HashSet<String>,
     rows: Vec<TreeRow>,
@@ -233,7 +233,7 @@ struct App {
     tree_area: Rect,
     filter_area: Rect,
     detail_area: Rect,
-    /// (pkg_idx, item_idx) of a hidden item being shown in the detail pane.
+    /// (pkg_idx, item_idx) of a hidden link target being shown in the detail pane.
     /// pkg_idx is an index into `hidden`.
     external_item: Option<(usize, usize)>,
     sym_index: HashMap<String, (usize, usize, bool)>, // name → (pkg_idx, item_idx, is_hidden)
@@ -577,6 +577,30 @@ impl App {
                 });
             }
         }
+    }
+
+    fn add_visible_packages(&mut self, packages: Vec<PackageDoc>) {
+        if packages.is_empty() {
+            return;
+        }
+        self.packages.extend(packages);
+        self.external_item = None;
+        self.sym_index = build_sym_index(&self.packages, &self.hidden);
+        self.rebuild_rows();
+        self.clamp_selection();
+    }
+
+    fn clamp_selection(&mut self) {
+        if self.rows.is_empty() {
+            self.list_state.select(None);
+            return;
+        }
+        let selected = self
+            .list_state
+            .selected()
+            .unwrap_or(0)
+            .min(self.rows.len().saturating_sub(1));
+        self.list_state.select(Some(selected));
     }
 
     fn rebuild_filtered_rows(&mut self) {
@@ -1197,7 +1221,7 @@ fn source_lines_windowed(
 fn detail_lines(app: &App) -> Vec<Line<'static>> {
     let width = app.detail_area.width.saturating_sub(4) as usize;
     let width = width.max(20);
-    // Hidden stdlib item shown via link click.
+    // Hidden link target shown via link click.
     if let Some((pi, ii)) = app.external_item {
         if let Some(pkg) = app.hidden.get(pi) {
             if let Some(item) = pkg.items.get(ii) {
@@ -2088,9 +2112,6 @@ pub fn browse(
     stdlib_rx: std::sync::mpsc::Receiver<StdlibMsg>,
 ) -> anyhow::Result<()> {
     let hidden = Vec::new();
-    if packages.is_empty() {
-        return Err(anyhow::anyhow!("no documented packages to display"));
-    }
 
     enable_raw_mode()?;
     let mut stderr = io::stderr();
@@ -2124,9 +2145,8 @@ fn run_loop(
                 Ok(StdlibMsg::Progress { done, total, label }) => {
                     app.stdlib_status = Some((done, total, label));
                 }
-                Ok(StdlibMsg::Done(hidden)) => {
-                    app.hidden = hidden;
-                    app.sym_index = build_sym_index(&app.packages, &app.hidden);
+                Ok(StdlibMsg::Done(stdlib_packages)) => {
+                    app.add_visible_packages(stdlib_packages);
                     app.stdlib_status = None;
                 }
                 Err(_) => break,

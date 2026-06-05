@@ -32,7 +32,6 @@ use crate::lock::LockFile;
 use crate::manifest::types::Manifest;
 use crate::toolchain::GlobalConfig;
 
-use super::graph::PackageGraph;
 use super::{
     apply_sanitize_override, build_resolved_deps, build_sources, check_slot_conflicts,
     ensure_git_deps_fetched, inject_option_handler_flags, load_project_at,
@@ -142,16 +141,15 @@ pub fn stage_fetch(
 /// Stages 4 + 5: resolve the dep graph, check slot conflicts, build all deps.
 pub fn stage_build_deps(
     project_dir: &Path,
-    graph: &PackageGraph,
+    root_dir: &Path,
     manifest: &Manifest,
     profile: &str,
+    include_dev: bool,
     activated_deps: &std::collections::BTreeSet<String>,
     ctx: &ProjectContext,
     progress: &Progress,
 ) -> Result<(Vec<ResolvedDep>, BuiltDepsOutput), FreightError> {
-    let include_dev = matches!(&ctx as *const _, _) && false; // placeholder — passed via goal below
-    let _ = include_dev;
-    let resolved = resolve_dep_graph(project_dir, manifest, false, activated_deps)?;
+    let resolved = resolve_dep_graph(project_dir, manifest, include_dev, activated_deps)?;
     let to_drop = check_slot_conflicts(&resolved, manifest)?;
     let resolved: Vec<ResolvedDep> = resolved.into_iter().filter(|d| !to_drop.contains(&d.name)).collect();
 
@@ -159,7 +157,7 @@ pub fn stage_build_deps(
         manifest, project_dir, &ctx.effective_backend, profile,
         &ctx.templates, &ctx.detected, &resolved, progress,
     )?;
-    let (foreign, _pc, tool_paths) = crate::adaptors::build_foreign_deps(graph, manifest, profile, progress)?;
+    let (foreign, _pc, tool_paths) = crate::adaptors::build_foreign_deps(project_dir, root_dir, manifest, profile, progress)?;
 
     let mut output = BuiltDepsOutput {
         libs: built.libs,
@@ -428,11 +426,6 @@ pub fn run_pipeline_at(
     let ProjectContext { project_dir, manifest, found, .. } = &ctx;
 
     let root_dir: &Path = parent_root.unwrap_or(project_dir);
-    let graph = if let Some(pr) = parent_root {
-        PackageGraph::for_dep(&manifest.package.name, &manifest.package.version, project_dir.to_path_buf(), pr.to_path_buf())
-    } else {
-        PackageGraph::root_only(&manifest.package.name, &manifest.package.version, project_dir.to_path_buf())
-    };
     let target_dir: PathBuf = if let Some(pr) = parent_root {
         pr.join("target").join("deps").join(&manifest.package.name)
     } else {
@@ -449,24 +442,10 @@ pub fn run_pipeline_at(
 
     // ── Stage 4+5: Resolve + build deps ──────────────────────────────────────
     let include_dev = config.goal.include_dev_deps();
-    let resolved = {
-        let r = resolve_dep_graph(project_dir, manifest, include_dev, &feat.activated_deps)?;
-        let drop = check_slot_conflicts(&r, manifest)?;
-        r.into_iter().filter(|d| !drop.contains(&d.name)).collect::<Vec<_>>()
-    };
-    let native_built = build_resolved_deps(
-        manifest, project_dir, &ctx.effective_backend, profile,
-        &ctx.templates, &ctx.detected, &resolved, progress,
+    let (resolved, native_deps) = stage_build_deps(
+        project_dir, root_dir, manifest, profile, include_dev, &feat.activated_deps, &ctx, progress,
     )?;
-    let (foreign, _pc, tool_paths) = crate::adaptors::build_foreign_deps(&graph, manifest, profile, progress)?;
-
-    let mut deps = BuiltDepsOutput {
-        libs: native_built.libs,
-        include_dirs: native_built.include_dirs,
-        raw_link_flags: Vec::new(),
-        tool_paths,
-    };
-    for f in foreign { deps.libs.extend(f.libs); deps.include_dirs.extend(f.include_dirs); deps.raw_link_flags.extend(f.raw_link_flags); }
+    let deps = native_deps;
 
     // ── Stage 6: Assemble include dirs ───────────────────────────────────────
     let mut include_dirs = stage_assemble_includes(project_dir, manifest, profile, &found.include_dirs, &deps.include_dirs);
@@ -511,7 +490,7 @@ pub fn run_pipeline_at(
                 profile, &all_sources, &include_dirs, &feat.defines, &pch.clangd,
                 Some(compile_result.compiled_sources.as_slice()),
             );
-            let cc = merge_dep_compile_commands(cc, &graph, profile);
+            let cc = merge_dep_compile_commands(cc, &root_dir.join(".pkgs"), profile);
             let lsp_dir = lsp_compile_commands_dir(project_dir, profile);
             if let Err(e) = compile_commands::write_to(&lsp_dir.join("compile_commands.json"), &cc)
                 .and_then(|_| compile_commands::write_incremental_cache(
@@ -555,12 +534,12 @@ pub fn run_pipeline_at(
 
 fn merge_dep_compile_commands(
     base: Vec<compile_commands::CompileCommand>,
-    graph: &PackageGraph,
+    pkgs_dir: &Path,
     profile: &str,
 ) -> Vec<compile_commands::CompileCommand> {
     let mut merged = base;
     let lsp_sub = std::path::Path::new(".freight").join("lsp").join(safe_lsp_profile_dir(profile));
-    if let Ok(entries) = std::fs::read_dir(graph.pkgs_dir()) {
+    if let Ok(entries) = std::fs::read_dir(pkgs_dir) {
         for entry in entries.flatten() {
             let dep_cc = entry.path().join(&lsp_sub).join("compile_commands.json");
             if dep_cc.exists() {

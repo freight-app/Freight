@@ -533,10 +533,10 @@ as passthroughs:
 | Assembly (`.asm`, `.nasm`, `.s`) | `asm-lsp` |
 
 On initialize, when `freight.toml` is saved, and when the editor reports an
-external `freight.toml` file change, the server refreshes a backend-owned source
-LSP compile database outside the project tree. `clangd` is launched with
-`--compile-commands-dir=<freight-lsp-cache>`, so the editor does not need a
-project-root `compile_commands.json` in the explorer. The explicit
+external `freight.toml` file change, the server refreshes a source LSP compile
+database at `.freight/lsp/<profile>/compile_commands.json`. `clangd` is launched
+with `--compile-commands-dir=.freight/lsp/<profile>`, so the editor does not need
+a project-root `compile_commands.json` in the explorer. The explicit
 `freight compile-commands` command still writes the project-root file for users
 and tools that ask for it.
 

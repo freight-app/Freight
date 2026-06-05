@@ -4,8 +4,9 @@ use crate::error::FreightError;
 use crate::event::Progress;
 use crate::manifest::{find_manifest_dir, load_manifest, types::Manifest};
 use super::{
-    clean_project_at, generate_compile_commands_at, pipeline, run_pipeline_at, BenchSummary,
-    BuildOutput, PipelineOutput, TestSummary,
+    check_slot_conflicts, clean_project_at, generate_compile_commands_at, pipeline,
+    resolve_dep_graph, run_pipeline_at, BenchSummary, BuildOutput, PipelineOutput, ResolvedDep,
+    TestSummary,
 };
 
 // ── Project ───────────────────────────────────────────────────────────────────
@@ -23,6 +24,8 @@ pub struct Project {
     /// When building a dep from source, the root project's directory anchors
     /// the flat `.pkgs/` pool and target dirs.  `None` for top-level builds.
     pub parent_root: Option<PathBuf>,
+    /// Resolved and topo-sorted dependency list.  Empty until [`Project::resolve`] is called.
+    pub deps: Vec<ResolvedDep>,
 }
 
 impl Project {
@@ -30,7 +33,7 @@ impl Project {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, FreightError> {
         let dir = dir.into();
         let manifest = load_manifest(&dir)?;
-        Ok(Self { dir, manifest, parent_root: None })
+        Ok(Self { dir, manifest, parent_root: None, deps: vec![] })
     }
 
     /// Open the project whose `freight.toml` is an ancestor of the current
@@ -46,6 +49,26 @@ impl Project {
     pub fn with_parent_root(mut self, root: PathBuf) -> Self {
         self.parent_root = Some(root);
         self
+    }
+
+    /// Fetch missing deps and resolve the dependency graph, populating [`Project::deps`].
+    ///
+    /// Runs stages 2–4 of the pipeline (features → fetch → resolve) without
+    /// compiling anything. Call this before inspecting `deps` or hand the
+    /// `Project` to other tools that need the dep list.
+    pub fn resolve(
+        &mut self,
+        config: &pipeline::PipelineConfig,
+        progress: &Progress,
+    ) -> Result<(), FreightError> {
+        let root_dir = self.parent_root.as_deref().unwrap_or(&self.dir);
+        let feat = pipeline::stage_features(&self.manifest, config)?;
+        pipeline::stage_fetch(&self.dir, root_dir, &self.manifest, progress)?;
+        let include_dev = config.goal.include_dev_deps();
+        let raw = resolve_dep_graph(&self.dir, &self.manifest, include_dev, &feat.activated_deps)?;
+        let drop = check_slot_conflicts(&raw, &self.manifest)?;
+        self.deps = raw.into_iter().filter(|d| !drop.contains(&d.name)).collect();
+        Ok(())
     }
 
     /// Compile and link the project.

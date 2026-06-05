@@ -760,7 +760,13 @@ mod tests {
     #[test]
     fn no_modules_gives_empty_batches() {
         let sources = vec![make_regular("src/main.cpp", &[])];
-        let plan = plan_module_build(Path::new("/proj"), Path::new("/proj/target"), "dev", sources).unwrap();
+        let plan = plan_module_build(
+            Path::new("/proj"),
+            Path::new("/proj/target"),
+            "dev",
+            sources,
+        )
+        .unwrap();
         assert!(plan.miu_batches.is_empty());
         assert_eq!(plan.rest.len(), 1);
     }
@@ -771,7 +777,13 @@ mod tests {
             make_miu("math", &[]),
             make_regular("src/main.cpp", &["math"]),
         ];
-        let plan = plan_module_build(Path::new("/proj"), Path::new("/proj/target"), "dev", sources).unwrap();
+        let plan = plan_module_build(
+            Path::new("/proj"),
+            Path::new("/proj/target"),
+            "dev",
+            sources,
+        )
+        .unwrap();
         assert_eq!(plan.miu_batches.len(), 1);
         assert_eq!(plan.miu_batches[0].len(), 1);
         assert_eq!(plan.rest.len(), 1);
@@ -784,7 +796,13 @@ mod tests {
             make_miu("geometry", &[]),
             make_regular("src/main.cpp", &["math", "geometry"]),
         ];
-        let plan = plan_module_build(Path::new("/proj"), Path::new("/proj/target"), "dev", sources).unwrap();
+        let plan = plan_module_build(
+            Path::new("/proj"),
+            Path::new("/proj/target"),
+            "dev",
+            sources,
+        )
+        .unwrap();
         assert_eq!(plan.miu_batches.len(), 1);
         assert_eq!(plan.miu_batches[0].len(), 2);
     }
@@ -797,7 +815,13 @@ mod tests {
             make_miu("geometry", &["math"]),
             make_regular("src/main.cpp", &["geometry"]),
         ];
-        let plan = plan_module_build(Path::new("/proj"), Path::new("/proj/target"), "dev", sources).unwrap();
+        let plan = plan_module_build(
+            Path::new("/proj"),
+            Path::new("/proj/target"),
+            "dev",
+            sources,
+        )
+        .unwrap();
         assert_eq!(plan.miu_batches.len(), 2);
         let first_names: Vec<&str> = plan.miu_batches[0]
             .iter()
@@ -812,7 +836,13 @@ mod tests {
     #[test]
     fn cycle_returns_error() {
         let sources = vec![make_miu("a", &["b"]), make_miu("b", &["a"])];
-        assert!(plan_module_build(Path::new("/proj"), Path::new("/proj/target"), "dev", sources).is_err());
+        assert!(plan_module_build(
+            Path::new("/proj"),
+            Path::new("/proj/target"),
+            "dev",
+            sources
+        )
+        .is_err());
     }
 
     #[test]

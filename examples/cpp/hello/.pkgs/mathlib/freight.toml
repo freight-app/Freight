@@ -1,0 +1,16 @@
+[package]
+name        = "mathlib"
+version     = "0.1.0"
+description = "Portable math utilities — C library with clamping, lerp, and statistics helpers"
+authors     = ["max <maxbensink@gmail.com>"]
+
+[language.c]
+std = "c17"
+
+[compiler]
+includes = ["include"]
+
+[lib]
+type = "static"
+srcs = ["src/mathlib.c"]
+hdrs = ["include/mathlib/mathlib.h"]

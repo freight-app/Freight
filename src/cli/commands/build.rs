@@ -275,7 +275,11 @@ pub fn cmd_build(
                     }
                     true
                 }
-                Err(e) => { println!(); print_error(&e.to_string()); false }
+                Err(e) => {
+                    println!();
+                    print_error(&e.to_string());
+                    false
+                }
             }
         } else {
             if package.is_some() {
@@ -289,10 +293,16 @@ pub fn cmd_build(
                         "{} ({} compiled, {} up to date)",
                         output.package_name, output.compiled, output.skipped,
                     ));
-                    for bin in &output.binaries { println!("    {}", bin.display()); }
+                    for bin in &output.binaries {
+                        println!("    {}", bin.display());
+                    }
                     true
                 }
-                Err(e) => { println!(); print_error(&e.to_string()); false }
+                Err(e) => {
+                    println!();
+                    print_error(&e.to_string());
+                    false
+                }
             }
         };
         if build_ok {

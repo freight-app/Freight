@@ -1,0 +1,19 @@
+[package]
+name        = "vecmath"
+version     = "0.1.1"
+description = "2D/3D vector and matrix math — C++17 header-only core with a compiled utility layer"
+authors     = ["max <maxbensink@gmail.com>"]
+
+[language.cpp]
+std = "c++17"
+
+[compiler]
+includes = ["include"]
+
+[lib]
+type = "static"
+srcs = ["src/vecmath.cpp"]
+hdrs = ["include/vecmath/vec2.h", "include/vecmath/vec3.h", "include/vecmath/mat3.h"]
+
+[dependencies]
+mathlib = { version = "0.1.0"}

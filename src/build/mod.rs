@@ -4,7 +4,6 @@ pub mod deps;
 pub(crate) mod diagnostics;
 pub mod discover;
 pub mod features;
-pub mod graph;
 pub mod header_units;
 pub mod link;
 pub mod modules;
@@ -19,7 +18,6 @@ pub use compile::{
 };
 pub use deps::{check_slot_conflicts, resolve_dep_graph, ResolvedDep};
 pub use discover::{discover, DiscoveredSources, SourceFile};
-pub use graph::{DepKind, DepRef, PackageGraph, PackageNode};
 pub use link::{link_static_lib, link_targets, link_test_binary, select_linker, LinkResult};
 pub use modules::{
     bmi_path, compile_module_sources, has_modules, plan_module_build, scan_sources,
@@ -354,7 +352,7 @@ pub fn build_project_at(
     target_override: Option<&str>,
     sanitize_override: &[String],
     progress: &Progress,
-    parent_graph: Option<&graph::PackageGraph>,
+    parent_root: Option<&Path>,
 ) -> Result<BuildOutput, FreightError> {
     let config = PipelineConfig {
         profile: profile.to_string(),
@@ -364,7 +362,6 @@ pub fn build_project_at(
         sanitize_override: sanitize_override.to_vec(),
         goal: PipelineGoal::Build,
     };
-    let parent_root = parent_graph.map(|pg| pg.root_dir.as_path());
     match run_pipeline_at(project_dir, &config, parent_root, progress)? {
         PipelineOutput::Build(out) => Ok(out),
         _ => unreachable!(),

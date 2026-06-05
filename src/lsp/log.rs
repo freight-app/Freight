@@ -33,8 +33,8 @@ pub fn init_lsp_logging(out: Arc<Mutex<io::Stdout>>) {
     {
         "trace" => LevelFilter::TRACE,
         "debug" => LevelFilter::DEBUG,
-        "info"  => LevelFilter::INFO,
-        "warn"  => LevelFilter::WARN,
+        "info" => LevelFilter::INFO,
+        "warn" => LevelFilter::WARN,
         "error" => LevelFilter::ERROR,
         _ => return, // not set → no logging
     };
@@ -76,9 +76,9 @@ impl<S: tracing::Subscriber> Layer<S> for LspLogLayer {
         let level = *event.metadata().level();
         let msg_type = match level {
             Level::ERROR => 1u32,
-            Level::WARN  => 2,
-            Level::INFO  => 3,
-            _            => 4, // DEBUG + TRACE → Log
+            Level::WARN => 2,
+            Level::INFO => 3,
+            _ => 4, // DEBUG + TRACE → Log
         };
 
         let mut visitor = FieldCollector::default();

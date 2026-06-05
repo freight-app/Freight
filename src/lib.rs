@@ -2,9 +2,9 @@ pub mod build;
 pub mod dap;
 pub mod dep_cmds;
 pub mod doc;
-pub mod lsp;
 pub mod error;
 pub mod event;
+pub mod lsp;
 pub mod migration;
 pub mod supports;
 

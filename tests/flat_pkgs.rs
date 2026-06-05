@@ -165,7 +165,8 @@ src  = "src/main.c"
 vecmath  = "0.1.0"
 geometry = "0.1.0"
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let vecmath_dir = root_dir.join(".pkgs/vecmath");
     write_lib_project(&vecmath_dir, "vecmath", Some(("mathlib", "0.1.0")));
@@ -180,7 +181,9 @@ geometry = "0.1.0"
     assert_success(&out, "flat_pkgs: two-dep shared transitive");
 
     assert!(
-        root_dir.join("target/deps/mathlib/dev/libmathlib.a").exists(),
+        root_dir
+            .join("target/deps/mathlib/dev/libmathlib.a")
+            .exists(),
         "mathlib must be built into root target/deps/mathlib/, not inside .pkgs/"
     );
     assert!(

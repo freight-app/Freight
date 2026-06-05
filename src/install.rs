@@ -215,7 +215,16 @@ pub fn package_project(
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
 
-    build_project_at(project_dir, profile, &[], true, target, &[], &silent(), None)?;
+    build_project_at(
+        project_dir,
+        profile,
+        &[],
+        true,
+        target,
+        &[],
+        &silent(),
+        None,
+    )?;
 
     let global_target = GlobalConfig::load().target;
     let (pkg_arch, pkg_os) = target
@@ -604,7 +613,16 @@ pub fn installer_project(
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
 
-    build_project_at(project_dir, profile, &[], true, target, &[], &silent(), None)?;
+    build_project_at(
+        project_dir,
+        profile,
+        &[],
+        true,
+        target,
+        &[],
+        &silent(),
+        None,
+    )?;
 
     let global_target = GlobalConfig::load().target;
     let (pkg_arch, pkg_os) = target
@@ -658,8 +676,8 @@ pub fn installer_project(
     }
 
     let output = match pkg_os.as_str() {
-        "linux"   => build_deb(&manifest, &staging, &pkg_dir, &pkg_arch)?,
-        "macos"   => build_dmg(&manifest, &staging, &pkg_dir)?,
+        "linux" => build_deb(&manifest, &staging, &pkg_dir, &pkg_arch)?,
+        "macos" => build_dmg(&manifest, &staging, &pkg_dir)?,
         "windows" => build_nsis(&manifest, &staging, &pkg_dir)?,
         other => {
             return Err(FreightError::InstallFailed(format!(
@@ -719,9 +737,19 @@ fn is_system_lib(path: &Path, target_os: &str) -> bool {
     match target_os {
         "linux" => {
             let skip = [
-                "libc.so", "libm.so", "libdl.so", "libpthread.so", "librt.so",
-                "libresolv.so", "libutil.so", "libnss_", "libnsl.so",
-                "libgcc_s.so", "ld-linux", "linux-vdso", "linux-gate",
+                "libc.so",
+                "libm.so",
+                "libdl.so",
+                "libpthread.so",
+                "librt.so",
+                "libresolv.so",
+                "libutil.so",
+                "libnss_",
+                "libnsl.so",
+                "libgcc_s.so",
+                "ld-linux",
+                "linux-vdso",
+                "linux-gate",
             ];
             skip.iter().any(|s| name.starts_with(s))
         }
@@ -732,10 +760,21 @@ fn is_system_lib(path: &Path, target_os: &str) -> bool {
         }
         "windows" => {
             let skip = [
-                "kernel32.dll", "user32.dll", "gdi32.dll", "ole32.dll",
-                "oleaut32.dll", "ntdll.dll", "advapi32.dll", "shell32.dll",
-                "shlwapi.dll", "ws2_32.dll", "msvcp", "vcruntime", "ucrtbase",
-                "api-ms-win", "ext-ms-win",
+                "kernel32.dll",
+                "user32.dll",
+                "gdi32.dll",
+                "ole32.dll",
+                "oleaut32.dll",
+                "ntdll.dll",
+                "advapi32.dll",
+                "shell32.dll",
+                "shlwapi.dll",
+                "ws2_32.dll",
+                "msvcp",
+                "vcruntime",
+                "ucrtbase",
+                "api-ms-win",
+                "ext-ms-win",
             ];
             skip.iter().any(|s| name.starts_with(s))
         }
@@ -745,8 +784,8 @@ fn is_system_lib(path: &Path, target_os: &str) -> bool {
 
 fn collect_shared_deps(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, FreightError> {
     match target_os {
-        "linux"   => collect_deps_ldd(binary, target_os),
-        "macos"   => collect_deps_otool(binary, target_os),
+        "linux" => collect_deps_ldd(binary, target_os),
+        "macos" => collect_deps_otool(binary, target_os),
         "windows" => collect_deps_dumpbin(binary, target_os),
         other => {
             eprintln!("warning: shared-lib collection not supported on {other}");
@@ -775,7 +814,11 @@ fn collect_deps_ldd(binary: &Path, target_os: &str) -> Result<Vec<PathBuf>, Frei
                 Some(p) => p,
                 None => continue,
             };
-            if p.starts_with('/') { Some(p) } else { None }
+            if p.starts_with('/') {
+                Some(p)
+            } else {
+                None
+            }
         };
         if let Some(p) = path_str {
             let pb = PathBuf::from(p);
@@ -877,14 +920,17 @@ fn build_deb(
     pkg_dir: &Path,
     pkg_arch: &str,
 ) -> Result<PathBuf, FreightError> {
-    let name    = &manifest.package.name;
+    let name = &manifest.package.name;
     let version = &manifest.package.version;
     let deb_arch = deb_arch(pkg_arch);
 
     // Compute installed size in KiB.
     let installed_kb = dir_size_kb(staging);
 
-    let maintainer = manifest.package.authors.first()
+    let maintainer = manifest
+        .package
+        .authors
+        .first()
         .cloned()
         .unwrap_or_else(|| "Unknown".to_string());
     let description = if manifest.package.description.is_empty() {
@@ -952,12 +998,12 @@ fn build_deb(
 /// Map Freight arch names to Debian arch names.
 fn deb_arch(arch: &str) -> &str {
     match arch {
-        "x86_64"  => "amd64",
+        "x86_64" => "amd64",
         "aarch64" => "arm64",
         "i686" | "i386" => "i386",
-        "arm"     => "armhf",
+        "arm" => "armhf",
         "riscv64" => "riscv64",
-        other     => other,
+        other => other,
     }
 }
 
@@ -972,7 +1018,8 @@ fn append_dir_to_tar<W: Write>(
         let entry = entry?;
         let path = entry.path();
         let rel = path.strip_prefix(root).unwrap_or(&path);
-        let rel_str = rel.components()
+        let rel_str = rel
+            .components()
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
@@ -1055,7 +1102,7 @@ fn build_dmg(
     staging: &Path,
     pkg_dir: &Path,
 ) -> Result<PathBuf, FreightError> {
-    let name    = &manifest.package.name;
+    let name = &manifest.package.name;
     let version = &manifest.package.version;
     let dmg_path = pkg_dir.join(format!("{name}-{version}.dmg"));
 
@@ -1063,19 +1110,24 @@ fn build_dmg(
     let status = std::process::Command::new("hdiutil")
         .args([
             "create",
-            "-volname",  &vol_name,
-            "-srcfolder", &staging.to_string_lossy(),
+            "-volname",
+            &vol_name,
+            "-srcfolder",
+            &staging.to_string_lossy(),
             "-ov",
-            "-format", "UDZO",
+            "-format",
+            "UDZO",
             &dmg_path.to_string_lossy(),
         ])
         .status()
-        .map_err(|e| FreightError::InstallFailed(format!(
-            "hdiutil not found — is this a macOS host? ({e})"
-        )))?;
+        .map_err(|e| {
+            FreightError::InstallFailed(format!("hdiutil not found — is this a macOS host? ({e})"))
+        })?;
 
     if !status.success() {
-        return Err(FreightError::InstallFailed("hdiutil exited with non-zero status".into()));
+        return Err(FreightError::InstallFailed(
+            "hdiutil exited with non-zero status".into(),
+        ));
     }
     Ok(dmg_path)
 }
@@ -1092,12 +1144,14 @@ fn build_nsis(
     staging: &Path,
     pkg_dir: &Path,
 ) -> Result<PathBuf, FreightError> {
-    let name    = &manifest.package.name;
+    let name = &manifest.package.name;
     let version = &manifest.package.version;
     let exe_path = pkg_dir.join(format!("{name}-{version}-setup.exe"));
 
     // Find the first binary to use as the main shortcut target.
-    let first_bin = manifest.bins.first()
+    let first_bin = manifest
+        .bins
+        .first()
         .map(|b| format!("bin\\{}.exe", b.name))
         .unwrap_or_else(|| format!("bin\\{name}.exe"));
 
@@ -1149,16 +1203,21 @@ SectionEnd
     let status = std::process::Command::new("makensis")
         .arg(&nsi_path)
         .status()
-        .map_err(|_| FreightError::InstallFailed(
-            "makensis not found — install NSIS first:\n  \
+        .map_err(|_| {
+            FreightError::InstallFailed(
+                "makensis not found — install NSIS first:\n  \
              Windows: winget install NSIS.NSIS\n  \
-             Linux:   apt install nsis".into()
-        ))?;
+             Linux:   apt install nsis"
+                    .into(),
+            )
+        })?;
 
     let _ = fs::remove_file(&nsi_path);
 
     if !status.success() {
-        return Err(FreightError::InstallFailed("makensis exited with non-zero status".into()));
+        return Err(FreightError::InstallFailed(
+            "makensis exited with non-zero status".into(),
+        ));
     }
     Ok(exe_path)
 }
@@ -1193,22 +1252,27 @@ fn build_msix(
     pkg_dir: &Path,
     pkg_arch: &str,
 ) -> Result<PathBuf, FreightError> {
-    let name    = &manifest.package.name;
+    let name = &manifest.package.name;
     let version = &manifest.package.version;
 
     // MSIX Identity/@Version must be a four-part dotted number.
     let msix_version = pad_version_to_four(version);
-    let msix_arch    = msix_arch(pkg_arch);
-    let publisher    = manifest.package.authors.first()
+    let msix_arch = msix_arch(pkg_arch);
+    let publisher = manifest
+        .package
+        .authors
+        .first()
         .map(|a| format!("CN={a}"))
         .unwrap_or_else(|| format!("CN={name}"));
-    let description  = if manifest.package.description.is_empty() {
+    let description = if manifest.package.description.is_empty() {
         name.clone()
     } else {
         manifest.package.description.clone()
     };
 
-    let first_bin = manifest.bins.first()
+    let first_bin = manifest
+        .bins
+        .first()
         .map(|b| format!("bin\\{}.exe", b.name))
         .unwrap_or_else(|| format!("bin\\{name}.exe"));
 
@@ -1224,8 +1288,14 @@ fn build_msix(
     // Write placeholder logo assets.
     let assets_dir = msix_stage.join("assets");
     fs::create_dir_all(&assets_dir)?;
-    fs::write(assets_dir.join("logo44.png"),  &solid_png(44,  44,  [0x00, 0x78, 0xd7]))?;
-    fs::write(assets_dir.join("logo150.png"), &solid_png(150, 150, [0x00, 0x78, 0xd7]))?;
+    fs::write(
+        assets_dir.join("logo44.png"),
+        &solid_png(44, 44, [0x00, 0x78, 0xd7]),
+    )?;
+    fs::write(
+        assets_dir.join("logo150.png"),
+        &solid_png(150, 150, [0x00, 0x78, 0xd7]),
+    )?;
 
     // AppxManifest.xml
     let manifest_xml = format!(
@@ -1271,11 +1341,11 @@ fn build_msix(
 
 </Package>
 "#,
-        name        = name,
+        name = name,
         msix_version = msix_version,
-        publisher   = publisher,
-        msix_arch   = msix_arch,
-        first_bin   = first_bin,
+        publisher = publisher,
+        msix_arch = msix_arch,
+        first_bin = first_bin,
         description = description,
     );
     fs::write(msix_stage.join("AppxManifest.xml"), manifest_xml.as_bytes())?;
@@ -1291,28 +1361,38 @@ fn build_msix(
     ContentType="application/vnd.ms-appx.manifest+xml" />
 </Types>
 "#;
-    fs::write(msix_stage.join("[Content_Types].xml"), content_types.as_bytes())?;
+    fs::write(
+        msix_stage.join("[Content_Types].xml"),
+        content_types.as_bytes(),
+    )?;
 
     let msix_path = pkg_dir.join(format!("{name}-{version}.msix"));
 
     let status = std::process::Command::new("makeappx")
         .args([
             "pack",
-            "/d", &msix_stage.to_string_lossy(),
-            "/p", &msix_path.to_string_lossy(),
-            "/nv",    // skip validation so unsigned builds work
-            "/o",     // overwrite if exists
+            "/d",
+            &msix_stage.to_string_lossy(),
+            "/p",
+            &msix_path.to_string_lossy(),
+            "/nv", // skip validation so unsigned builds work
+            "/o",  // overwrite if exists
         ])
         .status()
-        .map_err(|_| FreightError::InstallFailed(
-            "makeappx.exe not found — install the Windows SDK or Visual Studio.\n  \
-             In GitHub Actions use windows-latest; it ships with the SDK.".into()
-        ))?;
+        .map_err(|_| {
+            FreightError::InstallFailed(
+                "makeappx.exe not found — install the Windows SDK or Visual Studio.\n  \
+             In GitHub Actions use windows-latest; it ships with the SDK."
+                    .into(),
+            )
+        })?;
 
     fs::remove_dir_all(&msix_stage)?;
 
     if !status.success() {
-        return Err(FreightError::InstallFailed("makeappx exited with non-zero status".into()));
+        return Err(FreightError::InstallFailed(
+            "makeappx exited with non-zero status".into(),
+        ));
     }
 
     eprintln!(
@@ -1340,11 +1420,11 @@ fn pad_version_to_four(v: &str) -> String {
 #[allow(dead_code)]
 fn msix_arch(arch: &str) -> &str {
     match arch {
-        "x86_64"  => "x64",
+        "x86_64" => "x64",
         "aarch64" => "arm64",
         "i686" | "i386" | "x86" => "x86",
-        "arm"     => "arm",
-        _         => "neutral",
+        "arm" => "arm",
+        _ => "neutral",
     }
 }
 
@@ -1382,7 +1462,7 @@ fn solid_png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
         // raw[base] = 0  (filter type: None — already zero)
         for x in 0..width as usize {
             let p = base + 1 + x * 3;
-            raw[p]     = rgb[0];
+            raw[p] = rgb[0];
             raw[p + 1] = rgb[1];
             raw[p + 2] = rgb[2];
         }
@@ -1399,9 +1479,9 @@ fn solid_png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     let mut ihdr = [0u8; 13];
     ihdr[0..4].copy_from_slice(&width.to_be_bytes());
     ihdr[4..8].copy_from_slice(&height.to_be_bytes());
-    ihdr[8]  = 8;  // bit depth
-    ihdr[9]  = 2;  // colour type: RGB
-    // bytes 10–12 remain 0 (compression=0, filter=0, interlace=0)
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 2; // colour type: RGB
+                 // bytes 10–12 remain 0 (compression=0, filter=0, interlace=0)
     png_chunk(&mut out, b"IHDR", &ihdr);
     png_chunk(&mut out, b"IDAT", &idat_data);
     png_chunk(&mut out, b"IEND", &[]);

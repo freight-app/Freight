@@ -20,8 +20,8 @@ impl Args {
     }
 }
 
-use freight::doc::{extract_dir, extract_file, DocSet};
 use freight::doc::{self, collect_stdlib, DocDependency, PackageDoc, StdlibMsg};
+use freight::doc::{extract_dir, extract_file, DocSet};
 use freight::manifest::types::{Dependency, Manifest};
 use freight::manifest::{find_manifest_dir, load_manifest};
 use freight::toolchain::freight_home;
@@ -264,13 +264,10 @@ fn open_dependency_tui() -> anyhow::Result<()> {
         });
     }
 
-    if packages.is_empty() {
-        print_warning("no documented items found");
-        println!("hint: add doc comments (///, /**, !>, …) to your sources");
-        return Ok(());
-    }
-
     // Scan stdlib headers in the background so the TUI opens immediately.
+    if packages.is_empty() {
+        print_status("Scanning", "standard libraries");
+    }
     let (tx, rx) = std::sync::mpsc::channel::<StdlibMsg>();
     std::thread::spawn(move || collect_stdlib(tx));
     doc::browse(packages, rx)

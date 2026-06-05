@@ -107,18 +107,13 @@ struct BuildJob {
 }
 
 pub fn build_foreign_deps(
-    graph: &crate::build::graph::PackageGraph,
+    project_dir: &std::path::Path,
+    root_dir: &std::path::Path,
     manifest: &Manifest,
     profile: &str,
     progress: &Progress,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
-    let root_node = graph
-        .packages
-        .get(&graph.root_name)
-        .expect("root package missing from graph");
-    let project_dir = &root_node.dir;
-    let pkgs_root = graph.root_dir.clone();
-    let pkgs_root = pkgs_root.as_path();
+    let pkgs_root = root_dir;
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
@@ -264,7 +259,7 @@ pub fn build_foreign_deps(
                     optional,
                     project_dir,
                     profile,
-                    graph,
+                    pkgs_root,
                     progress,
                     &mut pc_cache,
                 )? {
@@ -528,12 +523,11 @@ fn resolve_version_dep(
     optional: bool,
     project_dir: &Path,
     profile: &str,
-    graph: &crate::build::graph::PackageGraph,
+    root_dir: &Path,
     progress: &Progress,
     pc_cache: &mut PkgConfigCache,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
-    let pkgs_root = graph.root_dir.clone();
-    let pkgs_root = pkgs_root.as_path();
+    let pkgs_root = root_dir;
     // Suppress unused warning; version may be used by future resolvers.
     let _ = version;
 
@@ -567,7 +561,7 @@ fn resolve_version_dep(
                 optional,
                 project_dir,
                 profile,
-                graph,
+                pkgs_root,
                 progress,
                 pc_cache,
             )
@@ -682,15 +676,15 @@ fn resolve_version_dep(
                         None,
                         &[],
                         &inner_progress,
-                        Some(graph),
+                        Some(pkgs_root),
                     ) {
                         progress(BuildEvent::Warning(format!(
                             "source-build of {name} failed: {e}"
                         )));
                     }
                     progress(BuildEvent::DepBuildDone);
-                    let built_lib = graph
-                        .target_dir(name)
+                    let built_lib = pkgs_root
+                        .join("target").join("deps").join(name)
                         .join(profile)
                         .join(format!("lib{name}.a"));
                     if built_lib.exists() {

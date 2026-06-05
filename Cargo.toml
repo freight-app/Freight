@@ -59,9 +59,6 @@ resvg          = { version = "0.47", optional = true }
 tui-markdown = "0.3.7"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# libclang bindings — runtime feature = dlopen at startup, no link-time dep.
-# The entire libclang path falls back gracefully when the library is absent.
-clang-sys = { version = "1", features = ["runtime"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -3,13 +3,13 @@
 #include <cmath>
 #include "stats.hpp"
 
+#include "vecmath/vec2.h"
+
 int main() {
     std::vector<double> data = {2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0};
 
-    // double m = mean(data);
-    // double v = variance(data);
 
-    std::pair tada(mean(data), variance(data));
+    std::pair tada = std::pair(mean(data), variance(data));
 
     auto [m,v] = tada;
 
@@ -21,6 +21,14 @@ int main() {
     std::cout << "mean:     " << m << "\n";
     std::cout << "variance: " << v << "\n";
     std::cout << "std dev:  " << std::sqrt(v) << "\n";
+
+    vm::Vec2 g(1,1);
+
+    g = g * 10;
+
+    std::cout << v << std::endl;
+    std::cout << g.length() << std::endl;
+
 
     return 0;
 }

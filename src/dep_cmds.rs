@@ -153,7 +153,10 @@ pub fn fetch_git_deps(project_dir: &Path) -> Result<Vec<GitDepOutcome>, FreightE
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        let Some(url) = &d.url else { continue }; if !d.is_git() { continue };
+        let Some(url) = &d.url else { continue };
+        if !d.is_git() {
+            continue;
+        };
 
         let dest = deps_dir.join(name);
         if dest.exists() {
@@ -205,7 +208,10 @@ pub fn update_git_deps(
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        if !d.is_git() || d.url.is_none() { continue }; let _url = d.url.as_deref().unwrap();
+        if !d.is_git() || d.url.is_none() {
+            continue;
+        };
+        let _url = d.url.as_deref().unwrap();
 
         let dest = deps_dir.join(name);
         if !dest.exists() {
@@ -462,9 +468,12 @@ pub fn fetch_registry_deps(
                         &checksum,
                     );
                     // Enqueue transitive deps from the fetched package's manifest.
-                    let fetched_manifest = project_dir.join(".pkgs").join(name).join("freight.toml");
+                    let fetched_manifest =
+                        project_dir.join(".pkgs").join(name).join("freight.toml");
                     if let Ok(m) = load_manifest(fetched_manifest.parent().unwrap_or(project_dir)) {
-                        for (tname, tdep) in m.dependencies.iter().chain(m.build_dependencies.iter()) {
+                        for (tname, tdep) in
+                            m.dependencies.iter().chain(m.build_dependencies.iter())
+                        {
                             if !seen.contains(tname) {
                                 queue.push_back((tname.clone(), tdep.clone()));
                             }

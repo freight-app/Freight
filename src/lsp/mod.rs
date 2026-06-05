@@ -140,14 +140,38 @@ struct ServerState {
     /// Header → package mapping for `#include` hover.
     header_index: HeaderIndex,
     workspace_inventory: WorkspaceInventory,
-    /// Pending inlay-hint intercepts: rewritten-id → (original-id, our-hints).
-    /// Shared with the clangd reader thread so it can merge and forward.
-    clangd_pending: Arc<Mutex<HashMap<String, (Value, Vec<Value>)>>>,
+    /// Pending clangd intercepts: rewritten-id → request metadata.
+    /// Shared with the clangd reader thread so it can merge clangd's semantic
+    /// answers with Freight package/docs context before forwarding.
+    clangd_pending: Arc<Mutex<HashMap<String, PendingClangdRequest>>>,
 }
 
 struct Passthrough {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
+}
+
+enum PendingClangdRequest {
+    InlayHint {
+        original_id: Value,
+        freight_hints: Vec<Value>,
+    },
+    Hover {
+        state: Arc<Mutex<PendingHoverState>>,
+        part: PendingHoverPart,
+    },
+}
+
+struct PendingHoverState {
+    original_id: Value,
+    clangd_hover: Option<Value>,
+    definition: Option<Value>,
+}
+
+#[derive(Clone, Copy)]
+enum PendingHoverPart {
+    Hover,
+    Definition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,17 +443,83 @@ impl Server {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 2. DocIndex — position-based then name-based lookup.
+        // 2. For C-family source, clangd owns symbol identity. Ask clangd for
+        // both hover text and the resolved definition/declaration location;
+        // the clangd reader thread then appends Freight docs found at that
+        // resolved location.
+        if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd))
+            && self.forward_clangd_semantic_hover(msg.clone())?
+        {
+            return Ok(());
+        }
+
+        // 3. DocIndex fallback for non-clangd source or when clangd is absent.
         if let Some(hover) = self.doc_hover(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), hover);
         }
 
-        // 3. Fall back to the language-specific passthrough server on a DocIndex miss.
+        // 4. Fall back to the language-specific passthrough server on a DocIndex miss.
         match source_server_for_uri(&uri) {
             Some(SourceServer::Clangd)
             | Some(SourceServer::Fortls)
             | Some(SourceServer::AsmLsp) => self.forward_by_uri(&uri, &msg),
             _ => self.respond(msg.get("id").cloned(), Value::Null),
+        }
+    }
+
+    fn forward_clangd_semantic_hover(&mut self, msg: Value) -> io::Result<bool> {
+        if self.state.clangd.is_none() {
+            return Ok(false);
+        }
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let orig_id_str = request_id_string(&id);
+        let hover_id = format!("__freight_hover_hover_{orig_id_str}");
+        let definition_id = format!("__freight_hover_definition_{orig_id_str}");
+        let state = Arc::new(Mutex::new(PendingHoverState {
+            original_id: id,
+            clangd_hover: None,
+            definition: None,
+        }));
+
+        {
+            let mut pending = self.state.clangd_pending.lock().unwrap();
+            pending.insert(
+                hover_id.clone(),
+                PendingClangdRequest::Hover {
+                    state: Arc::clone(&state),
+                    part: PendingHoverPart::Hover,
+                },
+            );
+            pending.insert(
+                definition_id.clone(),
+                PendingClangdRequest::Hover {
+                    state,
+                    part: PendingHoverPart::Definition,
+                },
+            );
+        }
+
+        let mut hover_msg = msg.clone();
+        set_request_id(&mut hover_msg, &hover_id);
+        let mut definition_msg = msg;
+        set_request_id(&mut definition_msg, &definition_id);
+        set_request_method(&mut definition_msg, "textDocument/definition");
+
+        if !self.forward_to_passthrough(SourceServer::Clangd, &hover_msg)? {
+            self.remove_pending_clangd(&[&hover_id, &definition_id]);
+            return Ok(false);
+        }
+        if !self.forward_to_passthrough(SourceServer::Clangd, &definition_msg)? {
+            self.remove_pending_clangd(&[&hover_id, &definition_id]);
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn remove_pending_clangd(&self, ids: &[&str]) {
+        let mut pending = self.state.clangd_pending.lock().unwrap();
+        for id in ids {
+            pending.remove(*id);
         }
     }
 
@@ -570,11 +660,13 @@ impl Server {
                 _ => "0".to_string(),
             };
             let rewritten = format!("__freight_inlayhint_{orig_id_str}");
-            self.state
-                .clangd_pending
-                .lock()
-                .unwrap()
-                .insert(rewritten.clone(), (id, our_hints));
+            self.state.clangd_pending.lock().unwrap().insert(
+                rewritten.clone(),
+                PendingClangdRequest::InlayHint {
+                    original_id: id,
+                    freight_hints: our_hints,
+                },
+            );
             let mut fwd = msg;
             fwd.as_object_mut()
                 .unwrap()
@@ -861,6 +953,121 @@ fn set_manifest_config(path: &Path, key: &str, value: Option<&Value>) -> anyhow:
     Ok(())
 }
 
+fn request_id_string(id: &Value) -> String {
+    match id {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => "0".to_string(),
+    }
+}
+
+fn set_request_id(msg: &mut Value, id: &str) {
+    if let Some(obj) = msg.as_object_mut() {
+        obj.insert("id".to_string(), Value::String(id.to_string()));
+    }
+}
+
+fn set_request_method(msg: &mut Value, method: &str) {
+    if let Some(obj) = msg.as_object_mut() {
+        obj.insert("method".to_string(), Value::String(method.to_string()));
+    }
+}
+
+fn merge_clangd_inlay_response(
+    mut msg: Value,
+    original_id: Value,
+    freight_hints: Vec<Value>,
+) -> Value {
+    // Collect the line numbers Freight already covers (#include / import lines)
+    // so clangd's hints on those same lines are dropped in favour of ours.
+    let freight_lines: std::collections::HashSet<u64> = freight_hints
+        .iter()
+        .filter_map(|h| h.get("position")?.get("line")?.as_u64())
+        .collect();
+
+    let clangd_hints: Vec<Value> = msg
+        .get("result")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|h| {
+            let line = h
+                .get("position")
+                .and_then(|p| p.get("line"))
+                .and_then(Value::as_u64);
+            !matches!(line, Some(l) if freight_lines.contains(&l))
+        })
+        .collect();
+
+    let mut merged = clangd_hints;
+    merged.extend(freight_hints);
+    if let Some(obj) = msg.as_object_mut() {
+        obj.insert("id".to_string(), original_id);
+        obj.insert("result".to_string(), Value::Array(merged));
+    }
+    msg
+}
+
+fn semantic_hover_response(
+    hover: &PendingHoverState,
+    doc_index: Option<&Arc<Mutex<Option<DocIndex>>>>,
+) -> Value {
+    let clangd_hover = hover.clangd_hover.clone().unwrap_or(Value::Null);
+    let freight_doc = hover
+        .definition
+        .as_ref()
+        .and_then(|definition| freight_doc_for_definition(definition, doc_index));
+    let result = freight_doc_hover_result(clangd_hover, freight_doc);
+    json!({ "jsonrpc": "2.0", "id": hover.original_id.clone(), "result": result })
+}
+
+fn freight_doc_for_definition(
+    definition: &Value,
+    doc_index: Option<&Arc<Mutex<Option<DocIndex>>>>,
+) -> Option<String> {
+    let (path, line) = first_definition_location(definition)?;
+    let guard = doc_index?.lock().ok()?;
+    let index = guard.as_ref()?;
+    let item = index.lookup_by_location(&path, line)?;
+    Some(item_to_markdown(item))
+}
+
+fn first_definition_location(definition: &Value) -> Option<(PathBuf, usize)> {
+    let location = definition
+        .as_array()
+        .and_then(|items| items.first())
+        .unwrap_or(definition);
+    if location.is_null() {
+        return None;
+    }
+    let uri = location
+        .get("targetUri")
+        .or_else(|| location.get("uri"))?
+        .as_str()?;
+    let range = location
+        .get("targetSelectionRange")
+        .or_else(|| location.get("range"))?;
+    let line = range.get("start")?.get("line")?.as_u64()? as usize;
+    Some((path_from_uri(uri)?, line))
+}
+
+fn freight_doc_hover_result(clangd_hover: Value, freight_doc: Option<String>) -> Value {
+    let Some(freight_doc) = freight_doc.filter(|doc| !doc.trim().is_empty()) else {
+        return Value::Null;
+    };
+
+    // clangd is used only to resolve the symbol and, when present, preserve
+    // the hover range. Its textual hover contents are intentionally discarded.
+    let mut result = json!({ "contents": { "kind": "markdown", "value": freight_doc } });
+    if let Some(range) = clangd_hover.get("range").cloned() {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("range".to_string(), range);
+        }
+    }
+    result
+}
+
 impl Server {
     fn forward_or_null(&mut self, msg: Value) -> io::Result<()> {
         if let Some(uri) = text_document_uri(&msg) {
@@ -1086,6 +1293,7 @@ impl Server {
         let root = self.active_manifest_dir()?;
         let compile_commands_arg = format!("--compile-commands-dir={}", dir.display());
         let pending = Arc::clone(&self.state.clangd_pending);
+        let doc_index = Arc::clone(&self.state.doc_index);
         let (server, caps) = self.start_passthrough_in(
             "clangd",
             &self.args.clangd,
@@ -1098,6 +1306,7 @@ impl Server {
             initialize_msg,
             Some(&root),
             Some(pending),
+            Some(doc_index),
         )?;
         self.state.clangd = Some(server);
         caps
@@ -1130,6 +1339,7 @@ impl Server {
             initialize_msg,
             Some(&root),
             None,
+            None,
         )?;
         self.state.fortls = Some(server);
         caps
@@ -1147,6 +1357,7 @@ impl Server {
             initialize_msg,
             Some(&root),
             None,
+            None,
         )?;
         self.state.asm_lsp = Some(server);
         caps
@@ -1160,7 +1371,8 @@ impl Server {
         init_id: &str,
         initialize_msg: &Value,
         cwd: Option<&Path>,
-        pending: Option<Arc<Mutex<HashMap<String, (Value, Vec<Value>)>>>>,
+        pending: Option<Arc<Mutex<HashMap<String, PendingClangdRequest>>>>,
+        doc_index: Option<Arc<Mutex<Option<DocIndex>>>>,
     ) -> Option<(Passthrough, Option<Value>)> {
         let mut cmd = Command::new(command);
         cmd.args(args)
@@ -1191,45 +1403,45 @@ impl Server {
             .cloned();
         let out = Arc::clone(&self.out);
         thread::spawn(move || {
-            while let Ok(Some(mut msg)) = read_lsp_message(&mut reader) {
-                // Check if this is an intercepted inlay-hint response.
+            while let Ok(Some(msg)) = read_lsp_message(&mut reader) {
                 if let Some(id_str) = msg.get("id").and_then(Value::as_str) {
-                    if id_str.starts_with("__freight_inlayhint_") {
-                        if let Some(ref p) = pending {
-                            if let Some((orig_id, our_hints)) = p.lock().unwrap().remove(id_str) {
-                                // Collect the line numbers freight already covers
-                                // (#include / import lines) so clangd's hints on
-                                // those same lines are dropped in favour of ours.
-                                let our_lines: std::collections::HashSet<u64> = our_hints
-                                    .iter()
-                                    .filter_map(|h| h.get("position")?.get("line")?.as_u64())
-                                    .collect();
-
-                                let clangd_hints: Vec<Value> = msg
-                                    .get("result")
-                                    .and_then(Value::as_array)
-                                    .cloned()
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .filter(|h| {
-                                        let line = h
-                                            .get("position")
-                                            .and_then(|p| p.get("line"))
-                                            .and_then(Value::as_u64);
-                                        !matches!(line, Some(l) if our_lines.contains(&l))
-                                    })
-                                    .collect();
-
-                                let mut merged = clangd_hints;
-                                merged.extend(our_hints);
-                                if let Some(obj) = msg.as_object_mut() {
-                                    obj.insert("id".to_string(), orig_id);
-                                    obj.insert("result".to_string(), Value::Array(merged));
-                                }
-                                let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
+                    if let Some(ref p) = pending {
+                        let intercepted = p.lock().unwrap().remove(id_str);
+                        match intercepted {
+                            Some(PendingClangdRequest::InlayHint {
+                                original_id,
+                                freight_hints,
+                            }) => {
+                                let response =
+                                    merge_clangd_inlay_response(msg, original_id, freight_hints);
+                                let _ = write_lsp_message(&mut *out.lock().unwrap(), &response);
+                                continue;
                             }
+                            Some(PendingClangdRequest::Hover { state, part }) => {
+                                let maybe_response = {
+                                    let mut hover = state.lock().unwrap();
+                                    let result = msg.get("result").cloned().unwrap_or(Value::Null);
+                                    match part {
+                                        PendingHoverPart::Hover => {
+                                            hover.clangd_hover = Some(result)
+                                        }
+                                        PendingHoverPart::Definition => {
+                                            hover.definition = Some(result)
+                                        }
+                                    }
+                                    if hover.clangd_hover.is_some() && hover.definition.is_some() {
+                                        Some(semantic_hover_response(&hover, doc_index.as_ref()))
+                                    } else {
+                                        None
+                                    }
+                                };
+                                if let Some(response) = maybe_response {
+                                    let _ = write_lsp_message(&mut *out.lock().unwrap(), &response);
+                                }
+                                continue;
+                            }
+                            None => {}
                         }
-                        continue;
                     }
                 }
                 if is_internal_passthrough_response(&msg) {
@@ -1466,7 +1678,10 @@ fn level_for_method(method: &str) -> tracing::Level {
 #[cfg(test)]
 mod tests {
     use super::protocol::sanitize_code_action_diagnostics;
-    use super::{build_workspace_inventory, collect_path_dependency_doc_dirs};
+    use super::{
+        build_workspace_inventory, collect_path_dependency_doc_dirs, first_definition_location,
+        freight_doc_hover_result,
+    };
     use serde_json::json;
 
     #[test]
@@ -1589,6 +1804,54 @@ hdrs = ["include/core.h"]
         collect_path_dependency_doc_dirs(tmp.path(), &mut dirs);
 
         assert_eq!(dirs, vec![tmp.path().join("core").canonicalize().unwrap()]);
+    }
+
+    #[test]
+    fn hover_result_uses_only_freight_docs_when_available() {
+        let clangd = json!({
+            "contents": { "kind": "markdown", "value": "```cpp\nint add(int, int)\n```" },
+            "range": {
+                "start": { "line": 4, "character": 2 },
+                "end": { "line": 4, "character": 5 }
+            }
+        });
+
+        let merged = freight_doc_hover_result(clangd, Some("Freight package docs".to_string()));
+
+        assert_eq!(merged["range"]["start"]["line"], json!(4));
+        let value = merged["contents"]["value"].as_str().unwrap();
+        assert!(!value.contains("int add"));
+        assert!(value.contains("Freight package docs"));
+    }
+
+    #[test]
+    fn hover_result_suppresses_clangd_hover_without_freight_docs() {
+        let clangd = json!({
+            "contents": { "kind": "markdown", "value": "```cpp\nint add(int, int)\n```" }
+        });
+
+        let merged = freight_doc_hover_result(clangd, None);
+
+        assert!(merged.is_null());
+    }
+
+    #[test]
+    fn definition_location_accepts_location_link() {
+        let definition = json!([{
+            "targetUri": "file:///tmp/freight-test/include/core.hpp",
+            "targetSelectionRange": {
+                "start": { "line": 12, "character": 7 },
+                "end": { "line": 12, "character": 11 }
+            }
+        }]);
+
+        let (path, line) = first_definition_location(&definition).unwrap();
+
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/tmp/freight-test/include/core.hpp")
+        );
+        assert_eq!(line, 12);
     }
 
     fn write_manifest(dir: &std::path::Path, text: &str) {

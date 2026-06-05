@@ -495,7 +495,6 @@ pub trait DocExtractor: Send + Sync {
     fn extract(&self, path: &Path, source: &str) -> Vec<DocItem>;
 }
 
-
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 /// Ordered list of [`DocExtractor`] implementations.
@@ -576,7 +575,6 @@ pub(crate) fn looks_like_cpp_header(src: &str) -> bool {
         || src.contains("protected:")
 }
 
-
 pub fn extract_dir(dir: &Path) -> DocSet {
     let registry = ExtractorRegistry::default();
     let items = walk_and_extract(dir, &mut |path| registry.extract_file(path));
@@ -645,7 +643,9 @@ fn dedup(items: Vec<DocItem>, source_root: &Path) -> DocSet {
                 // On a tie, prefer header files over implementation files so that
                 // namespace/class source items point to declarations, not definitions.
                 let prefer_over_existing = score > prev
-                    || (score == prev && is_header_file(&item.file) && !is_header_file(&deduped[idx].file));
+                    || (score == prev
+                        && is_header_file(&item.file)
+                        && !is_header_file(&deduped[idx].file));
                 if prefer_over_existing {
                     deduped[idx] = item;
                 }

@@ -522,20 +522,14 @@ pub fn settings_for_lang(
 /// `target_dir` is the root of the target tree (e.g. `project/target` or
 /// `root/target/deps/name` for pool deps).
 pub fn object_path(target_dir: &Path, profile: &str, source_rel: &Path) -> PathBuf {
-    let mut p = target_dir
-        .join(profile)
-        .join("objs")
-        .join(source_rel);
+    let mut p = target_dir.join(profile).join("objs").join(source_rel);
     p.set_extension("o");
     p
 }
 
 /// Same as `object_path` but with `.d` extension for the Makefile dependency file.
 pub fn dep_file_path(target_dir: &Path, profile: &str, source_rel: &Path) -> PathBuf {
-    let mut p = target_dir
-        .join(profile)
-        .join("objs")
-        .join(source_rel);
+    let mut p = target_dir.join(profile).join("objs").join(source_rel);
     p.set_extension("d");
     p
 }
@@ -1056,7 +1050,11 @@ mod tests {
 
     #[test]
     fn dep_file_path_has_d_extension() {
-        let dep = dep_file_path(Path::new("/project/target"), "dev", Path::new("src/main.cpp"));
+        let dep = dep_file_path(
+            Path::new("/project/target"),
+            "dev",
+            Path::new("src/main.cpp"),
+        );
         assert_eq!(dep, PathBuf::from("/project/target/dev/objs/src/main.d"));
     }
 

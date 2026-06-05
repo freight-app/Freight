@@ -20,8 +20,8 @@ impl DocExtractor for CExtractor {
 impl DocExtractor for CppExtractor {
     fn extensions(&self) -> &[&str] {
         &[
-            "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx",
-            "cppm", "ixx", "mpp",           // C++20 module interfaces
+            "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "cppm", "ixx",
+            "mpp", // C++20 module interfaces
             "cu", "cuh", "hip", "sycl", "ispc",
         ]
     }

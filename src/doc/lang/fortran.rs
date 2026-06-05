@@ -50,11 +50,12 @@ pub(super) fn extract_fortran(src: &str, file: &Path) -> Vec<DocItem> {
 
             // Qualify items inside a module so the tree groups them correctly,
             // but don't re-qualify the module declaration itself.
-            let qualified = if !module_name.is_empty() && kind != DocKind::Module && !name.is_empty() {
-                format!("{}.{}", module_name, name)
-            } else {
-                name
-            };
+            let qualified =
+                if !module_name.is_empty() && kind != DocKind::Module && !name.is_empty() {
+                    format!("{}.{}", module_name, name)
+                } else {
+                    name
+                };
 
             let item = build_item(
                 block,

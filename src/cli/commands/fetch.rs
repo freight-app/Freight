@@ -277,7 +277,9 @@ fn fetch_prebuilt_deps(
             // by fetch_registry_deps and compiled on first `freight build`.
             print_status(
                 "source",
-                &format!("`{name}@{version}` has no prebuilt for {triple} — will build from source"),
+                &format!(
+                    "`{name}@{version}` has no prebuilt for {triple} — will build from source"
+                ),
             );
             continue;
         }

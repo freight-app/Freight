@@ -30,6 +30,12 @@ Replace the current text-based DocIndex and clangd proxy for hover/definition/in
 hints with direct AST queries via `libclang` (`clang-sys` crate). clangd stays as
 the subprocess for diagnostics and completions where it adds the most value.
 
+**Status:** Paused. The prototype still lives in `src/lsp/clang_index.rs`, but
+active `freight lsp` wiring has been rolled back to the pre-libclang DocIndex +
+clangd passthrough path. Re-enable only after hover output and documentation
+fallbacks are production-ready. The checklist below records the paused prototype
+state, not what is currently compiled into `freight lsp`.
+
 **Phase 1 — TU lifecycle (prerequisite)**
 - [x] Add `clang-sys` (runtime dlopen) to `Cargo.toml` — no link-time dep on libclang.
 - [x] `TuCache` in `src/lsp/clang_index.rs` — `CXIndex` + per-file `CXTranslationUnit` map.

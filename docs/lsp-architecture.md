@@ -139,7 +139,7 @@ flowchart TD
 
     Trigger --> FindManifest["active_manifest_dir()\nwalk up from root or opened file"]
     FindManifest -->|None| LogSkip["log: no manifest dir — skip"]
-    FindManifest -->|found| GenCC["generate_lsp_compile_commands_at()\nwrite compile_commands.json"]
+    FindManifest -->|found| GenCC["generate_lsp_compile_commands_at()\nwrite .freight/lsp/<profile>/compile_commands.json"]
     GenCC --> BuildIndex["DocIndex::build_freight_packages()\nwalk src/ include/ inc/\nrun docify extractors per language"]
     BuildIndex --> StoreIndex["store in Arc<Mutex<Option<DocIndex>>>"]
     StoreIndex --> BuildHeader["HeaderIndex::build()\nwalk include/ dirs per package\nwalk .pkgs/ cache\nprobe system include dirs via gcc -v"]

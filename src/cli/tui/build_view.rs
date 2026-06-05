@@ -45,7 +45,7 @@ pub struct BuildViewState {
     project: String,
     profile: String,
     dep_builds: Vec<DepBuild>,
-    recent: VecDeque<String>,      // last N compiling/linking/etc lines
+    recent: VecDeque<String>, // last N compiling/linking/etc lines
     warnings: usize,
     status: Option<Status>,
     compiled: usize,
@@ -142,7 +142,11 @@ impl BuildViewState {
             format!("{} packages", names.len())
         };
         let warn = if self.warnings > 0 {
-            format!(", {} warning{}", self.warnings, if self.warnings == 1 { "" } else { "s" })
+            format!(
+                ", {} warning{}",
+                self.warnings,
+                if self.warnings == 1 { "" } else { "s" }
+            )
         } else {
             String::new()
         };
@@ -170,9 +174,7 @@ fn render(f: &mut Frame, state: &BuildViewState) {
     let green_bold = Style::default()
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD);
-    let red_bold = Style::default()
-        .fg(Color::Red)
-        .add_modifier(Modifier::BOLD);
+    let red_bold = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -269,44 +271,43 @@ pub fn run_build_viewport(target: BuildTarget) -> bool {
     // Sentinel: build thread drops tx when done, closing the channel.
     drop(tx);
 
-    let handle: std::thread::JoinHandle<Result<Vec<BuildOutput>, FreightError>> =
-        match &target {
-            BuildTarget::Project { .. } => {
-                let (profile, features, use_defaults, sanitize) = match target {
-                    BuildTarget::Project {
-                        profile,
-                        features,
-                        use_defaults,
-                        sanitize,
-                    } => (profile, features, use_defaults, sanitize),
-                    _ => unreachable!(),
-                };
-                std::thread::spawn(move || {
-                    build_project_with(&profile, &features, use_defaults, &sanitize, &progress)
-                        .map(|o| vec![o])
-                })
-            }
-            BuildTarget::Workspace { .. } => {
-                let (profile, package, features, use_defaults) = match target {
-                    BuildTarget::Workspace {
-                        profile,
-                        package,
-                        features,
-                        use_defaults,
-                    } => (profile, package, features, use_defaults),
-                    _ => unreachable!(),
-                };
-                std::thread::spawn(move || {
-                    build_workspace_with(
-                        &profile,
-                        package.as_deref(),
-                        &features,
-                        use_defaults,
-                        &progress,
-                    )
-                })
-            }
-        };
+    let handle: std::thread::JoinHandle<Result<Vec<BuildOutput>, FreightError>> = match &target {
+        BuildTarget::Project { .. } => {
+            let (profile, features, use_defaults, sanitize) = match target {
+                BuildTarget::Project {
+                    profile,
+                    features,
+                    use_defaults,
+                    sanitize,
+                } => (profile, features, use_defaults, sanitize),
+                _ => unreachable!(),
+            };
+            std::thread::spawn(move || {
+                build_project_with(&profile, &features, use_defaults, &sanitize, &progress)
+                    .map(|o| vec![o])
+            })
+        }
+        BuildTarget::Workspace { .. } => {
+            let (profile, package, features, use_defaults) = match target {
+                BuildTarget::Workspace {
+                    profile,
+                    package,
+                    features,
+                    use_defaults,
+                } => (profile, package, features, use_defaults),
+                _ => unreachable!(),
+            };
+            std::thread::spawn(move || {
+                build_workspace_with(
+                    &profile,
+                    package.as_deref(),
+                    &features,
+                    use_defaults,
+                    &progress,
+                )
+            })
+        }
+    };
 
     // Set up inline terminal.  If anything fails fall back to non-TUI path.
     let mut terminal = match Terminal::with_options(
@@ -386,9 +387,10 @@ fn run_fallback(
         }
     }
 
-    match handle.join().unwrap_or_else(|_| {
-        Err(FreightError::OptionError("build thread panicked".into()))
-    }) {
+    match handle
+        .join()
+        .unwrap_or_else(|_| Err(FreightError::OptionError("build thread panicked".into())))
+    {
         Ok(outputs) => {
             println!();
             for o in &outputs {

@@ -5,3 +5,7 @@ version = 1
 [[package]]
 name    = "hello-cpp"
 version = "0.1.0"
+dependencies = [
+    "mathlib",
+    "vecmath",
+]

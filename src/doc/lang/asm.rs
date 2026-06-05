@@ -70,13 +70,15 @@ pub(super) fn extract_asm(src: &str, file: &Path) -> Vec<DocItem> {
 }
 
 fn is_doc_comment(line: &str) -> bool {
-    line.starts_with(";;")
-        || line.starts_with("##")
-        || line.starts_with("//")
+    line.starts_with(";;") || line.starts_with("##") || line.starts_with("//")
 }
 
 fn strip_doc_prefix(line: &str) -> String {
-    if let Some(rest) = line.strip_prefix(";;").or_else(|| line.strip_prefix("##")).or_else(|| line.strip_prefix("//")) {
+    if let Some(rest) = line
+        .strip_prefix(";;")
+        .or_else(|| line.strip_prefix("##"))
+        .or_else(|| line.strip_prefix("//"))
+    {
         rest.trim_start().to_string()
     } else {
         line.to_string()
@@ -121,7 +123,9 @@ fn detect_asm_symbol(line: &str) -> Option<(String, DocKind)> {
     }
 
     // `global name` / `.global name` — public symbol declaration
-    let stripped = up.strip_prefix(".GLOBAL ").or_else(|| up.strip_prefix("GLOBAL "));
+    let stripped = up
+        .strip_prefix(".GLOBAL ")
+        .or_else(|| up.strip_prefix("GLOBAL "));
     if let Some(_) = stripped {
         let name = line.split_whitespace().nth(1)?;
         let name = name.trim_end_matches(':');
@@ -135,8 +139,11 @@ fn detect_asm_symbol(line: &str) -> Option<(String, DocKind)> {
 
 fn is_asm_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_' || c == '.')
-        && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '@')
+        && s.chars()
+            .next()
+            .map_or(false, |c| c.is_alphabetic() || c == '_' || c == '.')
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '@')
 }
 
 #[cfg(test)]

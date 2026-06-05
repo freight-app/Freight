@@ -16,7 +16,11 @@ impl Args {
 
         // Accept either a URL or a registry name.
         let (name, url) = if let Some(ref given) = self.registry {
-            if let Some(r) = config.registries.iter().find(|r| &r.name == given || &r.url == given) {
+            if let Some(r) = config
+                .registries
+                .iter()
+                .find(|r| &r.name == given || &r.url == given)
+            {
                 (r.name.clone(), r.url.clone())
             } else {
                 // Treat as URL; derive a name.
@@ -33,7 +37,9 @@ impl Args {
         };
 
         match Credentials::delete(&name) {
-            Ok(()) => print_success(&format!("logged out of {url} — token removed from keychain")),
+            Ok(()) => print_success(&format!(
+                "logged out of {url} — token removed from keychain"
+            )),
             Err(e) => {
                 print_warning(&format!("could not remove token from keychain: {e}"));
                 print_error("logout failed");

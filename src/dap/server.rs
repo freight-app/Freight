@@ -12,8 +12,9 @@ use std::time::Duration;
 
 use crate::build::{build_project_with, build_workspace_with, BuildOutput};
 use crate::event::silent;
-use crate::manifest::{find_manifest_dir, load_workspace_manifest};
+use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest, Manifest};
 use crate::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
+use crate::vendor::parse_triple;
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -31,10 +32,14 @@ pub fn launch_dap(config: &Value, is_attach: bool) -> anyhow::Result<()> {
     let (adapter_bin, mut adapter_args) = select_dap_adapter(&debuggers, config, &global_cfg)?;
 
     if !is_attach {
-        let features = config_string_array(config, "features");
-        let outputs = build_outputs_for_dap(&project_dir, config, &features)?;
         let bin_buf = config_string(config, "bin");
-        let binary = select_binary_from_outputs(&outputs, bin_buf.as_deref())?;
+        let binary = if config_bool(config, "noBuild").unwrap_or(false) {
+            existing_binary_for_dap(&project_dir, config, bin_buf.as_deref())?
+        } else {
+            let features = config_string_array(config, "features");
+            let outputs = build_outputs_for_dap(&project_dir, config, &features)?;
+            select_binary_from_outputs(&outputs, bin_buf.as_deref())?
+        };
         // Append the binary path as the final argument so the adapter loads it.
         adapter_args.push(binary.to_string_lossy().into_owned());
     }
@@ -83,7 +88,10 @@ fn select_dap_adapter(
         .as_deref()
         .or(global_cfg.default_debugger.as_deref());
     let candidates: Vec<_> = if let Some(name) = pref {
-        debuggers.iter().filter(|d| d.template.name == name).collect()
+        debuggers
+            .iter()
+            .filter(|d| d.template.name == name)
+            .collect()
     } else {
         debuggers.iter().collect()
     };
@@ -132,9 +140,7 @@ fn select_explicit_dap_adapter(
     let debugger_buf = config_string(config, "debugger");
     let debugger = debugger_buf.as_deref();
     let basename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if debugger == Some("lldb")
-        || basename.contains("lldb-dap")
-        || basename.contains("lldb-vscode")
+    if debugger == Some("lldb") || basename.contains("lldb-dap") || basename.contains("lldb-vscode")
     {
         if probe_dap_support(&path, &[]) {
             return Ok((
@@ -246,8 +252,7 @@ fn probe_dap_support(bin: &Path, args: &[String]) -> bool {
         // Read one header line to confirm the adapter speaks DAP.
         let mut line = String::new();
         let _ = tx.send(
-            reader.read_line(&mut line).is_ok()
-                && line.trim_start().starts_with("Content-Length:"),
+            reader.read_line(&mut line).is_ok() && line.trim_start().starts_with("Content-Length:"),
         );
     });
     let result = rx.recv_timeout(Duration::from_secs(3)).unwrap_or(false);
@@ -264,20 +269,13 @@ fn build_outputs_for_dap(
     config: &Value,
     features: &[String],
 ) -> anyhow::Result<Vec<BuildOutput>> {
-    let profile_buf = config_string(config, "profile");
-    let profile = profile_buf.as_deref().unwrap_or_else(|| {
-        if config_bool(config, "release").unwrap_or(false) {
-            "release"
-        } else {
-            "dev"
-        }
-    });
+    let profile = dap_profile(config);
     let use_defaults = !config_bool(config, "noDefaultFeatures").unwrap_or(false);
     let package_buf = config_string(config, "package");
     let package = package_buf.as_deref();
     if load_workspace_manifest(project_dir).is_some() {
         return Ok(build_workspace_with(
-            profile,
+            &profile,
             package,
             features,
             use_defaults,
@@ -288,12 +286,113 @@ fn build_outputs_for_dap(
         anyhow::bail!("`package` can only be used when launching from a Freight workspace root");
     }
     Ok(vec![build_project_with(
-        profile,
+        &profile,
         features,
         use_defaults,
         &[],
         &silent(),
     )?])
+}
+
+fn existing_binary_for_dap(
+    project_dir: &Path,
+    config: &Value,
+    filter: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    let profile = dap_profile(config);
+    let package_buf = config_string(config, "package");
+    let package = package_buf.as_deref();
+    let mut binaries = Vec::new();
+
+    if let Some(ws) = load_workspace_manifest(project_dir) {
+        for member in &ws.members {
+            let member_dir = project_dir.join(member.trim_end_matches('/'));
+            let member_name = member_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if let Some(pkg) = package {
+                if member_name != pkg {
+                    continue;
+                }
+            }
+            let manifest = load_manifest(&member_dir)?;
+            binaries.extend(binary_paths_for_manifest(&member_dir, &manifest, &profile));
+        }
+    } else {
+        if package.is_some() {
+            anyhow::bail!(
+                "`package` can only be used when launching from a Freight workspace root"
+            );
+        }
+        let manifest = load_manifest(project_dir)?;
+        binaries.extend(binary_paths_for_manifest(project_dir, &manifest, &profile));
+    }
+
+    let binary = select_binary_from_paths(&binaries, filter)?;
+    if !binary.exists() {
+        let release_flag = if profile == "release" {
+            " --release"
+        } else {
+            ""
+        };
+        anyhow::bail!(
+            "{} does not exist; run `freight build{release_flag}` before debugging",
+            binary.display()
+        );
+    }
+    Ok(binary)
+}
+
+fn binary_paths_for_manifest(
+    project_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+) -> Vec<PathBuf> {
+    let target_os = dap_target_os(manifest);
+    manifest
+        .bins
+        .iter()
+        .map(|bin| {
+            project_dir
+                .join("target")
+                .join(profile)
+                .join(dap_executable_name(&bin.name, &target_os))
+        })
+        .collect()
+}
+
+fn select_binary_from_paths(paths: &[PathBuf], filter: Option<&str>) -> anyhow::Result<PathBuf> {
+    let candidates: Vec<_> = filter
+        .map(|name| {
+            paths
+                .iter()
+                .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_else(|| paths.to_vec());
+    match candidates.len() {
+        0 if filter.is_some() => anyhow::bail!(
+            "no binary named '{}' — available: {}",
+            filter.unwrap(),
+            paths
+                .iter()
+                .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        0 => anyhow::bail!("no binary target declared — does the manifest declare [[bin]]?"),
+        1 => Ok(candidates.into_iter().next().unwrap()),
+        _ => anyhow::bail!(
+            "multiple binaries; set `bin` to one of: {}",
+            candidates
+                .iter()
+                .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 fn select_binary_from_outputs(
@@ -337,6 +436,34 @@ fn select_binary_from_outputs(
 // ---------------------------------------------------------------------------
 // Misc helpers
 // ---------------------------------------------------------------------------
+
+fn dap_profile(config: &Value) -> String {
+    config_string(config, "profile").unwrap_or_else(|| {
+        if config_bool(config, "release").unwrap_or(false) {
+            "release".to_string()
+        } else {
+            "dev".to_string()
+        }
+    })
+}
+
+fn dap_target_os(manifest: &Manifest) -> String {
+    manifest
+        .compiler
+        .target
+        .as_deref()
+        .map(parse_triple)
+        .map(|(_, os)| os)
+        .unwrap_or_else(|| std::env::consts::OS.to_string())
+}
+
+fn dap_executable_name(name: &str, target_os: &str) -> String {
+    if target_os == "windows" && !name.ends_with(".exe") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
 
 fn load_global_cfg(project_dir: &Path) -> GlobalConfig {
     let mut cfg = GlobalConfig::load();
@@ -447,7 +574,8 @@ mod tests {
         let debuggers = vec![detected_debugger("lldb", lldb, Some(lldb_dap.clone()))];
         let config = json!({ "debugger": "lldb" });
 
-        let (bin, args) = select_dap_adapter(&debuggers, &config, &GlobalConfig::default()).unwrap();
+        let (bin, args) =
+            select_dap_adapter(&debuggers, &config, &GlobalConfig::default()).unwrap();
 
         assert_eq!(bin, lldb_dap);
         assert!(args.is_empty());
@@ -460,7 +588,8 @@ mod tests {
         let debuggers = vec![detected_debugger("gdb", gdb.clone(), None)];
         let config = json!({ "debugger": "gdb" });
 
-        let (bin, args) = select_dap_adapter(&debuggers, &config, &GlobalConfig::default()).unwrap();
+        let (bin, args) =
+            select_dap_adapter(&debuggers, &config, &GlobalConfig::default()).unwrap();
 
         assert_eq!(bin, gdb);
         assert_eq!(args, gdb_dap_args());
