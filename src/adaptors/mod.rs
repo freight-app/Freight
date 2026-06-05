@@ -479,7 +479,7 @@ fn package_dep_optional(dep: &Dependency) -> bool {
 
 fn dep_repo(dep: &Dependency) -> Option<&str> {
     if let Dependency::Detailed(d) = dep {
-        d.repo.as_deref()
+        d.registry.as_deref()
     } else {
         None
     }

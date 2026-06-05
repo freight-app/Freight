@@ -727,7 +727,7 @@ fn cross_registry_dep(manifest: &Manifest, publish_repo: &str) -> Option<String>
         .chain(manifest.dev_dependencies.iter());
     for (name, dep) in all_deps {
         if let freight::manifest::types::Dependency::Detailed(d) = dep {
-            if let Some(ref repo) = d.repo {
+            if let Some(ref repo) = d.registry {
                 if repo != publish_repo {
                     return Some(name.clone());
                 }

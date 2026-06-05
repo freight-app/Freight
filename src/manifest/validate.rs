@@ -123,7 +123,7 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
         };
         let ctx = format!("[dependencies.{name}]");
 
-        if let Some(repo) = &d.repo {
+        if let Some(repo) = &d.registry {
             if repo.is_empty() {
                 errors.push(ValidationError::new(&ctx, "repo must not be empty"));
             }

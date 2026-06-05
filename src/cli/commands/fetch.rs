@@ -236,7 +236,7 @@ fn fetch_prebuilt_deps(
             {
                 (
                     d.version.as_deref().unwrap(),
-                    d.repo.as_deref(),
+                    d.registry.as_deref(),
                     d.channel.as_deref(),
                 )
             }

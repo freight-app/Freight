@@ -83,7 +83,7 @@ fn cmd_outdated(repo: Option<&str>) {
                     name: name.clone(),
                     current: ver.to_string(),
                     channel: d.channel.clone(),
-                    repo_key: d.repo.clone(),
+                    repo_key: d.registry.clone(),
                 });
             }
             _ => {}

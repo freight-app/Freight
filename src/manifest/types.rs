@@ -708,7 +708,7 @@ pub struct DetailedDep {
     /// Accepted values: `"system"`, `"pkg-config"`, or a named registry.
     /// When omitted, freight tries `pkg-config → system stubs → registry` in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
+    pub registry: Option<String>,
     /// Override the dep's own `[compiler] unity` setting.
     /// `unity = true` forces a unity build of this dep regardless of its manifest;
     /// `unity = false` disables unity even if the dep enables it.

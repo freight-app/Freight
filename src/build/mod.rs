@@ -23,7 +23,6 @@ pub use modules::{
 };
 
 use std::collections::BTreeSet;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -221,7 +220,10 @@ pub fn clean_workspace() -> Result<(), FreightError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_standard_c_family_include_dir, lsp_visible_include_dirs};
+    use super::{
+        is_standard_c_family_include_dir, lsp_compile_commands_dir, lsp_visible_include_dirs,
+        safe_lsp_profile_dir,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -274,6 +276,20 @@ mod tests {
         assert!(is_standard_c_family_include_dir(&PathBuf::from(
             "/usr/lib/llvm-18/lib/clang/18/include"
         )));
+    }
+
+    #[test]
+    fn lsp_compile_commands_live_under_freight_dir() {
+        let project = PathBuf::from("project");
+        let dir = lsp_compile_commands_dir(&project, "dev/debug");
+
+        assert_eq!(dir, project.join(".freight/lsp/dev_debug"));
+    }
+
+    #[test]
+    fn lsp_profile_dir_is_path_safe() {
+        assert_eq!(safe_lsp_profile_dir("../release"), "___release");
+        assert_eq!(safe_lsp_profile_dir(""), "dev");
     }
 }
 
@@ -736,8 +752,7 @@ pub fn generate_compile_commands_at(
 
 /// Generate the compile database used internally by `freight lsp`.
 ///
-/// Unlike [`generate_compile_commands_at`], this writes to a backend cache
-/// directory outside the project tree
+/// Unlike [`generate_compile_commands_at`], this writes to `.freight/lsp/<profile>/`
 /// so editor integrations can point source language servers at Freight's
 /// manifest-scoped view without adding `compile_commands.json` to the project
 /// root or the explorer.
@@ -810,16 +825,29 @@ fn generate_lsp_compile_commands_for_project(
 }
 
 fn lsp_compile_commands_dir(project_dir: &Path, profile: &str) -> PathBuf {
-    let stable_project_dir = project_dir
-        .canonicalize()
-        .unwrap_or_else(|_| project_dir.to_path_buf());
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    stable_project_dir.hash(&mut hasher);
-    profile.hash(&mut hasher);
-    std::env::temp_dir()
-        .join("freight")
+    project_dir
+        .join(".freight")
         .join("lsp")
-        .join(format!("{:016x}", hasher.finish()))
+        .join(safe_lsp_profile_dir(profile))
+}
+
+fn safe_lsp_profile_dir(profile: &str) -> String {
+    let safe: String = profile
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if safe.is_empty() {
+        "dev".to_string()
+    } else {
+        safe
+    }
 }
 
 fn lsp_visible_include_dirs(

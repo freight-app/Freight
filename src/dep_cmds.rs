@@ -87,6 +87,9 @@ pub fn manifest_add_dep(
             if let Some(ch) = &d.channel {
                 inline.insert("channel", Value::from(ch.as_str()));
             }
+            if let Some(reg) = &d.registry {
+                inline.insert("registry", Value::from(reg.as_str()));
+            }
             table[name] = Item::Value(Value::InlineTable(inline));
         }
     }
@@ -327,7 +330,7 @@ pub fn fetch_registry_deps(
             {
                 (
                     d.version.as_deref().unwrap(),
-                    d.repo.as_deref(),
+                    d.registry.as_deref(),
                     d.channel.as_deref(),
                 )
             }

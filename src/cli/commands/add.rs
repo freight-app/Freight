@@ -305,7 +305,7 @@ pub fn cmd_add(
         } else {
             Dependency::Detailed(DetailedDep {
                 version: Some(ver),
-                repo: if repo_key.is_empty() {
+                registry: if repo_key.is_empty() {
                     None
                 } else {
                     Some(repo_key)

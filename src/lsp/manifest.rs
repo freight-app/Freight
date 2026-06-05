@@ -680,7 +680,7 @@ fn hover_for_key(key: &str) -> Option<&'static str> {
         "git" => "`git` dependencies fetch exactly this repository. Use `branch`, `tag`, or `rev` to control the checked-out ref.",
         "url" => "`url` dependencies fetch exactly this archive. Pair with `sha256` for reproducible fetches.",
         "sha256" => "Expected SHA-256 for a URL archive. Freight rejects the archive when the digest does not match.",
-        "repo" => "Resolver override for a version dependency, such as `pkg-config`, `system`, or a named registry.",
+        "registry" => "Resolver override for a version dependency, such as `pkg-config`, `system`, or a named registry.",
         "features" => "Feature list. In a dependency this activates dependency features; in a profile it activates project features for that profile.",
         "default-features" => "Set to `false` to disable a dependency's default feature set.",
         "optional" => "Optional dependencies are available to features but are not included unless selected.",
