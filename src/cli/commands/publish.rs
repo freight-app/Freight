@@ -85,17 +85,6 @@ fn cmd_publish(dry_run: bool, yes: bool, no_verify: bool, repo: Option<&str>) {
         None => return,
     };
 
-    // ── cross-registry dep check ─────────────────────────────────────────────
-
-    if let Some(offender) = cross_registry_dep(&manifest, &registry_name) {
-        print_error(&format!(
-            "dependency `{offender}` uses a different registry than the publish target \
-             (`{registry_name}`); all registry deps must use the same repo or omit `repo` \
-             to use the default"
-        ));
-        return;
-    }
-
     // ── version already published? ───────────────────────────────────────────
 
     match registry.package_exists(&name, &version) {
@@ -516,6 +505,27 @@ const DEFAULT_EXCLUDES: &[&str] = &[
 /// Read `.freightignore` from `project_dir` and return the patterns, or an
 /// empty vec if the file doesn't exist.  The format is identical to
 /// `.gitignore`: one glob pattern per line, `#` for comments.
+/// Read `freight.toml` and return a cleaned version with `registry` stripped
+/// from every dependency entry. Consumers resolve deps via their own config.
+fn strip_registry_from_manifest(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let src = std::fs::read_to_string(path)?;
+    let mut doc: toml_edit::DocumentMut = src.parse()?;
+    for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(item) = doc.get_mut(section) {
+            if let Some(table) = item.as_table_mut() {
+                for (_, dep) in table.iter_mut() {
+                    if let Some(inline) = dep.as_value_mut().and_then(|v| v.as_inline_table_mut()) {
+                        inline.remove("registry");
+                    } else if let Some(t) = dep.as_table_mut() {
+                        t.remove("registry");
+                    }
+                }
+            }
+        }
+    }
+    Ok(doc.to_string().into_bytes())
+}
+
 fn load_freightignore(project_dir: &Path) -> Vec<String> {
     let path = project_dir.join(".freightignore");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -561,7 +571,16 @@ fn build_source_tarball(
         }
 
         if path.is_file() {
-            ar.append_path_with_name(path, format!("{prefix}/{rel_str}"))?;
+            if rel_str == "freight.toml" {
+                let cleaned = strip_registry_from_manifest(path)?;
+                let mut header = tar::Header::new_gnu();
+                header.set_size(cleaned.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                ar.append_data(&mut header, format!("{prefix}/{rel_str}"), cleaned.as_slice())?;
+            } else {
+                ar.append_path_with_name(path, format!("{prefix}/{rel_str}"))?;
+            }
         }
     }
 
@@ -714,27 +733,6 @@ fn non_empty(s: &str) -> Option<&str> {
     } else {
         Some(s)
     }
-}
-
-/// Returns the name of the first dependency that references a different registry
-/// than `publish_repo`. Path/git/url deps are ignored — only version deps with an
-/// explicit `repo` that doesn't match are flagged.
-fn cross_registry_dep(manifest: &Manifest, publish_repo: &str) -> Option<String> {
-    let all_deps = manifest
-        .dependencies
-        .iter()
-        .chain(manifest.build_dependencies.iter())
-        .chain(manifest.dev_dependencies.iter());
-    for (name, dep) in all_deps {
-        if let freight::manifest::types::Dependency::Detailed(d) = dep {
-            if let Some(ref repo) = d.registry {
-                if repo != publish_repo {
-                    return Some(name.clone());
-                }
-            }
-        }
-    }
-    None
 }
 
 fn find_executable(name: &str) -> Option<String> {
