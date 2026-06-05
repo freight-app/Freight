@@ -31,8 +31,8 @@ pub struct Args {
     pub no_verify: bool,
 
     /// Registry to publish to (default: first configured registry).
-    #[arg(long, value_name = "NAME")]
-    pub repo: Option<String>,
+    #[arg(long, short = 'r', value_name = "REGISTRY")]
+    pub registry: Option<String>,
 
     /// Upload a prebuilt binary tarball for the given triple instead of source.
     /// Omit the triple to use the detected host triple (e.g. x86_64-linux-gnu).
@@ -45,13 +45,13 @@ impl Args {
         if let Some(triple_opt) = self.prebuilt {
             cmd_publish_prebuilt(
                 triple_opt.as_deref(),
-                self.repo.as_deref(),
+                self.registry.as_deref(),
                 self.dry_run,
                 self.yes,
                 self.no_verify,
             );
         } else {
-            cmd_publish(self.dry_run, self.yes, self.no_verify, self.repo.as_deref());
+            cmd_publish(self.dry_run, self.yes, self.no_verify, self.registry.as_deref());
         }
     }
 }

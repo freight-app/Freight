@@ -9,13 +9,13 @@ pub struct Args {
     /// Package name, keyword (#tag), or user (@username) to look up
     pub query: String,
     /// Registry to search (default: all configured registries in order)
-    #[arg(long, value_name = "NAME")]
-    pub repo: Option<String>,
+    #[arg(long, short = 'r', value_name = "REGISTRY")]
+    pub registry: Option<String>,
 }
 
 impl Args {
     pub fn run(self) {
-        cmd_search(&self.query, self.repo.as_deref());
+        cmd_search(&self.query, self.registry.as_deref());
     }
 }
 

@@ -13,13 +13,13 @@ pub struct Args {
     #[arg(long)]
     pub undo: bool,
     /// Registry to operate on (default: first configured registry)
-    #[arg(long, value_name = "NAME")]
-    pub repo: Option<String>,
+    #[arg(long, short = 'r', value_name = "REGISTRY")]
+    pub registry: Option<String>,
 }
 
 impl Args {
     pub fn run(self) {
-        cmd_yank(&self.version, self.undo, self.repo.as_deref());
+        cmd_yank(&self.version, self.undo, self.registry.as_deref());
     }
 }
 

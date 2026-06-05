@@ -28,9 +28,9 @@ pub struct Args {
     /// Exact commit SHA to pin (requires --git)
     #[arg(long)]
     pub rev: Option<String>,
-    /// Package repository to use (default: freight registry).
-    #[arg(long, value_name = "REPO")]
-    pub repo: Option<String>,
+    /// Registry to search for the package (default: first configured registry).
+    #[arg(long, short = 'r', value_name = "REGISTRY")]
+    pub registry: Option<String>,
     /// Add to [dev-dependencies] instead of [dependencies]
     #[arg(long)]
     pub dev: bool,
@@ -46,11 +46,11 @@ impl Args {
                 self.branch.as_deref(),
                 self.tag.as_deref(),
                 self.rev.as_deref(),
-                self.repo.as_deref(),
+                self.registry.as_deref(),
                 self.dev,
             );
         } else {
-            cmd_add_interactive(self.repo.as_deref(), self.dev);
+            cmd_add_interactive(self.registry.as_deref(), self.dev);
         }
     }
 }

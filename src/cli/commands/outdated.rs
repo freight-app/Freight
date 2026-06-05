@@ -9,13 +9,13 @@ use owo_colors::OwoColorize;
 #[derive(clap::Args)]
 pub struct Args {
     /// Registry to query (default: all configured registries in order)
-    #[arg(long, value_name = "NAME")]
-    pub repo: Option<String>,
+    #[arg(long, short = 'r', value_name = "REGISTRY")]
+    pub registry: Option<String>,
 }
 
 impl Args {
     pub fn run(self) {
-        cmd_outdated(self.repo.as_deref());
+        cmd_outdated(self.registry.as_deref());
     }
 }
 

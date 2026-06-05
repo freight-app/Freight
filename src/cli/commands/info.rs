@@ -12,13 +12,13 @@ use owo_colors::OwoColorize;
 pub struct Args {
     pub package: Option<String>,
     /// Registry to query (default: all configured registries in order)
-    #[arg(long, value_name = "NAME")]
-    pub repo: Option<String>,
+    #[arg(long, short = 'r', value_name = "REGISTRY")]
+    pub registry: Option<String>,
 }
 
 impl Args {
     pub fn run(self) {
-        cmd_info(self.package.as_deref(), self.repo.as_deref());
+        cmd_info(self.package.as_deref(), self.registry.as_deref());
     }
 }
 
