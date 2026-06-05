@@ -23,6 +23,12 @@ pub enum BuildEvent {
     RunningScript { cached: bool },
     /// Fetching a git/http/registry dep.
     FetchingDep { name: String, source: String },
+    /// Starting a source build of a cached dep (no prebuilt available).
+    DepBuildStarted { name: String },
+    /// One source file compiled inside a dep build (contributes one dot to the inline bar).
+    DepCompiling,
+    /// All source files for a dep build are done.
+    DepBuildDone,
     /// Building a foreign dep (cmake/make/meson/…).
     BuildingForeignDep { name: String, backend: String },
     /// Non-fatal warning from any part of the build.

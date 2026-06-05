@@ -641,16 +641,18 @@ fn resolve_version_dep(
                 // tarball downloaded from the registry), build it in-place and point
                 // at the resulting static lib in target/{profile}/.
                 if link_flags.is_empty() && dep_dir.join("freight.toml").exists() {
-                    progress(BuildEvent::BuildStarted {
+                    progress(BuildEvent::DepBuildStarted {
                         name: format!("{name}@{version}"),
-                        profile: "source".to_string(),
                     });
-                    // Build the dep as a lib. Reuse the parent profile ("dev"/"release").
-                    // Errors here are non-fatal: we let the link step fail with a clear message.
-                    // Suppress BuildStarted from the inner build — replaced by our own emit above.
+                    // Suppress BuildStarted/Compiling from the inner build; translate Compiling
+                    // to DepCompiling so the CLI can show an inline dot bar instead.
                     let outer = std::sync::Arc::clone(progress);
                     let inner_progress: Progress = std::sync::Arc::new(move |ev| match ev {
-                        BuildEvent::BuildStarted { .. } => {}
+                        BuildEvent::BuildStarted { .. }
+                        | BuildEvent::DepBuildStarted { .. }
+                        | BuildEvent::DepBuildDone => {}
+                        BuildEvent::Compiling { .. } => outer(BuildEvent::DepCompiling),
+                        BuildEvent::DepCompiling => outer(BuildEvent::DepCompiling),
                         other => outer(other),
                     });
                     let _ = crate::build::build_project_at(
@@ -662,6 +664,7 @@ fn resolve_version_dep(
                         &[],
                         &inner_progress,
                     );
+                    progress(BuildEvent::DepBuildDone);
                     let built_lib = dep_dir.join("target").join(version).join(format!("lib{name}.a"));
                     if built_lib.exists() {
                         let out_dir = built_lib.parent().unwrap().to_path_buf();

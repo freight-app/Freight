@@ -113,6 +113,19 @@ pub fn make_progress() -> Progress {
             tracing::info!(name, source, "fetching dep");
             print_status("Fetching", &format!("{name} ({source})"));
         }
+        BuildEvent::DepBuildStarted { name } => {
+            use std::io::Write;
+            print!("{:>12} {name} ", "Building".bold().cyan());
+            let _ = std::io::stdout().flush();
+        }
+        BuildEvent::DepCompiling => {
+            use std::io::Write;
+            print!("·");
+            let _ = std::io::stdout().flush();
+        }
+        BuildEvent::DepBuildDone => {
+            println!();
+        }
         BuildEvent::BuildingForeignDep { name, backend } => {
             tracing::info!(name, backend, "building foreign dep");
             print_status("Building", &format!("{name} ({backend})"));
@@ -188,6 +201,17 @@ fn make_timed_progress() -> (
         BuildEvent::FetchingDep { name, source } => {
             print_status("Fetching", &format!("{name} ({source})"))
         }
+        BuildEvent::DepBuildStarted { name } => {
+            use std::io::Write;
+            print!("{:>12} {name} ", "Building".bold().cyan());
+            let _ = std::io::stdout().flush();
+        }
+        BuildEvent::DepCompiling => {
+            use std::io::Write;
+            print!("·");
+            let _ = std::io::stdout().flush();
+        }
+        BuildEvent::DepBuildDone => println!(),
         BuildEvent::BuildingForeignDep { name, backend } => {
             print_status("Building", &format!("{name} ({backend})"))
         }
