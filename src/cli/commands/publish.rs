@@ -85,6 +85,17 @@ fn cmd_publish(dry_run: bool, yes: bool, no_verify: bool, repo: Option<&str>) {
         None => return,
     };
 
+    // ── cross-registry dep check ─────────────────────────────────────────────
+
+    if let Some(offender) = cross_registry_dep(&manifest, &registry_name) {
+        print_error(&format!(
+            "dependency `{offender}` uses a different registry than the publish target \
+             (`{registry_name}`); all registry deps must use the same repo or omit `repo` \
+             to use the default"
+        ));
+        return;
+    }
+
     // ── version already published? ───────────────────────────────────────────
 
     match registry.package_exists(&name, &version) {
@@ -703,6 +714,27 @@ fn non_empty(s: &str) -> Option<&str> {
     } else {
         Some(s)
     }
+}
+
+/// Returns the name of the first dependency that references a different registry
+/// than `publish_repo`. Path/git/url deps are ignored — only version deps with an
+/// explicit `repo` that doesn't match are flagged.
+fn cross_registry_dep(manifest: &Manifest, publish_repo: &str) -> Option<String> {
+    let all_deps = manifest
+        .dependencies
+        .iter()
+        .chain(manifest.build_dependencies.iter())
+        .chain(manifest.dev_dependencies.iter());
+    for (name, dep) in all_deps {
+        if let freight::manifest::types::Dependency::Detailed(d) = dep {
+            if let Some(ref repo) = d.repo {
+                if repo != publish_repo {
+                    return Some(name.clone());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn find_executable(name: &str) -> Option<String> {
