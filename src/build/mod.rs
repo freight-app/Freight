@@ -22,7 +22,7 @@ pub use modules::{
     bmi_path, compile_module_sources, has_modules, plan_module_build, scan_sources,
     ModuleBuildPlan, ModuleRole, ScannedSource,
 };
-pub use pipeline::{DepKind, DepRef, PackageGraph, PackageNode};
+pub use pipeline::{DepKind, DepRef, PackageGraph, PackageNode, PipelineConfig, PipelineGoal};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -97,6 +97,12 @@ pub struct BenchSummary {
     pub results: Vec<BenchResult>,
 }
 
+pub enum PipelineOutput {
+    Build(BuildOutput),
+    Test(TestSummary),
+    Bench(BenchSummary),
+}
+
 struct ProjectContext {
     project_dir: PathBuf,
     manifest: Manifest,
@@ -110,6 +116,638 @@ struct ProjectContext {
 struct BuiltDeps {
     libs: Vec<PathBuf>,
     include_dirs: Vec<PathBuf>,
+}
+
+// ── Unified pipeline ─────────────────────────────────────────────────────────
+
+/// Single entry-point for all build / test / bench workflows.
+///
+/// Stages (in order):
+/// 1. **Load** — parse `freight.toml`, detect toolchain, discover sources.
+/// 2. **Features** — resolve feature flags, compute defines.
+/// 3. **Fetch** — clone/download missing git + registry deps.
+/// 4. **Resolve** — dep graph topo-sort + slot-conflict check.
+/// 5. **Build deps** — compile foreign + source-built deps.
+/// 6. **Proto** — run `protoc` if `[language.proto]` is declared.
+/// 7. **Header units** — precompile dep headers (C++20 builds only).
+/// 8. **PCH** — compile precompiled header if configured.
+/// 9. **Compile** — compile all project sources in parallel.
+/// 10. **Goal** — link + run goal-specific phase (build / test / bench).
+pub fn run_pipeline_at(
+    project_dir: &Path,
+    config: &pipeline::PipelineConfig,
+    parent_graph: Option<&pipeline::PackageGraph>,
+    progress: &Progress,
+) -> Result<PipelineOutput, FreightError> {
+    let profile = &config.profile;
+
+    // ── Stage 1: Load ────────────────────────────────────────────────────────
+    let mut ctx = load_project_at(project_dir, profile)?;
+    if let Some(t) = &config.target_override {
+        ctx.manifest.compiler.target = Some(t.clone());
+    }
+    if !config.sanitize_override.is_empty() {
+        apply_sanitize_override(&mut ctx.manifest, profile, &config.sanitize_override);
+    }
+    inject_option_handler_flags(&mut ctx)?;
+    let ProjectContext {
+        project_dir,
+        manifest,
+        effective_backend,
+        templates,
+        detected,
+        found,
+    } = &ctx;
+
+    let graph: pipeline::PackageGraph = match parent_graph {
+        Some(pg) => pipeline::PackageGraph::for_dep(
+            &manifest.package.name,
+            &manifest.package.version,
+            profile.as_str(),
+            project_dir.to_path_buf(),
+            pg.root_dir.clone(),
+        ),
+        None => pipeline::PackageGraph::root_only(
+            &manifest.package.name,
+            &manifest.package.version,
+            profile.as_str(),
+            project_dir.to_path_buf(),
+        ),
+    };
+    let target_dir: PathBuf = match parent_graph {
+        Some(pg) => pg
+            .root_dir
+            .join("target")
+            .join("deps")
+            .join(&manifest.package.name),
+        None => project_dir.join("target"),
+    };
+
+    progress(BuildEvent::BuildStarted {
+        name: manifest.package.name.clone(),
+        profile: profile.to_string(),
+    });
+
+    // ── Stage 2: Features ────────────────────────────────────────────────────
+    let profile_features_buf: Vec<String> = match profile.as_str() {
+        "dev" => manifest
+            .profile
+            .dev
+            .as_ref()
+            .map_or(vec![], |p| p.features.clone()),
+        "release" => manifest
+            .profile
+            .release
+            .as_ref()
+            .map_or(vec![], |p| p.features.clone()),
+        other => manifest
+            .profile
+            .custom
+            .get(other)
+            .map_or(vec![], |p| p.features.clone()),
+    };
+    let all_requested: Vec<String> = config
+        .features
+        .iter()
+        .chain(profile_features_buf.iter())
+        .cloned()
+        .collect();
+    let resolution =
+        features::resolve_features(&manifest.features, &all_requested, config.use_defaults)?;
+    let feature_defines = features::to_defines(&resolution.active);
+    let activated_deps = resolution.activated_deps;
+
+    // ── Stage 3: Fetch ───────────────────────────────────────────────────────
+    ensure_git_deps_fetched(project_dir, manifest, progress)?;
+    {
+        let mut cfg = GlobalConfig::load();
+        if let Some(local) = GlobalConfig::load_local(project_dir) {
+            cfg.apply_local(local);
+        }
+        if let Ok(outcomes) = crate::dep_cmds::fetch_registry_deps(&graph.root_dir, &cfg) {
+            for o in outcomes {
+                if matches!(o.action, crate::dep_cmds::RegistryDepAction::Downloaded) {
+                    progress(BuildEvent::FetchingDep {
+                        name: o.name.clone(),
+                        source: format!("registry@{}", o.version),
+                    });
+                }
+            }
+        }
+    }
+    let existing_lock = LockFile::load(project_dir);
+    if let Some(ref lock) = existing_lock {
+        verify_git_dep_shas(project_dir, manifest, lock, progress);
+    }
+
+    // ── Stage 4: Resolve ─────────────────────────────────────────────────────
+    let include_dev = config.goal.include_dev_deps();
+    let resolved_deps = resolve_dep_graph(project_dir, manifest, include_dev, &activated_deps)?;
+    let to_drop = check_slot_conflicts(&resolved_deps, manifest)?;
+    let resolved_deps: Vec<ResolvedDep> = resolved_deps
+        .into_iter()
+        .filter(|d| !to_drop.contains(&d.name))
+        .collect();
+
+    // ── Stage 5: Build deps ──────────────────────────────────────────────────
+    let built = build_resolved_deps(
+        manifest,
+        project_dir,
+        effective_backend,
+        profile,
+        templates,
+        detected,
+        &resolved_deps,
+        progress,
+    )?;
+    let (foreign_built, _pkg_configs, tool_paths) =
+        crate::adaptors::build_foreign_deps(&graph, manifest, profile, progress)?;
+
+    let mut all_libs = built.libs.clone();
+    let mut all_dep_includes = built.include_dirs.clone();
+    let mut all_raw_link_flags: Vec<String> = Vec::new();
+    for f in foreign_built {
+        all_libs.extend(f.libs);
+        all_dep_includes.extend(f.include_dirs);
+        all_raw_link_flags.extend(f.raw_link_flags);
+    }
+
+    // Merge [compiler] includes + discovered include dirs + dep includes.
+    let settings = manifest.build_settings_for(profile);
+    let mut include_dirs: Vec<PathBuf> = settings
+        .include_paths
+        .iter()
+        .map(|p| project_dir.join(p))
+        .collect();
+    for d in &found.include_dirs {
+        let abs = project_dir.join(d);
+        if !include_dirs.contains(&abs) {
+            include_dirs.push(abs);
+        }
+    }
+    include_dirs.extend(all_dep_includes.iter().cloned());
+
+    let compile_defines = feature_defines.clone();
+
+    // ── Stage 6: Proto ───────────────────────────────────────────────────────
+    let all_sources = if manifest.language.contains_key("proto") {
+        let proto_settings = manifest.effective_language_settings("proto");
+        let result =
+            proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
+        if !result.generated_include_dir.as_os_str().is_empty() {
+            include_dirs.push(result.generated_include_dir);
+        }
+        let mut srcs = found.sources.clone();
+        srcs.extend(result.generated_sources);
+        srcs
+    } else {
+        found.sources.clone()
+    };
+
+    // ── Stage 7: Header units (Build goal only, C++20+) ──────────────────────
+    let hu_flags: Vec<String> = if matches!(config.goal, pipeline::PipelineGoal::Build) {
+        if let Some(cpp_std) = manifest
+            .language
+            .get("cpp")
+            .and_then(|l| l.std.as_deref())
+            .filter(|s| header_units::is_module_std(s))
+        {
+            let units = header_units::precompile_dep_headers(
+                project_dir,
+                &all_dep_includes,
+                cpp_std,
+                effective_backend,
+                detected,
+                profile,
+            );
+            if let Some(compiler) =
+                compile::select_compiler("cpp", effective_backend, detected, None)
+            {
+                header_units::import_flags(&units, compiler)
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    // ── Stage 8: PCH ─────────────────────────────────────────────────────────
+    let mut pch_compile_flags: Vec<String> = vec![];
+    let mut pch_clangd_flags: Vec<String> = vec![];
+    if let Some(ref pch_header) = manifest.compiler.pch.clone() {
+        let primary = compile::select_compiler("cpp", effective_backend, detected, None)
+            .or_else(|| compile::select_compiler("c", effective_backend, detected, None));
+        if let Some(compiler) = primary {
+            match pch::compile_pch(
+                project_dir,
+                &target_dir,
+                pch_header,
+                profile,
+                compiler,
+                &include_dirs,
+                &compile_defines,
+                &[],
+            ) {
+                Ok(Some(compiled)) => {
+                    pch_compile_flags = compiled
+                        .use_flag
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect();
+                    pch_clangd_flags = compiled
+                        .clangd_flag
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect();
+                }
+                Ok(None) => {}
+                Err(e) => progress(BuildEvent::Warning(format!("PCH skipped: {e}"))),
+            }
+        }
+    }
+
+    // ── Stage 9: Compile ─────────────────────────────────────────────────────
+    let mut extra_flags = hu_flags;
+    extra_flags.extend(pch_compile_flags);
+    let compile_result = build_sources(
+        project_dir,
+        &target_dir,
+        manifest,
+        effective_backend,
+        profile,
+        &all_sources,
+        &include_dirs,
+        detected,
+        &compile_defines,
+        &extra_flags,
+        progress,
+    )?;
+
+    // ── Stage 10: Goal ───────────────────────────────────────────────────────
+    match &config.goal {
+        pipeline::PipelineGoal::Build => {
+            let link_result = link_targets(
+                project_dir,
+                &target_dir,
+                manifest,
+                effective_backend,
+                profile,
+                &compile_result.objects,
+                detected,
+                templates,
+                &all_libs,
+                &all_raw_link_flags,
+                progress,
+            )?;
+
+            let lock = LockFile::generate(project_dir, manifest, &resolved_deps);
+            if let Err(e) = lock.save(project_dir) {
+                progress(BuildEvent::Warning(format!(
+                    "could not write freight.lock: {e}"
+                )));
+            }
+
+            let cc = compile_commands::generate_incremental(
+                project_dir,
+                &target_dir,
+                manifest,
+                effective_backend,
+                detected,
+                profile,
+                &all_sources,
+                &include_dirs,
+                &feature_defines,
+                &pch_clangd_flags,
+                Some(compile_result.compiled_sources.as_slice()),
+            );
+            let cc = {
+                let mut merged = cc;
+                let pkgs_dir = graph.pkgs_dir();
+                let lsp_sub = std::path::Path::new(".freight")
+                    .join("lsp")
+                    .join(safe_lsp_profile_dir(profile));
+                if let Ok(entries) = std::fs::read_dir(&pkgs_dir) {
+                    for entry in entries.flatten() {
+                        let dep_cc =
+                            entry.path().join(&lsp_sub).join("compile_commands.json");
+                        if dep_cc.exists() {
+                            merged = compile_commands::merge(
+                                merged,
+                                compile_commands::load_from(&dep_cc),
+                            );
+                        }
+                    }
+                }
+                merged
+            };
+            let lsp_dir = lsp_compile_commands_dir(project_dir, profile);
+            if let Err(e) = compile_commands::write_to(
+                &lsp_dir.join("compile_commands.json"),
+                &cc,
+            )
+            .and_then(|_| {
+                compile_commands::write_incremental_cache(
+                    project_dir,
+                    manifest,
+                    effective_backend,
+                    detected,
+                    profile,
+                    &all_sources,
+                    &include_dirs,
+                    &feature_defines,
+                    &pch_clangd_flags,
+                )
+            }) {
+                progress(BuildEvent::Warning(format!(
+                    "could not write compile_commands.json: {e}"
+                )));
+            }
+
+            let binaries = link_result
+                .outputs
+                .iter()
+                .filter(|p| {
+                    !p.extension()
+                        .is_some_and(|e| e == "a" || e == "so" || e == "dylib" || e == "dll")
+                })
+                .cloned()
+                .collect();
+
+            Ok(PipelineOutput::Build(BuildOutput {
+                package_name: manifest.package.name.clone(),
+                binaries,
+                compiled: compile_result.compiled,
+                skipped: compile_result.skipped,
+            }))
+        }
+
+        pipeline::PipelineGoal::Test { filter } => {
+            // Objects from [[bin]] sources contain main() — exclude from test linking.
+            let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest
+                .bins
+                .iter()
+                .map(|b| object_path(&target_dir, profile, Path::new(&b.src)))
+                .collect();
+            let lib_objects: Vec<PathBuf> = compile_result
+                .objects
+                .iter()
+                .filter(|o| !bin_obj_paths.contains(*o))
+                .cloned()
+                .collect();
+
+            let test_dir = project_dir.join("tests");
+            if !test_dir.is_dir() {
+                return Ok(PipelineOutput::Test(TestSummary {
+                    passed: 0,
+                    failed: 0,
+                    total: 0,
+                }));
+            }
+
+            let ext_map = discover::build_ext_map(manifest, templates);
+            let filter = filter.as_deref();
+            let mut test_srcs: Vec<SourceFile> = Vec::new();
+            for entry in WalkDir::new(&test_dir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+            {
+                let path = entry.path();
+                let ext = match path.extension().and_then(|e| e.to_str()) {
+                    Some(e) => format!(".{e}"),
+                    None => continue,
+                };
+                if let Some(lang_key) = ext_map.get(ext.as_str()) {
+                    let stem =
+                        path.file_stem().and_then(|s| s.to_str()).unwrap_or("test");
+                    if filter.map_or(true, |f| f == stem) {
+                        let rel =
+                            path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
+                        test_srcs.push(SourceFile {
+                            path: rel,
+                            lang_key: lang_key.clone(),
+                        });
+                    }
+                }
+            }
+            test_srcs.sort_by(|a, b| a.path.cmp(&b.path));
+
+            if test_srcs.is_empty() {
+                return Ok(PipelineOutput::Test(TestSummary {
+                    passed: 0,
+                    failed: 0,
+                    total: 0,
+                }));
+            }
+
+            let test_compile = compile_sources(
+                project_dir,
+                &target_dir,
+                manifest,
+                effective_backend,
+                profile,
+                &test_srcs,
+                &include_dirs,
+                detected,
+                &feature_defines,
+                &[],
+                progress,
+            )?;
+
+            let out_dir = target_dir.join(profile).join("tests");
+            std::fs::create_dir_all(&out_dir)?;
+
+            let mut passed = 0usize;
+            let mut failed = 0usize;
+            for (src, test_obj) in test_srcs.iter().zip(test_compile.objects.iter()) {
+                let stem = src
+                    .path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("test");
+                let test_bin = out_dir.join(stem);
+                progress(BuildEvent::TestLinking {
+                    name: stem.to_string(),
+                });
+                let all_objs: Vec<PathBuf> = std::iter::once(test_obj.clone())
+                    .chain(lib_objects.iter().cloned())
+                    .collect();
+                link_test_binary(
+                    &all_objs,
+                    &test_bin,
+                    manifest,
+                    effective_backend,
+                    profile,
+                    detected,
+                    templates,
+                    &all_libs,
+                    &all_raw_link_flags,
+                )?;
+                progress(BuildEvent::TestRunning {
+                    name: stem.to_string(),
+                });
+                let ok = Command::new(&test_bin)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                progress(BuildEvent::TestResult {
+                    name: stem.to_string(),
+                    passed: ok,
+                });
+                if ok {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+
+            Ok(PipelineOutput::Test(TestSummary {
+                passed,
+                failed,
+                total: passed + failed,
+            }))
+        }
+
+        pipeline::PipelineGoal::Bench { filter } => {
+            let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest
+                .bins
+                .iter()
+                .map(|b| object_path(&target_dir, profile, Path::new(&b.src)))
+                .collect();
+            let lib_objects: Vec<PathBuf> = compile_result
+                .objects
+                .iter()
+                .filter(|o| !bin_obj_paths.contains(*o))
+                .cloned()
+                .collect();
+
+            let bench_dir = project_dir.join("benches");
+            if !bench_dir.is_dir() {
+                return Ok(PipelineOutput::Bench(BenchSummary { results: vec![] }));
+            }
+
+            let ext_map = discover::build_ext_map(manifest, templates);
+            let filter = filter.as_deref();
+            let mut bench_srcs: Vec<SourceFile> = Vec::new();
+            for entry in WalkDir::new(&bench_dir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+            {
+                let path = entry.path();
+                let ext = match path.extension().and_then(|e| e.to_str()) {
+                    Some(e) => format!(".{e}"),
+                    None => continue,
+                };
+                if let Some(lang_key) = ext_map.get(ext.as_str()) {
+                    let stem =
+                        path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+                    if filter.map_or(true, |f| f == stem) {
+                        let rel =
+                            path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
+                        bench_srcs.push(SourceFile {
+                            path: rel,
+                            lang_key: lang_key.clone(),
+                        });
+                    }
+                }
+            }
+            bench_srcs.sort_by(|a, b| a.path.cmp(&b.path));
+
+            if bench_srcs.is_empty() {
+                return Ok(PipelineOutput::Bench(BenchSummary { results: vec![] }));
+            }
+
+            let bench_compile = compile_sources(
+                project_dir,
+                &target_dir,
+                manifest,
+                effective_backend,
+                profile,
+                &bench_srcs,
+                &include_dirs,
+                detected,
+                &feature_defines,
+                &[],
+                progress,
+            )?;
+
+            let out_dir = target_dir.join(profile).join("benches");
+            std::fs::create_dir_all(&out_dir)?;
+
+            const BENCH_RUNS: usize = 5;
+            let mut results = Vec::new();
+
+            for (src, bench_obj) in bench_srcs.iter().zip(bench_compile.objects.iter()) {
+                let stem = src
+                    .path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("bench");
+                let bench_bin = out_dir.join(stem);
+                progress(BuildEvent::BenchLinking {
+                    name: stem.to_string(),
+                });
+                let all_objs: Vec<PathBuf> = std::iter::once(bench_obj.clone())
+                    .chain(lib_objects.iter().cloned())
+                    .collect();
+                link_test_binary(
+                    &all_objs,
+                    &bench_bin,
+                    manifest,
+                    effective_backend,
+                    profile,
+                    detected,
+                    templates,
+                    &all_libs,
+                    &all_raw_link_flags,
+                )?;
+                progress(BuildEvent::BenchRunning {
+                    name: stem.to_string(),
+                });
+
+                let mut samples_ns: Vec<u64> = Vec::with_capacity(BENCH_RUNS);
+                for _ in 0..BENCH_RUNS {
+                    let t0 = std::time::Instant::now();
+                    let ok = Command::new(&bench_bin)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    let elapsed = t0.elapsed().as_nanos() as u64;
+                    if ok {
+                        samples_ns.push(elapsed);
+                    }
+                }
+                let runs = samples_ns.len();
+                let (mean_ns, min_ns, max_ns) = if runs == 0 {
+                    (0, 0, 0)
+                } else {
+                    let sum: u64 = samples_ns.iter().sum();
+                    let min = *samples_ns.iter().min().unwrap();
+                    let max = *samples_ns.iter().max().unwrap();
+                    (sum / runs as u64, min, max)
+                };
+                progress(BuildEvent::BenchResult {
+                    name: stem.to_string(),
+                    mean_ns,
+                });
+                results.push(BenchResult {
+                    name: stem.to_string(),
+                    mean_ns,
+                    min_ns,
+                    max_ns,
+                    runs,
+                });
+            }
+
+            Ok(PipelineOutput::Bench(BenchSummary { results }))
+        }
+    }
 }
 
 // ── Build pipeline ────────────────────────────────────────────────────────────
@@ -530,14 +1168,6 @@ pub fn build_project_with(
 }
 
 /// Build the project at a specific `project_dir`.
-///
-/// `target_override` overrides the target triple from `~/.freight/config.toml`.
-/// `sanitize_override` replaces the profile's `sanitize` list when non-empty.
-/// All progress events are sent through `progress`.
-///
-/// `parent_node` — when building a dep from source pass the root project's
-/// `PackageNode` so transitive dep lookups use the flat `.pkgs/` pool.
-/// `None` means this is a top-level build (no parent context).
 pub fn build_project_at(
     project_dir: &Path,
     profile: &str,
@@ -548,347 +1178,18 @@ pub fn build_project_at(
     progress: &Progress,
     parent_graph: Option<&pipeline::PackageGraph>,
 ) -> Result<BuildOutput, FreightError> {
-    let mut ctx = load_project_at(project_dir, profile)?;
-    if let Some(t) = target_override {
-        ctx.manifest.compiler.target = Some(t.to_string());
-    }
-    if !sanitize_override.is_empty() {
-        apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
-    }
-    inject_option_handler_flags(&mut ctx)?;
-    let ProjectContext {
-        project_dir,
-        manifest,
-        effective_backend,
-        templates,
-        detected,
-        found,
-    } = &ctx;
-
-    // When a parent_graph is supplied this is a dep source-build; anchor all
-    // .pkgs/ lookups to the root by reusing that graph's root_dir.  Otherwise
-    // create a new root-only graph for this project.
-    let graph: pipeline::PackageGraph = match parent_graph {
-        Some(pg) => pipeline::PackageGraph::for_dep(
-            &manifest.package.name,
-            &manifest.package.version,
-            profile,
-            project_dir.to_path_buf(),
-            pg.root_dir.clone(),
-        ),
-        None => pipeline::PackageGraph::root_only(
-            &manifest.package.name,
-            &manifest.package.version,
-            profile,
-            project_dir.to_path_buf(),
-        ),
-    };
-    // Dep builds output artifacts into <root>/target/deps/<name>/; root builds
-    // use <project>/target/.  Computed directly rather than through graph so it
-    // doesn't depend on whether this package is root_name in its mini-graph.
-    let target_dir: PathBuf = match parent_graph {
-        Some(pg) => pg
-            .root_dir
-            .join("target")
-            .join("deps")
-            .join(&manifest.package.name),
-        None => project_dir.join("target"),
-    };
-
-    progress(BuildEvent::BuildStarted {
-        name: manifest.package.name.clone(),
+    let config = pipeline::PipelineConfig {
         profile: profile.to_string(),
-    });
-
-    // Merge profile-level features into the caller-supplied list before resolving.
-    let profile_features_buf: Vec<String> = match profile {
-        "dev" => manifest
-            .profile
-            .dev
-            .as_ref()
-            .map_or(vec![], |p| p.features.clone()),
-        "release" => manifest
-            .profile
-            .release
-            .as_ref()
-            .map_or(vec![], |p| p.features.clone()),
-        other => manifest
-            .profile
-            .custom
-            .get(other)
-            .map_or(vec![], |p| p.features.clone()),
+        features: features.to_vec(),
+        use_defaults,
+        target_override: target_override.map(str::to_string),
+        sanitize_override: sanitize_override.to_vec(),
+        goal: pipeline::PipelineGoal::Build,
     };
-    let all_requested: Vec<String> = features
-        .iter()
-        .chain(profile_features_buf.iter())
-        .cloned()
-        .collect();
-
-    let resolution = features::resolve_features(&manifest.features, &all_requested, use_defaults)?;
-    let feature_defines = features::to_defines(&resolution.active);
-    let activated_deps = resolution.activated_deps;
-
-    ensure_git_deps_fetched(project_dir, manifest, progress)?;
-
-    // Auto-fetch any registry deps not yet in target/deps/ — same as `freight fetch`
-    // but implicit, so `freight add` + `freight build` is the only workflow needed.
-    {
-        let mut cfg = GlobalConfig::load();
-        if let Some(local) = GlobalConfig::load_local(project_dir) {
-            cfg.apply_local(local);
-        }
-        if let Ok(outcomes) = crate::dep_cmds::fetch_registry_deps(&graph.root_dir, &cfg) {
-            for o in outcomes {
-                if matches!(o.action, crate::dep_cmds::RegistryDepAction::Downloaded) {
-                    progress(BuildEvent::FetchingDep {
-                        name: o.name.clone(),
-                        source: format!("registry@{}", o.version),
-                    });
-                }
-            }
-        }
+    match run_pipeline_at(project_dir, &config, parent_graph, progress)? {
+        PipelineOutput::Build(out) => Ok(out),
+        _ => unreachable!(),
     }
-
-    let existing_lock = LockFile::load(project_dir);
-    if let Some(ref lock) = existing_lock {
-        verify_git_dep_shas(project_dir, manifest, lock, progress);
-    }
-
-    let resolved_deps = resolve_dep_graph(project_dir, manifest, false, &activated_deps)?;
-    let to_drop = check_slot_conflicts(&resolved_deps, manifest)?;
-    let resolved_deps: Vec<ResolvedDep> = resolved_deps
-        .into_iter()
-        .filter(|d| !to_drop.contains(&d.name))
-        .collect();
-    let built = build_resolved_deps(
-        manifest,
-        project_dir,
-        effective_backend,
-        profile,
-        templates,
-        detected,
-        &resolved_deps,
-        progress,
-    )?;
-    let (foreign_built, _pkg_configs, tool_paths) =
-        crate::adaptors::build_foreign_deps(&graph, manifest, profile, progress)?;
-
-    let mut all_libs = built.libs.clone();
-    let mut all_dep_includes = built.include_dirs.clone();
-    let mut all_raw_link_flags: Vec<String> = Vec::new();
-    for f in foreign_built {
-        all_libs.extend(f.libs);
-        all_dep_includes.extend(f.include_dirs);
-        all_raw_link_flags.extend(f.raw_link_flags);
-    }
-
-    // Merge dep include dirs + own [compiler] includes into the compile step.
-    let settings = manifest.build_settings_for(profile);
-    let mut include_dirs: Vec<PathBuf> = settings
-        .include_paths
-        .iter()
-        .map(|p| project_dir.join(p))
-        .collect();
-    for d in &found.include_dirs {
-        let abs = project_dir.join(d);
-        if !include_dirs.contains(&abs) {
-            include_dirs.push(abs);
-        }
-    }
-    include_dirs.extend(all_dep_includes.iter().cloned());
-
-    let compile_defines = feature_defines.clone();
-
-    // ── Proto code generation ────────────────────────────────────────────────
-    // When [language.proto] is declared, run protoc on .proto files in src/,
-    // inject the generated .pb.cc files into the compile list, and add the
-    // generated header directory to include_dirs so #include "foo.pb.h" works.
-    let all_sources = if manifest.language.contains_key("proto") {
-        let proto_settings = manifest.effective_language_settings("proto");
-        let result =
-            proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
-        if !result.generated_include_dir.as_os_str().is_empty() {
-            include_dirs.push(result.generated_include_dir);
-        }
-        let mut srcs = found.sources.clone();
-        srcs.extend(result.generated_sources);
-        srcs
-    } else {
-        found.sources.clone()
-    };
-
-    // When the project uses C++20+, precompile dep headers as header units so
-    // consumers can write `import "dep.h";` instead of `#include "dep.h"`.
-    // Failures are non-fatal — we just skip and compile normally.
-    let hu_flags: Vec<String> = if let Some(cpp_std) = manifest
-        .language
-        .get("cpp")
-        .and_then(|l| l.std.as_deref())
-        .filter(|s| header_units::is_module_std(s))
-    {
-        let units = header_units::precompile_dep_headers(
-            project_dir,
-            &all_dep_includes,
-            cpp_std,
-            effective_backend,
-            detected,
-            profile,
-        );
-        if let Some(compiler) = compile::select_compiler("cpp", effective_backend, detected, None) {
-            header_units::import_flags(&units, compiler)
-        } else {
-            vec![]
-        }
-    } else {
-        vec![]
-    };
-
-    // If a PCH header is configured, compile it and inject the use flag into
-    // every source file. Failures are non-fatal.
-    let mut pch_compile_flags: Vec<String> = vec![];
-    let mut pch_clangd_flags: Vec<String> = vec![];
-    if let Some(ref pch_header) = manifest.compiler.pch.clone() {
-        let primary = compile::select_compiler("cpp", effective_backend, detected, None)
-            .or_else(|| compile::select_compiler("c", effective_backend, detected, None));
-        if let Some(compiler) = primary {
-            match pch::compile_pch(
-                project_dir,
-                &target_dir,
-                pch_header,
-                profile,
-                compiler,
-                &include_dirs,
-                &compile_defines,
-                &[],
-            ) {
-                Ok(Some(compiled)) => {
-                    pch_compile_flags = compiled
-                        .use_flag
-                        .split_whitespace()
-                        .map(str::to_owned)
-                        .collect();
-                    pch_clangd_flags = compiled
-                        .clangd_flag
-                        .split_whitespace()
-                        .map(str::to_owned)
-                        .collect();
-                }
-                Ok(None) => {}
-                Err(e) => progress(BuildEvent::Warning(format!("PCH skipped: {e}"))),
-            }
-        }
-    }
-
-    let mut extra_flags = hu_flags.clone();
-    extra_flags.extend(pch_compile_flags);
-    let compile_result = build_sources(
-        project_dir,
-        &target_dir,
-        manifest,
-        effective_backend,
-        profile,
-        &all_sources,
-        &include_dirs,
-        detected,
-        &compile_defines,
-        &extra_flags,
-        progress,
-    )?;
-
-    let link_result = link_targets(
-        project_dir,
-        &target_dir,
-        manifest,
-        effective_backend,
-        profile,
-        &compile_result.objects,
-        detected,
-        templates,
-        &all_libs,
-        &all_raw_link_flags,
-        progress,
-    )?;
-
-    // Keep freight.lock in sync with the resolved dep graph. Lock-write failures
-    // are non-fatal — we surface them on stderr but still return success.
-    let lock = LockFile::generate(project_dir, manifest, &resolved_deps);
-    if let Err(e) = lock.save(project_dir) {
-        progress(BuildEvent::Warning(format!(
-            "could not write freight.lock: {e}"
-        )));
-    }
-
-    let cc = compile_commands::generate_incremental(
-        project_dir,
-        &target_dir,
-        manifest,
-        effective_backend,
-        detected,
-        profile,
-        &all_sources,
-        &include_dirs,
-        &feature_defines,
-        &pch_clangd_flags,
-        Some(compile_result.compiled_sources.as_slice()),
-    );
-    // Merge compile_commands from source-built deps (.pkgs/*/) — look in each
-    // dep's .freight/lsp/<profile>/ where they now write their own database.
-    let cc = {
-        let mut merged = cc;
-        let pkgs_dir = graph.pkgs_dir();
-        let lsp_sub = std::path::Path::new(".freight")
-            .join("lsp")
-            .join(safe_lsp_profile_dir(profile));
-        if let Ok(entries) = std::fs::read_dir(&pkgs_dir) {
-            for entry in entries.flatten() {
-                let dep_cc_path = entry.path().join(&lsp_sub).join("compile_commands.json");
-                if dep_cc_path.exists() {
-                    merged =
-                        compile_commands::merge(merged, compile_commands::load_from(&dep_cc_path));
-                }
-            }
-        }
-        merged
-    };
-
-    // Write compile_commands only to .freight/lsp/<profile>/ — never to project root.
-    let lsp_dir = lsp_compile_commands_dir(project_dir, profile);
-    if let Err(e) = compile_commands::write_to(&lsp_dir.join("compile_commands.json"), &cc)
-        .and_then(|_| {
-            compile_commands::write_incremental_cache(
-                project_dir,
-                manifest,
-                effective_backend,
-                detected,
-                profile,
-                &all_sources,
-                &include_dirs,
-                &feature_defines,
-                &pch_clangd_flags,
-            )
-        })
-    {
-        progress(BuildEvent::Warning(format!(
-            "could not write compile_commands.json: {e}"
-        )));
-    }
-
-    let binaries = link_result
-        .outputs
-        .iter()
-        .filter(|p| {
-            !p.extension()
-                .is_some_and(|e| e == "a" || e == "so" || e == "dylib" || e == "dll")
-        })
-        .cloned()
-        .collect();
-
-    Ok(BuildOutput {
-        package_name: manifest.package.name.clone(),
-        binaries,
-        compiled: compile_result.compiled,
-        skipped: compile_result.skipped,
-    })
 }
 
 /// Generate `compile_commands.json` without running a full build.
@@ -1336,293 +1637,20 @@ pub fn test_project_at(
     sanitize_override: &[String],
     progress: &Progress,
 ) -> Result<TestSummary, FreightError> {
-    let mut ctx = load_project_at(project_dir, profile)?;
-    if !sanitize_override.is_empty() {
-        apply_sanitize_override(&mut ctx.manifest, profile, sanitize_override);
-    }
-    inject_option_handler_flags(&mut ctx)?;
-    let ProjectContext {
-        project_dir,
-        manifest,
-        effective_backend,
-        templates,
-        detected,
-        found,
-    } = &ctx;
-
-    progress(BuildEvent::BuildStarted {
-        name: manifest.package.name.clone(),
+    let config = pipeline::PipelineConfig {
         profile: profile.to_string(),
-    });
-
-    let profile_features_buf: Vec<String> = match profile {
-        "dev" => manifest
-            .profile
-            .dev
-            .as_ref()
-            .map_or(vec![], |p| p.features.clone()),
-        "release" => manifest
-            .profile
-            .release
-            .as_ref()
-            .map_or(vec![], |p| p.features.clone()),
-        other => manifest
-            .profile
-            .custom
-            .get(other)
-            .map_or(vec![], |p| p.features.clone()),
+        features: features.to_vec(),
+        use_defaults,
+        target_override: None,
+        sanitize_override: sanitize_override.to_vec(),
+        goal: pipeline::PipelineGoal::Test {
+            filter: filter.map(str::to_string),
+        },
     };
-    let all_requested: Vec<String> = features
-        .iter()
-        .chain(profile_features_buf.iter())
-        .cloned()
-        .collect();
-
-    let resolution = features::resolve_features(&manifest.features, &all_requested, use_defaults)?;
-    let feature_defines = features::to_defines(&resolution.active);
-    let activated_deps = resolution.activated_deps;
-
-    ensure_git_deps_fetched(project_dir, manifest, progress)?;
-    let existing_lock = LockFile::load(project_dir);
-    if let Some(ref lock) = existing_lock {
-        verify_git_dep_shas(project_dir, manifest, lock, progress);
+    match run_pipeline_at(project_dir, &config, None, progress)? {
+        PipelineOutput::Test(out) => Ok(out),
+        _ => unreachable!(),
     }
-
-    // Build deps (include dev-dependencies for test runs).
-    let resolved_deps = resolve_dep_graph(project_dir, manifest, true, &activated_deps)?;
-    let to_drop = check_slot_conflicts(&resolved_deps, manifest)?;
-    let resolved_deps: Vec<ResolvedDep> = resolved_deps
-        .into_iter()
-        .filter(|d| !to_drop.contains(&d.name))
-        .collect();
-    let built = build_resolved_deps(
-        manifest,
-        project_dir,
-        effective_backend,
-        profile,
-        templates,
-        detected,
-        &resolved_deps,
-        progress,
-    )?;
-    let (foreign_built, _pkg_configs, tool_paths) = crate::adaptors::build_foreign_deps(
-        &pipeline::PackageGraph::root_only(
-            &manifest.package.name,
-            &manifest.package.version,
-            profile,
-            project_dir.to_path_buf(),
-        ),
-        manifest,
-        profile,
-        progress,
-    )?;
-
-    let mut all_libs = built.libs.clone();
-    let mut all_dep_includes = built.include_dirs.clone();
-    let mut all_raw_link_flags: Vec<String> = Vec::new();
-    for f in foreign_built {
-        all_libs.extend(f.libs);
-        all_dep_includes.extend(f.include_dirs);
-        all_raw_link_flags.extend(f.raw_link_flags);
-    }
-
-    let mut include_dirs = found.include_dirs.clone();
-    include_dirs.extend(all_dep_includes.iter().cloned());
-
-    let compile_defines = feature_defines.clone();
-
-    // Proto codegen — same step as in build_project_at.
-    let all_sources = if manifest.language.contains_key("proto") {
-        let proto_settings = manifest.effective_language_settings("proto");
-        let result =
-            proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
-        if !result.generated_include_dir.as_os_str().is_empty() {
-            include_dirs.push(result.generated_include_dir);
-        }
-        let mut srcs = found.sources.clone();
-        srcs.extend(result.generated_sources);
-        srcs
-    } else {
-        found.sources.clone()
-    };
-
-    // PCH injection for test builds (same logic as build_project_at).
-    let pch_extra_test: Vec<String> = if let Some(ref pch_header) = manifest.compiler.pch.clone() {
-        let primary = compile::select_compiler("cpp", effective_backend, detected, None)
-            .or_else(|| compile::select_compiler("c", effective_backend, detected, None));
-        if let Some(compiler) = primary {
-            match pch::compile_pch(
-                project_dir,
-                &project_dir.join("target"),
-                pch_header,
-                profile,
-                compiler,
-                &include_dirs,
-                &compile_defines,
-                &[],
-            ) {
-                Ok(Some(compiled)) => compiled
-                    .use_flag
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect(),
-                Ok(None) => vec![],
-                Err(e) => {
-                    progress(BuildEvent::Warning(format!("PCH skipped: {e}")));
-                    vec![]
-                }
-            }
-        } else {
-            vec![]
-        }
-    } else {
-        vec![]
-    };
-
-    let target_dir = project_dir.join("target");
-    let compile_result = build_sources(
-        project_dir,
-        &target_dir,
-        manifest,
-        effective_backend,
-        profile,
-        &all_sources,
-        &include_dirs,
-        detected,
-        &compile_defines,
-        &pch_extra_test,
-        progress,
-    )?;
-
-    // Objects from [[bin]] sources contain a main() — exclude from test linking.
-    let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest
-        .bins
-        .iter()
-        .map(|b| object_path(&target_dir, profile, Path::new(&b.src)))
-        .collect();
-    let lib_objects: Vec<PathBuf> = compile_result
-        .objects
-        .iter()
-        .filter(|o| !bin_obj_paths.contains(*o))
-        .cloned()
-        .collect();
-
-    let test_dir = project_dir.join("tests");
-    if !test_dir.is_dir() {
-        return Ok(TestSummary {
-            passed: 0,
-            failed: 0,
-            total: 0,
-        });
-    }
-
-    let ext_map = discover::build_ext_map(manifest, templates);
-    let mut test_srcs: Vec<SourceFile> = Vec::new();
-
-    for entry in WalkDir::new(&test_dir)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
-        let ext = match path.extension().and_then(|e| e.to_str()) {
-            Some(e) => format!(".{e}"),
-            None => continue,
-        };
-        if let Some(lang_key) = ext_map.get(ext.as_str()) {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("test");
-            if filter.map_or(true, |f| f == stem) {
-                let rel = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
-                test_srcs.push(SourceFile {
-                    path: rel,
-                    lang_key: lang_key.clone(),
-                });
-            }
-        }
-    }
-    test_srcs.sort_by(|a, b| a.path.cmp(&b.path));
-
-    if test_srcs.is_empty() {
-        return Ok(TestSummary {
-            passed: 0,
-            failed: 0,
-            total: 0,
-        });
-    }
-
-    let test_target_dir = project_dir.join("target");
-    let test_compile = compile_sources(
-        project_dir,
-        &test_target_dir,
-        manifest,
-        effective_backend,
-        profile,
-        &test_srcs,
-        &include_dirs,
-        detected,
-        &feature_defines,
-        &[],
-        progress,
-    )?;
-
-    let out_dir = test_target_dir.join(profile).join("tests");
-    std::fs::create_dir_all(&out_dir)?;
-
-    let mut passed = 0usize;
-    let mut failed = 0usize;
-
-    for (src, test_obj) in test_srcs.iter().zip(test_compile.objects.iter()) {
-        let stem = src
-            .path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("test");
-        let test_bin = out_dir.join(stem);
-
-        progress(BuildEvent::TestLinking {
-            name: stem.to_string(),
-        });
-
-        let all_objs: Vec<PathBuf> = std::iter::once(test_obj.clone())
-            .chain(lib_objects.iter().cloned())
-            .collect();
-        link_test_binary(
-            &all_objs,
-            &test_bin,
-            manifest,
-            effective_backend,
-            profile,
-            detected,
-            templates,
-            &all_libs,
-            &all_raw_link_flags,
-        )?;
-
-        progress(BuildEvent::TestRunning {
-            name: stem.to_string(),
-        });
-        let ok = Command::new(&test_bin)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        progress(BuildEvent::TestResult {
-            name: stem.to_string(),
-            passed: ok,
-        });
-        if ok {
-            passed += 1;
-        } else {
-            failed += 1;
-        }
-    }
-
-    Ok(TestSummary {
-        passed,
-        failed,
-        total: passed + failed,
-    })
 }
 
 // ── Bench pipeline ────────────────────────────────────────────────────────────
@@ -1716,12 +1744,6 @@ pub fn bench_project_with(
 }
 
 /// Build and run benchmark binaries for the project at `project_dir`.
-///
-/// Benchmarks are discovered in the `benches/` directory — any compilable
-/// source file there is treated as a standalone bench binary with its own
-/// `main()`. Each binary is run [`BENCH_RUNS`] times and the wall-clock min,
-/// max, and mean are reported. Pass a filter to run only benches whose file
-/// stem matches exactly.
 pub fn bench_project_at(
     project_dir: &Path,
     profile: &str,
@@ -1730,243 +1752,20 @@ pub fn bench_project_at(
     use_defaults: bool,
     progress: &Progress,
 ) -> Result<BenchSummary, FreightError> {
-    let mut ctx = load_project_at(project_dir, profile)?;
-    inject_option_handler_flags(&mut ctx)?;
-    let ProjectContext {
-        project_dir,
-        manifest,
-        effective_backend,
-        templates,
-        detected,
-        found,
-    } = &ctx;
-    let project_dir = project_dir.as_path();
-
-    let profile_features_buf: Vec<String> = manifest
-        .build_settings_for(profile)
-        .sanitize
-        .iter()
-        .map(|s| format!("sanitize_{s}"))
-        .collect();
-    let all_requested: Vec<String> = features
-        .iter()
-        .chain(profile_features_buf.iter())
-        .cloned()
-        .collect();
-
-    let resolution = features::resolve_features(&manifest.features, &all_requested, use_defaults)?;
-    let feature_defines = features::to_defines(&resolution.active);
-    let activated_deps = resolution.activated_deps;
-
-    ensure_git_deps_fetched(project_dir, manifest, progress)?;
-
-    let resolved_deps = resolve_dep_graph(project_dir, manifest, false, &activated_deps)?;
-    let to_drop = check_slot_conflicts(&resolved_deps, manifest)?;
-    let resolved_deps: Vec<ResolvedDep> = resolved_deps
-        .into_iter()
-        .filter(|d| !to_drop.contains(&d.name))
-        .collect();
-    let built = build_resolved_deps(
-        manifest,
-        project_dir,
-        effective_backend,
-        profile,
-        templates,
-        detected,
-        &resolved_deps,
-        progress,
-    )?;
-    let (foreign_built, _pkg_configs, tool_paths) = crate::adaptors::build_foreign_deps(
-        &pipeline::PackageGraph::root_only(
-            &manifest.package.name,
-            &manifest.package.version,
-            profile,
-            project_dir.to_path_buf(),
-        ),
-        manifest,
-        profile,
-        progress,
-    )?;
-
-    let mut all_libs = built.libs.clone();
-    let mut all_dep_includes = built.include_dirs.clone();
-    let mut all_raw_link_flags: Vec<String> = Vec::new();
-    for f in foreign_built {
-        all_libs.extend(f.libs);
-        all_dep_includes.extend(f.include_dirs);
-        all_raw_link_flags.extend(f.raw_link_flags);
-    }
-
-    let mut include_dirs = found.include_dirs.clone();
-    include_dirs.extend(all_dep_includes.iter().cloned());
-
-    // Proto codegen — same step as in build_project_at.
-    let bench_sources = if manifest.language.contains_key("proto") {
-        let proto_settings = manifest.effective_language_settings("proto");
-        let result =
-            proto::run_protoc(project_dir, profile, &proto_settings, &tool_paths, progress)?;
-        if !result.generated_include_dir.as_os_str().is_empty() {
-            include_dirs.push(result.generated_include_dir);
-        }
-        let mut srcs = found.sources.clone();
-        srcs.extend(result.generated_sources);
-        srcs
-    } else {
-        found.sources.clone()
+    let config = pipeline::PipelineConfig {
+        profile: profile.to_string(),
+        features: features.to_vec(),
+        use_defaults,
+        target_override: None,
+        sanitize_override: vec![],
+        goal: pipeline::PipelineGoal::Bench {
+            filter: filter.map(str::to_string),
+        },
     };
-
-    let bench_target_dir = project_dir.join("target");
-    let compile_result = build_sources(
-        project_dir,
-        &bench_target_dir,
-        manifest,
-        effective_backend,
-        profile,
-        &bench_sources,
-        &include_dirs,
-        detected,
-        &feature_defines,
-        &[],
-        progress,
-    )?;
-
-    // Exclude [[bin]] entry-point objects (contain a main()) from bench linking.
-    let bin_obj_paths: std::collections::HashSet<PathBuf> = manifest
-        .bins
-        .iter()
-        .map(|b| object_path(&bench_target_dir, profile, Path::new(&b.src)))
-        .collect();
-    let lib_objects: Vec<PathBuf> = compile_result
-        .objects
-        .iter()
-        .filter(|o| !bin_obj_paths.contains(*o))
-        .cloned()
-        .collect();
-
-    let bench_dir = project_dir.join("benches");
-    if !bench_dir.is_dir() {
-        return Ok(BenchSummary { results: vec![] });
+    match run_pipeline_at(project_dir, &config, None, progress)? {
+        PipelineOutput::Bench(out) => Ok(out),
+        _ => unreachable!(),
     }
-
-    let ext_map = discover::build_ext_map(manifest, templates);
-    let mut bench_srcs: Vec<SourceFile> = Vec::new();
-
-    for entry in WalkDir::new(&bench_dir)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
-        let ext = match path.extension().and_then(|e| e.to_str()) {
-            Some(e) => format!(".{e}"),
-            None => continue,
-        };
-        if let Some(lang_key) = ext_map.get(ext.as_str()) {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
-            if filter.map_or(true, |f| f == stem) {
-                let rel = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
-                bench_srcs.push(SourceFile {
-                    path: rel,
-                    lang_key: lang_key.clone(),
-                });
-            }
-        }
-    }
-    bench_srcs.sort_by(|a, b| a.path.cmp(&b.path));
-
-    if bench_srcs.is_empty() {
-        return Ok(BenchSummary { results: vec![] });
-    }
-
-    let bench_compile = compile_sources(
-        project_dir,
-        &bench_target_dir,
-        manifest,
-        effective_backend,
-        profile,
-        &bench_srcs,
-        &include_dirs,
-        detected,
-        &feature_defines,
-        &[],
-        progress,
-    )?;
-
-    let out_dir = bench_target_dir.join(profile).join("benches");
-    std::fs::create_dir_all(&out_dir)?;
-
-    const BENCH_RUNS: usize = 5;
-    let mut results = Vec::new();
-
-    for (src, bench_obj) in bench_srcs.iter().zip(bench_compile.objects.iter()) {
-        let stem = src
-            .path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("bench");
-        let bench_bin = out_dir.join(stem);
-
-        progress(BuildEvent::BenchLinking {
-            name: stem.to_string(),
-        });
-
-        let all_objs: Vec<PathBuf> = std::iter::once(bench_obj.clone())
-            .chain(lib_objects.iter().cloned())
-            .collect();
-        link_test_binary(
-            &all_objs,
-            &bench_bin,
-            manifest,
-            effective_backend,
-            profile,
-            detected,
-            templates,
-            &all_libs,
-            &all_raw_link_flags,
-        )?;
-
-        progress(BuildEvent::BenchRunning {
-            name: stem.to_string(),
-        });
-
-        let mut samples_ns: Vec<u64> = Vec::with_capacity(BENCH_RUNS);
-        for _ in 0..BENCH_RUNS {
-            let t0 = std::time::Instant::now();
-            let ok = Command::new(&bench_bin)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            let elapsed = t0.elapsed().as_nanos() as u64;
-            if ok {
-                samples_ns.push(elapsed);
-            }
-        }
-
-        let runs = samples_ns.len();
-        let (mean_ns, min_ns, max_ns) = if runs == 0 {
-            (0, 0, 0)
-        } else {
-            let sum: u64 = samples_ns.iter().sum();
-            let min = *samples_ns.iter().min().unwrap();
-            let max = *samples_ns.iter().max().unwrap();
-            (sum / runs as u64, min, max)
-        };
-
-        progress(BuildEvent::BenchResult {
-            name: stem.to_string(),
-            mean_ns,
-        });
-        results.push(BenchResult {
-            name: stem.to_string(),
-            mean_ns,
-            min_ns,
-            max_ns,
-            runs,
-        });
-    }
-
-    Ok(BenchSummary { results })
 }
 
 // ── Git dep helpers ───────────────────────────────────────────────────────────

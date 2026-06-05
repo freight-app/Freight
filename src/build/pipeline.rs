@@ -58,11 +58,17 @@ impl DepRef {
     }
 
     pub fn build_dep(version_req: impl Into<String>) -> Self {
-        Self { kind: Some(DepKind::Build), ..Self::normal(version_req) }
+        Self {
+            kind: Some(DepKind::Build),
+            ..Self::normal(version_req)
+        }
     }
 
     pub fn dev_dep(version_req: impl Into<String>) -> Self {
-        Self { kind: Some(DepKind::Dev), ..Self::normal(version_req) }
+        Self {
+            kind: Some(DepKind::Dev),
+            ..Self::normal(version_req)
+        }
     }
 }
 
@@ -122,7 +128,11 @@ pub enum ResolveError {
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::VersionConflict { name, existing, required } => write!(
+            Self::VersionConflict {
+                name,
+                existing,
+                required,
+            } => write!(
                 f,
                 "dependency conflict: '{name}' is already resolved at {existing} \
                  but another dep requires {required}"
@@ -154,7 +164,12 @@ impl PackageGraph {
         let profile = root.profile.clone();
         let mut packages = HashMap::new();
         packages.insert(root_name.clone(), root);
-        Self { root_name, root_dir, profile, packages }
+        Self {
+            root_name,
+            root_dir,
+            profile,
+            packages,
+        }
     }
 
     /// Insert `node` as a dep of `parent_name`, recording `dep_ref` as the
@@ -178,7 +193,11 @@ impl PackageGraph {
             check_version_compat(&name, &existing.version, &dep_ref.version_req)?;
 
             // Record the edge on the parent anyway (it still depends on this pkg).
-            if let Some(parent) = Arc::get_mut(self.packages.get_mut(parent_name).expect("parent must be in graph")) {
+            if let Some(parent) = Arc::get_mut(
+                self.packages
+                    .get_mut(parent_name)
+                    .expect("parent must be in graph"),
+            ) {
                 merge_dep_ref(&mut parent.deps, name.clone(), dep_ref)?;
             }
 
@@ -187,7 +206,11 @@ impl PackageGraph {
             // New package — insert it, then record the edge on the parent.
             self.packages.insert(name.clone(), node);
 
-            if let Some(parent) = Arc::get_mut(self.packages.get_mut(parent_name).expect("parent must be in graph")) {
+            if let Some(parent) = Arc::get_mut(
+                self.packages
+                    .get_mut(parent_name)
+                    .expect("parent must be in graph"),
+            ) {
                 merge_dep_ref(&mut parent.deps, name.clone(), dep_ref)?;
             }
 
@@ -325,10 +348,11 @@ fn check_version_compat(
     if incoming_req == "*" {
         return Ok(());
     }
-    let ver = semver::Version::parse(existing_version).map_err(|_| ResolveError::InvalidVersion {
-        name: name.to_string(),
-        version: existing_version.to_string(),
-    })?;
+    let ver =
+        semver::Version::parse(existing_version).map_err(|_| ResolveError::InvalidVersion {
+            name: name.to_string(),
+            version: existing_version.to_string(),
+        })?;
     let req = parse_req(incoming_req).ok_or_else(|| ResolveError::InvalidRequirement {
         name: name.to_string(),
         req: incoming_req.to_string(),
@@ -419,7 +443,12 @@ impl PackageGraph {
         let profile = node.profile.clone();
         let mut packages = HashMap::new();
         packages.insert(name.clone(), node);
-        Self { root_name: name, root_dir, profile, packages }
+        Self {
+            root_name: name,
+            root_dir,
+            profile,
+            packages,
+        }
     }
 
     /// Add a dep node to this graph, returning whether it was newly inserted.
@@ -440,4 +469,53 @@ impl PackageGraph {
         };
         self.insert(node, parent_name, dep_ref)
     }
+}
+
+// ── Pipeline goal / config / output ──────────────────────────────────────────
+
+/// What the pipeline should do after compiling sources.
+#[derive(Debug, Clone)]
+pub enum PipelineGoal {
+    /// Compile and link production targets.
+    Build,
+    /// Compile, then compile+link+run files in `tests/`.
+    Test {
+        /// If set, only run test files whose stem matches.
+        filter: Option<String>,
+    },
+    /// Compile, then compile+link+run files in `benches/` with timing.
+    Bench {
+        /// If set, only run bench files whose stem matches.
+        filter: Option<String>,
+    },
+}
+
+impl Default for PipelineGoal {
+    fn default() -> Self {
+        Self::Build
+    }
+}
+
+impl PipelineGoal {
+    /// Whether dev-dependencies should be included in the dep graph.
+    pub fn include_dev_deps(&self) -> bool {
+        matches!(self, Self::Test { .. })
+    }
+}
+
+/// Configuration for a single `run_pipeline_at` invocation.
+#[derive(Debug, Clone, Default)]
+pub struct PipelineConfig {
+    /// Build profile (e.g. `"dev"`, `"release"`).
+    pub profile: String,
+    /// Feature flags requested on the command line.
+    pub features: Vec<String>,
+    /// Whether to activate default features.  Usually `true`.
+    pub use_defaults: bool,
+    /// Override the compiler target triple (cross-compilation).
+    pub target_override: Option<String>,
+    /// Replace the profile's `sanitize` list when non-empty.
+    pub sanitize_override: Vec<String>,
+    /// What to do after sources are compiled.
+    pub goal: PipelineGoal,
 }
