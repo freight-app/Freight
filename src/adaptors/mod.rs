@@ -107,16 +107,14 @@ struct BuildJob {
 }
 
 pub fn build_foreign_deps(
-    project_dir: &Path,
+    node: &std::sync::Arc<crate::build::pipeline::PackageNode>,
     manifest: &Manifest,
     profile: &str,
     progress: &Progress,
-    // Override where `.pkgs/` is looked up. None uses project_dir; pass
-    // Some(root) when building a dep from source so transitive deps resolve
-    // from the root project's flat pool instead of nesting inside the dep.
-    pkgs_root: Option<&Path>,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
-    let pkgs_root = pkgs_root.unwrap_or(project_dir);
+    let project_dir = &node.dir;
+    let pkgs_root = node.pkgs_root_dir();
+    let pkgs_root = pkgs_root.as_path();
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
@@ -261,7 +259,7 @@ pub fn build_foreign_deps(
                     repo,
                     optional,
                     project_dir,
-                    pkgs_root,
+                    node,
                     progress,
                     &mut pc_cache,
                 )? {
@@ -519,10 +517,12 @@ fn resolve_version_dep(
     repo: Option<&str>,
     optional: bool,
     project_dir: &Path,
-    pkgs_root: &Path,
+    node: &std::sync::Arc<crate::build::pipeline::PackageNode>,
     progress: &Progress,
     pc_cache: &mut PkgConfigCache,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
+    let pkgs_root = node.pkgs_root_dir();
+    let pkgs_root = pkgs_root.as_path();
     // Suppress unused warning; version may be used by future resolvers.
     let _ = version;
 
@@ -555,7 +555,7 @@ fn resolve_version_dep(
                 None,
                 optional,
                 project_dir,
-                pkgs_root,
+                node,
                 progress,
                 pc_cache,
             )
@@ -662,18 +662,33 @@ fn resolve_version_dep(
                         BuildEvent::DepCompiling => outer(BuildEvent::DepCompiling),
                         other => outer(other),
                     });
+                    let root_node = node.root();
+                    // Create a dep node and register it as a child of the current node
+                    // so the pipeline tree reflects what was built and in what order.
+                    let dep_node = crate::build::pipeline::PackageNode::new_dep(
+                        name,
+                        version,
+                        &root_node.profile,
+                        dep_dir.clone(),
+                        node,
+                        false,
+                    );
+                    node.push_child(std::sync::Arc::clone(&dep_node));
                     let _ = crate::build::build_project_at(
                         &dep_dir,
-                        version,
+                        &root_node.profile,
                         &[],
                         true,
                         None,
                         &[],
                         &inner_progress,
-                        Some(pkgs_root), // flat: transitive deps resolve from root .pkgs/ pool
+                        Some(&root_node),
                     );
                     progress(BuildEvent::DepBuildDone);
-                    let built_lib = dep_dir.join("target").join(version).join(format!("lib{name}.a"));
+                    let built_lib = dep_dir
+                        .join("target")
+                        .join(&root_node.profile)
+                        .join(format!("lib{name}.a"));
                     if built_lib.exists() {
                         let out_dir = built_lib.parent().unwrap().to_path_buf();
                         link_flags.push(format!("-L{}", out_dir.display()));

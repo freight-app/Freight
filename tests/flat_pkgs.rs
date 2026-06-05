@@ -121,10 +121,10 @@ fn flat_pkgs_transitive_dep_at_root_level() {
     assert_success(&out, "flat_pkgs: app build");
 
     // mathlib was built at the root flat pool (profile = version constraint "0.1.0").
-    let mathlib_built = mathlib_dir.join("target/0.1.0/libmathlib.a");
+    let mathlib_built = mathlib_dir.join("target/dev/libmathlib.a");
     assert!(
         mathlib_built.exists(),
-        "mathlib should be built in root .pkgs/mathlib/target/0.1.0/, not nested"
+        "mathlib should be built in root .pkgs/mathlib/target/dev/, not nested"
     );
 
     // No nested .pkgs/ should have been created inside vecmath.
@@ -180,8 +180,8 @@ geometry = "0.1.0"
     assert_success(&out, "flat_pkgs: two-dep shared transitive");
 
     assert!(
-        mathlib_dir.join("target/0.1.0/libmathlib.a").exists(),
-        "mathlib must be built from the flat root pool (target/0.1.0/)"
+        mathlib_dir.join("target/dev/libmathlib.a").exists(),
+        "mathlib must be built from the flat root pool (target/dev/)"
     );
     assert!(
         !vecmath_dir.join(".pkgs").exists(),
