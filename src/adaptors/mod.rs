@@ -107,12 +107,15 @@ struct BuildJob {
 }
 
 pub fn build_foreign_deps(
-    graph: &crate::build::pipeline::PackageGraph,
+    graph: &crate::build::graph::PackageGraph,
     manifest: &Manifest,
     profile: &str,
     progress: &Progress,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
-    let root_node = graph.packages.get(&graph.root_name).expect("root package missing from graph");
+    let root_node = graph
+        .packages
+        .get(&graph.root_name)
+        .expect("root package missing from graph");
     let project_dir = &root_node.dir;
     let pkgs_root = graph.root_dir.clone();
     let pkgs_root = pkgs_root.as_path();
@@ -260,6 +263,7 @@ pub fn build_foreign_deps(
                     repo,
                     optional,
                     project_dir,
+                    profile,
                     graph,
                     progress,
                     &mut pc_cache,
@@ -452,7 +456,12 @@ fn check_cmake_version(constraint: &str, tool_paths: &[PathBuf]) -> Result<(), F
 
 /// Resolve the on-disk directory for a build-dep entry.
 /// Same logic as regular deps: path → join project_dir; git/url/version → .deps/<name>.
-fn build_dep_dir(name: &str, dep: &Dependency, project_dir: &Path, pkgs_root: &Path) -> Option<PathBuf> {
+fn build_dep_dir(
+    name: &str,
+    dep: &Dependency,
+    project_dir: &Path,
+    pkgs_root: &Path,
+) -> Option<PathBuf> {
     match dep {
         Dependency::Simple(_) => Some(pkgs_root.join(".pkgs").join(name)),
         Dependency::Detailed(d) => {
@@ -518,7 +527,8 @@ fn resolve_version_dep(
     repo: Option<&str>,
     optional: bool,
     project_dir: &Path,
-    graph: &crate::build::pipeline::PackageGraph,
+    profile: &str,
+    graph: &crate::build::graph::PackageGraph,
     progress: &Progress,
     pc_cache: &mut PkgConfigCache,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
@@ -556,6 +566,7 @@ fn resolve_version_dep(
                 None,
                 optional,
                 project_dir,
+                profile,
                 graph,
                 progress,
                 pc_cache,
@@ -665,7 +676,7 @@ fn resolve_version_dep(
                     });
                     if let Err(e) = crate::build::build_project_at(
                         &dep_dir,
-                        &graph.profile,
+                        profile,
                         &[],
                         true,
                         None,
@@ -673,11 +684,14 @@ fn resolve_version_dep(
                         &inner_progress,
                         Some(graph),
                     ) {
-                        progress(BuildEvent::Warning(format!("source-build of {name} failed: {e}")));
+                        progress(BuildEvent::Warning(format!(
+                            "source-build of {name} failed: {e}"
+                        )));
                     }
                     progress(BuildEvent::DepBuildDone);
-                    let built_lib = graph.target_dir(name)
-                        .join(&graph.profile)
+                    let built_lib = graph
+                        .target_dir(name)
+                        .join(profile)
                         .join(format!("lib{name}.a"));
                     if built_lib.exists() {
                         let out_dir = built_lib.parent().unwrap().to_path_buf();

@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use crate::error::FreightError;
 use crate::event::Progress;
-use crate::manifest::{find_manifest_dir, load_manifest};
-
+use crate::manifest::{find_manifest_dir, load_manifest, types::Manifest};
 use super::{
     clean_project_at, generate_compile_commands_at, pipeline, run_pipeline_at, BenchSummary,
     BuildOutput, PipelineOutput, TestSummary,
@@ -20,10 +19,10 @@ pub struct Project {
     /// Absolute path to the directory containing `freight.toml`.
     pub dir: PathBuf,
     /// Parsed and validated project manifest.
-    pub manifest: crate::manifest::types::Manifest,
-    /// When building a dep from source, the root project's graph anchors the
-    /// flat `.pkgs/` pool.  `None` for top-level builds.
-    pub parent_graph: Option<pipeline::PackageGraph>,
+    pub manifest: Manifest,
+    /// When building a dep from source, the root project's directory anchors
+    /// the flat `.pkgs/` pool and target dirs.  `None` for top-level builds.
+    pub parent_root: Option<PathBuf>,
 }
 
 impl Project {
@@ -31,11 +30,7 @@ impl Project {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, FreightError> {
         let dir = dir.into();
         let manifest = load_manifest(&dir)?;
-        Ok(Self {
-            dir,
-            manifest,
-            parent_graph: None,
-        })
+        Ok(Self { dir, manifest, parent_root: None })
     }
 
     /// Open the project whose `freight.toml` is an ancestor of the current
@@ -47,9 +42,9 @@ impl Project {
         Self::open(dir)
     }
 
-    /// Attach a parent graph so dep source-builds anchor to the root `.pkgs/` pool.
-    pub fn with_parent(mut self, parent_graph: pipeline::PackageGraph) -> Self {
-        self.parent_graph = Some(parent_graph);
+    /// Attach a parent root dir so dep source-builds anchor to the root `.pkgs/` pool.
+    pub fn with_parent_root(mut self, root: PathBuf) -> Self {
+        self.parent_root = Some(root);
         self
     }
 
@@ -63,7 +58,7 @@ impl Project {
             goal: pipeline::PipelineGoal::Build,
             ..config.clone()
         };
-        match run_pipeline_at(&self.dir, &cfg, self.parent_graph.as_ref(), progress)? {
+        match run_pipeline_at(&self.dir, &cfg, self.parent_root.as_deref(), progress)? {
             PipelineOutput::Build(out) => Ok(out),
             _ => unreachable!(),
         }
@@ -82,7 +77,7 @@ impl Project {
             },
             ..config.clone()
         };
-        match run_pipeline_at(&self.dir, &cfg, self.parent_graph.as_ref(), progress)? {
+        match run_pipeline_at(&self.dir, &cfg, self.parent_root.as_deref(), progress)? {
             PipelineOutput::Test(out) => Ok(out),
             _ => unreachable!(),
         }
@@ -101,7 +96,7 @@ impl Project {
             },
             ..config.clone()
         };
-        match run_pipeline_at(&self.dir, &cfg, self.parent_graph.as_ref(), progress)? {
+        match run_pipeline_at(&self.dir, &cfg, self.parent_root.as_deref(), progress)? {
             PipelineOutput::Bench(out) => Ok(out),
             _ => unreachable!(),
         }
@@ -128,11 +123,9 @@ impl Project {
                 .cloned()
                 .ok_or_else(|| FreightError::ManifestParse(format!("no binary named `{name}`")))?,
             None => match built.binaries.as_slice() {
-                [] => {
-                    return Err(FreightError::ManifestParse(
-                        "no binary target produced — add a [[bin]] to freight.toml".into(),
-                    ))
-                }
+                [] => return Err(FreightError::ManifestParse(
+                    "no binary target produced — add a [[bin]] to freight.toml".into(),
+                )),
                 [b] => b.clone(),
                 _ => built.binaries[0].clone(),
             },

@@ -1,521 +1,572 @@
-/// Flat package dependency graph.
+/// Pipeline configuration types and the unified build pipeline.
 ///
-/// All packages — the root project and every fetched dep — live in a single
-/// `HashMap<name, Arc<PackageNode>>` owned by `PackageGraph`. Edges are stored
-/// on each node as `HashMap<name, DepRef>` rather than as strong `Arc` links,
-/// so there are no reference cycles and no tree traversal is needed to find the
-/// root.
+/// The pipeline is split into discrete stages so each can be called
+/// independently from [`super::project::Project`] methods or the thin
+/// wrapper functions in `mod.rs`.
 ///
-/// # Resolution
-///
-/// `PackageGraph::insert` performs resolution at insertion time:
-/// - If the name is new, the node is accepted and its `DepRef` recorded.
-/// - If the name already exists, the incoming `version_req` must be compatible
-///   with the stored resolved version (semver intersection). Features are
-///   unioned. Conflicting defines are an error.
-///
-/// # Target directories
-///
-/// `PackageGraph::target_dir(name)`:
-/// - Root package → `root_dir/target`
-/// - Any other package → `root_dir/target/deps/<name>`
-use std::collections::{HashMap, HashSet};
+/// Stages:
+///  1. `load`          — parse manifest, detect toolchain, discover sources
+///  2. `features`      — resolve feature flags, compute preprocessor defines
+///  3. `fetch`         — clone/download missing git + registry deps
+///  4. `resolve_deps`  — dep graph topo-sort + slot-conflict check
+///  5. `build_deps`    — compile source-built deps + foreign (cmake/make/…) deps
+///  6. `assemble_includes` — merge `[compiler] includes`, discovered dirs, dep dirs
+///  7. `codegen`       — run `protoc` if `[language.proto]` is declared
+///  8. `header_units`  — precompile dep headers as BMIs (C++20 builds only)
+///  9. `pch`           — compile precompiled header if configured
+/// 10. `compile`       — compile all project sources in parallel
+/// 11. goal phase      — link (build), run tests, or run benchmarks
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::process::Command;
 
-// ── DepKind ───────────────────────────────────────────────────────────────────
+use walkdir::WalkDir;
 
-/// How a dep edge is classified in the manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DepKind {
-    Build,
-    Dev,
-}
+use crate::build::{
+    compile, compile_commands, discover, features, header_units, link_targets, link_test_binary,
+    modules, object_path, pch, proto, BenchResult, BenchSummary, BuildOutput, CompileResult,
+    PipelineOutput, SourceFile, TestSummary,
+};
+use crate::error::FreightError;
+use crate::event::{BuildEvent, Progress};
+use crate::lock::LockFile;
+use crate::manifest::types::Manifest;
+use crate::toolchain::GlobalConfig;
 
-// ── DepRef ────────────────────────────────────────────────────────────────────
-
-/// Reference from one package to another in the flat graph.
-#[derive(Debug, Clone)]
-pub struct DepRef {
-    /// Semver requirement string from the manifest (e.g. `"1.2"`, `">=1.0"`, `"*"`).
-    pub version_req: String,
-    /// Features requested for this dep.
-    pub features: Vec<String>,
-    /// Extra preprocessor defines injected when building this dep.
-    pub defines: Vec<String>,
-    /// `None` = normal; `Some(Build)` = build-dep; `Some(Dev)` = dev-dep.
-    pub kind: Option<DepKind>,
-}
-
-impl DepRef {
-    pub fn normal(version_req: impl Into<String>) -> Self {
-        Self {
-            version_req: version_req.into(),
-            features: vec![],
-            defines: vec![],
-            kind: None,
-        }
-    }
-
-    pub fn build_dep(version_req: impl Into<String>) -> Self {
-        Self {
-            kind: Some(DepKind::Build),
-            ..Self::normal(version_req)
-        }
-    }
-
-    pub fn dev_dep(version_req: impl Into<String>) -> Self {
-        Self {
-            kind: Some(DepKind::Dev),
-            ..Self::normal(version_req)
-        }
-    }
-}
-
-// ── PackageNode ───────────────────────────────────────────────────────────────
-
-pub struct PackageNode {
-    /// Package name from `freight.toml`.
-    pub name: String,
-    /// Resolved version (e.g. `"1.2.3"`).
-    pub version: String,
-    /// Build profile (`"dev"`, `"release"`, …).
-    pub profile: String,
-    /// Absolute path to the package's source directory.
-    pub dir: PathBuf,
-    /// Immediate dep references keyed by dep name.
-    pub deps: HashMap<String, DepRef>,
-}
-
-// ── PackageGraph ──────────────────────────────────────────────────────────────
-
-pub struct PackageGraph {
-    /// Name of the root project package.
-    pub root_name: String,
-    /// Source directory of the root project.
-    pub root_dir: PathBuf,
-    /// Active build profile for all packages in this graph.
-    pub profile: String,
-    /// Flat registry of all packages (root + deps). Key = package name.
-    pub packages: HashMap<String, Arc<PackageNode>>,
-}
-
-// ── Resolution error ──────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub enum ResolveError {
-    /// `name` is already present with version `existing` which does not satisfy
-    /// the incoming requirement `required`.
-    VersionConflict {
-        name: String,
-        existing: String,
-        required: String,
-    },
-    /// `name` is required with conflicting preprocessor defines that cannot be
-    /// merged (key `define` has values `a` vs `b`).
-    DefineConflict {
-        name: String,
-        define: String,
-        a: String,
-        b: String,
-    },
-    /// The version string `version` could not be parsed as a semver version.
-    InvalidVersion { name: String, version: String },
-    /// The requirement string `req` could not be parsed as a semver requirement.
-    InvalidRequirement { name: String, req: String },
-}
-
-impl std::fmt::Display for ResolveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::VersionConflict {
-                name,
-                existing,
-                required,
-            } => write!(
-                f,
-                "dependency conflict: '{name}' is already resolved at {existing} \
-                 but another dep requires {required}"
-            ),
-            Self::DefineConflict { name, define, a, b } => write!(
-                f,
-                "dependency conflict: '{name}' has incompatible define '{define}': \
-                 '{a}' vs '{b}'"
-            ),
-            Self::InvalidVersion { name, version } => {
-                write!(f, "'{name}': invalid version '{version}'")
-            }
-            Self::InvalidRequirement { name, req } => {
-                write!(f, "'{name}': invalid version requirement '{req}'")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ResolveError {}
-
-// ── PackageGraph impl ─────────────────────────────────────────────────────────
-
-impl PackageGraph {
-    /// Create a graph seeded with the root project.
-    pub fn new(root: Arc<PackageNode>) -> Self {
-        let root_name = root.name.clone();
-        let root_dir = root.dir.clone();
-        let profile = root.profile.clone();
-        let mut packages = HashMap::new();
-        packages.insert(root_name.clone(), root);
-        Self {
-            root_name,
-            root_dir,
-            profile,
-            packages,
-        }
-    }
-
-    /// Insert `node` as a dep of `parent_name`, recording `dep_ref` as the
-    /// edge.  If a package with the same name already exists in the graph,
-    /// the incoming `dep_ref.version_req` must be satisfied by the stored
-    /// resolved version; features are unioned; defines are checked for
-    /// conflicts.
-    ///
-    /// Returns `Ok(false)` when the package was already present and compatible
-    /// (no build needed again), `Ok(true)` when it was freshly inserted.
-    pub fn insert(
-        &mut self,
-        node: Arc<PackageNode>,
-        parent_name: &str,
-        dep_ref: DepRef,
-    ) -> Result<bool, ResolveError> {
-        let name = node.name.clone();
-
-        if let Some(existing) = self.packages.get(&name) {
-            // Package already registered — check semver compatibility.
-            check_version_compat(&name, &existing.version, &dep_ref.version_req)?;
-
-            // Record the edge on the parent anyway (it still depends on this pkg).
-            if let Some(parent) = Arc::get_mut(
-                self.packages
-                    .get_mut(parent_name)
-                    .expect("parent must be in graph"),
-            ) {
-                merge_dep_ref(&mut parent.deps, name.clone(), dep_ref)?;
-            }
-
-            Ok(false)
-        } else {
-            // New package — insert it, then record the edge on the parent.
-            self.packages.insert(name.clone(), node);
-
-            if let Some(parent) = Arc::get_mut(
-                self.packages
-                    .get_mut(parent_name)
-                    .expect("parent must be in graph"),
-            ) {
-                merge_dep_ref(&mut parent.deps, name.clone(), dep_ref)?;
-            }
-
-            Ok(true)
-        }
-    }
-
-    // ── Path helpers ──────────────────────────────────────────────────────────
-
-    /// Absolute path to the flat `.pkgs/` pool (always anchored at the root).
-    pub fn pkgs_dir(&self) -> PathBuf {
-        self.root_dir.join(".pkgs")
-    }
-
-    /// Absolute path to `<dep_name>`'s source directory in the flat pool.
-    pub fn dep_source_dir(&self, dep_name: &str) -> PathBuf {
-        self.pkgs_dir().join(dep_name)
-    }
-
-    /// Where build artifacts for `name` are written.
-    ///
-    /// - Root package → `root_dir/target`
-    /// - Any dep → `root_dir/target/deps/<name>`
-    pub fn target_dir(&self, name: &str) -> PathBuf {
-        if name == self.root_name {
-            self.root_dir.join("target")
-        } else {
-            self.root_dir.join("target").join("deps").join(name)
-        }
-    }
-
-    /// Convenience: `target_dir` for the root package.
-    pub fn root_target_dir(&self) -> PathBuf {
-        self.target_dir(&self.root_name)
-    }
-
-    /// `true` if `name` is the root package of this graph.
-    pub fn is_root(&self, name: &str) -> bool {
-        name == self.root_name
-    }
-
-    // ── Build-order traversal ─────────────────────────────────────────────────
-
-    /// Return package names in topological build order (deps before dependents).
-    ///
-    /// The root package is always last.  Packages without recorded deps come
-    /// first (stable ordering within the same depth level).
-    pub fn topo_order(&self) -> Vec<&str> {
-        let mut visited: HashSet<&str> = HashSet::new();
-        let mut order: Vec<&str> = Vec::new();
-        topo_visit(&self.root_name, self, &mut visited, &mut order);
-        order
-    }
-}
-
-fn topo_visit<'g>(
-    name: &'g str,
-    graph: &'g PackageGraph,
-    visited: &mut HashSet<&'g str>,
-    order: &mut Vec<&'g str>,
-) {
-    if !visited.insert(name) {
-        return;
-    }
-    if let Some(node) = graph.packages.get(name) {
-        // Visit deps first (build order: leaves before root).
-        let mut dep_names: Vec<&str> = node.deps.keys().map(String::as_str).collect();
-        dep_names.sort_unstable(); // deterministic order
-        for dep in dep_names {
-            topo_visit(dep, graph, visited, order);
-        }
-    }
-    order.push(name);
-}
-
-// ── PackageNode construction ──────────────────────────────────────────────────
-
-impl PackageNode {
-    pub fn new(
-        name: impl Into<String>,
-        version: impl Into<String>,
-        profile: impl Into<String>,
-        dir: PathBuf,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            name: name.into(),
-            version: version.into(),
-            profile: profile.into(),
-            dir,
-            deps: HashMap::new(),
-        })
-    }
-
-    /// Build a node from a manifest loaded at `dir`.
-    pub fn from_manifest_dir(
-        dir: &Path,
-        profile: &str,
-        manifest: &crate::manifest::types::Manifest,
-    ) -> Arc<Self> {
-        Self::new(
-            &manifest.package.name,
-            &manifest.package.version,
-            profile,
-            dir.to_path_buf(),
-        )
-    }
-}
-
-// ── Semver helpers ────────────────────────────────────────────────────────────
-
-/// Parse `req_str` into a semver `VersionReq`, handling bare versions like
-/// `"1.2.3"` (treated as `^1.2.3`) and `"*"`.
-fn parse_req(req_str: &str) -> Option<semver::VersionReq> {
-    if req_str == "*" {
-        return semver::VersionReq::parse("*").ok();
-    }
-    // Try as-is first (handles `>=1.0`, `^1.2`, etc.)
-    if let Ok(r) = semver::VersionReq::parse(req_str) {
-        return Some(r);
-    }
-    // Bare version like "1.2.3" or "1.2" — treat as caret req.
-    let padded = if req_str.matches('.').count() == 1 {
-        format!("^{req_str}.0")
-    } else {
-        format!("^{req_str}")
-    };
-    semver::VersionReq::parse(&padded).ok()
-}
-
-fn check_version_compat(
-    name: &str,
-    existing_version: &str,
-    incoming_req: &str,
-) -> Result<(), ResolveError> {
-    if incoming_req == "*" {
-        return Ok(());
-    }
-    let ver =
-        semver::Version::parse(existing_version).map_err(|_| ResolveError::InvalidVersion {
-            name: name.to_string(),
-            version: existing_version.to_string(),
-        })?;
-    let req = parse_req(incoming_req).ok_or_else(|| ResolveError::InvalidRequirement {
-        name: name.to_string(),
-        req: incoming_req.to_string(),
-    })?;
-    if !req.matches(&ver) {
-        return Err(ResolveError::VersionConflict {
-            name: name.to_string(),
-            existing: existing_version.to_string(),
-            required: incoming_req.to_string(),
-        });
-    }
-    Ok(())
-}
-
-/// Merge `incoming` into `deps[name]`.  Features are unioned; defines are
-/// checked for key=value conflicts (same key, different value → error).
-fn merge_dep_ref(
-    deps: &mut HashMap<String, DepRef>,
-    name: String,
-    incoming: DepRef,
-) -> Result<(), ResolveError> {
-    if let Some(existing) = deps.get_mut(&name) {
-        // Union features.
-        for f in &incoming.features {
-            if !existing.features.contains(f) {
-                existing.features.push(f.clone());
-            }
-        }
-        // Check defines for conflicts.
-        for def in &incoming.defines {
-            let (key, val) = def.split_once('=').unwrap_or((def.as_str(), ""));
-            if let Some(existing_def) = existing.defines.iter().find(|d| {
-                let (k, _) = d.split_once('=').unwrap_or((d.as_str(), ""));
-                k == key
-            }) {
-                let (_, existing_val) = existing_def.split_once('=').unwrap_or(("", ""));
-                if existing_val != val {
-                    return Err(ResolveError::DefineConflict {
-                        name,
-                        define: key.to_string(),
-                        a: existing_val.to_string(),
-                        b: val.to_string(),
-                    });
-                }
-            } else {
-                existing.defines.push(def.clone());
-            }
-        }
-    } else {
-        deps.insert(name, incoming);
-    }
-    Ok(())
-}
-
-// ── Backward-compat shim ──────────────────────────────────────────────────────
-//
-// The build pipeline in `mod.rs` and `adaptors/mod.rs` still uses a
-// `PackageGraph` passed as `Option<&PackageGraph>`.  When `None`, a temporary
-// root-only graph is created internally.  All callers that previously accepted
-// `Option<&Arc<PackageNode>>` now accept `Option<&PackageGraph>`.
-
-impl PackageGraph {
-    /// Create a minimal single-node graph for an isolated root build.
-    /// `dir` is both the package source directory and the root project directory.
-    pub fn root_only(
-        name: impl Into<String>,
-        version: impl Into<String>,
-        profile: impl Into<String>,
-        dir: PathBuf,
-    ) -> Self {
-        let node = PackageNode::new(name, version, profile, dir);
-        Self::new(node)
-    }
-
-    /// Create a single-node graph for a dep source-build.
-    ///
-    /// `pkg_dir` is the dep's own source directory (e.g. `.pkgs/vecmath/`).
-    /// `root_dir` is the root project directory that owns the flat `.pkgs/` pool.
-    pub fn for_dep(
-        name: impl Into<String>,
-        version: impl Into<String>,
-        profile: impl Into<String>,
-        pkg_dir: PathBuf,
-        root_dir: PathBuf,
-    ) -> Self {
-        let name: String = name.into();
-        let node = PackageNode::new(name.clone(), version, profile.into(), pkg_dir);
-        let profile = node.profile.clone();
-        let mut packages = HashMap::new();
-        packages.insert(name.clone(), node);
-        Self {
-            root_name: name,
-            root_dir,
-            profile,
-            packages,
-        }
-    }
-
-    /// Add a dep node to this graph, returning whether it was newly inserted.
-    /// Uses `DepRef::normal` for the edge.  For the common source-build path
-    /// where fine-grained edge metadata isn't yet resolved.
-    pub fn add_dep_node(
-        &mut self,
-        node: Arc<PackageNode>,
-        parent_name: &str,
-        version_req: impl Into<String>,
-        kind: Option<DepKind>,
-    ) -> Result<bool, ResolveError> {
-        let dep_ref = DepRef {
-            version_req: version_req.into(),
-            features: vec![],
-            defines: vec![],
-            kind,
-        };
-        self.insert(node, parent_name, dep_ref)
-    }
-}
+use super::graph::PackageGraph;
+use super::{
+    apply_sanitize_override, build_resolved_deps, build_sources, check_slot_conflicts,
+    ensure_git_deps_fetched, inject_option_handler_flags, load_project_at,
+    lsp_compile_commands_dir, resolve_dep_graph, safe_lsp_profile_dir, verify_git_dep_shas,
+    ProjectContext, ResolvedDep,
+};
 
 // ── Pipeline goal / config / output ──────────────────────────────────────────
 
 /// What the pipeline should do after compiling sources.
 #[derive(Debug, Clone)]
 pub enum PipelineGoal {
-    /// Compile and link production targets.
     Build,
-    /// Compile, then compile+link+run files in `tests/`.
-    Test {
-        /// If set, only run test files whose stem matches.
-        filter: Option<String>,
-    },
-    /// Compile, then compile+link+run files in `benches/` with timing.
-    Bench {
-        /// If set, only run bench files whose stem matches.
-        filter: Option<String>,
-    },
+    Test { filter: Option<String> },
+    Bench { filter: Option<String> },
 }
 
 impl Default for PipelineGoal {
-    fn default() -> Self {
-        Self::Build
-    }
+    fn default() -> Self { Self::Build }
 }
 
 impl PipelineGoal {
-    /// Whether dev-dependencies should be included in the dep graph.
     pub fn include_dev_deps(&self) -> bool {
         matches!(self, Self::Test { .. })
     }
 }
 
-/// Configuration for a single `run_pipeline_at` invocation.
+/// All inputs for a single `run_pipeline_at` call.
 #[derive(Debug, Clone, Default)]
 pub struct PipelineConfig {
-    /// Build profile (e.g. `"dev"`, `"release"`).
     pub profile: String,
-    /// Feature flags requested on the command line.
     pub features: Vec<String>,
-    /// Whether to activate default features.  Usually `true`.
     pub use_defaults: bool,
-    /// Override the compiler target triple (cross-compilation).
     pub target_override: Option<String>,
-    /// Replace the profile's `sanitize` list when non-empty.
     pub sanitize_override: Vec<String>,
-    /// What to do after sources are compiled.
     pub goal: PipelineGoal,
+}
+
+// ── Stage results ─────────────────────────────────────────────────────────────
+
+/// Output of the feature-resolution stage.
+pub struct FeatureResolution {
+    pub defines: Vec<String>,
+    pub activated_deps: std::collections::BTreeSet<String>,
+}
+
+/// Aggregated dep output: static libs + include dirs + raw link flags + tool paths.
+pub struct BuiltDepsOutput {
+    pub libs: Vec<PathBuf>,
+    pub include_dirs: Vec<PathBuf>,
+    pub raw_link_flags: Vec<String>,
+    pub tool_paths: Vec<PathBuf>,
+}
+
+/// Compiler flags from the PCH stage.
+pub struct PchFlags {
+    /// Flags injected into every source compilation (`-include-pch …`).
+    pub compile: Vec<String>,
+    /// Flags for `clangd` entries in `compile_commands.json`.
+    pub clangd: Vec<String>,
+}
+
+// ── Stage functions ───────────────────────────────────────────────────────────
+
+/// Stage 2: resolve feature flags and compute preprocessor defines.
+pub fn stage_features(manifest: &Manifest, config: &PipelineConfig) -> Result<FeatureResolution, FreightError> {
+    let profile_features: Vec<String> = match config.profile.as_str() {
+        "dev"     => manifest.profile.dev.as_ref().map_or(vec![], |p| p.features.clone()),
+        "release" => manifest.profile.release.as_ref().map_or(vec![], |p| p.features.clone()),
+        other     => manifest.profile.custom.get(other).map_or(vec![], |p| p.features.clone()),
+    };
+    let all_requested: Vec<String> = config.features.iter().chain(profile_features.iter()).cloned().collect();
+    let resolution = features::resolve_features(&manifest.features, &all_requested, config.use_defaults)?;
+    Ok(FeatureResolution {
+        defines: features::to_defines(&resolution.active),
+        activated_deps: resolution.activated_deps,
+    })
+}
+
+/// Stage 3: fetch missing git + registry deps and verify the lock file.
+pub fn stage_fetch(
+    project_dir: &Path,
+    root_dir: &Path,
+    manifest: &Manifest,
+    progress: &Progress,
+) -> Result<Option<LockFile>, FreightError> {
+    ensure_git_deps_fetched(project_dir, manifest, progress)?;
+    {
+        let mut cfg = GlobalConfig::load();
+        if let Some(local) = GlobalConfig::load_local(project_dir) { cfg.apply_local(local); }
+        if let Ok(outcomes) = crate::dep_cmds::fetch_registry_deps(root_dir, &cfg) {
+            for o in outcomes {
+                if matches!(o.action, crate::dep_cmds::RegistryDepAction::Downloaded) {
+                    progress(BuildEvent::FetchingDep {
+                        name: o.name.clone(),
+                        source: format!("registry@{}", o.version),
+                    });
+                }
+            }
+        }
+    }
+    let lock = LockFile::load(project_dir);
+    if let Some(ref l) = lock { verify_git_dep_shas(project_dir, manifest, l, progress); }
+    Ok(lock)
+}
+
+/// Stages 4 + 5: resolve the dep graph, check slot conflicts, build all deps.
+pub fn stage_build_deps(
+    project_dir: &Path,
+    graph: &PackageGraph,
+    manifest: &Manifest,
+    profile: &str,
+    activated_deps: &std::collections::BTreeSet<String>,
+    ctx: &ProjectContext,
+    progress: &Progress,
+) -> Result<(Vec<ResolvedDep>, BuiltDepsOutput), FreightError> {
+    let include_dev = matches!(&ctx as *const _, _) && false; // placeholder — passed via goal below
+    let _ = include_dev;
+    let resolved = resolve_dep_graph(project_dir, manifest, false, activated_deps)?;
+    let to_drop = check_slot_conflicts(&resolved, manifest)?;
+    let resolved: Vec<ResolvedDep> = resolved.into_iter().filter(|d| !to_drop.contains(&d.name)).collect();
+
+    let built = build_resolved_deps(
+        manifest, project_dir, &ctx.effective_backend, profile,
+        &ctx.templates, &ctx.detected, &resolved, progress,
+    )?;
+    let (foreign, _pc, tool_paths) = crate::adaptors::build_foreign_deps(graph, manifest, profile, progress)?;
+
+    let mut output = BuiltDepsOutput {
+        libs: built.libs,
+        include_dirs: built.include_dirs,
+        raw_link_flags: Vec::new(),
+        tool_paths,
+    };
+    for f in foreign {
+        output.libs.extend(f.libs);
+        output.include_dirs.extend(f.include_dirs);
+        output.raw_link_flags.extend(f.raw_link_flags);
+    }
+    Ok((resolved, output))
+}
+
+/// Stage 6: merge `[compiler] includes` + discovered dirs + dep include dirs.
+pub fn stage_assemble_includes(
+    project_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    found_include_dirs: &[PathBuf],
+    dep_include_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let settings = manifest.build_settings_for(profile);
+    let mut dirs: Vec<PathBuf> = settings.include_paths.iter().map(|p| project_dir.join(p)).collect();
+    for d in found_include_dirs {
+        let abs = project_dir.join(d);
+        if !dirs.contains(&abs) { dirs.push(abs); }
+    }
+    dirs.extend_from_slice(dep_include_dirs);
+    dirs
+}
+
+/// Stage 7: run `protoc` codegen if `[language.proto]` is declared.
+/// Returns the (possibly extended) source list and include dirs.
+pub fn stage_codegen(
+    project_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    base_sources: Vec<SourceFile>,
+    include_dirs: &mut Vec<PathBuf>,
+    tool_paths: &[PathBuf],
+    progress: &Progress,
+) -> Result<Vec<SourceFile>, FreightError> {
+    if !manifest.language.contains_key("proto") { return Ok(base_sources); }
+    let proto_settings = manifest.effective_language_settings("proto");
+    let result = proto::run_protoc(project_dir, profile, &proto_settings, tool_paths, progress)?;
+    if !result.generated_include_dir.as_os_str().is_empty() {
+        include_dirs.push(result.generated_include_dir);
+    }
+    let mut srcs = base_sources;
+    srcs.extend(result.generated_sources);
+    Ok(srcs)
+}
+
+/// Stage 8: precompile dep headers as BMIs (C++20 builds only; no-op otherwise).
+pub fn stage_header_units(
+    project_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    dep_include_dirs: &[PathBuf],
+    ctx: &ProjectContext,
+) -> Vec<String> {
+    let Some(cpp_std) = manifest.language.get("cpp").and_then(|l| l.std.as_deref())
+        .filter(|s| header_units::is_module_std(s))
+    else { return vec![]; };
+
+    let units = header_units::precompile_dep_headers(
+        project_dir, dep_include_dirs, cpp_std, &ctx.effective_backend, &ctx.detected, profile,
+    );
+    if let Some(compiler) = compile::select_compiler("cpp", &ctx.effective_backend, &ctx.detected, None) {
+        header_units::import_flags(&units, compiler)
+    } else {
+        vec![]
+    }
+}
+
+/// Stage 9: compile the precompiled header if configured; returns compile + clangd flags.
+pub fn stage_pch(
+    project_dir: &Path,
+    target_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    include_dirs: &[PathBuf],
+    defines: &[String],
+    ctx: &ProjectContext,
+    progress: &Progress,
+) -> PchFlags {
+    let Some(ref pch_header) = manifest.compiler.pch.clone() else {
+        return PchFlags { compile: vec![], clangd: vec![] };
+    };
+    let primary = compile::select_compiler("cpp", &ctx.effective_backend, &ctx.detected, None)
+        .or_else(|| compile::select_compiler("c", &ctx.effective_backend, &ctx.detected, None));
+    let Some(compiler) = primary else {
+        return PchFlags { compile: vec![], clangd: vec![] };
+    };
+    match pch::compile_pch(project_dir, target_dir, pch_header, profile, compiler, include_dirs, defines, &[]) {
+        Ok(Some(compiled)) => PchFlags {
+            compile: compiled.use_flag.split_whitespace().map(str::to_owned).collect(),
+            clangd: compiled.clangd_flag.split_whitespace().map(str::to_owned).collect(),
+        },
+        Ok(None) => PchFlags { compile: vec![], clangd: vec![] },
+        Err(e) => { progress(BuildEvent::Warning(format!("PCH skipped: {e}"))); PchFlags { compile: vec![], clangd: vec![] } }
+    }
+}
+
+// ── Goal phase helpers ────────────────────────────────────────────────────────
+
+fn lib_objects_excluding_bins(manifest: &Manifest, target_dir: &Path, profile: &str, objects: &[PathBuf]) -> Vec<PathBuf> {
+    let bin_objs: std::collections::HashSet<PathBuf> = manifest
+        .bins.iter()
+        .map(|b| object_path(target_dir, profile, Path::new(&b.src)))
+        .collect();
+    objects.iter().filter(|o| !bin_objs.contains(*o)).cloned().collect()
+}
+
+fn discover_goal_sources(
+    dir: &Path,
+    project_dir: &Path,
+    manifest: &Manifest,
+    templates: &[crate::toolchain::CompilerTemplate],
+    filter: Option<&str>,
+    default_stem: &str,
+) -> Vec<SourceFile> {
+    if !dir.is_dir() { return vec![]; }
+    let ext_map = discover::build_ext_map(manifest, templates);
+    let mut srcs: Vec<SourceFile> = WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| {
+            let path = e.path();
+            let ext = format!(".{}", path.extension()?.to_str()?);
+            let lang_key = ext_map.get(ext.as_str())?.clone();
+            let stem = path.file_stem()?.to_str().unwrap_or(default_stem);
+            if filter.map_or(true, |f| f == stem) {
+                let rel = path.strip_prefix(project_dir).unwrap_or(path).to_path_buf();
+                Some(SourceFile { path: rel, lang_key })
+            } else {
+                None
+            }
+        })
+        .collect();
+    srcs.sort_by(|a, b| a.path.cmp(&b.path));
+    srcs
+}
+
+fn run_test_goal(
+    filter: Option<&str>,
+    project_dir: &Path,
+    target_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    ctx: &ProjectContext,
+    compile_result: &CompileResult,
+    deps: &BuiltDepsOutput,
+    include_dirs: &[PathBuf],
+    feature_defines: &[String],
+    progress: &Progress,
+) -> Result<TestSummary, FreightError> {
+    let lib_objs = lib_objects_excluding_bins(manifest, target_dir, profile, &compile_result.objects);
+    let srcs = discover_goal_sources(&project_dir.join("tests"), project_dir, manifest, &ctx.templates, filter, "test");
+    if srcs.is_empty() { return Ok(TestSummary { passed: 0, failed: 0, total: 0 }); }
+
+    let compiled = crate::build::compile_sources(
+        project_dir, target_dir, manifest, &ctx.effective_backend, profile,
+        &srcs, include_dirs, &ctx.detected, feature_defines, &[], progress,
+    )?;
+
+    let out_dir = target_dir.join(profile).join("tests");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let (mut passed, mut failed) = (0usize, 0usize);
+    for (src, obj) in srcs.iter().zip(compiled.objects.iter()) {
+        let stem = src.path.file_stem().and_then(|s| s.to_str()).unwrap_or("test");
+        let bin = out_dir.join(stem);
+        progress(BuildEvent::TestLinking { name: stem.to_string() });
+        let all_objs: Vec<PathBuf> = std::iter::once(obj.clone()).chain(lib_objs.iter().cloned()).collect();
+        link_test_binary(&all_objs, &bin, manifest, &ctx.effective_backend, profile,
+            &ctx.detected, &ctx.templates, &deps.libs, &deps.raw_link_flags)?;
+        progress(BuildEvent::TestRunning { name: stem.to_string() });
+        let ok = Command::new(&bin).status().map(|s| s.success()).unwrap_or(false);
+        progress(BuildEvent::TestResult { name: stem.to_string(), passed: ok });
+        if ok { passed += 1; } else { failed += 1; }
+    }
+    Ok(TestSummary { passed, failed, total: passed + failed })
+}
+
+fn run_bench_goal(
+    filter: Option<&str>,
+    project_dir: &Path,
+    target_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    ctx: &ProjectContext,
+    compile_result: &CompileResult,
+    deps: &BuiltDepsOutput,
+    include_dirs: &[PathBuf],
+    feature_defines: &[String],
+    progress: &Progress,
+) -> Result<BenchSummary, FreightError> {
+    const BENCH_RUNS: usize = 5;
+    let lib_objs = lib_objects_excluding_bins(manifest, target_dir, profile, &compile_result.objects);
+    let srcs = discover_goal_sources(&project_dir.join("benches"), project_dir, manifest, &ctx.templates, filter, "bench");
+    if srcs.is_empty() { return Ok(BenchSummary { results: vec![] }); }
+
+    let compiled = crate::build::compile_sources(
+        project_dir, target_dir, manifest, &ctx.effective_backend, profile,
+        &srcs, include_dirs, &ctx.detected, feature_defines, &[], progress,
+    )?;
+
+    let out_dir = target_dir.join(profile).join("benches");
+    std::fs::create_dir_all(&out_dir)?;
+    let mut results = Vec::new();
+
+    for (src, obj) in srcs.iter().zip(compiled.objects.iter()) {
+        let stem = src.path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+        let bin = out_dir.join(stem);
+        progress(BuildEvent::BenchLinking { name: stem.to_string() });
+        let all_objs: Vec<PathBuf> = std::iter::once(obj.clone()).chain(lib_objs.iter().cloned()).collect();
+        link_test_binary(&all_objs, &bin, manifest, &ctx.effective_backend, profile,
+            &ctx.detected, &ctx.templates, &deps.libs, &deps.raw_link_flags)?;
+        progress(BuildEvent::BenchRunning { name: stem.to_string() });
+
+        let mut samples: Vec<u64> = Vec::with_capacity(BENCH_RUNS);
+        for _ in 0..BENCH_RUNS {
+            let t0 = std::time::Instant::now();
+            if Command::new(&bin).status().map(|s| s.success()).unwrap_or(false) {
+                samples.push(t0.elapsed().as_nanos() as u64);
+            }
+        }
+        let runs = samples.len();
+        let (mean_ns, min_ns, max_ns) = if runs == 0 { (0, 0, 0) } else {
+            let sum: u64 = samples.iter().sum();
+            (sum / runs as u64, *samples.iter().min().unwrap(), *samples.iter().max().unwrap())
+        };
+        progress(BuildEvent::BenchResult { name: stem.to_string(), mean_ns });
+        results.push(BenchResult { name: stem.to_string(), mean_ns, min_ns, max_ns, runs });
+    }
+    Ok(BenchSummary { results })
+}
+
+// ── Orchestrator ──────────────────────────────────────────────────────────────
+
+/// Run all pipeline stages for the project at `project_dir`.
+///
+/// `parent_root` — when building a dep from source, pass the root project's
+/// directory so the flat `.pkgs/` pool is anchored there instead of inside the
+/// dep's own directory.
+pub fn run_pipeline_at(
+    project_dir: &Path,
+    config: &PipelineConfig,
+    parent_root: Option<&Path>,
+    progress: &Progress,
+) -> Result<PipelineOutput, FreightError> {
+    let profile = &config.profile;
+
+    // ── Stage 1: Load ────────────────────────────────────────────────────────
+    let mut ctx = load_project_at(project_dir, profile)?;
+    if let Some(t) = &config.target_override { ctx.manifest.compiler.target = Some(t.clone()); }
+    if !config.sanitize_override.is_empty() {
+        apply_sanitize_override(&mut ctx.manifest, profile, &config.sanitize_override);
+    }
+    inject_option_handler_flags(&mut ctx)?;
+    let ProjectContext { project_dir, manifest, found, .. } = &ctx;
+
+    let root_dir: &Path = parent_root.unwrap_or(project_dir);
+    let graph = if let Some(pr) = parent_root {
+        PackageGraph::for_dep(&manifest.package.name, &manifest.package.version, project_dir.to_path_buf(), pr.to_path_buf())
+    } else {
+        PackageGraph::root_only(&manifest.package.name, &manifest.package.version, project_dir.to_path_buf())
+    };
+    let target_dir: PathBuf = if let Some(pr) = parent_root {
+        pr.join("target").join("deps").join(&manifest.package.name)
+    } else {
+        project_dir.join("target")
+    };
+
+    progress(BuildEvent::BuildStarted { name: manifest.package.name.clone(), profile: profile.to_string() });
+
+    // ── Stage 2: Features ────────────────────────────────────────────────────
+    let feat = stage_features(manifest, config)?;
+
+    // ── Stage 3: Fetch ───────────────────────────────────────────────────────
+    stage_fetch(project_dir, root_dir, manifest, progress)?;
+
+    // ── Stage 4+5: Resolve + build deps ──────────────────────────────────────
+    let include_dev = config.goal.include_dev_deps();
+    let resolved = {
+        let r = resolve_dep_graph(project_dir, manifest, include_dev, &feat.activated_deps)?;
+        let drop = check_slot_conflicts(&r, manifest)?;
+        r.into_iter().filter(|d| !drop.contains(&d.name)).collect::<Vec<_>>()
+    };
+    let native_built = build_resolved_deps(
+        manifest, project_dir, &ctx.effective_backend, profile,
+        &ctx.templates, &ctx.detected, &resolved, progress,
+    )?;
+    let (foreign, _pc, tool_paths) = crate::adaptors::build_foreign_deps(&graph, manifest, profile, progress)?;
+
+    let mut deps = BuiltDepsOutput {
+        libs: native_built.libs,
+        include_dirs: native_built.include_dirs,
+        raw_link_flags: Vec::new(),
+        tool_paths,
+    };
+    for f in foreign { deps.libs.extend(f.libs); deps.include_dirs.extend(f.include_dirs); deps.raw_link_flags.extend(f.raw_link_flags); }
+
+    // ── Stage 6: Assemble include dirs ───────────────────────────────────────
+    let mut include_dirs = stage_assemble_includes(project_dir, manifest, profile, &found.include_dirs, &deps.include_dirs);
+
+    // ── Stage 7: Proto codegen ───────────────────────────────────────────────
+    let all_sources = stage_codegen(project_dir, manifest, profile, found.sources.clone(), &mut include_dirs, &deps.tool_paths, progress)?;
+
+    // ── Stage 8: Header units (build goal only) ──────────────────────────────
+    let hu_flags = if matches!(config.goal, PipelineGoal::Build) {
+        stage_header_units(project_dir, manifest, profile, &deps.include_dirs, &ctx)
+    } else { vec![] };
+
+    // ── Stage 9: PCH ─────────────────────────────────────────────────────────
+    let pch = stage_pch(project_dir, &target_dir, manifest, profile, &include_dirs, &feat.defines, &ctx, progress);
+
+    // ── Stage 10: Compile ────────────────────────────────────────────────────
+    let mut extra_flags = hu_flags;
+    extra_flags.extend(pch.compile.iter().cloned());
+    let compile_result = build_sources(
+        project_dir, &target_dir, manifest, &ctx.effective_backend, profile,
+        &all_sources, &include_dirs, &ctx.detected, &feat.defines, &extra_flags, progress,
+    )?;
+
+    // ── Goal phase ───────────────────────────────────────────────────────────
+    match &config.goal {
+        PipelineGoal::Build => {
+            let link_result = link_targets(
+                project_dir, &target_dir, manifest, &ctx.effective_backend, profile,
+                &compile_result.objects, &ctx.detected, &ctx.templates,
+                &deps.libs, &deps.raw_link_flags, progress,
+            )?;
+
+            // Write freight.lock.
+            let lock = LockFile::generate(project_dir, manifest, &resolved);
+            if let Err(e) = lock.save(project_dir) {
+                progress(BuildEvent::Warning(format!("could not write freight.lock: {e}")));
+            }
+
+            // Write compile_commands.json to .freight/lsp/<profile>/, merging dep databases.
+            let cc = compile_commands::generate_incremental(
+                project_dir, &target_dir, manifest, &ctx.effective_backend, &ctx.detected,
+                profile, &all_sources, &include_dirs, &feat.defines, &pch.clangd,
+                Some(compile_result.compiled_sources.as_slice()),
+            );
+            let cc = merge_dep_compile_commands(cc, &graph, profile);
+            let lsp_dir = lsp_compile_commands_dir(project_dir, profile);
+            if let Err(e) = compile_commands::write_to(&lsp_dir.join("compile_commands.json"), &cc)
+                .and_then(|_| compile_commands::write_incremental_cache(
+                    project_dir, manifest, &ctx.effective_backend, &ctx.detected,
+                    profile, &all_sources, &include_dirs, &feat.defines, &pch.clangd,
+                ))
+            {
+                progress(BuildEvent::Warning(format!("could not write compile_commands.json: {e}")));
+            }
+
+            let binaries = link_result.outputs.iter()
+                .filter(|p| !p.extension().is_some_and(|e| e == "a" || e == "so" || e == "dylib" || e == "dll"))
+                .cloned().collect();
+            Ok(PipelineOutput::Build(BuildOutput {
+                package_name: manifest.package.name.clone(),
+                binaries,
+                compiled: compile_result.compiled,
+                skipped: compile_result.skipped,
+            }))
+        }
+
+        PipelineGoal::Test { filter } => {
+            let summary = run_test_goal(
+                filter.as_deref(), project_dir, &target_dir, manifest, profile, &ctx,
+                &compile_result, &deps, &include_dirs, &feat.defines, progress,
+            )?;
+            Ok(PipelineOutput::Test(summary))
+        }
+
+        PipelineGoal::Bench { filter } => {
+            let summary = run_bench_goal(
+                filter.as_deref(), project_dir, &target_dir, manifest, profile, &ctx,
+                &compile_result, &deps, &include_dirs, &feat.defines, progress,
+            )?;
+            Ok(PipelineOutput::Bench(summary))
+        }
+    }
+}
+
+// ── Compile-commands merge helper ─────────────────────────────────────────────
+
+fn merge_dep_compile_commands(
+    base: Vec<compile_commands::CompileCommand>,
+    graph: &PackageGraph,
+    profile: &str,
+) -> Vec<compile_commands::CompileCommand> {
+    let mut merged = base;
+    let lsp_sub = std::path::Path::new(".freight").join("lsp").join(safe_lsp_profile_dir(profile));
+    if let Ok(entries) = std::fs::read_dir(graph.pkgs_dir()) {
+        for entry in entries.flatten() {
+            let dep_cc = entry.path().join(&lsp_sub).join("compile_commands.json");
+            if dep_cc.exists() {
+                merged = compile_commands::merge(merged, compile_commands::load_from(&dep_cc));
+            }
+        }
+    }
+    merged
 }
