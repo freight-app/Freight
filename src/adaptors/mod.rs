@@ -559,11 +559,11 @@ fn resolve_version_dep(
         }
         None => {
             // Default chain: pkg-config (cached) → system-lib stubs → target/deps/ cache.
-            progress(BuildEvent::ResolvingDep {
-                name: name.to_string(),
-                via: query.to_string(),
-            });
             if let Ok((pc, ver)) = pc_cache.query(query) {
+                progress(BuildEvent::ResolvingDep {
+                    name: name.to_string(),
+                    via: "pkg-config".to_string(),
+                });
                 return Ok(Some((
                     ForeignBuilt {
                         name: name.to_string(),
