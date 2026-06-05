@@ -297,14 +297,25 @@ pub fn fetch_registry_deps(
 ) -> Result<Vec<RegistryDepOutcome>, FreightError> {
     let manifest = load_manifest(project_dir)?;
     let mut outcomes = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Fetch both regular dependencies and build-dependencies (tools like cmake).
-    let all_deps = manifest
+    // Work queue: (dep_name, dep, registry_repo_key).
+    // Seeded from the root manifest; extended as transitive deps are discovered.
+    let mut queue: std::collections::VecDeque<(String, Dependency)> = manifest
         .dependencies
         .iter()
-        .chain(manifest.build_dependencies.iter());
+        .chain(manifest.build_dependencies.iter())
+        .map(|(n, d)| (n.clone(), d.clone()))
+        .collect();
 
-    for (name, dep) in all_deps {
+    while let Some((name, dep)) = queue.pop_front() {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.insert(name.clone());
+
+        let dep = &dep; // reborrow as ref for the match below
+        let name = &name;
         let (version, repo_name, channel) = match dep {
             Dependency::Simple(v) => (v.as_str(), None, None),
             Dependency::Detailed(d)
@@ -328,12 +339,20 @@ pub fn fetch_registry_deps(
             continue;
         }
 
-        // If already fetched, skip.
+        // If already fetched, still enqueue its transitive deps then skip download.
         let sentinel = project_dir
             .join(".pkgs")
             .join(name)
             .join(".freight-fetched");
         if sentinel.exists() {
+            let fetched_manifest = project_dir.join(".pkgs").join(name).join("freight.toml");
+            if let Ok(m) = load_manifest(fetched_manifest.parent().unwrap_or(project_dir)) {
+                for (tname, tdep) in m.dependencies.iter().chain(m.build_dependencies.iter()) {
+                    if !seen.contains(tname) {
+                        queue.push_back((tname.clone(), tdep.clone()));
+                    }
+                }
+            }
             outcomes.push(RegistryDepOutcome {
                 name: name.clone(),
                 version: version.to_string(),
@@ -442,6 +461,15 @@ pub fn fetch_registry_deps(
                         &source,
                         &checksum,
                     );
+                    // Enqueue transitive deps from the fetched package's manifest.
+                    let fetched_manifest = project_dir.join(".pkgs").join(name).join("freight.toml");
+                    if let Ok(m) = load_manifest(fetched_manifest.parent().unwrap_or(project_dir)) {
+                        for (tname, tdep) in m.dependencies.iter().chain(m.build_dependencies.iter()) {
+                            if !seen.contains(tname) {
+                                queue.push_back((tname.clone(), tdep.clone()));
+                            }
+                        }
+                    }
                     outcomes.push(RegistryDepOutcome {
                         name: name.clone(),
                         version: concrete,
