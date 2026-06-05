@@ -11,7 +11,6 @@ pub mod pch;
 pub mod pipeline;
 pub mod proto;
 
-pub use pipeline::{DepKind, DepRef, PackageGraph, PackageNode};
 pub use compile::{
     compile_sources, compile_sources_unity, dep_file_path, emit_asm_sources, object_path,
     primary_family, select_compiler, settings_for_lang, CompileResult, UNITY_SUPPORTED_LANGS,
@@ -23,6 +22,7 @@ pub use modules::{
     bmi_path, compile_module_sources, has_modules, plan_module_build, scan_sources,
     ModuleBuildPlan, ModuleRole, ScannedSource,
 };
+pub use pipeline::{DepKind, DepRef, PackageGraph, PackageNode};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -587,7 +587,11 @@ pub fn build_project_at(
     // use <project>/target/.  Computed directly rather than through graph so it
     // doesn't depend on whether this package is root_name in its mini-graph.
     let target_dir: PathBuf = match parent_graph {
-        Some(pg) => pg.root_dir.join("target").join("deps").join(&manifest.package.name),
+        Some(pg) => pg
+            .root_dir
+            .join("target")
+            .join("deps")
+            .join(&manifest.package.name),
         None => project_dir.join("target"),
     };
 
@@ -678,8 +682,19 @@ pub fn build_project_at(
         all_raw_link_flags.extend(f.raw_link_flags);
     }
 
-    // Merge dep include dirs into the set passed to the root compile step.
-    let mut include_dirs = found.include_dirs.clone();
+    // Merge dep include dirs + own [compiler] includes into the compile step.
+    let settings = manifest.build_settings_for(profile);
+    let mut include_dirs: Vec<PathBuf> = settings
+        .include_paths
+        .iter()
+        .map(|p| project_dir.join(p))
+        .collect();
+    for d in &found.include_dirs {
+        let abs = project_dir.join(d);
+        if !include_dirs.contains(&abs) {
+            include_dirs.push(abs);
+        }
+    }
     include_dirs.extend(all_dep_includes.iter().cloned());
 
     let compile_defines = feature_defines.clone();
@@ -828,10 +843,8 @@ pub fn build_project_at(
             for entry in entries.flatten() {
                 let dep_cc_path = entry.path().join(&lsp_sub).join("compile_commands.json");
                 if dep_cc_path.exists() {
-                    merged = compile_commands::merge(
-                        merged,
-                        compile_commands::load_from(&dep_cc_path),
-                    );
+                    merged =
+                        compile_commands::merge(merged, compile_commands::load_from(&dep_cc_path));
                 }
             }
         }
@@ -931,10 +944,7 @@ pub fn generate_compile_commands_at(
             for entry in entries.flatten() {
                 let dep_cc = entry.path().join(&lsp_sub).join("compile_commands.json");
                 if dep_cc.exists() {
-                    merged = compile_commands::merge(
-                        merged,
-                        compile_commands::load_from(&dep_cc),
-                    );
+                    merged = compile_commands::merge(merged, compile_commands::load_from(&dep_cc));
                 }
             }
         }
@@ -943,19 +953,21 @@ pub fn generate_compile_commands_at(
 
     let count = commands.len();
     let lsp_dir = lsp_compile_commands_dir(project_dir, profile);
-    compile_commands::write_to(&lsp_dir.join("compile_commands.json"), &commands).and_then(|_| {
-        compile_commands::write_incremental_cache(
-            project_dir,
-            manifest,
-            effective_backend,
-            detected,
-            profile,
-            &found.sources,
-            &include_dirs,
-            &feature_defines,
-            &[],
-        )
-    })?;
+    compile_commands::write_to(&lsp_dir.join("compile_commands.json"), &commands).and_then(
+        |_| {
+            compile_commands::write_incremental_cache(
+                project_dir,
+                manifest,
+                effective_backend,
+                detected,
+                profile,
+                &found.sources,
+                &include_dirs,
+                &feature_defines,
+                &[],
+            )
+        },
+    )?;
     Ok(count)
 }
 
@@ -1393,8 +1405,17 @@ pub fn test_project_at(
         &resolved_deps,
         progress,
     )?;
-    let (foreign_built, _pkg_configs, tool_paths) =
-        crate::adaptors::build_foreign_deps(&pipeline::PackageGraph::root_only(&manifest.package.name, &manifest.package.version, profile, project_dir.to_path_buf()), manifest, profile, progress)?;
+    let (foreign_built, _pkg_configs, tool_paths) = crate::adaptors::build_foreign_deps(
+        &pipeline::PackageGraph::root_only(
+            &manifest.package.name,
+            &manifest.package.version,
+            profile,
+            project_dir.to_path_buf(),
+        ),
+        manifest,
+        profile,
+        progress,
+    )?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -1755,8 +1776,17 @@ pub fn bench_project_at(
         &resolved_deps,
         progress,
     )?;
-    let (foreign_built, _pkg_configs, tool_paths) =
-        crate::adaptors::build_foreign_deps(&pipeline::PackageGraph::root_only(&manifest.package.name, &manifest.package.version, profile, project_dir.to_path_buf()), manifest, profile, progress)?;
+    let (foreign_built, _pkg_configs, tool_paths) = crate::adaptors::build_foreign_deps(
+        &pipeline::PackageGraph::root_only(
+            &manifest.package.name,
+            &manifest.package.version,
+            profile,
+            project_dir.to_path_buf(),
+        ),
+        manifest,
+        profile,
+        progress,
+    )?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
