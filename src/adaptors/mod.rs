@@ -528,10 +528,6 @@ fn resolve_version_dep(
             } else {
                 format!("-l{name}")
             };
-            progress(BuildEvent::ResolvingDep {
-                name: name.to_string(),
-                via: "system".to_string(),
-            });
             Ok(Some((
                 ForeignBuilt {
                     name: name.to_string(),
@@ -560,10 +556,6 @@ fn resolve_version_dep(
         None => {
             // Default chain: pkg-config (cached) → system-lib stubs → target/deps/ cache.
             if let Ok((pc, ver)) = pc_cache.query(query) {
-                progress(BuildEvent::ResolvingDep {
-                    name: name.to_string(),
-                    via: "pkg-config".to_string(),
-                });
                 return Ok(Some((
                     ForeignBuilt {
                         name: name.to_string(),
@@ -583,10 +575,6 @@ fn resolve_version_dep(
             let stubs = load_system_lib_stubs();
             if let Some(stub) = find_stub(name, &stubs) {
                 let link_flag = format!("-l{}", stub.link_name);
-                progress(BuildEvent::ResolvingDep {
-                    name: name.to_string(),
-                    via: "system-lib stub".to_string(),
-                });
                 return Ok(Some((
                     ForeignBuilt {
                         name: name.to_string(),
@@ -599,18 +587,10 @@ fn resolve_version_dep(
             }
             // All freight-fetched deps (source, prebuilt, git, url) live in .deps/<name>/
             let dep_dir = project_dir.join(".pkgs").join(name);
-            let cached: Option<(PathBuf, &str)> = if dep_dir.join(".freight-fetched").exists() {
-                Some((dep_dir, ".pkgs"))
-            } else {
-                None
-            };
+            let cached = dep_dir.join(".freight-fetched").exists();
 
-            if let Some((dep_dir, via)) = cached {
-                progress(BuildEvent::ResolvingDep {
-                    name: name.to_string(),
-                    via: via.to_string(),
-                });
-
+            if cached {
+                let dep_dir = dep_dir;
                 // Try pkg-config if the dep ships a .pc file.
                 let pc_dir = dep_dir.join("lib").join("pkgconfig");
                 if pc_dir.is_dir() {
@@ -667,12 +647,10 @@ fn resolve_version_dep(
                     });
                     // Build the dep as a lib. Reuse the parent profile ("dev"/"release").
                     // Errors here are non-fatal: we let the link step fail with a clear message.
-                    // Suppress ResolvingDep and BuildStarted from the inner build — ResolvingDep
-                    // would duplicate the outer project's resolutions; BuildStarted is replaced
-                    // by our own emit above.
+                    // Suppress BuildStarted from the inner build — replaced by our own emit above.
                     let outer = std::sync::Arc::clone(progress);
                     let inner_progress: Progress = std::sync::Arc::new(move |ev| match ev {
-                        BuildEvent::ResolvingDep { .. } | BuildEvent::BuildStarted { .. } => {}
+                        BuildEvent::BuildStarted { .. } => {}
                         other => outer(other),
                     });
                     let _ = crate::build::build_project_at(

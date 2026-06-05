@@ -23,8 +23,6 @@ pub enum BuildEvent {
     RunningScript { cached: bool },
     /// Fetching a git/http/registry dep.
     FetchingDep { name: String, source: String },
-    /// Resolving a version dep via a specific resolver.
-    ResolvingDep { name: String, via: String },
     /// Building a foreign dep (cmake/make/meson/…).
     BuildingForeignDep { name: String, backend: String },
     /// Non-fatal warning from any part of the build.

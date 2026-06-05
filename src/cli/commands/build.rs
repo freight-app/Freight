@@ -113,10 +113,6 @@ pub fn make_progress() -> Progress {
             tracing::info!(name, source, "fetching dep");
             print_status("Fetching", &format!("{name} ({source})"));
         }
-        BuildEvent::ResolvingDep { name, via } => {
-            tracing::debug!(name, via, "resolving dep");
-            println!("{:>12} {} ({})", "Resolving".dimmed(), name, via);
-        }
         BuildEvent::BuildingForeignDep { name, backend } => {
             tracing::info!(name, backend, "building foreign dep");
             print_status("Building", &format!("{name} ({backend})"));
@@ -191,9 +187,6 @@ fn make_timed_progress() -> (
         }
         BuildEvent::FetchingDep { name, source } => {
             print_status("Fetching", &format!("{name} ({source})"))
-        }
-        BuildEvent::ResolvingDep { name, via } => {
-            println!("{:>12} {} ({})", "Resolving".dimmed(), name, via)
         }
         BuildEvent::BuildingForeignDep { name, backend } => {
             print_status("Building", &format!("{name} ({backend})"))
