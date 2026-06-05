@@ -111,7 +111,12 @@ pub fn build_foreign_deps(
     manifest: &Manifest,
     profile: &str,
     progress: &Progress,
+    // Override where `.pkgs/` is looked up. None uses project_dir; pass
+    // Some(root) when building a dep from source so transitive deps resolve
+    // from the root project's flat pool instead of nesting inside the dep.
+    pkgs_root: Option<&Path>,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
+    let pkgs_root = pkgs_root.unwrap_or(project_dir);
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
@@ -125,7 +130,7 @@ pub fn build_foreign_deps(
     let mut tool_paths: Vec<PathBuf> = Vec::new();
 
     for (name, dep) in &manifest.build_dependencies {
-        let dep_dir = match build_dep_dir(name, dep, project_dir) {
+        let dep_dir = match build_dep_dir(name, dep, project_dir, pkgs_root) {
             Some(d) => d,
             None => continue,
         };
@@ -228,7 +233,7 @@ pub fn build_foreign_deps(
             // Check for a metadata-only registry dep that was fetched from upstream source.
             // `fetch_registry_deps()` writes `.freight-build-system` when the dep needs
             // compiling from source (e.g. vcpkg packages with `build = "cmake"`).
-            let dep_dir = project_dir.join(".pkgs").join(name);
+            let dep_dir = pkgs_root.join(".pkgs").join(name);
             let bs_file = dep_dir.join(".freight-build-system");
             if bs_file.exists() {
                 let bs = std::fs::read_to_string(&bs_file)
@@ -256,6 +261,7 @@ pub fn build_foreign_deps(
                     repo,
                     optional,
                     project_dir,
+                    pkgs_root,
                     progress,
                     &mut pc_cache,
                 )? {
@@ -282,7 +288,7 @@ pub fn build_foreign_deps(
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
         } else if d.is_git() {
-            project_dir.join(".pkgs").join(name)
+            pkgs_root.join(".pkgs").join(name)
         } else if let Some(url) = &d.url {
             crate::fetch::http::fetch_url_dep(
                 name,
@@ -447,15 +453,14 @@ fn check_cmake_version(constraint: &str, tool_paths: &[PathBuf]) -> Result<(), F
 
 /// Resolve the on-disk directory for a build-dep entry.
 /// Same logic as regular deps: path → join project_dir; git/url/version → .deps/<name>.
-fn build_dep_dir(name: &str, dep: &Dependency, project_dir: &Path) -> Option<PathBuf> {
+fn build_dep_dir(name: &str, dep: &Dependency, project_dir: &Path, pkgs_root: &Path) -> Option<PathBuf> {
     match dep {
-        Dependency::Simple(_) => Some(project_dir.join(".pkgs").join(name)),
+        Dependency::Simple(_) => Some(pkgs_root.join(".pkgs").join(name)),
         Dependency::Detailed(d) => {
             if let Some(p) = &d.path {
                 Some(project_dir.join(p))
             } else {
-                // git, url, or version dep — all land in .deps/<name> after `freight fetch`
-                Some(project_dir.join(".pkgs").join(name))
+                Some(pkgs_root.join(".pkgs").join(name))
             }
         }
     }
@@ -514,6 +519,7 @@ fn resolve_version_dep(
     repo: Option<&str>,
     optional: bool,
     project_dir: &Path,
+    pkgs_root: &Path,
     progress: &Progress,
     pc_cache: &mut PkgConfigCache,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
@@ -549,6 +555,7 @@ fn resolve_version_dep(
                 None,
                 optional,
                 project_dir,
+                pkgs_root,
                 progress,
                 pc_cache,
             )
@@ -586,7 +593,7 @@ fn resolve_version_dep(
                 )));
             }
             // All freight-fetched deps (source, prebuilt, git, url) live in .deps/<name>/
-            let dep_dir = project_dir.join(".pkgs").join(name);
+            let dep_dir = pkgs_root.join(".pkgs").join(name);
             let cached = dep_dir.join(".freight-fetched").exists();
 
             if cached {
@@ -663,6 +670,7 @@ fn resolve_version_dep(
                         None,
                         &[],
                         &inner_progress,
+                        Some(project_dir), // flat: use root .pkgs/ for transitive deps
                     );
                     progress(BuildEvent::DepBuildDone);
                     let built_lib = dep_dir.join("target").join(version).join(format!("lib{name}.a"));

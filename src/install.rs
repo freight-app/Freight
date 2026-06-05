@@ -91,6 +91,7 @@ pub fn install_project(
             opts.target.as_deref(),
             &[],
             &silent(),
+            None,
         )?;
     }
 
@@ -214,7 +215,7 @@ pub fn package_project(
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
 
-    build_project_at(project_dir, profile, &[], true, target, &[], &silent())?;
+    build_project_at(project_dir, profile, &[], true, target, &[], &silent(), None)?;
 
     let global_target = GlobalConfig::load().target;
     let (pkg_arch, pkg_os) = target
@@ -603,7 +604,7 @@ pub fn installer_project(
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
 
-    build_project_at(project_dir, profile, &[], true, target, &[], &silent())?;
+    build_project_at(project_dir, profile, &[], true, target, &[], &silent(), None)?;
 
     let global_target = GlobalConfig::load().target;
     let (pkg_arch, pkg_os) = target

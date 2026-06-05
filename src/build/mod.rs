@@ -183,6 +183,7 @@ pub fn build_workspace_with(
             None,
             &[],
             progress,
+            None,
         )?);
         member_dirs.push(member_dir);
     }
@@ -522,6 +523,7 @@ pub fn build_project_with(
         None,
         sanitize_override,
         progress,
+        None,
     )
 }
 
@@ -538,6 +540,9 @@ pub fn build_project_at(
     target_override: Option<&str>,
     sanitize_override: &[String],
     progress: &Progress,
+    // When building a dep from source, point this at the root project so all
+    // transitive deps are resolved from the flat root .pkgs/ pool.
+    pkgs_root: Option<&Path>,
 ) -> Result<BuildOutput, FreightError> {
     let mut ctx = load_project_at(project_dir, profile)?;
     if let Some(t) = target_override {
@@ -598,7 +603,8 @@ pub fn build_project_at(
         if let Some(local) = GlobalConfig::load_local(project_dir) {
             cfg.apply_local(local);
         }
-        if let Ok(outcomes) = crate::dep_cmds::fetch_registry_deps(project_dir, &cfg) {
+        let fetch_root = pkgs_root.unwrap_or(project_dir);
+        if let Ok(outcomes) = crate::dep_cmds::fetch_registry_deps(fetch_root, &cfg) {
             for o in outcomes {
                 if matches!(o.action, crate::dep_cmds::RegistryDepAction::Downloaded) {
                     progress(BuildEvent::FetchingDep {
@@ -632,7 +638,7 @@ pub fn build_project_at(
         progress,
     )?;
     let (foreign_built, _pkg_configs, tool_paths) =
-        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress)?;
+        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress, pkgs_root)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -1334,7 +1340,7 @@ pub fn test_project_at(
         progress,
     )?;
     let (foreign_built, _pkg_configs, tool_paths) =
-        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress)?;
+        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress, None)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();
@@ -1691,7 +1697,7 @@ pub fn bench_project_at(
         progress,
     )?;
     let (foreign_built, _pkg_configs, tool_paths) =
-        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress)?;
+        crate::adaptors::build_foreign_deps(project_dir, manifest, profile, progress, None)?;
 
     let mut all_libs = built.libs.clone();
     let mut all_dep_includes = built.include_dirs.clone();

@@ -79,6 +79,7 @@ pub fn cmd_run(
             None,
             sanitize,
             &super::build::make_progress(),
+            None,
         ) {
             Ok(o) => o,
             Err(e) => {
