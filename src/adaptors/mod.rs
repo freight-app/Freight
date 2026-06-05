@@ -666,6 +666,13 @@ fn resolve_version_dep(
                     )));
                     // Build the dep as a lib. Reuse the parent profile ("dev"/"release").
                     // Errors here are non-fatal: we let the link step fail with a clear message.
+                    // Suppress ResolvingDep from the inner build — those deps are transitive and
+                    // would appear as duplicates alongside the outer project's own resolutions.
+                    let outer = std::sync::Arc::clone(progress);
+                    let inner_progress: Progress = std::sync::Arc::new(move |ev| match ev {
+                        BuildEvent::ResolvingDep { .. } => {}
+                        other => outer(other),
+                    });
                     let _ = crate::build::build_project_at(
                         &dep_dir,
                         version,
@@ -673,7 +680,7 @@ fn resolve_version_dep(
                         true,
                         None,
                         &[],
-                        progress,
+                        &inner_progress,
                     );
                     let built_lib = dep_dir.join("target").join(version).join(format!("lib{name}.a"));
                     if built_lib.exists() {
