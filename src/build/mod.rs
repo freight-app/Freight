@@ -221,9 +221,10 @@ pub fn clean_workspace() -> Result<(), FreightError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_standard_c_family_include_dir, lsp_compile_commands_dir, lsp_visible_include_dirs,
-        safe_lsp_profile_dir,
+        collect_dep_include_dirs_and_roots, is_standard_c_family_include_dir,
+        lsp_compile_commands_dir, lsp_visible_include_dirs, safe_lsp_profile_dir,
     };
+    use crate::manifest::load_manifest;
     use std::path::PathBuf;
 
     #[test]
@@ -290,6 +291,125 @@ mod tests {
     fn lsp_profile_dir_is_path_safe() {
         assert_eq!(safe_lsp_profile_dir("../release"), "___release");
         assert_eq!(safe_lsp_profile_dir(""), "dev");
+    }
+
+    #[test]
+    fn lsp_compile_commands_include_cached_version_dep_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/main.cpp"),
+            "#include \"vecmath/vec2.h\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("freight.toml"),
+            r#"
+[package]
+name = "app"
+version = "0.1.0"
+
+[[bin]]
+name = "app"
+src = "src/main.cpp"
+
+[dependencies]
+vecmath = "0.1.1"
+"#,
+        )
+        .unwrap();
+
+        let vecmath = dir.path().join(".pkgs/vecmath");
+        std::fs::create_dir_all(vecmath.join("include/vecmath")).unwrap();
+        std::fs::write(vecmath.join("include/vecmath/vec2.h"), "#pragma once\n").unwrap();
+        std::fs::write(
+            vecmath.join("freight.toml"),
+            r#"
+[package]
+name = "vecmath"
+version = "0.1.1"
+
+[compiler]
+includes = ["include"]
+
+[lib]
+type = "static"
+srcs = []
+hdrs = ["include/vecmath/vec2.h"]
+"#,
+        )
+        .unwrap();
+
+        let manifest = load_manifest(dir.path()).unwrap();
+        let (includes, roots) = collect_dep_include_dirs_and_roots(dir.path(), &manifest);
+
+        assert!(roots.iter().any(|root| root.ends_with(".pkgs/vecmath")));
+        assert!(includes
+            .iter()
+            .any(|include| include.ends_with(".pkgs/vecmath/include")));
+
+        let filtered = lsp_visible_include_dirs(dir.path(), &roots, includes);
+        assert!(filtered
+            .iter()
+            .any(|include| include.ends_with(".pkgs/vecmath/include")));
+    }
+
+    #[test]
+    fn lsp_compile_commands_include_transitive_cached_version_dep_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freight.toml"),
+            r#"
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+vecmath = "0.1.1"
+"#,
+        )
+        .unwrap();
+
+        let vecmath = dir.path().join(".pkgs/vecmath");
+        std::fs::create_dir_all(vecmath.join("include/vecmath")).unwrap();
+        std::fs::write(vecmath.join("include/vecmath/vec2.h"), "#pragma once\n").unwrap();
+        std::fs::write(
+            vecmath.join("freight.toml"),
+            r#"
+[package]
+name = "vecmath"
+version = "0.1.1"
+
+[dependencies]
+mathlib = "0.1.0"
+"#,
+        )
+        .unwrap();
+
+        let mathlib = dir.path().join(".pkgs/mathlib");
+        std::fs::create_dir_all(mathlib.join("include/mathlib")).unwrap();
+        std::fs::write(mathlib.join("include/mathlib/mathlib.h"), "#pragma once\n").unwrap();
+        std::fs::write(
+            mathlib.join("freight.toml"),
+            r#"
+[package]
+name = "mathlib"
+version = "0.1.0"
+"#,
+        )
+        .unwrap();
+
+        let manifest = load_manifest(dir.path()).unwrap();
+        let (includes, roots) = collect_dep_include_dirs_and_roots(dir.path(), &manifest);
+
+        assert!(roots.iter().any(|root| root.ends_with(".pkgs/vecmath")));
+        assert!(roots.iter().any(|root| root.ends_with(".pkgs/mathlib")));
+        assert!(includes
+            .iter()
+            .any(|include| include.ends_with(".pkgs/vecmath/include")));
+        assert!(includes
+            .iter()
+            .any(|include| include.ends_with(".pkgs/mathlib/include")));
     }
 }
 
@@ -657,6 +777,23 @@ pub fn build_project_at(
         &pch_clangd_flags,
         Some(&compile_result.compiled_sources),
     );
+    // Merge compile_commands.json from source-built deps (.pkgs/*/) so that
+    // clangd gets full coverage of dep headers and sources without requiring
+    // a separate compile_commands path configuration.
+    let cc = {
+        let mut merged = cc;
+        let pkgs_dir = project_dir.join(".pkgs");
+        if let Ok(entries) = std::fs::read_dir(&pkgs_dir) {
+            for entry in entries.flatten() {
+                let dep_cc_path = entry.path().join("compile_commands.json");
+                if dep_cc_path.exists() {
+                    merged = compile_commands::merge(merged, compile_commands::load(&entry.path()));
+                }
+            }
+        }
+        merged
+    };
+
     if let Err(e) = compile_commands::write(project_dir, &cc).and_then(|_| {
         compile_commands::write_incremental_cache(
             project_dir,
@@ -733,6 +870,20 @@ pub fn generate_compile_commands_at(
         &[],
         None,
     );
+    // Merge in compile_commands from source-built deps.
+    let commands = {
+        let mut merged = commands;
+        let pkgs_dir = project_dir.join(".pkgs");
+        if let Ok(entries) = std::fs::read_dir(&pkgs_dir) {
+            for entry in entries.flatten() {
+                if entry.path().join("compile_commands.json").exists() {
+                    merged = compile_commands::merge(merged, compile_commands::load(&entry.path()));
+                }
+            }
+        }
+        merged
+    };
+
     let count = commands.len();
     compile_commands::write(project_dir, &commands).and_then(|_| {
         compile_commands::write_incremental_cache(
@@ -904,15 +1055,110 @@ fn collect_dep_include_dirs_and_roots(
     manifest: &Manifest,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let empty = BTreeSet::new();
-    let Ok(resolved) = resolve_dep_graph(project_dir, manifest, false, &empty) else {
-        return (vec![], vec![]);
-    };
-    let roots = resolved.iter().map(|dep| dep.dir.clone()).collect();
-    let includes = resolved
-        .iter()
-        .flat_map(|dep| deps::dep_include_dirs(&dep.dir, &dep.manifest))
-        .collect();
+    let mut roots = Vec::new();
+    let mut includes = Vec::new();
+    let mut seen_roots = std::collections::HashSet::new();
+    let mut seen_includes = std::collections::HashSet::new();
+
+    if let Ok(resolved) = resolve_dep_graph(project_dir, manifest, false, &empty) {
+        for dep in resolved {
+            push_unique_existing_dir(&mut roots, &mut seen_roots, dep.dir.clone());
+            for include in deps::dep_include_dirs(&dep.dir, &dep.manifest) {
+                push_unique_existing_dir(&mut includes, &mut seen_includes, include);
+            }
+        }
+    }
+
+    collect_cached_package_dep_includes(
+        project_dir,
+        manifest,
+        &mut includes,
+        &mut roots,
+        &mut seen_includes,
+        &mut seen_roots,
+    );
+
     (includes, roots)
+}
+
+fn collect_cached_package_dep_includes(
+    root_dir: &Path,
+    manifest: &Manifest,
+    includes: &mut Vec<PathBuf>,
+    roots: &mut Vec<PathBuf>,
+    seen_includes: &mut std::collections::HashSet<PathBuf>,
+    seen_roots: &mut std::collections::HashSet<PathBuf>,
+) {
+    for (name, dep) in manifest.effective_dependencies() {
+        if crate::manifest::types::is_platform_dep(&name) {
+            continue;
+        }
+        if matches!(&dep, Dependency::Detailed(d) if d.optional) {
+            continue;
+        }
+        let Some(dep_dir) = cached_package_dep_dir(root_dir, &name, &dep) else {
+            continue;
+        };
+        if !dep_dir.is_dir() {
+            continue;
+        }
+        let first_seen = push_unique_existing_dir(roots, seen_roots, dep_dir.clone());
+
+        let explicit_includes = match &dep {
+            Dependency::Detailed(d) => d.include.as_slice(),
+            Dependency::Simple(_) => &[],
+        };
+        let build_dir = dep_dir.join(".freight-build");
+        for include in
+            crate::adaptors::collect_include_dirs(&dep_dir, explicit_includes, Some(&build_dir))
+        {
+            push_unique_existing_dir(includes, seen_includes, include);
+        }
+
+        if first_seen {
+            if let Ok(dep_manifest) = load_manifest(&dep_dir) {
+                collect_cached_package_dep_includes(
+                    root_dir,
+                    &dep_manifest,
+                    includes,
+                    roots,
+                    seen_includes,
+                    seen_roots,
+                );
+            }
+        }
+    }
+}
+
+fn cached_package_dep_dir(root_dir: &Path, name: &str, dep: &Dependency) -> Option<PathBuf> {
+    match dep {
+        Dependency::Simple(_) => Some(root_dir.join(".pkgs").join(name)),
+        Dependency::Detailed(d)
+            if d.path.is_none()
+                && d.registry.as_deref() != Some("system")
+                && (d.version.is_some() || d.url.is_some() || d.is_git()) =>
+        {
+            Some(root_dir.join(".pkgs").join(name))
+        }
+        _ => None,
+    }
+}
+
+fn push_unique_existing_dir(
+    out: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    dir: PathBuf,
+) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+    if seen.insert(canonical) {
+        out.push(dir);
+        true
+    } else {
+        false
+    }
 }
 
 /// Emit assembly files for all sources of the project at the current working directory.
@@ -1679,7 +1925,9 @@ fn verify_git_dep_shas(
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        if !d.is_git() { continue };
+        if !d.is_git() {
+            continue;
+        };
 
         let dep_dir = project_dir.join(".pkgs").join(name);
         if !dep_dir.exists() {
