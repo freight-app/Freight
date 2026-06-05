@@ -2,11 +2,12 @@ use std::path::PathBuf;
 
 use crate::error::FreightError;
 use crate::event::Progress;
+use crate::install::{InstallOptions, InstallResult};
 use crate::manifest::{find_manifest_dir, load_manifest, types::Manifest};
 use super::{
-    check_slot_conflicts, clean_project_at, generate_compile_commands_at, pipeline,
-    resolve_dep_graph, run_pipeline_at, BenchSummary, BuildOutput, PipelineOutput, ResolvedDep,
-    TestSummary,
+    check_slot_conflicts, clean_project_at, emit_sources, generate_compile_commands_at, pipeline,
+    resolve_dep_graph, run_pipeline_at, BenchSummary, BuildOutput, EmitTarget, PipelineOutput,
+    ResolvedDep, TestSummary,
 };
 
 // ── Project ───────────────────────────────────────────────────────────────────
@@ -158,6 +159,76 @@ impl Project {
             .args(args)
             .status()
             .map_err(FreightError::Io)
+    }
+
+    /// Emit intermediate output for all sources without linking.
+    ///
+    /// Writes files to `target/{profile}/{target}/` (e.g. `target/dev/asm/`).
+    /// Returns the output directory path.
+    pub fn emit(
+        &self,
+        target: EmitTarget,
+        config: &pipeline::PipelineConfig,
+        progress: &Progress,
+    ) -> Result<PathBuf, FreightError> {
+        let profile = &config.profile;
+        let feat = pipeline::stage_features(&self.manifest, config)?;
+        let ctx = super::load_project_at(&self.dir, profile)?;
+        let target_dir = self.dir.join("target");
+        emit_sources(
+            &target,
+            &self.dir,
+            &target_dir,
+            &self.manifest,
+            &ctx.effective_backend,
+            profile,
+            &ctx.found.sources,
+            &ctx.found.include_dirs,
+            &ctx.detected,
+            &feat.defines,
+            progress,
+        )
+    }
+
+    /// Build and install outputs to `opts.prefix`.
+    pub fn install(
+        &self,
+        opts: &InstallOptions,
+        progress: &Progress,
+    ) -> Result<InstallResult, FreightError> {
+        if !opts.no_build {
+            let profile = if opts.release { "release" } else { "dev" };
+            let config = pipeline::PipelineConfig {
+                profile: profile.to_string(),
+                use_defaults: true,
+                target_override: opts.target.clone(),
+                goal: pipeline::PipelineGoal::Build,
+                ..Default::default()
+            };
+            self.build(&config, progress)?;
+        }
+        crate::install::install_project_built(&self.dir, &self.manifest, opts)
+    }
+
+    /// Build and create a distributable archive (`target/package/<name>-<ver>-<arch>-<os>.tar.gz`).
+    ///
+    /// Returns the path to the created archive.
+    pub fn package(
+        &self,
+        release: bool,
+        target_triple: Option<&str>,
+        progress: &Progress,
+    ) -> Result<PathBuf, FreightError> {
+        let profile = if release { "release" } else { "dev" };
+        let config = pipeline::PipelineConfig {
+            profile: profile.to_string(),
+            use_defaults: true,
+            target_override: target_triple.map(str::to_string),
+            goal: pipeline::PipelineGoal::Build,
+            ..Default::default()
+        };
+        self.build(&config, progress)?;
+        crate::install::package_project_built(&self.dir, &self.manifest, release, target_triple)
     }
 
     /// Remove build artifacts (`target/`).

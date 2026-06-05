@@ -753,16 +753,78 @@ pub(crate) fn print_cmd(cmd: &Command) {
 
 // ── Assembly emission ─────────────────────────────────────────────────────────
 
-/// Languages for which assembly emission (`-S`) is not meaningful or supported.
-/// Pure assemblers (gas/nasm/yasm) already work with textual assembly source.
-const ASM_EMIT_SKIP_LANGS: &[&str] = &["gas", "nasm", "yasm", "ispc"];
+// ── Emit ──────────────────────────────────────────────────────────────────────
 
-/// Emit textual assembly for every source in `sources` into `target/{profile}/asm/`.
+/// What kind of intermediate output to emit alongside (or instead of) object files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmitTarget {
+    /// Textual assembly (`-S` → `.s`). Supported by all GCC/Clang-family compilers.
+    Asm,
+    /// Human-readable LLVM IR (`-emit-llvm -S` → `.ll`). Clang only.
+    LlvmIr,
+    /// LLVM bitcode (`-emit-llvm` → `.bc`). Clang only; useful for LTO analysis.
+    LlvmBc,
+    /// Preprocessed source (`-E` → `.i` / `.ii`). Supported by all compilers.
+    Preprocessed,
+}
+
+impl EmitTarget {
+    /// Parse from the CLI string used by `--emit`.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "asm" => Some(Self::Asm),
+            "llvm-ir" => Some(Self::LlvmIr),
+            "llvm-bc" => Some(Self::LlvmBc),
+            "preprocessed" | "preprocess" => Some(Self::Preprocessed),
+            _ => None,
+        }
+    }
+
+    fn subdir(&self) -> &'static str {
+        match self {
+            Self::Asm => "asm",
+            Self::LlvmIr => "llvm-ir",
+            Self::LlvmBc => "llvm-bc",
+            Self::Preprocessed => "preprocessed",
+        }
+    }
+
+    fn extension(&self, lang_key: &str) -> &'static str {
+        match self {
+            Self::Asm => "s",
+            Self::LlvmIr => "ll",
+            Self::LlvmBc => "bc",
+            Self::Preprocessed => if lang_key == "cpp" { "ii" } else { "i" },
+        }
+    }
+
+    /// Compiler flags that replace `-c` for this emit target.
+    fn flags(&self) -> &'static [&'static str] {
+        match self {
+            Self::Asm => &["-S"],
+            Self::LlvmIr => &["-emit-llvm", "-S"],
+            Self::LlvmBc => &["-emit-llvm"],
+            Self::Preprocessed => &["-E"],
+        }
+    }
+
+    /// Languages for which this emission is not meaningful (skip silently).
+    fn skip_langs(&self) -> &'static [&'static str] {
+        match self {
+            // Pure assemblers already are textual assembly; preprocessing them is not useful.
+            Self::Asm | Self::Preprocessed => &["gas", "nasm", "yasm", "ispc"],
+            // LLVM targets are Clang-only and not meaningful for non-C/C++ langs.
+            Self::LlvmIr | Self::LlvmBc => &["gas", "nasm", "yasm", "ispc", "fortran", "ada", "d"],
+        }
+    }
+}
+
+/// Emit intermediate output for every source in `sources` into `target/{profile}/{subdir}/`.
 ///
-/// Runs in parallel alongside the normal build. Uses the same compiler flags as
-/// compilation, replacing `-c` with `-S`. Non-fatal: failures are surfaced as
-/// [`BuildEvent::Warning`] rather than aborting the build.
-pub fn emit_asm_sources(
+/// Runs in parallel. Non-fatal: failures are surfaced as [`BuildEvent::Warning`].
+/// Returns the output directory.
+pub fn emit_sources(
+    target: &EmitTarget,
     project_dir: &Path,
     target_dir: &Path,
     manifest: &Manifest,
@@ -773,95 +835,70 @@ pub fn emit_asm_sources(
     detected: &[DetectedCompiler],
     feature_defines: &[String],
     progress: &Progress,
-) -> Result<(), FreightError> {
+) -> Result<PathBuf, FreightError> {
     let pf = primary_family(backend, detected);
-    let asm_dir = target_dir.join(profile).join("asm");
-    fs::create_dir_all(&asm_dir)?;
+    let out_dir = target_dir.join(profile).join(target.subdir());
+    fs::create_dir_all(&out_dir)?;
 
-    let eligible: Vec<&SourceFile> = sources
-        .iter()
-        .filter(|s| !ASM_EMIT_SKIP_LANGS.contains(&s.lang_key.as_str()))
+    let skip = target.skip_langs();
+    let eligible: Vec<&SourceFile> = sources.iter()
+        .filter(|s| !skip.contains(&s.lang_key.as_str()))
         .collect();
 
+    let label = target.subdir();
     eligible.par_iter().for_each(|src| {
         let src_abs = project_dir.join(&src.path);
-
-        // Preserve directory structure to avoid name collisions between files
-        // with the same name in different subdirectories.
-        let asm_rel = {
+        let out_rel = {
             let mut p = src.path.clone();
-            p.set_extension("s");
+            p.set_extension(target.extension(&src.lang_key));
             p
         };
-        let asm_path = asm_dir.join(&asm_rel);
+        let out_path = out_dir.join(&out_rel);
 
-        if let Some(parent) = asm_path.parent() {
+        if let Some(parent) = out_path.parent() {
             if let Err(e) = fs::create_dir_all(parent) {
-                progress(BuildEvent::Warning(format!(
-                    "emit-asm: cannot create dir: {e}"
-                )));
+                progress(BuildEvent::Warning(format!("emit-{label}: cannot create dir: {e}")));
                 return;
             }
         }
 
-        let compiler = match select_compiler(&src.lang_key, backend, detected, pf) {
-            Some(c) => c,
-            None => return, // no compiler for this lang — skip silently
-        };
+        let Some(compiler) = select_compiler(&src.lang_key, backend, detected, pf) else { return; };
 
-        let settings = settings_for_lang(
-            manifest,
-            profile,
-            &src.lang_key,
-            include_dirs,
-            project_dir,
-            feature_defines,
-        );
+        let settings = settings_for_lang(manifest, profile, &src.lang_key, include_dirs, project_dir, feature_defines);
         let compile_bin = resolve_compile_binary(compiler, &src.lang_key);
 
         let mut cmd = if let Some(wrapper) = cache_wrapper() {
             let mut c = Command::new(wrapper);
             c.arg(&compile_bin);
-            if let Some(sub) = compiler.template.subcommand.as_deref() {
-                c.arg(sub);
-            }
+            if let Some(sub) = compiler.template.subcommand.as_deref() { c.arg(sub); }
             c
         } else {
             let mut c = Command::new(&compile_bin);
-            if let Some(sub) = compiler.template.subcommand.as_deref() {
-                c.arg(sub);
-            }
+            if let Some(sub) = compiler.template.subcommand.as_deref() { c.arg(sub); }
             c
         };
         cmd.args(compiler.template.assemble_flags(&settings));
-        cmd.arg("-S");
-        cmd.arg(&src_abs);
-        cmd.arg("-o");
-        cmd.arg(&asm_path);
+        for flag in target.flags() { cmd.arg(flag); }
+        cmd.arg(&src_abs).arg("-o").arg(&out_path);
 
-        if std::env::var_os("FREIGHT_VERBOSE").is_some() {
-            print_cmd(&cmd);
-        }
+        if std::env::var_os("FREIGHT_VERBOSE").is_some() { print_cmd(&cmd); }
 
         match cmd.output() {
             Ok(out) if out.status.success() => {
-                progress(BuildEvent::EmittedAsm { path: asm_path });
+                progress(BuildEvent::Emitted { target: label.to_string(), path: out_path });
             }
             Ok(out) => {
                 let msg = String::from_utf8_lossy(&out.stderr).into_owned();
                 progress(BuildEvent::Warning(format!(
-                    "emit-asm failed for {}: {}",
-                    src.path.display(),
-                    msg.lines().next().unwrap_or("unknown error")
+                    "emit-{label} failed for {}: {}",
+                    src.path.display(), msg.lines().next().unwrap_or("unknown error")
                 )));
             }
-            Err(e) => {
-                progress(BuildEvent::Warning(format!("emit-asm: {e}")));
-            }
+            Err(e) => progress(BuildEvent::Warning(format!("emit-{label}: {e}"))),
         }
     });
 
-    Ok(())
+    Ok(out_dir)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

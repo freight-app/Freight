@@ -23,7 +23,7 @@ use walkdir::WalkDir;
 
 use crate::build::{
     compile, compile_commands, discover, features, header_units, link_targets, link_test_binary,
-    modules, object_path, pch, proto, BenchResult, BenchSummary, BuildOutput, CompileResult,
+    object_path, pch, proto, BenchResult, BenchSummary, BuildOutput, CompileResult,
     PipelineOutput, SourceFile, TestSummary,
 };
 use crate::error::FreightError;

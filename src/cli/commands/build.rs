@@ -65,7 +65,8 @@ impl Args {
 }
 
 use freight::build::{
-    build_project_with, build_workspace_with, emit_asm_project_with, resolve_dep_graph, ResolvedDep,
+    build_project_with, build_workspace_with, resolve_dep_graph, EmitTarget, PipelineConfig,
+    PipelineGoal, Project, ResolvedDep,
 };
 use freight::event::{BuildEvent, Progress};
 use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
@@ -164,7 +165,7 @@ pub fn make_progress() -> Progress {
             );
         }
         BuildEvent::Timing { .. } => {} // collected separately; not printed inline
-        BuildEvent::EmittedAsm { path } => {
+        BuildEvent::Emitted { path, .. } => {
             println!("{:>12} {}", "Emitted".dimmed(), path.display());
         }
     })
@@ -218,7 +219,7 @@ fn make_timed_progress() -> (
             print_status("Building", &format!("{name} ({backend})"))
         }
         BuildEvent::Warning(msg) => print_warning(&msg),
-        BuildEvent::EmittedAsm { path } => {
+        BuildEvent::Emitted { path, .. } => {
             println!("{:>12} {}", "Emitted".dimmed(), path.display())
         }
         _ => {}
@@ -306,11 +307,7 @@ pub fn cmd_build(
             }
         };
         if build_ok {
-            if emit.iter().any(|e| e.eq_ignore_ascii_case("asm")) {
-                if let Err(e) = emit_asm_project_with(profile, &progress) {
-                    print_error(&format!("--emit asm failed: {e}"));
-                }
-            }
+            run_emit_targets(emit, profile, &progress);
             let mut t = timings.lock().unwrap();
             t.sort_by(|a, b| b.1.cmp(&a.1));
             print_timing_table(&t);
@@ -340,11 +337,33 @@ pub fn cmd_build(
         })
     };
 
-    if build_ok && emit.iter().any(|e| e.eq_ignore_ascii_case("asm")) {
+    if build_ok {
         let progress = make_progress();
-        if let Err(e) = emit_asm_project_with(profile, &progress) {
-            print_error(&format!("--emit asm failed: {e}"));
+        run_emit_targets(emit, profile, &progress);
+    }
+}
+
+fn run_emit_targets(emit: &[String], profile: &str, progress: &Progress) {
+    let config = PipelineConfig {
+        profile: profile.to_string(),
+        use_defaults: true,
+        goal: PipelineGoal::Build,
+        ..Default::default()
+    };
+    match Project::from_cwd() {
+        Ok(project) => {
+            for s in emit {
+                match EmitTarget::from_str(s) {
+                    Some(target) => {
+                        if let Err(e) = project.emit(target, &config, progress) {
+                            print_error(&format!("--emit {s} failed: {e}"));
+                        }
+                    }
+                    None => print_error(&format!("unknown emit target `{s}` (known: asm, llvm-ir, llvm-bc, preprocessed)")),
+                }
+            }
         }
+        Err(e) => print_error(&format!("--emit: could not open project: {e}")),
     }
 }
 

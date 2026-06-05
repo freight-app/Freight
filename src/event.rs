@@ -47,8 +47,8 @@ pub enum BuildEvent {
     BenchResult { name: String, mean_ns: u64 },
     /// Wall-clock time to compile one source file (only emitted when `--time-passes` is active).
     Timing { path: PathBuf, ns: u64 },
-    /// An assembly file was emitted to `target/{profile}/asm/` (one per source).
-    EmittedAsm { path: PathBuf },
+    /// An intermediate file was emitted (asm, llvm-ir, llvm-bc, preprocessed).
+    Emitted { target: String, path: PathBuf },
 }
 
 /// A shared, thread-safe progress sink.
