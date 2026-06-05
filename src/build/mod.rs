@@ -1640,7 +1640,7 @@ fn ensure_git_deps_fetched(
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        let Some(url) = &d.git else { continue };
+        let Some(url) = &d.url else { continue };
 
         let dest = deps_dir.join(name);
         if dest.exists() {
@@ -1679,7 +1679,7 @@ fn verify_git_dep_shas(
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        let Some(_url) = &d.git else { continue };
+        if !d.is_git() { continue };
 
         let dep_dir = project_dir.join(".pkgs").join(name);
         if !dep_dir.exists() {

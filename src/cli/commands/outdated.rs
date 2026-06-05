@@ -71,7 +71,7 @@ fn cmd_outdated(repo: Option<&str>) {
             Dependency::Detailed(d)
                 if d.version.is_some()
                     && d.path.is_none()
-                    && d.git.is_none()
+                    && !d.is_git()
                     && d.url.is_none()
                     && !freight::manifest::types::is_platform_dep(name) =>
             {

@@ -633,8 +633,6 @@ pub struct DetailedDep {
     pub version: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
-    #[serde(default)]
-    pub git: Option<String>,
     /// Features of this dep to activate (in addition to its defaults).
     #[serde(default)]
     pub features: Vec<String>,
@@ -718,6 +716,18 @@ pub struct DetailedDep {
     /// When absent the registry uses its default channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+}
+
+impl DetailedDep {
+    /// True when this dep is a git source: has a `url` and at least one of
+    /// `branch`, `tag`, `rev`, or the URL ends with `.git`.
+    pub fn is_git(&self) -> bool {
+        self.url.is_some()
+            && (self.branch.is_some()
+                || self.tag.is_some()
+                || self.rev.is_some()
+                || self.url.as_deref().map_or(false, |u| u.ends_with(".git")))
+    }
 }
 
 fn default_true() -> bool {

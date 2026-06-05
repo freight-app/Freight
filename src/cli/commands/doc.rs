@@ -417,9 +417,9 @@ fn dependency_summary(
                 dir.exists().then_some(dir),
             )
         }
-        Dependency::Detailed(d) if d.git.is_some() => {
+        Dependency::Detailed(d) if d.is_git() => {
             let dir = project_dir.join(".pkgs").join(name);
-            let source = d.git.clone().unwrap_or_default();
+            let source = d.url.clone().unwrap_or_default();
             (
                 "git".to_string(),
                 git_ref(d),

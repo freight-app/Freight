@@ -122,8 +122,8 @@ fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str) {
                     );
                 }
             }
-            Dependency::Detailed(d) if d.git.is_some() => {
-                let url = d.git.as_deref().unwrap_or("?");
+            Dependency::Detailed(d) if d.is_git() => {
+                let url = d.url.as_deref().unwrap_or("?");
                 println!(
                     "{}{} {}",
                     branch,

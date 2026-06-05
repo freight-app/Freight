@@ -128,7 +128,7 @@ fn validate_foreign_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
                 errors.push(ValidationError::new(&ctx, "repo must not be empty"));
             }
             let is_version_dep =
-                d.version.is_some() && d.path.is_none() && d.git.is_none() && d.url.is_none();
+                d.version.is_some() && d.path.is_none() && !d.is_git() && d.url.is_none();
             if !is_version_dep {
                 errors.push(ValidationError::new(
                     &ctx,

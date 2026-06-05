@@ -16,16 +16,16 @@ pub struct Args {
     /// Add as a path dependency pointing to a local freight project
     #[arg(long, value_name = "PATH")]
     pub path: Option<String>,
-    /// Add as a git dependency (URL)
+    /// Add as a URL dependency (git repo or HTTP archive)
     #[arg(long, value_name = "URL")]
-    pub git: Option<String>,
-    /// Git branch to track (requires --git)
+    pub url: Option<String>,
+    /// Git branch to track (makes --url a git dep)
     #[arg(long)]
     pub branch: Option<String>,
-    /// Git tag to check out (requires --git)
+    /// Git tag to check out (makes --url a git dep)
     #[arg(long)]
     pub tag: Option<String>,
-    /// Exact commit SHA to pin (requires --git)
+    /// Exact commit SHA to pin (makes --url a git dep)
     #[arg(long)]
     pub rev: Option<String>,
     /// Registry to search for the package (default: first configured registry).
@@ -42,7 +42,7 @@ impl Args {
             cmd_add(
                 &package,
                 self.path.as_deref(),
-                self.git.as_deref(),
+                self.url.as_deref(),
                 self.branch.as_deref(),
                 self.tag.as_deref(),
                 self.rev.as_deref(),
@@ -112,7 +112,7 @@ fn url_dep_name(url: &str) -> String {
 pub fn cmd_add(
     package: &str,
     path: Option<&str>,
-    git: Option<&str>,
+    url: Option<&str>,
     branch: Option<&str>,
     tag: Option<&str>,
     rev: Option<&str>,
@@ -135,7 +135,7 @@ pub fn cmd_add(
     };
 
     // Auto-detect git / URL archive when the package argument is a raw URL.
-    if looks_like_url(package) && path.is_none() && git.is_none() {
+    if looks_like_url(package) && path.is_none() && url.is_none() {
         let dep_name = url_dep_name(package);
         let dep = if url_is_archive(package) {
             print_status("detected", &format!("URL archive dep → `{dep_name}`"));
@@ -146,7 +146,7 @@ pub fn cmd_add(
         } else {
             print_status("detected", &format!("git dep → `{dep_name}`"));
             Dependency::Detailed(DetailedDep {
-                git: Some(package.to_string()),
+                url: Some(package.to_string()),
                 branch: branch.map(str::to_string),
                 tag: tag.map(str::to_string),
                 rev: rev.map(str::to_string),
@@ -163,7 +163,7 @@ pub fn cmd_add(
             "dependencies"
         };
         print_success(&format!("added `{dep_name}` to [{section}]"));
-        if matches!(&dep, Dependency::Detailed(d) if d.git.is_some()) {
+        if matches!(&dep, Dependency::Detailed(d) if d.is_git()) {
             print_status("fetch", &format!("cloning `{dep_name}`…"));
             match fetch_git_deps(&project_dir) {
                 Ok(outcomes) => {
@@ -213,9 +213,9 @@ pub fn cmd_add(
             path: Some(rel_path.to_string()),
             ..Default::default()
         })
-    } else if let Some(url) = git {
+    } else if let Some(u) = url {
         Dependency::Detailed(DetailedDep {
-            git: Some(url.to_string()),
+            url: Some(u.to_string()),
             branch: branch.map(str::to_string),
             tag: tag.map(str::to_string),
             rev: rev.map(str::to_string),
@@ -328,7 +328,7 @@ pub fn cmd_add(
     };
     print_success(&format!("added `{dep_name}` to [{section}]"));
 
-    if matches!(&dep, Dependency::Detailed(d) if d.git.is_some()) {
+    if matches!(&dep, Dependency::Detailed(d) if d.is_git()) {
         print_status("fetch", &format!("cloning `{dep_name}`…"));
         match fetch_git_deps(&project_dir) {
             Ok(outcomes) => {

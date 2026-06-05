@@ -166,9 +166,11 @@ impl LockFile {
 
 fn dep_source_string(project_dir: &Path, dep: &ResolvedDep, root_manifest: &Manifest) -> String {
     if let Some(Dependency::Detailed(d)) = root_manifest.dependencies.get(&dep.name) {
-        if let Some(url) = &d.git {
-            let sha = git::current_rev(&dep.dir).unwrap_or_else(|| "HEAD".to_string());
-            return format!("git+{}#{}", url, sha);
+        if d.is_git() {
+            if let Some(url) = &d.url {
+                let sha = git::current_rev(&dep.dir).unwrap_or_else(|| "HEAD".to_string());
+                return format!("git+{}#{}", url, sha);
+            }
         }
     }
     let rel = relative_path(project_dir, &dep.dir);

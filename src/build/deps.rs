@@ -269,7 +269,7 @@ fn compilable_dep_dir(
             if crate::manifest::types::is_platform_dep(name) {
                 return None;
             }
-            let dep_dir = if d.git.is_some() {
+            let dep_dir = if d.is_git() {
                 // Git dep → root .deps/{name}/ (flat pool)
                 root_dir.join(".pkgs").join(name)
             } else if let Some(p) = &d.path {

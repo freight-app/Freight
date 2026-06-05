@@ -190,7 +190,6 @@ fn resolve_input(input: &Path) -> Result<(PathBuf, PathBuf)> {
 /// A dep fetched at configure-time by FetchContent, ExternalProject, or CPM.
 struct FetchedDep {
     name: String,
-    git: Option<String>,
     tag: Option<String>,
     branch: Option<String>,
     rev: Option<String>,
@@ -867,11 +866,10 @@ fn handle_cpm_add_package(args: &[&str], ex: &mut Extracted, warnings: &mut Vec<
     }
     ex.fetched_deps.push(FetchedDep {
         name,
-        git,
         tag,
         branch,
         rev,
-        url,
+        url: git.or(url),
         sha256,
     });
 }
@@ -907,11 +905,10 @@ fn parse_fetch_kv(name: &str, tail: &[&str], warnings: &mut Vec<String>) -> Opti
     }
     Some(FetchedDep {
         name: name.to_string(),
-        git,
         tag,
         branch,
         rev,
-        url,
+        url: git.or(url),
         sha256,
     })
 }
@@ -934,7 +931,7 @@ fn parse_cpm_compact(s: &str) -> Option<FetchedDep> {
     if name.is_empty() {
         return None;
     }
-    let git = Some(format!("{host}{repo}.git"));
+    let url = Some(format!("{host}{repo}.git"));
     let (tag, branch, rev) = if !ref_str.is_empty() {
         classify_git_ref(ref_str)
     } else {
@@ -942,11 +939,10 @@ fn parse_cpm_compact(s: &str) -> Option<FetchedDep> {
     };
     Some(FetchedDep {
         name,
-        git,
         tag,
         branch,
         rev,
-        url: None,
+        url,
         sha256: None,
     })
 }
@@ -990,8 +986,8 @@ fn keyword_value_pairs(args: &[&str]) -> HashMap<String, String> {
 /// Build a toml_edit `InlineTable` for a `FetchedDep` entry.
 fn fetched_dep_inline(dep: &FetchedDep) -> InlineTable {
     let mut tbl = InlineTable::new();
-    if let Some(git) = &dep.git {
-        tbl.insert("git", toml_edit::Value::from(git.as_str()));
+    if let Some(url) = &dep.url {
+        tbl.insert("url", toml_edit::Value::from(url.as_str()));
     }
     if let Some(tag) = &dep.tag {
         tbl.insert("tag", toml_edit::Value::from(tag.as_str()));
@@ -1883,7 +1879,7 @@ FetchContent_MakeAvailable(fmt)
         assert_eq!(ex.fetched_deps.len(), 1);
         let d = &ex.fetched_deps[0];
         assert_eq!(d.name, "fmt");
-        assert_eq!(d.git.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
+        assert_eq!(d.url.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
         assert_eq!(d.tag.as_deref(), Some("10.2.1"));
         assert!(d.branch.is_none() && d.rev.is_none());
     }
@@ -1925,7 +1921,7 @@ FetchContent_Declare(
             d.sha256.as_deref(),
             Some("ff0ba4c292013dbc27530b3a81e1f9a813cd39de0fb13876d0e4ac6e8f11f0a7")
         );
-        assert!(d.git.is_none());
+        assert!(d.url.as_deref().map_or(true, |u| !u.ends_with(".git")));
     }
 
     #[test]
@@ -1961,8 +1957,8 @@ find_package(fmt REQUIRED)
         let (ex, w) = extract_src(src);
         let toml = emit_toml("app", "0.1.0", &ex, &w);
         assert!(
-            toml.contains("git = "),
-            "expected inline git dep, got:\n{toml}"
+            toml.contains("url = "),
+            "expected inline url dep, got:\n{toml}"
         );
         // Should not also appear as `fmt = "*"`
         assert!(!toml.contains("fmt = \"*\""));
@@ -1982,7 +1978,7 @@ ExternalProject_Add(
         let (ex, _) = extract_src(src);
         let d = &ex.fetched_deps[0];
         assert_eq!(d.name, "mylib");
-        assert_eq!(d.git.as_deref(), Some("https://github.com/user/mylib.git"));
+        assert_eq!(d.url.as_deref(), Some("https://github.com/user/mylib.git"));
         assert_eq!(d.tag.as_deref(), Some("v1.0.0"));
     }
 
@@ -2015,7 +2011,7 @@ CPMAddPackage(
         assert!(w.is_empty(), "unexpected warnings: {w:?}");
         let d = &ex.fetched_deps[0];
         assert_eq!(d.name, "fmt");
-        assert_eq!(d.git.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
+        assert_eq!(d.url.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
         assert_eq!(d.tag.as_deref(), Some("10.2.1"));
     }
 
@@ -2032,7 +2028,7 @@ CPMAddPackage(
         assert!(w.is_empty(), "unexpected warnings: {w:?}");
         let d = &ex.fetched_deps[0];
         assert_eq!(d.name, "fmt");
-        assert_eq!(d.git.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
+        assert_eq!(d.url.as_deref(), Some("https://github.com/fmtlib/fmt.git"));
         assert_eq!(d.tag.as_deref(), Some("10.2.1"));
     }
 
@@ -2040,7 +2036,7 @@ CPMAddPackage(
     fn cpm_compact_gl() {
         let (ex, _) = extract_src("CPMAddPackage(\"gl:user/mylib#develop\")");
         let d = &ex.fetched_deps[0];
-        assert_eq!(d.git.as_deref(), Some("https://gitlab.com/user/mylib.git"));
+        assert_eq!(d.url.as_deref(), Some("https://gitlab.com/user/mylib.git"));
         assert_eq!(d.branch.as_deref(), Some("develop"));
     }
 
@@ -2052,7 +2048,7 @@ CPMAddPackage(
         let (ex, w) = extract_src(src);
         let toml = emit_toml("app", "0.1.0", &ex, &w);
         assert!(toml.contains("[dependencies]"));
-        assert!(toml.contains("git = \"https://github.com/fmtlib/fmt.git\""));
+        assert!(toml.contains("url = \"https://github.com/fmtlib/fmt.git\""));
         assert!(toml.contains("tag = \"10.2.1\""));
     }
 

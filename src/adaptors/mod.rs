@@ -281,7 +281,7 @@ pub fn build_foreign_deps(
 
         let dep_dir = if let Some(rel) = &d.path {
             project_dir.join(rel)
-        } else if d.git.is_some() {
+        } else if d.is_git() {
             project_dir.join(".pkgs").join(name)
         } else if let Some(url) = &d.url {
             crate::fetch::http::fetch_url_dep(
@@ -465,7 +465,7 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
     match dep {
         Dependency::Simple(version) => Some(version.as_str()),
         Dependency::Detailed(d)
-            if d.version.is_some() && d.path.is_none() && d.git.is_none() && d.url.is_none() =>
+            if d.version.is_some() && d.path.is_none() && !d.is_git() && d.url.is_none() =>
         {
             d.version.as_deref()
         }

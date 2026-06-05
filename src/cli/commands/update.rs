@@ -92,7 +92,7 @@ fn cmd_update(package: Option<&str>) {
         && !manifest
             .dependencies
             .values()
-            .any(|d| matches!(d, Dependency::Detailed(dd) if dd.git.is_some()))
+            .any(|d| matches!(d, Dependency::Detailed(dd) if dd.is_git()))
         && url_count == 0
     {
         if let Some(pkg) = package {

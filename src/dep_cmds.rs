@@ -59,9 +59,6 @@ pub fn manifest_add_dep(
             if let Some(u) = &d.url {
                 inline.insert("url", Value::from(u.as_str()));
             }
-            if let Some(g) = &d.git {
-                inline.insert("git", Value::from(g.as_str()));
-            }
             if let Some(b) = &d.branch {
                 inline.insert("branch", Value::from(b.as_str()));
             }
@@ -156,7 +153,7 @@ pub fn fetch_git_deps(project_dir: &Path) -> Result<Vec<GitDepOutcome>, FreightE
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        let Some(url) = &d.git else { continue };
+        let Some(url) = &d.url else { continue }; if !d.is_git() { continue };
 
         let dest = deps_dir.join(name);
         if dest.exists() {
@@ -208,7 +205,7 @@ pub fn update_git_deps(
         let Dependency::Detailed(d) = dep else {
             continue;
         };
-        let Some(_url) = &d.git else { continue };
+        if !d.is_git() || d.url.is_none() { continue }; let _url = d.url.as_deref().unwrap();
 
         let dest = deps_dir.join(name);
         if !dest.exists() {
@@ -324,7 +321,7 @@ pub fn fetch_registry_deps(
             Dependency::Detailed(d)
                 if d.version.is_some()
                     && d.path.is_none()
-                    && d.git.is_none()
+                    && !d.is_git()
                     && d.url.is_none()
                     && !crate::manifest::types::is_platform_dep(name) =>
             {
@@ -597,7 +594,7 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
     match dep {
         Dependency::Simple(version) => Some(version.as_str()),
         Dependency::Detailed(d)
-            if d.version.is_some() && d.path.is_none() && d.git.is_none() && d.url.is_none() =>
+            if d.version.is_some() && d.path.is_none() && !d.is_git() && d.url.is_none() =>
         {
             d.version.as_deref()
         }
