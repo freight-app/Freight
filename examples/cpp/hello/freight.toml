@@ -26,3 +26,7 @@ opt-level = 3
 lto       = true
 strip     = true
 debug     = false
+
+[dependencies]
+vecmath = "0.1.1"
+mathlib = "0.1.0"
