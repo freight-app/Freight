@@ -70,6 +70,8 @@ use freight::build::{
 use freight::event::{BuildEvent, Progress};
 use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 
+use crate::tui::{run_build_viewport, BuildTarget};
+
 use crate::output::{
     print_error, print_status, print_success, print_warning, render_dot_graph,
     render_mermaid_graph, GraphCluster, GraphEdge, GraphFormat,
@@ -253,79 +255,85 @@ pub fn cmd_build(
 ) {
     let profile = if release { "release" } else { "dev" };
 
+    // --time-passes uses a specialised progress that collects timing data;
+    // skip the TUI for that path.
     if time_passes {
-        // Safety: single-threaded here; rayon workers not yet started.
-        unsafe {
-            std::env::set_var("FREIGHT_TIME_PASSES", "1");
-        }
-    }
-
-    let (progress, timings) = if time_passes {
-        make_timed_progress()
-    } else {
-        (
-            make_progress(),
-            std::sync::Arc::new(std::sync::Mutex::new(vec![])),
-        )
-    };
-
-    let build_ok;
-    if at_workspace_root() {
-        match build_workspace_with(profile, package, features, use_defaults, &progress) {
-            Ok(outputs) => {
-                println!();
-                for o in &outputs {
+        unsafe { std::env::set_var("FREIGHT_TIME_PASSES", "1") };
+        let (progress, timings) = make_timed_progress();
+        let build_ok = if at_workspace_root() {
+            match build_workspace_with(profile, package, features, use_defaults, &progress) {
+                Ok(outputs) => {
+                    println!();
+                    for o in &outputs {
+                        print_success(&format!(
+                            "{} ({} compiled, {} up to date)",
+                            o.package_name, o.compiled, o.skipped,
+                        ));
+                        for bin in &o.binaries {
+                            println!("    {}", bin.display());
+                        }
+                    }
+                    true
+                }
+                Err(e) => { println!(); print_error(&e.to_string()); false }
+            }
+        } else {
+            if package.is_some() {
+                print_error("`-p` can only be used at a workspace root");
+                return;
+            }
+            match build_project_with(profile, features, use_defaults, sanitize, &progress) {
+                Ok(output) => {
+                    println!();
                     print_success(&format!(
                         "{} ({} compiled, {} up to date)",
-                        o.package_name, o.compiled, o.skipped,
+                        output.package_name, output.compiled, output.skipped,
                     ));
-                    for bin in &o.binaries {
-                        println!("    {}", bin.display());
-                    }
+                    for bin in &output.binaries { println!("    {}", bin.display()); }
+                    true
                 }
-                build_ok = true;
+                Err(e) => { println!(); print_error(&e.to_string()); false }
             }
-            Err(e) => {
-                println!();
-                print_error(&e.to_string());
-                build_ok = false;
+        };
+        if build_ok {
+            if emit.iter().any(|e| e.eq_ignore_ascii_case("asm")) {
+                if let Err(e) = emit_asm_project_with(profile, &progress) {
+                    print_error(&format!("--emit asm failed: {e}"));
+                }
             }
+            let mut t = timings.lock().unwrap();
+            t.sort_by(|a, b| b.1.cmp(&a.1));
+            print_timing_table(&t);
         }
+        return;
+    }
+
+    // Normal build — ratatui inline viewport (falls back to plain output when
+    // stdout is not a TTY or the terminal can't be initialised).
+    let build_ok = if at_workspace_root() {
+        run_build_viewport(BuildTarget::Workspace {
+            profile: profile.to_string(),
+            package: package.map(str::to_string),
+            features: features.to_vec(),
+            use_defaults,
+        })
     } else {
         if package.is_some() {
             print_error("`-p` can only be used at a workspace root");
             return;
         }
-        match build_project_with(profile, features, use_defaults, sanitize, &progress) {
-            Ok(output) => {
-                println!();
-                print_success(&format!(
-                    "{} ({} compiled, {} up to date)",
-                    output.package_name, output.compiled, output.skipped,
-                ));
-                for bin in &output.binaries {
-                    println!("    {}", bin.display());
-                }
-                build_ok = true;
-            }
-            Err(e) => {
-                println!();
-                print_error(&e.to_string());
-                build_ok = false;
-            }
-        }
-    }
+        run_build_viewport(BuildTarget::Project {
+            profile: profile.to_string(),
+            features: features.to_vec(),
+            use_defaults,
+            sanitize: sanitize.to_vec(),
+        })
+    };
 
-    if build_ok {
-        if emit.iter().any(|e| e.eq_ignore_ascii_case("asm")) {
-            if let Err(e) = emit_asm_project_with(profile, &progress) {
-                print_error(&format!("--emit asm failed: {e}"));
-            }
-        }
-        if time_passes {
-            let mut t = timings.lock().unwrap();
-            t.sort_by(|a, b| b.1.cmp(&a.1));
-            print_timing_table(&t);
+    if build_ok && emit.iter().any(|e| e.eq_ignore_ascii_case("asm")) {
+        let progress = make_progress();
+        if let Err(e) = emit_asm_project_with(profile, &progress) {
+            print_error(&format!("--emit asm failed: {e}"));
         }
     }
 }
