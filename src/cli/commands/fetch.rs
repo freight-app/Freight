@@ -273,6 +273,12 @@ fn fetch_prebuilt_deps(
         };
 
         if !triples.contains(&triple.to_string()) {
+            // No prebuilt for this triple — source tarball will be downloaded
+            // by fetch_registry_deps and compiled on first `freight build`.
+            print_status(
+                "source",
+                &format!("`{name}@{version}` has no prebuilt for {triple} — will build from source"),
+            );
             continue;
         }
 

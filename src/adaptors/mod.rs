@@ -657,6 +657,39 @@ fn resolve_version_dep(
                     }
                 }
 
+                // No prebuilt libs found — if the dep ships a freight.toml (source
+                // tarball downloaded from the registry), build it in-place and point
+                // at the resulting static lib in target/{profile}/.
+                if link_flags.is_empty() && dep_dir.join("freight.toml").exists() {
+                    progress(BuildEvent::Warning(format!(
+                        "no prebuilt found for `{name}` — building from source"
+                    )));
+                    // Build the dep as a lib. Reuse the parent profile ("dev"/"release").
+                    // Errors here are non-fatal: we let the link step fail with a clear message.
+                    let _ = crate::build::build_project_at(
+                        &dep_dir,
+                        version,
+                        &[],
+                        true,
+                        None,
+                        &[],
+                        progress,
+                    );
+                    let built_lib = dep_dir.join("target").join(version).join(format!("lib{name}.a"));
+                    if built_lib.exists() {
+                        let out_dir = built_lib.parent().unwrap().to_path_buf();
+                        link_flags.push(format!("-L{}", out_dir.display()));
+                        link_flags.push(format!("-l{name}"));
+                        // Also pick up include dirs from the dep itself.
+                        for candidate in &["include", "inc"] {
+                            let d = dep_dir.join(candidate);
+                            if d.is_dir() && !include_dirs.contains(&d) {
+                                include_dirs.push(d);
+                            }
+                        }
+                    }
+                }
+
                 return Ok(Some((
                     ForeignBuilt {
                         name: name.to_string(),
