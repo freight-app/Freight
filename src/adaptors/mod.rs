@@ -670,7 +670,7 @@ fn resolve_version_dep(
                         None,
                         &[],
                         &inner_progress,
-                        Some(project_dir), // flat: use root .pkgs/ for transitive deps
+                        Some(pkgs_root), // flat: transitive deps resolve from root .pkgs/ pool
                     );
                     progress(BuildEvent::DepBuildDone);
                     let built_lib = dep_dir.join("target").join(version).join(format!("lib{name}.a"));
