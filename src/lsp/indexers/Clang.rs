@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use clang_bridge::{Index, TranslationUnit};
 use serde_json::{json, Value};
 
+use crate::build::lsp_source_flags;
+use crate::lsp::index::LanguageIndexer;
 use crate::lsp::protocol::{path_from_uri, position, uri_from_path};
 
 /// Per-file C/C++ indexer backed by `clang-bridge`.
@@ -29,80 +31,12 @@ impl ClangIndexer {
         }
     }
 
-    /// Replace the flag map and evict all cached TUs so they are reparsed with
-    /// the new flags on next access.
-    pub fn refresh_flags(&mut self, flags: HashMap<PathBuf, Vec<String>>) {
-        self.source_flags = flags;
-        self.tus.clear();
-    }
-
-    /// Evict the cached TU for `path` (call on `textDocument/didClose`).
-    pub fn evict(&mut self, path: &Path) {
-        self.tus.remove(path);
-    }
-
-    /// Return true if `path` is a C/C++ source or header file.
-    pub fn handles(path: &Path) -> bool {
+    fn is_c_family(path: &Path) -> bool {
         matches!(
             path.extension().and_then(|e| e.to_str()).unwrap_or(""),
             "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx"
         )
     }
-
-    // ── LSP request handlers ──────────────────────────────────────────────────
-
-    /// Try to serve `textDocument/hover`. Returns the LSP result value or `None`.
-    pub fn hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        if !Self::handles(&path) { return None; }
-        let tu = self.ensure_tu(&path)?;
-        let md = clang_bridge::hover::hover_markdown(tu, line as u32 + 1, col as u32 + 1)?;
-        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
-    }
-
-    /// Try to serve `textDocument/definition` / `textDocument/declaration`.
-    /// Returns an LSP `Location` or `None`.
-    pub fn goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        if !Self::handles(&path) { return None; }
-        let tu = self.ensure_tu(&path)?;
-        let loc = clang_bridge::goto::goto_definition(tu, line as u32 + 1, col as u32 + 1)?;
-        let target_uri = uri_from_path(Path::new(&loc.file));
-        Some(json!({
-            "uri": target_uri,
-            "range": {
-                "start": { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) },
-                "end":   { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) }
-            }
-        }))
-    }
-
-    /// Try to serve `textDocument/completion`. Returns an LSP `CompletionList`
-    /// or `None`.
-    pub fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        if !Self::handles(&path) { return None; }
-        let tu = self.ensure_tu(&path)?;
-        let items: Vec<Value> = clang_bridge::completion::complete(
-            tu,
-            line as u32 + 1,
-            col as u32 + 1,
-            None,
-        )
-        .map(|item| {
-            let mut v = json!({ "label": item.label, "kind": item.kind });
-            if let Some(d) = item.detail        { v["detail"] = Value::String(d); }
-            if let Some(d) = item.documentation { v["documentation"] = json!({ "kind": "markdown", "value": d }); }
-            v
-        })
-        .collect();
-        Some(json!({ "isIncomplete": false, "items": items }))
-    }
-
-    // ── Internal ──────────────────────────────────────────────────────────────
 
     fn ensure_tu(&mut self, path: &Path) -> Option<&TranslationUnit> {
         if !self.tus.contains_key(path) {
@@ -119,4 +53,62 @@ impl ClangIndexer {
 
 impl Default for ClangIndexer {
     fn default() -> Self { Self::new() }
+}
+
+impl LanguageIndexer for ClangIndexer {
+    fn handles(&self, path: &Path) -> bool {
+        Self::is_c_family(path)
+    }
+
+    fn refresh_flags(&mut self, manifest_dir: &Path, profile: &str) {
+        if let Ok(flags) = lsp_source_flags(manifest_dir, profile) {
+            self.source_flags = flags;
+            self.tus.clear();
+        }
+    }
+
+    fn evict(&mut self, path: &Path) {
+        self.tus.remove(path);
+    }
+
+    fn hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+        let md = clang_bridge::hover::hover_markdown(tu, line as u32 + 1, col as u32 + 1)?;
+        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
+    }
+
+    fn goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+        let loc = clang_bridge::goto::goto_definition(tu, line as u32 + 1, col as u32 + 1)?;
+        let target_uri = uri_from_path(Path::new(&loc.file));
+        Some(json!({
+            "uri": target_uri,
+            "range": {
+                "start": { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) },
+                "end":   { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) }
+            }
+        }))
+    }
+
+    fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+        let items: Vec<Value> = clang_bridge::completion::complete(tu, line as u32 + 1, col as u32 + 1, None)
+            .map(|item| {
+                let mut v = json!({ "label": item.label, "kind": item.kind });
+                if let Some(d) = item.detail        { v["detail"] = Value::String(d); }
+                if let Some(d) = item.documentation { v["documentation"] = json!({ "kind": "markdown", "value": d }); }
+                v
+            })
+            .collect();
+        Some(json!({ "isIncomplete": false, "items": items }))
+    }
 }

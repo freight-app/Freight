@@ -1,12 +1,45 @@
-//! Symbol documentation index built from the project's source files via docify.
+//! Shared indexer trait and symbol documentation index.
 //!
-//! The index is rebuilt whenever `freight.toml` is saved (same cadence as
-//! `compile_commands.json`). Hover requests for source files look up the symbol
-//! at the cursor position and return formatted Markdown documentation before
-//! falling back to the passthrough language server (clangd/fortls/asm-lsp).
+//! `LanguageIndexer` is the contract every per-language indexer in
+//! `indexers/` must implement so the LSP server can drive them uniformly.
+//!
+//! `DocIndex` and `HeaderIndex` are freight-specific lookup structures used
+//! across all indexers for `#include` hover, inlay hints, and doc lookup.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+// ---------------------------------------------------------------------------
+// LanguageIndexer trait
+// ---------------------------------------------------------------------------
+
+/// Common interface for per-language LSP indexers.
+///
+/// Each implementation owns its parse state (AST cache, compile flags, etc.)
+/// and answers LSP requests for the file types it handles.
+pub trait LanguageIndexer: Send {
+    /// Return true if this indexer handles the given source file.
+    fn handles(&self, path: &Path) -> bool;
+
+    /// Called when the manifest or build context changes so the indexer can
+    /// reload compile flags and evict stale cached state.
+    fn refresh_flags(&mut self, manifest_dir: &Path, profile: &str);
+
+    /// Evict any cached state for `path` (called on `textDocument/didClose`).
+    fn evict(&mut self, path: &Path);
+
+    /// Serve `textDocument/hover`. Returns the LSP result value or `None`.
+    fn hover(&mut self, uri: &str, msg: &Value) -> Option<Value>;
+
+    /// Serve `textDocument/definition` / `textDocument/declaration`.
+    /// Returns an LSP `Location` or `None`.
+    fn goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value>;
+
+    /// Serve `textDocument/completion`. Returns an LSP `CompletionList` or `None`.
+    fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value>;
+}
 
 use crate::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};
 use crate::manifest::load_manifest;

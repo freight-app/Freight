@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use indexers::ClangIndexer;
+use index::LanguageIndexer;
 
 use crate::build::generate_lsp_compile_commands_at;
 use crate::manifest::types::{Dependency, Manifest};
@@ -152,7 +153,8 @@ struct ServerState {
     /// answers with Freight package/docs context before forwarding.
     clangd_pending: Arc<Mutex<HashMap<String, PendingClangdRequest>>>,
 
-    clang: ClangIndexer,
+    /// Per-language indexers; iterated in order for each LSP request.
+    indexers: Vec<Box<dyn LanguageIndexer>>,
 }
 
 struct Passthrough {
@@ -215,7 +217,7 @@ impl Server {
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
-                clang: ClangIndexer::new(),
+                indexers: vec![Box::new(ClangIndexer::new())],
             },
         }
     }
@@ -380,7 +382,7 @@ impl Server {
             return Ok(());
         }
         if let Some(path) = path_from_uri(&uri) {
-            self.state.clang.evict(&path);
+            for ix in &mut self.state.indexers { ix.evict(&path); }
         }
         self.forward_by_uri(&uri, &msg)
     }
@@ -430,7 +432,7 @@ impl Server {
             );
             return self.respond(msg.get("id").cloned(), result);
         }
-        if let Some(result) = self.state.clang.completion(&uri, &msg) {
+        if let Some(result) = self.state.indexers.iter_mut().find_map(|ix| ix.completion(&uri, &msg)) {
             return self.respond(msg.get("id").cloned(), result);
         }
         self.forward_or_null(msg)
@@ -447,7 +449,7 @@ impl Server {
             return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
         }
 
-        if let Some(result) = self.state.clang.hover(&uri, &msg) {
+        if let Some(result) = self.state.indexers.iter_mut().find_map(|ix| ix.hover(&uri, &msg)) {
             return self.respond(msg.get("id").cloned(), result);
         }
 
@@ -555,7 +557,7 @@ impl Server {
                 return self.respond(msg.get("id").cloned(), location);
             }
         }
-        if let Some(location) = self.state.clang.goto_definition(&uri, &msg) {
+        if let Some(location) = self.state.indexers.iter_mut().find_map(|ix| ix.goto_definition(&uri, &msg)) {
             return self.respond(msg.get("id").cloned(), location);
         }
         self.forward_by_uri(&uri, &msg)
@@ -588,11 +590,11 @@ impl Server {
 
     // ── Indexer delegates ─────────────────────────────────────────────────────
 
-    fn clang_refresh_flags(&mut self) {
-        use crate::build::lsp_source_flags;
+    fn refresh_indexer_flags(&mut self) {
         let Some(ref manifest_dir) = self.state.manifest_dir.clone() else { return; };
-        if let Ok(flags) = lsp_source_flags(manifest_dir, &self.args.profile) {
-            self.state.clang.refresh_flags(flags);
+        let profile = self.args.profile.clone();
+        for ix in &mut self.state.indexers {
+            ix.refresh_flags(&manifest_dir, &profile);
         }
     }
 
@@ -1199,7 +1201,7 @@ impl Server {
             tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
             self.state.compile_commands_dir = Some(dir);
         }
-        self.clang_refresh_flags();
+        self.refresh_indexer_flags();
         self.refresh_doc_index();
     }
 
