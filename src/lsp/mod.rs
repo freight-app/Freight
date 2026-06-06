@@ -24,7 +24,7 @@ use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
 use index::{
-    include_hover_markdown, include_inlay_label, item_to_markdown, parse_include_header, word_at,
+    include_hover_markdown, include_inlay_label, parse_include_header,
     DocIndex, HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
 };
 use manifest::{
@@ -167,22 +167,6 @@ enum PendingClangdRequest {
         original_id: Value,
         freight_hints: Vec<Value>,
     },
-    Hover {
-        state: Arc<Mutex<PendingHoverState>>,
-        part: PendingHoverPart,
-    },
-}
-
-struct PendingHoverState {
-    original_id: Value,
-    clangd_hover: Option<Value>,
-    definition: Option<Value>,
-}
-
-#[derive(Clone, Copy)]
-enum PendingHoverPart {
-    Hover,
-    Definition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -462,89 +446,6 @@ impl Server {
         }
     }
 
-    fn forward_clangd_semantic_hover(&mut self, msg: Value) -> io::Result<bool> {
-        if self.state.clangd.is_none() {
-            return Ok(false);
-        }
-        let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let orig_id_str = request_id_string(&id);
-        let hover_id = format!("__freight_hover_hover_{orig_id_str}");
-        let definition_id = format!("__freight_hover_definition_{orig_id_str}");
-        let state = Arc::new(Mutex::new(PendingHoverState {
-            original_id: id,
-            clangd_hover: None,
-            definition: None,
-        }));
-
-        {
-            let mut pending = self.state.clangd_pending.lock().unwrap();
-            pending.insert(
-                hover_id.clone(),
-                PendingClangdRequest::Hover {
-                    state: Arc::clone(&state),
-                    part: PendingHoverPart::Hover,
-                },
-            );
-            pending.insert(
-                definition_id.clone(),
-                PendingClangdRequest::Hover {
-                    state,
-                    part: PendingHoverPart::Definition,
-                },
-            );
-        }
-
-        let mut hover_msg = msg.clone();
-        set_request_id(&mut hover_msg, &hover_id);
-        let mut definition_msg = msg;
-        set_request_id(&mut definition_msg, &definition_id);
-        set_request_method(&mut definition_msg, "textDocument/definition");
-
-        if !self.forward_to_passthrough(SourceServer::Clangd, &hover_msg)? {
-            self.remove_pending_clangd(&[&hover_id, &definition_id]);
-            return Ok(false);
-        }
-        if !self.forward_to_passthrough(SourceServer::Clangd, &definition_msg)? {
-            self.remove_pending_clangd(&[&hover_id, &definition_id]);
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
-    fn remove_pending_clangd(&self, ids: &[&str]) {
-        let mut pending = self.state.clangd_pending.lock().unwrap();
-        for id in ids {
-            pending.remove(*id);
-        }
-    }
-
-    fn include_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, _) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let text = std::fs::read_to_string(&path).ok()?;
-        let line_text = text.lines().nth(line)?;
-        let (header, is_system) = parse_include_header(line_text)?;
-
-        // Try package index first, then system dirs for angle-bracket includes.
-        let owned;
-        let entry: &HeaderEntry = if let Some(e) = self.state.header_index.lookup(&header) {
-            e
-        } else if is_system {
-            owned = self.state.header_index.lookup_system(&header)?;
-            &owned
-        } else {
-            return None;
-        };
-
-        let md = include_hover_markdown(&header, entry);
-        tracing::debug!(
-            header = header.as_str(),
-            package = entry.package_name.as_str(),
-            line,
-            "include hover"
-        );
-        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
-    }
 
     /// Go-to-definition / go-to-declaration on an `#include` line:
     /// jump directly to the header file. Falls through to clangd for non-include lines.
@@ -744,92 +645,6 @@ impl Server {
         Some(hints)
     }
 
-    fn doc_hover(&self, uri: &str, msg: &Value) -> Option<Value> {
-        let guard = self.state.doc_index.lock().unwrap();
-        let index = match guard.as_ref() {
-            Some(idx) if !idx.is_empty() => idx,
-            Some(_) => {
-                tracing::info!("doc-index hover: index is empty — no items indexed");
-                return None;
-            }
-            None => {
-                tracing::info!("doc-index hover: index not built yet");
-                return None;
-            }
-        };
-
-        let Some((line, character)) = position(msg) else {
-            tracing::debug!("doc-index hover: no position in message");
-            return None;
-        };
-        let Some(path) = path_from_uri(uri) else {
-            tracing::debug!(uri, "doc-index hover: could not resolve path from uri");
-            return None;
-        };
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::debug!(path = %path.display(), error = %e, "doc-index hover: could not read file");
-                return None;
-            }
-        };
-
-        let word = word_at(&text, line, character);
-        tracing::debug!(
-            word = word.as_deref().unwrap_or("(none)"),
-            line,
-            col = character,
-            index_items = index.len(),
-            "doc-index hover lookup"
-        );
-
-        // Position-based: find the item whose doc comment is nearest before the cursor.
-        // Validate that the word under cursor matches the item's simple name so we don't
-        // return the wrong item when the cursor is inside a long function body.
-        let item = index
-            .lookup_by_location(&path, line)
-            .filter(|item| {
-                word.as_deref()
-                    .map(|w| {
-                        item.name
-                            .to_ascii_lowercase()
-                            .ends_with(&w.to_ascii_lowercase())
-                    })
-                    .unwrap_or(true)
-            })
-            .or_else(|| {
-                let w = word.as_deref()?;
-                let found = index.lookup(w);
-                if found.is_none() {
-                    tracing::debug!(word = w, "doc-index hover: name lookup miss");
-                }
-                found
-            });
-
-        match item {
-            Some(item) => {
-                tracing::info!(
-                    symbol = item.name.as_str(),
-                    source_file = %item.file.display(),
-                    cursor_line = line,
-                    cursor_col = character,
-                    "doc-index hover hit"
-                );
-                let markdown = item_to_markdown(item);
-                Some(json!({ "contents": { "kind": "markdown", "value": markdown } }))
-            }
-            None => {
-                tracing::info!(
-                    word = word.as_deref().unwrap_or("(none)"),
-                    line,
-                    col = character,
-                    "doc-index hover: no match"
-                );
-                None
-            }
-        }
-    }
-
     fn handle_signature_help_or_forward(&mut self, msg: Value) -> io::Result<()> {
         let Some(uri) = text_document_uri(&msg) else {
             return self.forward_or_null(msg);
@@ -961,26 +776,6 @@ fn set_manifest_config(path: &Path, key: &str, value: Option<&Value>) -> anyhow:
     Ok(())
 }
 
-fn request_id_string(id: &Value) -> String {
-    match id {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        _ => "0".to_string(),
-    }
-}
-
-fn set_request_id(msg: &mut Value, id: &str) {
-    if let Some(obj) = msg.as_object_mut() {
-        obj.insert("id".to_string(), Value::String(id.to_string()));
-    }
-}
-
-fn set_request_method(msg: &mut Value, method: &str) {
-    if let Some(obj) = msg.as_object_mut() {
-        obj.insert("method".to_string(), Value::String(method.to_string()));
-    }
-}
-
 fn merge_clangd_inlay_response(
     mut msg: Value,
     original_id: Value,
@@ -1015,65 +810,6 @@ fn merge_clangd_inlay_response(
         obj.insert("result".to_string(), Value::Array(merged));
     }
     msg
-}
-
-fn semantic_hover_response(
-    hover: &PendingHoverState,
-    doc_index: Option<&Arc<Mutex<Option<DocIndex>>>>,
-) -> Value {
-    let clangd_hover = hover.clangd_hover.clone().unwrap_or(Value::Null);
-    let freight_doc = hover
-        .definition
-        .as_ref()
-        .and_then(|definition| freight_doc_for_definition(definition, doc_index));
-    let result = freight_doc_hover_result(clangd_hover, freight_doc);
-    json!({ "jsonrpc": "2.0", "id": hover.original_id.clone(), "result": result })
-}
-
-fn freight_doc_for_definition(
-    definition: &Value,
-    doc_index: Option<&Arc<Mutex<Option<DocIndex>>>>,
-) -> Option<String> {
-    let (path, line) = first_definition_location(definition)?;
-    let guard = doc_index?.lock().ok()?;
-    let index = guard.as_ref()?;
-    let item = index.lookup_by_location(&path, line)?;
-    Some(item_to_markdown(item))
-}
-
-fn first_definition_location(definition: &Value) -> Option<(PathBuf, usize)> {
-    let location = definition
-        .as_array()
-        .and_then(|items| items.first())
-        .unwrap_or(definition);
-    if location.is_null() {
-        return None;
-    }
-    let uri = location
-        .get("targetUri")
-        .or_else(|| location.get("uri"))?
-        .as_str()?;
-    let range = location
-        .get("targetSelectionRange")
-        .or_else(|| location.get("range"))?;
-    let line = range.get("start")?.get("line")?.as_u64()? as usize;
-    Some((path_from_uri(uri)?, line))
-}
-
-fn freight_doc_hover_result(clangd_hover: Value, freight_doc: Option<String>) -> Value {
-    let Some(freight_doc) = freight_doc.filter(|doc| !doc.trim().is_empty()) else {
-        // No freight doc — fall through to clangd's raw hover.
-        return clangd_hover;
-    };
-
-    // Freight doc found: use it, but preserve the hover range from clangd.
-    let mut result = json!({ "contents": { "kind": "markdown", "value": freight_doc } });
-    if let Some(range) = clangd_hover.get("range").cloned() {
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert("range".to_string(), range);
-        }
-    }
-    result
 }
 
 impl Server {
@@ -1383,7 +1119,7 @@ impl Server {
         initialize_msg: &Value,
         cwd: Option<&Path>,
         pending: Option<Arc<Mutex<HashMap<String, PendingClangdRequest>>>>,
-        doc_index: Option<Arc<Mutex<Option<DocIndex>>>>,
+        _doc_index: Option<Arc<Mutex<Option<DocIndex>>>>,
     ) -> Option<(Passthrough, Option<Value>)> {
         let mut cmd = Command::new(command);
         cmd.args(args)
@@ -1426,29 +1162,6 @@ impl Server {
                                 let response =
                                     merge_clangd_inlay_response(msg, original_id, freight_hints);
                                 let _ = write_lsp_message(&mut *out.lock().unwrap(), &response);
-                                continue;
-                            }
-                            Some(PendingClangdRequest::Hover { state, part }) => {
-                                let maybe_response = {
-                                    let mut hover = state.lock().unwrap();
-                                    let result = msg.get("result").cloned().unwrap_or(Value::Null);
-                                    match part {
-                                        PendingHoverPart::Hover => {
-                                            hover.clangd_hover = Some(result)
-                                        }
-                                        PendingHoverPart::Definition => {
-                                            hover.definition = Some(result)
-                                        }
-                                    }
-                                    if hover.clangd_hover.is_some() && hover.definition.is_some() {
-                                        Some(semantic_hover_response(&hover, doc_index.as_ref()))
-                                    } else {
-                                        None
-                                    }
-                                };
-                                if let Some(response) = maybe_response {
-                                    let _ = write_lsp_message(&mut *out.lock().unwrap(), &response);
-                                }
                                 continue;
                             }
                             None => {}
@@ -1689,10 +1402,7 @@ fn level_for_method(method: &str) -> tracing::Level {
 #[cfg(test)]
 mod tests {
     use super::protocol::sanitize_code_action_diagnostics;
-    use super::{
-        build_workspace_inventory, collect_path_dependency_doc_dirs, first_definition_location,
-        freight_doc_hover_result,
-    };
+    use super::{build_workspace_inventory, collect_path_dependency_doc_dirs};
     use serde_json::json;
 
     #[test]
@@ -1815,54 +1525,6 @@ hdrs = ["include/core.h"]
         collect_path_dependency_doc_dirs(tmp.path(), &mut dirs);
 
         assert_eq!(dirs, vec![tmp.path().join("core").canonicalize().unwrap()]);
-    }
-
-    #[test]
-    fn hover_result_uses_only_freight_docs_when_available() {
-        let clangd = json!({
-            "contents": { "kind": "markdown", "value": "```cpp\nint add(int, int)\n```" },
-            "range": {
-                "start": { "line": 4, "character": 2 },
-                "end": { "line": 4, "character": 5 }
-            }
-        });
-
-        let merged = freight_doc_hover_result(clangd, Some("Freight package docs".to_string()));
-
-        assert_eq!(merged["range"]["start"]["line"], json!(4));
-        let value = merged["contents"]["value"].as_str().unwrap();
-        assert!(!value.contains("int add"));
-        assert!(value.contains("Freight package docs"));
-    }
-
-    #[test]
-    fn hover_result_suppresses_clangd_hover_without_freight_docs() {
-        let clangd = json!({
-            "contents": { "kind": "markdown", "value": "```cpp\nint add(int, int)\n```" }
-        });
-
-        let merged = freight_doc_hover_result(clangd, None);
-
-        assert!(merged.is_null());
-    }
-
-    #[test]
-    fn definition_location_accepts_location_link() {
-        let definition = json!([{
-            "targetUri": "file:///tmp/freight-test/include/core.hpp",
-            "targetSelectionRange": {
-                "start": { "line": 12, "character": 7 },
-                "end": { "line": 12, "character": 11 }
-            }
-        }]);
-
-        let (path, line) = first_definition_location(&definition).unwrap();
-
-        assert_eq!(
-            path,
-            std::path::PathBuf::from("/tmp/freight-test/include/core.hpp")
-        );
-        assert_eq!(line, 12);
     }
 
     fn write_manifest(dir: &std::path::Path, text: &str) {
