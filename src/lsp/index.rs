@@ -426,7 +426,7 @@ impl Default for HeaderIndex {
 
 /// Probe the default C++ compiler for its system include search paths.
 /// Parses the `#include <...> search starts here:` block from `gcc -v` output.
-fn probe_system_include_dirs() -> Vec<PathBuf> {
+pub(crate) fn probe_system_include_dirs() -> Vec<PathBuf> {
     let compilers = ["c++", "g++", "clang++", "cc", "gcc", "clang"];
     for compiler in compilers {
         if let Some(dirs) = try_probe_compiler(compiler) {

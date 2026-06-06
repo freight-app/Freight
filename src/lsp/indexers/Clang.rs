@@ -88,7 +88,27 @@ impl LanguageIndexer for ClangIndexer {
 
     fn refresh_flags(&mut self, manifest_dir: &Path, profile: &str) {
         if let Ok(flags) = lsp_source_flags(manifest_dir, profile) {
-            self.source_flags = flags;
+            // Probe system C++ include dirs once and inject them as -isystem flags so
+            // libclang finds GCC target-specific headers (e.g. bits/requires_hosted.h).
+            // clang++ auto-detects these at driver level but FixedCompilationDatabase
+            // does not reproduce that detection.
+            let sys_dirs = crate::lsp::index::probe_system_include_dirs();
+            let sys_flags: Vec<String> = sys_dirs
+                .iter()
+                .flat_map(|d| ["-isystem".to_string(), d.to_string_lossy().into_owned()])
+                .collect();
+            self.source_flags = if sys_flags.is_empty() {
+                flags
+            } else {
+                flags
+                    .into_iter()
+                    .map(|(path, file_flags)| {
+                        let mut combined = file_flags;
+                        combined.extend_from_slice(&sys_flags);
+                        (path, combined)
+                    })
+                    .collect()
+            };
             self.tus.clear();
         }
     }
