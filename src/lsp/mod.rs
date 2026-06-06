@@ -13,7 +13,6 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-#[cfg(feature = "clang-bridge")]
 use clang_bridge::{Index as ClangIndex, TranslationUnit as ClangTU};
 
 use crate::build::generate_lsp_compile_commands_at;
@@ -152,14 +151,11 @@ struct ServerState {
     /// answers with Freight package/docs context before forwarding.
     clangd_pending: Arc<Mutex<HashMap<String, PendingClangdRequest>>>,
 
-    #[cfg(feature = "clang-bridge")]
     bridge_index: ClangIndex,
     /// file path → parsed TU (lazily populated on first access).
-    #[cfg(feature = "clang-bridge")]
     bridge_tus: HashMap<PathBuf, ClangTU>,
     /// file path → compile flags, derived directly from the freight build
     /// context (no compile_commands.json needed).
-    #[cfg(feature = "clang-bridge")]
     bridge_source_flags: HashMap<PathBuf, Vec<String>>,
 }
 
@@ -223,11 +219,8 @@ impl Server {
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
-                #[cfg(feature = "clang-bridge")]
                 bridge_index: ClangIndex::new(),
-                #[cfg(feature = "clang-bridge")]
                 bridge_tus: HashMap::new(),
-                #[cfg(feature = "clang-bridge")]
                 bridge_source_flags: HashMap::new(),
             },
         }
@@ -392,7 +385,6 @@ impl Server {
             self.publish_diagnostics(&uri, vec![])?;
             return Ok(());
         }
-        #[cfg(feature = "clang-bridge")]
         if let Some(path) = path_from_uri(&uri) {
             self.bridge_evict(&path);
         }
@@ -445,7 +437,6 @@ impl Server {
             return self.respond(msg.get("id").cloned(), result);
         }
         // Try in-process bridge for C/C++ completion.
-        #[cfg(feature = "clang-bridge")]
         if let Some(result) = self.bridge_completion(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), result);
         }
@@ -464,7 +455,6 @@ impl Server {
         }
 
         // Try in-process bridge first (C/C++ only).
-        #[cfg(feature = "clang-bridge")]
         if let Some(result) = self.bridge_hover(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), result);
         }
@@ -574,7 +564,6 @@ impl Server {
             }
         }
         // Try in-process bridge for C/C++ definition lookup.
-        #[cfg(feature = "clang-bridge")]
         if let Some(location) = self.bridge_goto_definition(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), location);
         }
@@ -611,7 +600,6 @@ impl Server {
     /// Ensure a parsed TU exists for `path`, (re)parsing from disk if needed.
     /// Returns a reference to the cached TU or None if parsing failed / feature
     /// is disabled.
-    #[cfg(feature = "clang-bridge")]
     fn bridge_ensure_tu(&mut self, path: &Path) -> Option<&ClangTU> {
         if !self.state.bridge_tus.contains_key(path) {
             let flags: Vec<&str> = self.state.bridge_source_flags
@@ -627,7 +615,6 @@ impl Server {
 
     /// Refresh per-file compile flags from the freight build context.
     /// Clears the TU cache so stale TUs are reparsed with updated flags.
-    #[cfg(feature = "clang-bridge")]
     fn bridge_refresh_flags(&mut self) {
         use crate::build::lsp_source_flags;
         let Some(ref manifest_dir) = self.state.manifest_dir.clone() else { return; };
@@ -638,14 +625,12 @@ impl Server {
     }
 
     /// Remove the cached TU for `path` (called on didClose).
-    #[cfg(feature = "clang-bridge")]
     fn bridge_evict(&mut self, path: &Path) {
         self.state.bridge_tus.remove(path);
     }
 
     /// Try to serve hover from the in-process bridge. Returns the LSP hover
     /// result value or None if the bridge has no answer.
-    #[cfg(feature = "clang-bridge")]
     fn bridge_hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
@@ -661,7 +646,6 @@ impl Server {
 
     /// Try to serve go-to-definition from the bridge. Returns an LSP Location
     /// or None.
-    #[cfg(feature = "clang-bridge")]
     fn bridge_goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
@@ -683,7 +667,6 @@ impl Server {
 
     /// Try to serve completion from the bridge. Returns an LSP CompletionList
     /// or None.
-    #[cfg(feature = "clang-bridge")]
     fn bridge_completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
@@ -1318,7 +1301,6 @@ impl Server {
             tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
             self.state.compile_commands_dir = Some(dir);
         }
-        #[cfg(feature = "clang-bridge")]
         self.bridge_refresh_flags();
         self.refresh_doc_index();
     }
