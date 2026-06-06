@@ -1302,6 +1302,7 @@ impl Server {
             compile_commands_arg,
             "--background-index=false".to_string(),
             "--header-insertion=never".to_string(),
+            "--hover-style=detailed".to_string(),
         ];
         clangd_flags.extend(self.args.clangd_args.clone());
         let (server, caps) = self.start_passthrough_in(
