@@ -14,8 +14,9 @@ name = "freight"
 path = "src/cli/main.rs"
 
 [features]
-default   = []
-rich-math = ["dep:ratatui-image", "dep:image", "dep:mathjax-svg-rs", "dep:resvg"]
+default      = ["clang-bridge"]
+rich-math    = ["dep:ratatui-image", "dep:image", "dep:mathjax-svg-rs", "dep:resvg"]
+clang-bridge = ["dep:clang-bridge"]
 
 [dependencies]
 # Core library
@@ -59,6 +60,7 @@ resvg          = { version = "0.47", optional = true }
 tui-markdown = "0.3.7"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clang-bridge       = { path = "../clang-bridge", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

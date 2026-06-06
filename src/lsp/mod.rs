@@ -13,6 +13,9 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[cfg(feature = "clang-bridge")]
+use clang_bridge::{Index as ClangIndex, TranslationUnit as ClangTU};
+
 use crate::build::generate_lsp_compile_commands_at;
 use crate::manifest::types::{Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
@@ -148,6 +151,15 @@ struct ServerState {
     /// Shared with the clangd reader thread so it can merge clangd's semantic
     /// answers with Freight package/docs context before forwarding.
     clangd_pending: Arc<Mutex<HashMap<String, PendingClangdRequest>>>,
+
+    #[cfg(feature = "clang-bridge")]
+    bridge_index: ClangIndex,
+    /// file path → parsed TU (lazily populated on didOpen/didSave).
+    #[cfg(feature = "clang-bridge")]
+    bridge_tus: HashMap<PathBuf, ClangTU>,
+    /// Extra compile flags for the bridge (from compile_commands.json, once known).
+    #[cfg(feature = "clang-bridge")]
+    bridge_flags: Vec<String>,
 }
 
 struct Passthrough {
@@ -210,6 +222,12 @@ impl Server {
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
+                #[cfg(feature = "clang-bridge")]
+                bridge_index: ClangIndex::new(),
+                #[cfg(feature = "clang-bridge")]
+                bridge_tus: HashMap::new(),
+                #[cfg(feature = "clang-bridge")]
+                bridge_flags: Vec::new(),
             },
         }
     }
@@ -373,6 +391,10 @@ impl Server {
             self.publish_diagnostics(&uri, vec![])?;
             return Ok(());
         }
+        #[cfg(feature = "clang-bridge")]
+        if let Some(path) = path_from_uri(&uri) {
+            self.bridge_evict(&path);
+        }
         self.forward_by_uri(&uri, &msg)
     }
 
@@ -412,16 +434,21 @@ impl Server {
         let Some(uri) = text_document_uri(&msg) else {
             return self.forward_or_null(msg);
         };
-        if !is_freight_manifest_uri(&uri) {
-            return self.forward_or_null(msg);
+        if is_freight_manifest_uri(&uri) {
+            let text = self.manifest_text(&uri);
+            let result = completion_result(
+                text.as_deref(),
+                position(&msg),
+                Some(&self.state.workspace_inventory),
+            );
+            return self.respond(msg.get("id").cloned(), result);
         }
-        let text = self.manifest_text(&uri);
-        let result = completion_result(
-            text.as_deref(),
-            position(&msg),
-            Some(&self.state.workspace_inventory),
-        );
-        self.respond(msg.get("id").cloned(), result)
+        // Try in-process bridge for C/C++ completion.
+        #[cfg(feature = "clang-bridge")]
+        if let Some(result) = self.bridge_completion(&uri, &msg) {
+            return self.respond(msg.get("id").cloned(), result);
+        }
+        self.forward_or_null(msg)
     }
 
     fn handle_hover_or_forward(&mut self, msg: Value) -> io::Result<()> {
@@ -435,11 +462,10 @@ impl Server {
             return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
         }
 
-        if let Some((line, col)) = position(&msg) {
-            let file = path_from_uri(&uri)
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| uri.to_string());
-            tracing::debug!(file, line, col, "hover request");
+        // Try in-process bridge first (C/C++ only).
+        #[cfg(feature = "clang-bridge")]
+        if let Some(result) = self.bridge_hover(&uri, &msg) {
+            return self.respond(msg.get("id").cloned(), result);
         }
 
         // Forward all hover requests directly to the passthrough server.
@@ -546,6 +572,11 @@ impl Server {
                 return self.respond(msg.get("id").cloned(), location);
             }
         }
+        // Try in-process bridge for C/C++ definition lookup.
+        #[cfg(feature = "clang-bridge")]
+        if let Some(location) = self.bridge_goto_definition(&uri, &msg) {
+            return self.respond(msg.get("id").cloned(), location);
+        }
         self.forward_by_uri(&uri, &msg)
     }
 
@@ -572,6 +603,100 @@ impl Server {
             "uri": target_uri,
             "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }
         }))
+    }
+
+    // ── Bridge helpers (clang-bridge feature) ────────────────────────────────
+
+    /// Ensure a parsed TU exists for `path`, (re)parsing from disk if needed.
+    /// Returns a reference to the cached TU or None if parsing failed / feature
+    /// is disabled.
+    #[cfg(feature = "clang-bridge")]
+    fn bridge_ensure_tu(&mut self, path: &Path) -> Option<&ClangTU> {
+        if !self.state.bridge_tus.contains_key(path) {
+            let flags: Vec<&str> = self.state.bridge_flags.iter().map(String::as_str).collect();
+            let src = path.to_str()?;
+            let tu = self.state.bridge_index.parse(src, &flags)?;
+            self.state.bridge_tus.insert(path.to_path_buf(), tu);
+        }
+        self.state.bridge_tus.get(path)
+    }
+
+    /// Remove the cached TU for `path` (called on didClose).
+    #[cfg(feature = "clang-bridge")]
+    fn bridge_evict(&mut self, path: &Path) {
+        self.state.bridge_tus.remove(path);
+    }
+
+    /// Try to serve hover from the in-process bridge. Returns the LSP hover
+    /// result value or None if the bridge has no answer.
+    #[cfg(feature = "clang-bridge")]
+    fn bridge_hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
+            return None;
+        }
+        // line/col from LSP are 0-based; clang is 1-based
+        let tu = self.bridge_ensure_tu(&path)?;
+        let md = clang_bridge::hover::hover_markdown(tu, line as u32 + 1, col as u32 + 1)?;
+        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
+    }
+
+    /// Try to serve go-to-definition from the bridge. Returns an LSP Location
+    /// or None.
+    #[cfg(feature = "clang-bridge")]
+    fn bridge_goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
+            return None;
+        }
+        let tu = self.bridge_ensure_tu(&path)?;
+        let loc = clang_bridge::goto::goto_definition(tu, line as u32 + 1, col as u32 + 1)?;
+        let target_uri = uri_from_path(Path::new(&loc.file));
+        Some(json!({
+            "uri": target_uri,
+            "range": {
+                "start": { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) },
+                "end":   { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) }
+            }
+        }))
+    }
+
+    /// Try to serve completion from the bridge. Returns an LSP CompletionList
+    /// or None.
+    #[cfg(feature = "clang-bridge")]
+    fn bridge_completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
+            return None;
+        }
+        let tu = self.bridge_ensure_tu(&path)?;
+        let items: Vec<Value> = clang_bridge::completion::complete(
+            tu,
+            line as u32 + 1,
+            col as u32 + 1,
+            None,
+        )
+        .map(|item| {
+            let mut v = json!({
+                "label": item.label,
+                "kind":  item.kind,
+            });
+            if let Some(d) = item.detail {
+                v["detail"] = Value::String(d);
+            }
+            if let Some(doc) = item.documentation {
+                v["documentation"] = json!({ "kind": "markdown", "value": doc });
+            }
+            v
+        })
+        .collect();
+        Some(json!({ "isIncomplete": false, "items": items }))
     }
 
     /// Document links for the entire file: freight provides links for
