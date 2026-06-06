@@ -442,27 +442,7 @@ impl Server {
             tracing::debug!(file, line, col, "hover request");
         }
 
-        // 1. #include / #import hover — show package origin.
-        if let Some(hover) = self.include_hover(&uri, &msg) {
-            return self.respond(msg.get("id").cloned(), hover);
-        }
-
-        // 2. For C-family source, clangd owns symbol identity. Ask clangd for
-        // both hover text and the resolved definition/declaration location;
-        // the clangd reader thread then appends Freight docs found at that
-        // resolved location.
-        if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd))
-            && self.forward_clangd_semantic_hover(msg.clone())?
-        {
-            return Ok(());
-        }
-
-        // 3. DocIndex fallback for non-clangd source or when clangd is absent.
-        if let Some(hover) = self.doc_hover(&uri, &msg) {
-            return self.respond(msg.get("id").cloned(), hover);
-        }
-
-        // 4. Fall back to the language-specific passthrough server on a DocIndex miss.
+        // Forward all hover requests directly to the passthrough server.
         match source_server_for_uri(&uri) {
             Some(SourceServer::Clangd)
             | Some(SourceServer::Fortls)
