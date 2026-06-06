@@ -487,20 +487,21 @@ fn generate_lsp_workspace_compile_commands_at(
 /// Return compile flags for every source file in the project at `project_dir`,
 /// extracted directly from the build context — no filesystem write.
 ///
-/// Keys are absolute source paths; values are the compiler flags (no compiler
-/// binary, no `-c`, no `-o`) that should be passed when parsing each file.
+/// Keys are absolute source paths; values are `(compiler_binary, flags)` where
+/// `flags` contains no compiler binary, no `-c`, and no `-o <path>`.
+/// The compiler binary is preserved so callers can probe include dirs using
+/// the same compiler (and stdlib/sysroot/target) as the actual build.
 pub fn lsp_source_flags(
     project_dir: &Path,
     profile: &str,
-) -> Result<HashMap<PathBuf, Vec<String>>, FreightError> {
+) -> Result<HashMap<PathBuf, (String, Vec<String>)>, FreightError> {
     let commands = generate_lsp_compile_commands_for_project(project_dir, profile)?;
     let mut map = HashMap::new();
     for cmd in commands {
-        // `arguments[0]` is the compiler binary; strip it plus `-c` and `-o <path>`.
-        let flags: Vec<String> = cmd
-            .arguments
-            .into_iter()
-            .skip(1) // compiler binary
+        let mut args = cmd.arguments.into_iter();
+        let compiler = args.next().unwrap_or_default();
+        let file_str = cmd.file.to_string_lossy().into_owned();
+        let flags: Vec<String> = args
             .scan(false, |skip_next, arg| {
                 if *skip_next {
                     *skip_next = false;
@@ -513,15 +514,12 @@ pub fn lsp_source_flags(
                     *skip_next = true;
                     return Some(None);
                 }
-                // Also drop the source file itself (last positional arg)
                 Some(Some(arg))
             })
             .flatten()
+            .filter(|f| f != &file_str)
             .collect();
-        // Drop the source path argument (last element that equals the file path)
-        let file_str = cmd.file.to_string_lossy().into_owned();
-        let flags: Vec<String> = flags.into_iter().filter(|f| f != &file_str).collect();
-        map.insert(cmd.file, flags);
+        map.insert(cmd.file, (compiler, flags));
     }
     Ok(map)
 }

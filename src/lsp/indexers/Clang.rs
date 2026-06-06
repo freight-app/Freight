@@ -8,6 +8,47 @@ use crate::build::lsp_source_flags;
 use crate::lsp::index::LanguageIndexer;
 use crate::lsp::protocol::{path_from_uri, position, uri_from_path};
 
+/// Extract the subset of compile flags that affect the system include search
+/// path so they can be forwarded to the compiler probe.
+///
+/// Covers: `-stdlib=`, `--sysroot`, `-isysroot`, `--target`, `-target`,
+/// `--gcc-toolchain` — the flags that change WHICH directories are searched,
+/// not just what is compiled (so `-std=c++20` is intentionally excluded).
+fn env_probe_flags(flags: &[String]) -> Vec<String> {
+    // Flags whose value is attached with `=` (single token).
+    const SINGLE: &[&str] = &[
+        "-stdlib=",
+        "--sysroot=",
+        "--target=",
+        "-target=",
+        "--gcc-toolchain=",
+    ];
+    // Flags whose value is the next token (two tokens).
+    const TWO: &[&str] = &[
+        "--sysroot",
+        "-isysroot",
+        "--target",
+        "-target",
+        "--gcc-toolchain",
+    ];
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < flags.len() {
+        let f = &flags[i];
+        if SINGLE.iter().any(|p| f.starts_with(p)) {
+            out.push(f.clone());
+            i += 1;
+        } else if TWO.iter().any(|p| f.as_str() == *p) && i + 1 < flags.len() {
+            out.push(f.clone());
+            out.push(flags[i + 1].clone());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Convert a clang-bridge `Diagnostic` to an LSP `Diagnostic` JSON object.
 /// `source` is the value for the LSP `source` field (e.g. `"clang"` or `"clang-tidy"`).
 pub(crate) fn diag_to_lsp(d: &clang_bridge::diag::Diagnostic, source: &str) -> Value {
@@ -87,30 +128,34 @@ impl LanguageIndexer for ClangIndexer {
     }
 
     fn refresh_flags(&mut self, manifest_dir: &Path, profile: &str) {
-        if let Ok(flags) = lsp_source_flags(manifest_dir, profile) {
-            // Probe system C++ include dirs once and inject them as -isystem flags so
-            // libclang finds GCC target-specific headers (e.g. bits/requires_hosted.h).
-            // clang++ auto-detects these at driver level but FixedCompilationDatabase
-            // does not reproduce that detection.
-            let sys_dirs = crate::lsp::index::probe_system_include_dirs();
-            let sys_flags: Vec<String> = sys_dirs
-                .iter()
-                .flat_map(|d| ["-isystem".to_string(), d.to_string_lossy().into_owned()])
-                .collect();
-            self.source_flags = if sys_flags.is_empty() {
-                flags
-            } else {
-                flags
-                    .into_iter()
-                    .map(|(path, file_flags)| {
-                        let mut combined = file_flags;
-                        combined.extend_from_slice(&sys_flags);
-                        (path, combined)
-                    })
-                    .collect()
-            };
-            self.tus.clear();
-        }
+        let Ok(per_file) = lsp_source_flags(manifest_dir, profile) else { return };
+
+        // Probe system C++ include dirs using the actual compiler and the
+        // env-relevant subset of flags for each file (stdlib, sysroot, target).
+        // Cache by (compiler, env_fingerprint) so we run at most one subprocess
+        // per distinct build configuration — usually just one.
+        let mut probe_cache: std::collections::HashMap<(String, String), Vec<PathBuf>> =
+            std::collections::HashMap::new();
+
+        self.source_flags = per_file
+            .into_iter()
+            .map(|(path, (compiler, file_flags))| {
+                let env = env_probe_flags(&file_flags);
+                let cache_key = (compiler.clone(), env.join("\x00"));
+                let sys_dirs = probe_cache.entry(cache_key).or_insert_with(|| {
+                    let env_refs: Vec<&str> = env.iter().map(String::as_str).collect();
+                    crate::lsp::index::probe_for_file(&compiler, &env_refs)
+                });
+                let mut combined = file_flags;
+                for d in sys_dirs.iter() {
+                    combined.push("-isystem".to_string());
+                    combined.push(d.to_string_lossy().into_owned());
+                }
+                (path, combined)
+            })
+            .collect();
+
+        self.tus.clear();
     }
 
     fn evict(&mut self, path: &Path) {

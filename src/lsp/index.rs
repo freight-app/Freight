@@ -425,11 +425,12 @@ impl Default for HeaderIndex {
 }
 
 /// Probe the default C++ compiler for its system include search paths.
-/// Parses the `#include <...> search starts here:` block from `gcc -v` output.
+/// Used by `HeaderIndex` for include-hover; for per-file LSP parsing use
+/// `probe_for_file` instead so the stdlib/sysroot/target are respected.
 pub(crate) fn probe_system_include_dirs() -> Vec<PathBuf> {
     let compilers = ["c++", "g++", "clang++", "cc", "gcc", "clang"];
     for compiler in compilers {
-        if let Some(dirs) = try_probe_compiler(compiler) {
+        if let Some(dirs) = run_compiler_probe(compiler, &[]) {
             if !dirs.is_empty() {
                 return dirs;
             }
@@ -438,9 +439,28 @@ pub(crate) fn probe_system_include_dirs() -> Vec<PathBuf> {
     Vec::new()
 }
 
-fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
+/// Probe `compiler` with `env_flags` (e.g. `-stdlib=libc++`, `--sysroot=...`,
+/// `--target=...`) to find the system C++ include dirs that match the actual
+/// build configuration for a specific source file.
+///
+/// Falls back to `probe_system_include_dirs()` if the compiler is not found or
+/// returns an empty list (e.g. a bare compiler name that isn't on PATH).
+pub(crate) fn probe_for_file(compiler: &str, env_flags: &[&str]) -> Vec<PathBuf> {
+    if let Some(dirs) = run_compiler_probe(compiler, env_flags) {
+        if !dirs.is_empty() {
+            return dirs;
+        }
+    }
+    probe_system_include_dirs()
+}
+
+fn run_compiler_probe(compiler: &str, extra_flags: &[&str]) -> Option<Vec<PathBuf>> {
     let out = std::process::Command::new(compiler)
-        .args(["-xc++", "-E", "-v", "/dev/null"])
+        .arg("-xc++")
+        .arg("-E")
+        .arg("-v")
+        .args(extra_flags)
+        .arg("/dev/null")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -448,9 +468,12 @@ fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
         .ok()?;
 
     let stderr = String::from_utf8_lossy(&out.stderr);
+    Some(parse_include_search_dirs(&stderr))
+}
+
+fn parse_include_search_dirs(stderr: &str) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     let mut in_block = false;
-
     for line in stderr.lines() {
         if line.contains("#include <...> search starts here") {
             in_block = true;
@@ -462,7 +485,7 @@ fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
             }
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                // Strip any trailing " (framework directory)" annotation (macOS clang)
+                // Strip trailing " (framework directory)" annotation (macOS clang)
                 let path_str = trimmed.split_once(" (").map(|(p, _)| p).unwrap_or(trimmed);
                 let p = PathBuf::from(path_str);
                 if p.is_dir() {
@@ -471,7 +494,7 @@ fn try_probe_compiler(compiler: &str) -> Option<Vec<PathBuf>> {
             }
         }
     }
-    Some(dirs)
+    dirs
 }
 
 fn walk_headers(
