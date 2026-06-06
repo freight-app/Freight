@@ -1058,11 +1058,11 @@ fn first_definition_location(definition: &Value) -> Option<(PathBuf, usize)> {
 
 fn freight_doc_hover_result(clangd_hover: Value, freight_doc: Option<String>) -> Value {
     let Some(freight_doc) = freight_doc.filter(|doc| !doc.trim().is_empty()) else {
-        return Value::Null;
+        // No freight doc — fall through to clangd's raw hover.
+        return clangd_hover;
     };
 
-    // clangd is used only to resolve the symbol and, when present, preserve
-    // the hover range. Its textual hover contents are intentionally discarded.
+    // Freight doc found: use it, but preserve the hover range from clangd.
     let mut result = json!({ "contents": { "kind": "markdown", "value": freight_doc } });
     if let Some(range) = clangd_hover.get("range").cloned() {
         if let Some(obj) = result.as_object_mut() {
