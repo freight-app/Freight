@@ -44,6 +44,13 @@ pub trait LanguageIndexer: Send {
     /// hover/goto/completion calls reflect the live editor state.
     /// A no-op for indexers that do not cache ASTs.
     fn reparse(&mut self, _uri: &str, _content: &str) {}
+
+    /// Return LSP `Diagnostic` objects for the given URI based on the last
+    /// parsed TU. Called after `didOpen`, `didChange`, and `didSave`.
+    fn diagnostics(&mut self, _uri: &str) -> Vec<Value> { vec![] }
+
+    /// Return compile flags for `path`, used by external tools (e.g. clang-tidy).
+    fn flags_for(&self, _path: &Path) -> Vec<String> { vec![] }
 }
 
 use crate::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};

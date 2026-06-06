@@ -8,6 +8,32 @@ use crate::build::lsp_source_flags;
 use crate::lsp::index::LanguageIndexer;
 use crate::lsp::protocol::{path_from_uri, position, uri_from_path};
 
+/// Convert a clang-bridge `Diagnostic` to an LSP `Diagnostic` JSON object.
+/// `source` is the value for the LSP `source` field (e.g. `"clang"` or `"clang-tidy"`).
+pub(crate) fn diag_to_lsp(d: &clang_bridge::diag::Diagnostic, source: &str) -> Value {
+    use clang_bridge::diag::Severity;
+    let severity: u32 = match d.severity {
+        Severity::Note | Severity::Remark => 4,
+        Severity::Warning => 2,
+        Severity::Error | Severity::Fatal => 1,
+    };
+    let line = d.line.saturating_sub(1) as u64;
+    let col  = d.col.saturating_sub(1) as u64;
+    let mut v = json!({
+        "range": {
+            "start": { "line": line, "character": col },
+            "end":   { "line": line, "character": col }
+        },
+        "severity": severity,
+        "source":   source,
+        "message":  d.message
+    });
+    if let Some(ref name) = d.check_name {
+        v["code"] = Value::String(name.clone());
+    }
+    v
+}
+
 /// Per-file C/C++ indexer backed by `clang-bridge`.
 ///
 /// Holds a single `Index` (reused across parses), a TU cache keyed on the
@@ -104,6 +130,21 @@ impl LanguageIndexer for ClangIndexer {
         if let Some(tu) = self.tus.get(&path) {
             clang_bridge::hover::reparse(tu, Some(content));
         }
+    }
+
+    fn diagnostics(&mut self, uri: &str) -> Vec<Value> {
+        let Some(path) = path_from_uri(uri) else { return vec![] };
+        if !Self::is_c_family(&path) { return vec![]; }
+        let Some(tu) = self.ensure_tu(&path) else { return vec![] };
+        let source_str = path.to_string_lossy().into_owned();
+        tu.diagnostics()
+            .filter(|d| d.file == source_str)
+            .map(|d| diag_to_lsp(&d, "clang"))
+            .collect()
+    }
+
+    fn flags_for(&self, path: &Path) -> Vec<String> {
+        self.source_flags.get(path).cloned().unwrap_or_default()
     }
 
     fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {

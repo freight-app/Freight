@@ -190,7 +190,7 @@ pub fn freight_capabilities() -> Value {
         "positionEncoding": "utf-16",
         "textDocumentSync": {
             "openClose": true,
-            "change": 2,
+            "change": 1,
             "save": { "includeText": true }
         },
         "completionProvider": {

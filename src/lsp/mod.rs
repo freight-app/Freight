@@ -134,6 +134,18 @@ struct Server {
     state: ServerState,
 }
 
+/// Per-URI merged diagnostic state.
+///
+/// Both fields are updated independently: `clangd` whenever the passthrough
+/// reader receives a `publishDiagnostics` notification from clangd, `tidy`
+/// when the background clang-tidy thread finishes. Every update re-publishes
+/// the union to the client so the client always sees a consistent set.
+#[derive(Default)]
+struct DiagCache {
+    clangd: Vec<Value>,
+    tidy:   Vec<Value>,
+}
+
 struct ServerState {
     root_dir: PathBuf,
     manifest_dir: Option<PathBuf>,
@@ -152,6 +164,9 @@ struct ServerState {
     /// Shared with the clangd reader thread so it can merge clangd's semantic
     /// answers with Freight package/docs context before forwarding.
     clangd_pending: Arc<Mutex<HashMap<String, PendingClangdRequest>>>,
+    /// Merged diagnostic cache shared between the main loop, the clangd
+    /// passthrough reader thread, and background clang-tidy threads.
+    diag_cache: Arc<Mutex<HashMap<String, DiagCache>>>,
 
     /// Per-language indexers; iterated in order for each LSP request.
     indexers: Vec<Box<dyn LanguageIndexer>>,
@@ -201,6 +216,7 @@ impl Server {
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
+                diag_cache: Arc::new(Mutex::new(HashMap::new())),
                 indexers: vec![Box::new(ClangIndexer::new())],
             },
         }
@@ -324,6 +340,11 @@ impl Server {
             return self.forward_to_all_passthroughs(&msg);
         };
         if !is_freight_manifest_uri(&uri) {
+            // Reparse the clang-bridge TU so hover/completion reflect the live buffer.
+            // Full-text sync (change: 1) guarantees changed_full_text is always present.
+            if let Some(text) = changed_full_text(&msg) {
+                for ix in &mut self.state.indexers { ix.reparse(&uri, &text); }
+            }
             return self.forward_by_uri(&uri, &msg);
         }
         if let Some(text) = changed_full_text(&msg) {
@@ -339,7 +360,9 @@ impl Server {
             return self.forward_to_all_passthroughs(&msg);
         };
         if !is_freight_manifest_uri(&uri) {
-            return self.forward_by_uri(&uri, &msg);
+            self.forward_by_uri(&uri, &msg)?;
+            self.spawn_tidy(&uri);
+            return Ok(());
         }
         if let Some(text) = msg
             .get("params")
@@ -899,6 +922,43 @@ impl Server {
         }))
     }
 
+    /// Spawn a background thread that runs clang-tidy on `uri` and publishes
+    /// merged (clangd + tidy) diagnostics once the run completes.
+    /// No-op for non-C/C++ files or files without a source-server mapping.
+    fn spawn_tidy(&self, uri: &str) {
+        if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
+            return;
+        }
+        let Some(path) = path_from_uri(uri) else { return };
+        let flags: Vec<String> = self.state.indexers.iter()
+            .flat_map(|ix| ix.flags_for(&path))
+            .collect();
+        let uri  = uri.to_string();
+        let out  = Arc::clone(&self.out);
+        let cache = Arc::clone(&self.state.diag_cache);
+        thread::spawn(move || {
+            let path_str   = path.to_string_lossy().into_owned();
+            let flag_refs: Vec<&str> = flags.iter().map(String::as_str).collect();
+            let tidy_diags: Vec<Value> =
+                clang_bridge::tidy::run(None, &path_str, None, &flag_refs)
+                    .filter(|d| d.file == path_str)
+                    .map(|d| indexers::Clang::diag_to_lsp(&d, "clang-tidy"))
+                    .collect();
+            tracing::debug!(file = %path_str, count = tidy_diags.len(), "clang-tidy done");
+            let mut guard = cache.lock().unwrap();
+            let entry = guard.entry(uri.clone()).or_default();
+            entry.tidy = tidy_diags;
+            let merged: Vec<Value> = entry.clangd.iter().chain(entry.tidy.iter()).cloned().collect();
+            drop(guard);
+            let msg = json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/publishDiagnostics",
+                "params": { "uri": uri, "diagnostics": merged }
+            });
+            let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
+        });
+    }
+
     fn publish_manifest_diagnostics(&mut self, uri: &str) -> io::Result<()> {
         let text = self.manifest_text(uri).unwrap_or_default();
         let dir = path_from_uri(uri)
@@ -1046,6 +1106,7 @@ impl Server {
             "--header-insertion=never".to_string(),
         ];
         clangd_flags.extend(self.args.clangd_args.clone());
+        let diag_cache = Arc::clone(&self.state.diag_cache);
         let (server, caps) = self.start_passthrough_in(
             "clangd",
             &self.args.clangd,
@@ -1055,6 +1116,7 @@ impl Server {
             Some(&root),
             Some(pending),
             Some(doc_index),
+            Some(diag_cache),
         )?;
         self.state.clangd = Some(server);
         caps
@@ -1088,6 +1150,7 @@ impl Server {
             Some(&root),
             None,
             None,
+            None,
         )?;
         self.state.fortls = Some(server);
         caps
@@ -1106,6 +1169,7 @@ impl Server {
             Some(&root),
             None,
             None,
+            None,
         )?;
         self.state.asm_lsp = Some(server);
         caps
@@ -1121,6 +1185,7 @@ impl Server {
         cwd: Option<&Path>,
         pending: Option<Arc<Mutex<HashMap<String, PendingClangdRequest>>>>,
         _doc_index: Option<Arc<Mutex<Option<DocIndex>>>>,
+        diag_cache: Option<Arc<Mutex<HashMap<String, DiagCache>>>>,
     ) -> Option<(Passthrough, Option<Value>)> {
         let mut cmd = Command::new(command);
         cmd.args(args)
@@ -1167,6 +1232,33 @@ impl Server {
                             }
                             None => {}
                         }
+                    }
+                }
+                // Intercept publishDiagnostics from this passthrough so we can
+                // merge its results with clang-tidy before forwarding to the client.
+                if msg.get("method").and_then(Value::as_str)
+                    == Some("textDocument/publishDiagnostics")
+                {
+                    if let Some(ref cache) = diag_cache {
+                        let uri = msg["params"]["uri"]
+                            .as_str().unwrap_or("").to_string();
+                        let new_diags = msg["params"]["diagnostics"]
+                            .as_array().cloned().unwrap_or_default();
+                        let mut guard = cache.lock().unwrap();
+                        let entry = guard.entry(uri.clone()).or_default();
+                        entry.clangd = new_diags;
+                        let merged: Vec<Value> = entry.clangd.iter()
+                            .chain(entry.tidy.iter())
+                            .cloned()
+                            .collect();
+                        drop(guard);
+                        let merged_msg = json!({
+                            "jsonrpc": "2.0",
+                            "method": "textDocument/publishDiagnostics",
+                            "params": { "uri": uri, "diagnostics": merged }
+                        });
+                        let _ = write_lsp_message(&mut *out.lock().unwrap(), &merged_msg);
+                        continue;
                     }
                 }
                 if is_internal_passthrough_response(&msg) {
