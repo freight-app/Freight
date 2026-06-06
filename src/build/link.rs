@@ -11,6 +11,20 @@ use crate::vendor::parse_triple;
 
 use super::compile::object_path;
 
+// ── Up-to-date check ──────────────────────────────────────────────────────────
+
+/// Returns true if `output` exists and is newer than every file in `inputs`.
+fn output_is_fresh(output: &Path, inputs: &[&Path]) -> bool {
+    let Ok(out_meta) = std::fs::metadata(output) else { return false; };
+    let Ok(out_mtime) = out_meta.modified() else { return false; };
+    inputs.iter().all(|inp| {
+        std::fs::metadata(inp)
+            .and_then(|m| m.modified())
+            .map(|t| t <= out_mtime)
+            .unwrap_or(false)
+    })
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Priority order for linker selection: the first language in this list that is
@@ -84,10 +98,7 @@ pub fn link_targets(
                 progress(BuildEvent::Compiling { path: src.clone() });
             }
         }
-        progress(BuildEvent::Linking {
-            name: bin.name.clone(),
-        });
-        link_executable(
+        let linked = link_executable(
             &bin_objects,
             &out,
             linker,
@@ -96,6 +107,11 @@ pub fn link_targets(
             dep_libs,
             extra_link_flags,
         )?;
+        if linked {
+            progress(BuildEvent::Linking {
+                name: bin.name.clone(),
+            });
+        }
         if link_settings(manifest, profile).strip {
             strip_output(&out, linker)?;
         }
@@ -114,10 +130,11 @@ pub fn link_targets(
                         select_linker(manifest, backend, detected, templates).ok_or_else(|| {
                             FreightError::CompilerNotFound("no suitable linker found".into())
                         })?;
-                    progress(BuildEvent::Archiving {
-                        name: format!("lib{}.a", manifest.package.name),
-                    });
-                    link_static(&out, objects, linker.template.ar_binary())?;
+                    if link_static(&out, objects, linker.template.ar_binary())? {
+                        progress(BuildEvent::Archiving {
+                            name: format!("lib{}.a", manifest.package.name),
+                        });
+                    }
                     outputs.push(out);
                 }
                 LibType::Shared => {
@@ -127,10 +144,7 @@ pub fn link_targets(
                         select_linker(manifest, backend, detected, templates).ok_or_else(|| {
                             FreightError::CompilerNotFound("no suitable linker found".into())
                         })?;
-                    progress(BuildEvent::Linking {
-                        name: lib_name.clone(),
-                    });
-                    link_shared(
+                    if link_shared(
                         objects,
                         &out,
                         linker,
@@ -138,7 +152,11 @@ pub fn link_targets(
                         profile,
                         dep_libs,
                         extra_link_flags,
-                    )?;
+                    )? {
+                        progress(BuildEvent::Linking {
+                            name: lib_name.clone(),
+                        });
+                    }
                     if link_settings(manifest, profile).strip {
                         strip_output(&out, linker)?;
                     }
@@ -174,13 +192,13 @@ pub fn link_test_binary(
         profile,
         dep_libs,
         extra_link_flags,
-    )
+    ).map(|_| ())
 }
 
 /// Archive a set of object files into a static library.
 /// `ar_bin` is the archiver binary to use (from `CompilerTemplate::ar_binary()`).
 pub fn link_static_lib(objects: &[PathBuf], out: &Path, ar_bin: &str) -> Result<(), FreightError> {
-    link_static(out, objects, ar_bin)
+    link_static(out, objects, ar_bin).map(|_| ())
 }
 
 /// Pick the compiler binary that drives the final link step.
@@ -254,6 +272,7 @@ pub fn select_linker<'a>(
 
 // ── Link commands ─────────────────────────────────────────────────────────────
 
+/// Returns `true` if linking was performed, `false` if the output was already fresh.
 fn link_executable(
     objects: &[PathBuf],
     out: &Path,
@@ -262,7 +281,13 @@ fn link_executable(
     profile: &str,
     dep_libs: &[PathBuf],
     extra_link_flags: &[String],
-) -> Result<(), FreightError> {
+) -> Result<bool, FreightError> {
+    // Skip link if binary is newer than all inputs.
+    let all_inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path)
+        .chain(dep_libs.iter().map(PathBuf::as_path))
+        .collect();
+    if output_is_fresh(out, &all_inputs) { return Ok(false); }
+
     // Whole-program builders (e.g. gnatmake for Ada) receive source file paths instead
     // of object files and handle compile + bind + link themselves.
     let is_whole_program = linker.template.linking.values().any(|l| l.whole_program);
@@ -282,7 +307,8 @@ fn link_executable(
         );
         cmd.args(objects);
         cmd.args(linker.template.output_bin_flag(out));
-        return run_cmd(cmd, out);
+        run_cmd(cmd, out)?;
+        return Ok(true);
     } else {
         let link_sub = linker
             .template
@@ -305,13 +331,18 @@ fn link_executable(
         cmd.args(extra_link_flags);
     }
     cmd.args(linker.template.output_bin_flag(out));
-    run_cmd(cmd, out)
+    run_cmd(cmd, out)?;
+    Ok(true)
 }
 
-fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<(), FreightError> {
+/// Returns `true` if archiving was performed, `false` if the output was already fresh.
+fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<bool, FreightError> {
+    let inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path).collect();
+    if output_is_fresh(out, &inputs) { return Ok(false); }
     let mut cmd = Command::new(ar_bin);
     cmd.arg("rcs").arg(out).args(objects);
-    run_cmd(cmd, out)
+    run_cmd(cmd, out)?;
+    Ok(true)
 }
 
 fn shared_lib_name(name: &str, target_os: &str) -> String {
@@ -340,6 +371,7 @@ fn link_target_os(manifest: &Manifest) -> String {
         .unwrap_or_else(|| std::env::consts::OS.to_string())
 }
 
+/// Returns `true` if linking was performed, `false` if the output was already fresh.
 fn link_shared(
     objects: &[PathBuf],
     out: &Path,
@@ -348,7 +380,11 @@ fn link_shared(
     profile: &str,
     dep_libs: &[PathBuf],
     extra_link_flags: &[String],
-) -> Result<(), FreightError> {
+) -> Result<bool, FreightError> {
+    let all_inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path)
+        .chain(dep_libs.iter().map(PathBuf::as_path))
+        .collect();
+    if output_is_fresh(out, &all_inputs) { return Ok(false); }
     let target_os = link_target_os(manifest);
     let shared_flag = if target_os == "macos" {
         "-dynamiclib"
@@ -377,7 +413,8 @@ fn link_shared(
     }
     cmd.args(extra_link_flags);
     cmd.args(linker.template.output_bin_flag(out));
-    run_cmd(cmd, out)
+    run_cmd(cmd, out)?;
+    Ok(true)
 }
 
 fn strip_output(out: &Path, linker: &DetectedCompiler) -> Result<(), FreightError> {

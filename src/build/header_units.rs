@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use rayon::prelude::*;
 use walkdir::WalkDir;
 
 use super::compile::{is_up_to_date, select_compiler};
@@ -57,82 +58,72 @@ pub fn precompile_dep_headers(
         .join(profile)
         .join("header-units");
 
-    let mut units: Vec<HeaderUnit> = Vec::new();
+    // Collect all (header, pcm_path, cmd) work items first so we can run them in parallel.
+    struct WorkItem {
+        rel_path: String,
+        pcm_path: PathBuf,
+        /// None = already up to date, no compilation needed.
+        cmd: Option<(PathBuf, Vec<String>)>,
+    }
+
+    let mut work: Vec<WorkItem> = Vec::new();
 
     for inc_dir in include_dirs {
-        if !inc_dir.is_dir() {
-            continue;
-        }
+        if !inc_dir.is_dir() { continue; }
 
-        // Build the -I flag for this include dir so headers that include siblings compile.
-        let i_flag = compiler
-            .template
-            .structure
-            .include_dir
-            .replace("{path}", &inc_dir.to_string_lossy());
+        let i_flag = compiler.template.structure.include_dir.replace("{path}", &inc_dir.to_string_lossy());
         let include_flags: Vec<String> = i_flag.split_whitespace().map(str::to_owned).collect();
 
-        for entry in WalkDir::new(inc_dir)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-        {
+        for entry in WalkDir::new(inc_dir).follow_links(false).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
             let header_abs = entry.path();
-            let ext = header_abs
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            if !matches!(ext, "h" | "hpp" | "hh" | "hxx") {
-                continue;
-            }
+            let ext = header_abs.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !matches!(ext, "h" | "hpp" | "hh" | "hxx") { continue; }
 
             let rel_path = match header_abs.strip_prefix(inc_dir) {
                 Ok(r) => r.to_string_lossy().replace('\\', "/"),
                 Err(_) => continue,
             };
-
             let pcm_path = hu_dir.join(&rel_path).with_extension("h.pcm");
 
-            // Dirty check: PCM newer than header → skip.
-            let dummy_dep = PathBuf::new(); // no .d file for header units
+            let dummy_dep = PathBuf::new();
             if is_up_to_date(header_abs, &pcm_path, &dummy_dep) {
-                units.push(HeaderUnit { rel_path, pcm_path });
+                work.push(WorkItem { rel_path, pcm_path, cmd: None });
                 continue;
             }
 
             if let Some(parent) = pcm_path.parent() {
-                if std::fs::create_dir_all(parent).is_err() {
-                    continue;
-                }
+                if std::fs::create_dir_all(parent).is_err() { continue; }
             }
 
             let Some((binary, args)) = compiler.template.precompile_header_unit_cmd(
-                header_abs,
-                &pcm_path,
-                &std_flag,
-                &include_flags,
-            ) else {
-                continue;
-            };
+                header_abs, &pcm_path, &std_flag, &include_flags,
+            ) else { continue; };
 
-            let status = Command::new(&binary).args(&args).output();
-            match status {
-                Ok(out) if out.status.success() => {
-                    units.push(HeaderUnit { rel_path, pcm_path });
-                }
-                Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    eprintln!("warning: header unit precompile skipped for {rel_path}: {stderr}");
-                }
-                Err(e) => {
-                    eprintln!("warning: header unit precompile failed for {rel_path}: {e}");
-                }
-            }
+            work.push(WorkItem { rel_path, pcm_path, cmd: Some((binary, args)) });
         }
     }
 
-    units
+    // Compile dirty header units in parallel.
+    work.into_par_iter().filter_map(|item| {
+        let WorkItem { rel_path, pcm_path, cmd } = item;
+        match cmd {
+            None => Some(HeaderUnit { rel_path, pcm_path }),
+            Some((binary, args)) => {
+                match Command::new(&binary).args(&args).output() {
+                    Ok(out) if out.status.success() => Some(HeaderUnit { rel_path, pcm_path }),
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        eprintln!("warning: header unit precompile skipped for {rel_path}: {stderr}");
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("warning: header unit precompile failed for {rel_path}: {e}");
+                        None
+                    }
+                }
+            }
+        }
+    }).collect()
 }
 
 /// Build the `-fmodule-file=rel_path=pcm_path` flags for each header unit.
