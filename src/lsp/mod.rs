@@ -2,6 +2,7 @@
 //! source files (clangd, fortls, asm-lsp passthroughs).
 
 mod index;
+pub mod indexers;
 pub mod log;
 mod manifest;
 mod protocol;
@@ -13,7 +14,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use clang_bridge::{Index as ClangIndex, TranslationUnit as ClangTU};
+use indexers::ClangIndexer;
 
 use crate::build::generate_lsp_compile_commands_at;
 use crate::manifest::types::{Dependency, Manifest};
@@ -151,12 +152,7 @@ struct ServerState {
     /// answers with Freight package/docs context before forwarding.
     clangd_pending: Arc<Mutex<HashMap<String, PendingClangdRequest>>>,
 
-    bridge_index: ClangIndex,
-    /// file path → parsed TU (lazily populated on first access).
-    bridge_tus: HashMap<PathBuf, ClangTU>,
-    /// file path → compile flags, derived directly from the freight build
-    /// context (no compile_commands.json needed).
-    bridge_source_flags: HashMap<PathBuf, Vec<String>>,
+    clang: ClangIndexer,
 }
 
 struct Passthrough {
@@ -219,9 +215,7 @@ impl Server {
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
-                bridge_index: ClangIndex::new(),
-                bridge_tus: HashMap::new(),
-                bridge_source_flags: HashMap::new(),
+                clang: ClangIndexer::new(),
             },
         }
     }
@@ -386,7 +380,7 @@ impl Server {
             return Ok(());
         }
         if let Some(path) = path_from_uri(&uri) {
-            self.bridge_evict(&path);
+            self.state.clang.evict(&path);
         }
         self.forward_by_uri(&uri, &msg)
     }
@@ -436,8 +430,7 @@ impl Server {
             );
             return self.respond(msg.get("id").cloned(), result);
         }
-        // Try in-process bridge for C/C++ completion.
-        if let Some(result) = self.bridge_completion(&uri, &msg) {
+        if let Some(result) = self.state.clang.completion(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), result);
         }
         self.forward_or_null(msg)
@@ -454,8 +447,7 @@ impl Server {
             return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
         }
 
-        // Try in-process bridge first (C/C++ only).
-        if let Some(result) = self.bridge_hover(&uri, &msg) {
+        if let Some(result) = self.state.clang.hover(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), result);
         }
 
@@ -563,8 +555,7 @@ impl Server {
                 return self.respond(msg.get("id").cloned(), location);
             }
         }
-        // Try in-process bridge for C/C++ definition lookup.
-        if let Some(location) = self.bridge_goto_definition(&uri, &msg) {
+        if let Some(location) = self.state.clang.goto_definition(&uri, &msg) {
             return self.respond(msg.get("id").cloned(), location);
         }
         self.forward_by_uri(&uri, &msg)
@@ -595,107 +586,14 @@ impl Server {
         }))
     }
 
-    // ── Bridge helpers (clang-bridge feature) ────────────────────────────────
+    // ── Indexer delegates ─────────────────────────────────────────────────────
 
-    /// Ensure a parsed TU exists for `path`, (re)parsing from disk if needed.
-    /// Returns a reference to the cached TU or None if parsing failed / feature
-    /// is disabled.
-    fn bridge_ensure_tu(&mut self, path: &Path) -> Option<&ClangTU> {
-        if !self.state.bridge_tus.contains_key(path) {
-            let flags: Vec<&str> = self.state.bridge_source_flags
-                .get(path)
-                .map(|v| v.iter().map(String::as_str).collect())
-                .unwrap_or_default();
-            let src = path.to_str()?;
-            let tu = self.state.bridge_index.parse(src, &flags)?;
-            self.state.bridge_tus.insert(path.to_path_buf(), tu);
-        }
-        self.state.bridge_tus.get(path)
-    }
-
-    /// Refresh per-file compile flags from the freight build context.
-    /// Clears the TU cache so stale TUs are reparsed with updated flags.
-    fn bridge_refresh_flags(&mut self) {
+    fn clang_refresh_flags(&mut self) {
         use crate::build::lsp_source_flags;
         let Some(ref manifest_dir) = self.state.manifest_dir.clone() else { return; };
         if let Ok(flags) = lsp_source_flags(manifest_dir, &self.args.profile) {
-            self.state.bridge_source_flags = flags;
-            self.state.bridge_tus.clear(); // reparsed lazily with new flags
+            self.state.clang.refresh_flags(flags);
         }
-    }
-
-    /// Remove the cached TU for `path` (called on didClose).
-    fn bridge_evict(&mut self, path: &Path) {
-        self.state.bridge_tus.remove(path);
-    }
-
-    /// Try to serve hover from the in-process bridge. Returns the LSP hover
-    /// result value or None if the bridge has no answer.
-    fn bridge_hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
-            return None;
-        }
-        // line/col from LSP are 0-based; clang is 1-based
-        let tu = self.bridge_ensure_tu(&path)?;
-        let md = clang_bridge::hover::hover_markdown(tu, line as u32 + 1, col as u32 + 1)?;
-        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
-    }
-
-    /// Try to serve go-to-definition from the bridge. Returns an LSP Location
-    /// or None.
-    fn bridge_goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
-            return None;
-        }
-        let tu = self.bridge_ensure_tu(&path)?;
-        let loc = clang_bridge::goto::goto_definition(tu, line as u32 + 1, col as u32 + 1)?;
-        let target_uri = uri_from_path(Path::new(&loc.file));
-        Some(json!({
-            "uri": target_uri,
-            "range": {
-                "start": { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) },
-                "end":   { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) }
-            }
-        }))
-    }
-
-    /// Try to serve completion from the bridge. Returns an LSP CompletionList
-    /// or None.
-    fn bridge_completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
-        let (line, col) = position(msg)?;
-        let path = path_from_uri(uri)?;
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
-            return None;
-        }
-        let tu = self.bridge_ensure_tu(&path)?;
-        let items: Vec<Value> = clang_bridge::completion::complete(
-            tu,
-            line as u32 + 1,
-            col as u32 + 1,
-            None,
-        )
-        .map(|item| {
-            let mut v = json!({
-                "label": item.label,
-                "kind":  item.kind,
-            });
-            if let Some(d) = item.detail {
-                v["detail"] = Value::String(d);
-            }
-            if let Some(doc) = item.documentation {
-                v["documentation"] = json!({ "kind": "markdown", "value": doc });
-            }
-            v
-        })
-        .collect();
-        Some(json!({ "isIncomplete": false, "items": items }))
     }
 
     /// Document links for the entire file: freight provides links for
@@ -1301,7 +1199,7 @@ impl Server {
             tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
             self.state.compile_commands_dir = Some(dir);
         }
-        self.bridge_refresh_flags();
+        self.clang_refresh_flags();
         self.refresh_doc_index();
     }
 
