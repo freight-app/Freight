@@ -54,6 +54,10 @@ pub struct Args {
     pub no_asm_lsp: bool,
     #[arg(long, default_value = "dev")]
     pub profile: String,
+    /// Extra flags forwarded verbatim to clangd (repeatable).
+    /// E.g. `--clangd-arg=--hover-style=detailed`
+    #[arg(long = "clangd-arg", value_name = "ARG")]
+    pub clangd_args: Vec<String>,
     /// Accepted for compatibility with LSP clients that append --stdio.
     #[arg(long, hide = true)]
     pub stdio: bool,
@@ -1294,14 +1298,16 @@ impl Server {
         let compile_commands_arg = format!("--compile-commands-dir={}", dir.display());
         let pending = Arc::clone(&self.state.clangd_pending);
         let doc_index = Arc::clone(&self.state.doc_index);
+        let mut clangd_flags = vec![
+            compile_commands_arg,
+            "--background-index=false".to_string(),
+            "--header-insertion=never".to_string(),
+        ];
+        clangd_flags.extend(self.args.clangd_args.clone());
         let (server, caps) = self.start_passthrough_in(
             "clangd",
             &self.args.clangd,
-            &[
-                compile_commands_arg,
-                "--background-index=false".to_string(),
-                "--header-insertion=never".to_string(),
-            ],
+            &clangd_flags,
             INTERNAL_CLANGD_INIT_ID,
             initialize_msg,
             Some(&root),
