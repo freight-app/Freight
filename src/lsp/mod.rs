@@ -154,12 +154,13 @@ struct ServerState {
 
     #[cfg(feature = "clang-bridge")]
     bridge_index: ClangIndex,
-    /// file path → parsed TU (lazily populated on didOpen/didSave).
+    /// file path → parsed TU (lazily populated on first access).
     #[cfg(feature = "clang-bridge")]
     bridge_tus: HashMap<PathBuf, ClangTU>,
-    /// Extra compile flags for the bridge (from compile_commands.json, once known).
+    /// file path → compile flags, derived directly from the freight build
+    /// context (no compile_commands.json needed).
     #[cfg(feature = "clang-bridge")]
-    bridge_flags: Vec<String>,
+    bridge_source_flags: HashMap<PathBuf, Vec<String>>,
 }
 
 struct Passthrough {
@@ -227,7 +228,7 @@ impl Server {
                 #[cfg(feature = "clang-bridge")]
                 bridge_tus: HashMap::new(),
                 #[cfg(feature = "clang-bridge")]
-                bridge_flags: Vec::new(),
+                bridge_source_flags: HashMap::new(),
             },
         }
     }
@@ -613,12 +614,27 @@ impl Server {
     #[cfg(feature = "clang-bridge")]
     fn bridge_ensure_tu(&mut self, path: &Path) -> Option<&ClangTU> {
         if !self.state.bridge_tus.contains_key(path) {
-            let flags: Vec<&str> = self.state.bridge_flags.iter().map(String::as_str).collect();
+            let flags: Vec<&str> = self.state.bridge_source_flags
+                .get(path)
+                .map(|v| v.iter().map(String::as_str).collect())
+                .unwrap_or_default();
             let src = path.to_str()?;
             let tu = self.state.bridge_index.parse(src, &flags)?;
             self.state.bridge_tus.insert(path.to_path_buf(), tu);
         }
         self.state.bridge_tus.get(path)
+    }
+
+    /// Refresh per-file compile flags from the freight build context.
+    /// Clears the TU cache so stale TUs are reparsed with updated flags.
+    #[cfg(feature = "clang-bridge")]
+    fn bridge_refresh_flags(&mut self) {
+        use crate::build::lsp_source_flags;
+        let Some(ref manifest_dir) = self.state.manifest_dir.clone() else { return; };
+        if let Ok(flags) = lsp_source_flags(manifest_dir, &self.args.profile) {
+            self.state.bridge_source_flags = flags;
+            self.state.bridge_tus.clear(); // reparsed lazily with new flags
+        }
     }
 
     /// Remove the cached TU for `path` (called on didClose).
@@ -1302,6 +1318,8 @@ impl Server {
             tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
             self.state.compile_commands_dir = Some(dir);
         }
+        #[cfg(feature = "clang-bridge")]
+        self.bridge_refresh_flags();
         self.refresh_doc_index();
     }
 

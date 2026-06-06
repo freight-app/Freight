@@ -27,7 +27,7 @@ pub use modules::{
 pub use pipeline::{run_pipeline_at, PipelineConfig, PipelineGoal};
 pub use project::Project;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use crate::error::FreightError;
 use crate::event::{silent, BuildEvent, Progress};
@@ -482,6 +482,48 @@ fn generate_lsp_workspace_compile_commands_at(
     let dir = lsp_compile_commands_dir(workspace_dir, profile);
     compile_commands::write_to(&dir.join("compile_commands.json"), &commands)?;
     Ok(dir)
+}
+
+/// Return compile flags for every source file in the project at `project_dir`,
+/// extracted directly from the build context — no filesystem write.
+///
+/// Keys are absolute source paths; values are the compiler flags (no compiler
+/// binary, no `-c`, no `-o`) that should be passed when parsing each file.
+pub fn lsp_source_flags(
+    project_dir: &Path,
+    profile: &str,
+) -> Result<HashMap<PathBuf, Vec<String>>, FreightError> {
+    let commands = generate_lsp_compile_commands_for_project(project_dir, profile)?;
+    let mut map = HashMap::new();
+    for cmd in commands {
+        // `arguments[0]` is the compiler binary; strip it plus `-c` and `-o <path>`.
+        let flags: Vec<String> = cmd
+            .arguments
+            .into_iter()
+            .skip(1) // compiler binary
+            .scan(false, |skip_next, arg| {
+                if *skip_next {
+                    *skip_next = false;
+                    return Some(None);
+                }
+                if arg == "-c" {
+                    return Some(None);
+                }
+                if arg == "-o" {
+                    *skip_next = true;
+                    return Some(None);
+                }
+                // Also drop the source file itself (last positional arg)
+                Some(Some(arg))
+            })
+            .flatten()
+            .collect();
+        // Drop the source path argument (last element that equals the file path)
+        let file_str = cmd.file.to_string_lossy().into_owned();
+        let flags: Vec<String> = flags.into_iter().filter(|f| f != &file_str).collect();
+        map.insert(cmd.file, flags);
+    }
+    Ok(map)
 }
 
 fn generate_lsp_compile_commands_for_project(
