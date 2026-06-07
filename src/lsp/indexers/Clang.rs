@@ -78,15 +78,15 @@ pub(crate) fn diag_to_lsp(d: &clang_bridge::diag::Diagnostic, source: &str) -> V
 /// Per-file C/C++ indexer backed by `clang-bridge`.
 ///
 /// Holds a single `Index` (reused across parses), a TU cache keyed on the
-/// absolute source path, and a per-file compile-flag map derived directly from
-/// the freight build context.
+/// absolute source path, and per-file `(working_dir, flags)` derived from the
+/// freight build context.
 pub struct ClangIndexer {
     index: Index,
     /// Lazily-populated translation units, keyed on absolute source path.
     tus: HashMap<PathBuf, TranslationUnit>,
-    /// file path → compile flags (no compiler binary, no -c/-o).
-    /// Populated by `refresh_flags`; empty until the manifest is first loaded.
-    source_flags: HashMap<PathBuf, Vec<String>>,
+    /// file path → (working_dir, compile_flags).
+    /// `working_dir` is the project root; flags have no compiler binary, -c, or -o.
+    source_data: HashMap<PathBuf, (String, Vec<String>)>,
 }
 
 impl ClangIndexer {
@@ -94,7 +94,7 @@ impl ClangIndexer {
         Self {
             index: Index::new(),
             tus: HashMap::new(),
-            source_flags: HashMap::new(),
+            source_data: HashMap::new(),
         }
     }
 
@@ -107,11 +107,11 @@ impl ClangIndexer {
 
     fn ensure_tu(&mut self, path: &Path) -> Option<&TranslationUnit> {
         if !self.tus.contains_key(path) {
-            let flags: Vec<&str> = self.source_flags
+            let (wd, flags) = self.source_data
                 .get(path)
-                .map(|v| v.iter().map(String::as_str).collect())
-                .unwrap_or_default();
-            let tu = self.index.parse(path.to_str()?, &flags)?;
+                .map(|(wd, f)| (wd.as_str(), f.iter().map(String::as_str).collect::<Vec<_>>()))
+                .unwrap_or(("", vec![]));
+            let tu = self.index.parse(path.to_str()?, wd, &flags)?;
             self.tus.insert(path.to_path_buf(), tu);
         }
         self.tus.get(path)
@@ -137,9 +137,9 @@ impl LanguageIndexer for ClangIndexer {
         let mut probe_cache: std::collections::HashMap<(String, String), Vec<PathBuf>> =
             std::collections::HashMap::new();
 
-        self.source_flags = per_file
+        self.source_data = per_file
             .into_iter()
-            .map(|(path, (compiler, file_flags))| {
+            .map(|(path, (compiler, dir, file_flags))| {
                 let env = env_probe_flags(&file_flags);
                 let cache_key = (compiler.clone(), env.join("\x00"));
                 let sys_dirs = probe_cache.entry(cache_key).or_insert_with(|| {
@@ -151,7 +151,7 @@ impl LanguageIndexer for ClangIndexer {
                     combined.push("-isystem".to_string());
                     combined.push(d.to_string_lossy().into_owned());
                 }
-                (path, combined)
+                (path, (dir, combined))
             })
             .collect();
 
@@ -209,7 +209,7 @@ impl LanguageIndexer for ClangIndexer {
     }
 
     fn flags_for(&self, path: &Path) -> Vec<String> {
-        self.source_flags.get(path).cloned().unwrap_or_default()
+        self.source_data.get(path).map(|(_, f)| f.clone()).unwrap_or_default()
     }
 
     fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {

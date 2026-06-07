@@ -487,17 +487,18 @@ fn generate_lsp_workspace_compile_commands_at(
 /// Return compile flags for every source file in the project at `project_dir`,
 /// extracted directly from the build context — no filesystem write.
 ///
-/// Keys are absolute source paths; values are `(compiler_binary, flags)` where
-/// `flags` contains no compiler binary, no `-c`, and no `-o <path>`.
-/// The compiler binary is preserved so callers can probe include dirs using
-/// the same compiler (and stdlib/sysroot/target) as the actual build.
+/// Keys are absolute source paths; values are `(compiler_binary, working_dir, flags)` where
+/// - `compiler_binary` is `arguments[0]` before stripping
+/// - `working_dir` is the project root from which relative include paths resolve
+/// - `flags` contains no compiler binary, no `-c`, and no `-o <path>`
 pub fn lsp_source_flags(
     project_dir: &Path,
     profile: &str,
-) -> Result<HashMap<PathBuf, (String, Vec<String>)>, FreightError> {
+) -> Result<HashMap<PathBuf, (String, String, Vec<String>)>, FreightError> {
     let commands = generate_lsp_compile_commands_for_project(project_dir, profile)?;
     let mut map = HashMap::new();
     for cmd in commands {
+        let dir = cmd.directory.to_string_lossy().into_owned();
         let mut args = cmd.arguments.into_iter();
         let compiler = args.next().unwrap_or_default();
         let file_str = cmd.file.to_string_lossy().into_owned();
@@ -519,7 +520,7 @@ pub fn lsp_source_flags(
             .flatten()
             .filter(|f| f != &file_str)
             .collect();
-        map.insert(cmd.file, (compiler, flags));
+        map.insert(cmd.file, (compiler, dir, flags));
     }
     Ok(map)
 }
