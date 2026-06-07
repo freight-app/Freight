@@ -176,7 +176,7 @@ impl LanguageIndexer for ClangIndexer {
         let path = path_from_uri(uri)?;
         if !Self::is_c_family(&path) { return None; }
         let tu = self.ensure_tu(&path)?;
-        let md = clang_bridge::hover::hover_markdown(tu, line as u32 + 1, col as u32 + 1)?;
+        let md = clang_bridge::hover::hover_full(tu, line as u32 + 1, col as u32 + 1)?;
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
     }
 
@@ -219,6 +219,38 @@ impl LanguageIndexer for ClangIndexer {
 
     fn flags_for(&self, path: &Path) -> Vec<String> {
         self.source_data.get(path).map(|(_, f)| f.clone()).unwrap_or_default()
+    }
+
+    fn inlay_hints(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+
+        let range = msg.get("params")?.get("range")?;
+        let start_line = range.get("start")?.get("line")?.as_u64()? as u32;
+        let end_line   = range.get("end")?.get("line")?.as_u64()? as u32;
+
+        // clang-bridge uses 1-based lines; LSP uses 0-based.
+        let hints = clang_bridge::inlay::inlay_hints(tu, start_line + 1, end_line + 1);
+        let items: Vec<serde_json::Value> = hints.iter().map(|h| {
+            // clang-bridge kind: 0 = param, 1 = type
+            // LSP InlayHintKind:  2 = Parameter, 1 = Type
+            let lsp_kind: u8 = if h.kind == 0 { 2 } else { 1 };
+            let padding_right = h.kind == 0; // param hints: space after label
+            let padding_left  = h.kind == 1; // type hints: space before ": T"
+            json!({
+                "position": {
+                    "line":      h.line.saturating_sub(1),
+                    "character": h.col.saturating_sub(1)
+                },
+                "label":        h.label,
+                "kind":         lsp_kind,
+                "paddingLeft":  padding_left,
+                "paddingRight": padding_right
+            })
+        }).collect();
+
+        Some(items)
     }
 
     fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {

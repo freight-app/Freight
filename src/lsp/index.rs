@@ -51,6 +51,12 @@ pub trait LanguageIndexer: Send {
 
     /// Return compile flags for `path`, used by external tools (e.g. clang-tidy).
     fn flags_for(&self, _path: &Path) -> Vec<String> { vec![] }
+
+    /// Serve `textDocument/inlayHint` for source-code hints (parameter names,
+    /// deduced types). Returns LSP `InlayHint[]` or `None` if this indexer
+    /// does not handle the file. The default returns `None` so existing
+    /// indexers that do not implement this are unaffected.
+    fn inlay_hints(&mut self, _uri: &str, _msg: &Value) -> Option<Vec<Value>> { None }
 }
 
 use crate::doc::{extract_dir, extract_file, DocItem, DocKind, DocLanguage, TagKind};

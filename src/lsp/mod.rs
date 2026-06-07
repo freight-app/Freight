@@ -575,12 +575,26 @@ impl Server {
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let our_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
 
-        // If clangd is running for this file, forward the request under a
-        // rewritten ID. The reader thread will merge our hints into its
-        // response and forward to the client. If clangd is absent, respond directly.
+        // #include / import annotation hints (e.g. "← stdlib", "← vecmath-1.0").
+        let include_hints = self.compute_inlay_hints(&msg).unwrap_or_default();
+
+        // Source-code hints (parameter names, deduced types) from whichever
+        // language indexer handles this file. Clang-bridge provides these for
+        // C/C++ with filtered, correct labels (no system-header names, main-file
+        // only). When an indexer covers the file we skip clangd for hints so
+        // its unfiltered output does not overwrite ours.
         let uri = text_document_uri(&msg);
+        let source_hints: Option<Vec<Value>> = uri.as_deref().and_then(|u| {
+            self.state.indexers.iter_mut().find_map(|ix| ix.inlay_hints(u, &msg))
+        });
+
+        if let Some(mut all) = source_hints {
+            all.extend(include_hints);
+            return self.respond(Some(id), Value::Array(all));
+        }
+
+        // No indexer covered this file — fall back to the old clangd-merge path.
         let goes_to_clangd = uri
             .as_deref()
             .map(|u| matches!(source_server_for_uri(u), Some(SourceServer::Clangd)))
@@ -597,7 +611,7 @@ impl Server {
                 rewritten.clone(),
                 PendingClangdRequest::InlayHint {
                     original_id: id,
-                    freight_hints: our_hints,
+                    freight_hints: include_hints,
                 },
             );
             let mut fwd = msg;
@@ -606,7 +620,7 @@ impl Server {
                 .insert("id".to_string(), json!(rewritten));
             self.forward_to_passthrough(SourceServer::Clangd, &fwd)?;
         } else {
-            self.respond(Some(id), Value::Array(our_hints))?;
+            self.respond(Some(id), Value::Array(include_hints))?;
         }
         Ok(())
     }
