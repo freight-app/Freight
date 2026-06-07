@@ -233,9 +233,9 @@ impl LanguageIndexer for ClangIndexer {
         // clang-bridge uses 1-based lines; LSP uses 0-based.
         let hints = clang_bridge::inlay::inlay_hints(tu, start_line + 1, end_line + 1);
         let items: Vec<serde_json::Value> = hints.iter().map(|h| {
-            // clang-bridge kind: 0 = param, 1 = type, 2 = block-end
-            // LSP InlayHintKind:  2 = Parameter, 1 = Type, 4 = BlockEnd (clangd ext)
-            let lsp_kind: u8 = match h.kind { 0 => 2, 2 => 4, _ => 1 };
+            // clang-bridge kind: 0 = param, 1 = type, 2 = block-end, 3 = designator
+            // LSP InlayHintKind:  2 = Parameter, 1 = Type, 4 = BlockEnd (ext), 0 = None
+            let lsp_kind: u8 = match h.kind { 0 => 2, 2 => 4, 3 => 0, _ => 1 };
             let padding_right = h.kind == 0; // param hints: space after label
             let padding_left  = h.kind == 1; // type hints: space before ": T"
             json!({
