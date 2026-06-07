@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 use index::{
     include_hover_markdown, include_inlay_label, parse_include_header,
-    DocIndex, HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
+    HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
 };
 use manifest::{
     completion_result, hover_result, manifest_diagnostics, signature_help_result,
@@ -155,8 +155,6 @@ struct ServerState {
     clangd: Option<Passthrough>,
     fortls: Option<Passthrough>,
     asm_lsp: Option<Passthrough>,
-    /// Symbol documentation index — shared with passthrough read threads.
-    doc_index: Arc<Mutex<Option<DocIndex>>>,
     /// Header → package mapping for `#include` hover.
     header_index: HeaderIndex,
     workspace_inventory: WorkspaceInventory,
@@ -212,7 +210,6 @@ impl Server {
                 clangd: None,
                 fortls: None,
                 asm_lsp: None,
-                doc_index: Arc::new(Mutex::new(None)),
                 header_index: HeaderIndex::default(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
@@ -1004,7 +1001,7 @@ impl Server {
             tracing::info!(
                 root_dir = %self.state.root_dir.display(),
                 manifest_dir = ?self.state.manifest_dir,
-                "no manifest dir — skipping compile commands and doc index"
+                "no manifest dir — skipping compile commands"
             );
             return;
         };
@@ -1013,47 +1010,14 @@ impl Server {
             self.state.compile_commands_dir = Some(dir);
         }
         self.refresh_indexer_flags();
-        self.refresh_doc_index();
+        self.refresh_header_index();
     }
 
-    fn refresh_workspace_inventory(&mut self) {
-        self.state.workspace_inventory = build_workspace_inventory(
-            &self
-                .active_manifest_dir()
-                .unwrap_or_else(|| self.state.root_dir.clone()),
-        );
-    }
-
-    fn refresh_doc_index(&mut self) {
+    fn refresh_header_index(&mut self) {
         let base = self
             .active_manifest_dir()
             .unwrap_or_else(|| self.state.root_dir.clone());
-        let package_dirs = self.doc_index_package_dirs(&base);
-        let package_refs: Vec<&Path> = package_dirs.iter().map(PathBuf::as_path).collect();
-
-        // DocIndex — built synchronously; typically well under a second.
-        let new_index = DocIndex::build_freight_packages(package_refs.iter().copied());
-        tracing::info!(
-            packages = package_dirs.len(),
-            items = new_index.len(),
-            "doc index rebuilt"
-        );
-        for dir in &package_dirs {
-            tracing::debug!(path = %dir.display(), "doc index package dir");
-        }
-        let item_count = new_index.len();
-        *self.state.doc_index.lock().unwrap() = Some(new_index);
-
-        // Notify the client so it can update its status bar.
-        let _ = self.write_to_client(&json!({
-            "jsonrpc": "2.0",
-            "method": "freight/docIndexUpdated",
-            "params": { "items": item_count }
-        }));
-
-        // HeaderIndex — build from the manifest graph so origins carry dep-key context.
         let header_specs = build_header_specs(&base, self.root_is_workspace());
-
         let pkgs_dir = base.join(".pkgs");
         let pkgs_opt = if pkgs_dir.is_dir() {
             Some(pkgs_dir.as_path())
@@ -1063,21 +1027,12 @@ impl Server {
         self.state.header_index = HeaderIndex::build(&header_specs, pkgs_opt);
     }
 
-    fn doc_index_package_dirs(&self, base: &Path) -> Vec<PathBuf> {
-        let mut dirs = Vec::new();
-        if self.root_is_workspace() {
-            for pkg in &self.state.workspace_inventory.packages {
-                let member_dir = base.join(&pkg.path);
-                push_doc_package_dir(&mut dirs, member_dir.clone());
-                collect_path_dependency_doc_dirs(&member_dir, &mut dirs);
-            }
-            if !dirs.is_empty() {
-                return dirs;
-            }
-        }
-        push_doc_package_dir(&mut dirs, base.to_path_buf());
-        collect_path_dependency_doc_dirs(base, &mut dirs);
-        dirs
+    fn refresh_workspace_inventory(&mut self) {
+        self.state.workspace_inventory = build_workspace_inventory(
+            &self
+                .active_manifest_dir()
+                .unwrap_or_else(|| self.state.root_dir.clone()),
+        );
     }
 
     fn notify_compile_commands_changed(&mut self) -> io::Result<()> {
@@ -1113,7 +1068,6 @@ impl Server {
         let root = self.active_manifest_dir()?;
         let compile_commands_arg = format!("--compile-commands-dir={}", dir.display());
         let pending = Arc::clone(&self.state.clangd_pending);
-        let doc_index = Arc::clone(&self.state.doc_index);
         let mut clangd_flags = vec![
             compile_commands_arg,
             "--background-index=false".to_string(),
@@ -1129,7 +1083,6 @@ impl Server {
             initialize_msg,
             Some(&root),
             Some(pending),
-            Some(doc_index),
             Some(diag_cache),
         )?;
         self.state.clangd = Some(server);
@@ -1164,7 +1117,6 @@ impl Server {
             Some(&root),
             None,
             None,
-            None,
         )?;
         self.state.fortls = Some(server);
         caps
@@ -1183,7 +1135,6 @@ impl Server {
             Some(&root),
             None,
             None,
-            None,
         )?;
         self.state.asm_lsp = Some(server);
         caps
@@ -1198,7 +1149,6 @@ impl Server {
         initialize_msg: &Value,
         cwd: Option<&Path>,
         pending: Option<Arc<Mutex<HashMap<String, PendingClangdRequest>>>>,
-        _doc_index: Option<Arc<Mutex<Option<DocIndex>>>>,
         diag_cache: Option<Arc<Mutex<HashMap<String, DiagCache>>>>,
     ) -> Option<(Passthrough, Option<Value>)> {
         let mut cmd = Command::new(command);
@@ -1348,46 +1298,6 @@ fn package_inventory(dir: &Path, path: String) -> Option<WorkspacePackage> {
     })
 }
 
-fn collect_path_dependency_doc_dirs(project_dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(manifest) = load_manifest(project_dir) else {
-        return;
-    };
-    collect_manifest_path_dependency_doc_dirs(project_dir, &manifest, out);
-}
-
-fn collect_manifest_path_dependency_doc_dirs(
-    project_dir: &Path,
-    manifest: &Manifest,
-    out: &mut Vec<PathBuf>,
-) {
-    for dep in manifest
-        .effective_dependencies()
-        .into_values()
-        .chain(manifest.dev_dependencies.values().cloned())
-    {
-        let Dependency::Detailed(detail) = dep else {
-            continue;
-        };
-        let Some(path) = detail.path else {
-            continue;
-        };
-        push_doc_package_dir(out, project_dir.join(path));
-    }
-}
-
-fn push_doc_package_dir(out: &mut Vec<PathBuf>, dir: PathBuf) {
-    if !dir.is_dir() {
-        return;
-    }
-    let canonical = dir.canonicalize().unwrap_or(dir);
-    if !out
-        .iter()
-        .any(|existing| existing.canonicalize().unwrap_or_else(|_| existing.clone()) == canonical)
-    {
-        out.push(canonical);
-    }
-}
-
 /// Build `HeaderDirSpec` entries from the freight manifest graph rooted at `base`.
 ///
 /// - `base` itself (or workspace root) → `Own`
@@ -1509,7 +1419,7 @@ fn level_for_method(method: &str) -> tracing::Level {
 #[cfg(test)]
 mod tests {
     use super::protocol::sanitize_code_action_diagnostics;
-    use super::{build_workspace_inventory, collect_path_dependency_doc_dirs};
+    use super::build_workspace_inventory;
     use serde_json::json;
 
     #[test]
@@ -1589,49 +1499,6 @@ src = "src/main.c"
             .unwrap();
         assert_eq!(core.lib.as_deref(), Some("Static"));
         assert_eq!(core.path, "core");
-    }
-
-    #[test]
-    fn doc_index_dirs_include_explicit_path_dependencies() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_manifest(
-            tmp.path(),
-            r#"
-[package]
-name = "app"
-version = "0.1.0"
-
-[language.c]
-std = "c17"
-
-[[bin]]
-name = "app"
-src = "src/main.c"
-
-[dependencies]
-core = { path = "core" }
-"#,
-        );
-        write_manifest(
-            &tmp.path().join("core"),
-            r#"
-[package]
-name = "core"
-version = "0.1.0"
-
-[language.c]
-std = "c17"
-
-[lib]
-type = "header"
-hdrs = ["include/core.h"]
-"#,
-        );
-
-        let mut dirs = Vec::new();
-        collect_path_dependency_doc_dirs(tmp.path(), &mut dirs);
-
-        assert_eq!(dirs, vec![tmp.path().join("core").canonicalize().unwrap()]);
     }
 
     fn write_manifest(dir: &std::path::Path, text: &str) {
