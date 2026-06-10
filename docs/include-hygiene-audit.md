@@ -6,11 +6,33 @@ out commit-by-commit. Newest entries at the top.
 
 ## Status
 
-- **Phase 1 (warn):** in progress.
+- **Phase 1 (warn):** ✅ complete and verified end-to-end.
 - **Phase 2 (build enforcement):** not started.
 - **Phase 3 (system libs + stdlib matching):** stdlib matching folded into Phase 1.
 
 ## Log
+
+### Step 5 — LSP wiring (Phase 1 complete)
+
+- `DiagCache` gained a `freight` field; both merge sites now chain
+  clangd + tidy + freight.
+- `ServerState.system_include_dirs: Option<Vec<PathBuf>>` (probed once, cached).
+- `Server::compute_include_hygiene(uri, text)` — runs `check_includes` and stores
+  the results as `source:"freight" code:"undeclared-include"` diagnostics
+  (severity from the lint level: warn→2, deny→1; allow→cleared/no-op).
+- Helpers: `undeclared_include_level()` (reads `[lints]` from the project
+  manifest), `declared_dirs_and_compiler()` (parses `-I`/`-isystem`/`-iquote` and
+  argv[0] from compile_commands.json), `cached_system_dirs()`.
+- Called from `handle_did_open` / `handle_did_change` (full-text sync) /
+  `handle_did_save`.
+- **End-to-end verified** against the `freight lsp` binary on a real project
+  (`/tmp/ih`): `#include <pthread.h>` → one Warning on the right span; `<vector>`
+  and `<cstdio>` (stdlib) not flagged; `[lints] undeclared-include = "allow"`
+  silences it (0 diagnostics).
+- Works with the clang bridge gated off (bridge-free resolution path).
+- Suite: my unit tests all pass. The 4 failing `*_hello_builds` integration tests
+  are pre-existing/environmental (they invoke `freight build`; they fail
+  identically with my changes stashed — the sandbox can't run them).
 
 ### Step 4 — system-dir probe + `check_includes` orchestration
 

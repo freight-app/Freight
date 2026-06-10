@@ -149,8 +149,10 @@ struct Server {
 /// the union to the client so the client always sees a consistent set.
 #[derive(Default)]
 struct DiagCache {
-    clangd: Vec<Value>,
-    tidy:   Vec<Value>,
+    clangd:  Vec<Value>,
+    tidy:    Vec<Value>,
+    /// Freight-generated diagnostics (e.g. undeclared-include warnings).
+    freight: Vec<Value>,
 }
 
 struct ServerState {
@@ -175,6 +177,10 @@ struct ServerState {
 
     /// Per-language indexers; iterated in order for each LSP request.
     indexers: Vec<Box<dyn LanguageIndexer>>,
+
+    /// Cached compiler built-in include dirs, probed once (used by the
+    /// include-hygiene check to confirm an undeclared header exists).
+    system_include_dirs: Option<Vec<PathBuf>>,
 }
 
 struct Passthrough {
@@ -231,6 +237,7 @@ impl Server {
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
                 diag_cache: Arc::new(Mutex::new(HashMap::new())),
                 indexers,
+                system_include_dirs: None,
             },
         }
     }
@@ -349,6 +356,8 @@ impl Server {
                     }
                 }
             }
+            // Flag undeclared #includes (no-op for non-C/C++).
+            self.compute_include_hygiene(&uri, &text);
         }
         self.forward_by_text_document(&msg)
     }
@@ -362,6 +371,7 @@ impl Server {
             // Full-text sync (change: 1) guarantees changed_full_text is always present.
             if let Some(text) = changed_full_text(&msg) {
                 for ix in &mut self.state.indexers { ix.reparse(&uri, &text); }
+                self.compute_include_hygiene(&uri, &text);
             }
             return self.forward_by_uri(&uri, &msg);
         }
@@ -380,6 +390,16 @@ impl Server {
         if !is_freight_manifest_uri(&uri) {
             self.forward_by_uri(&uri, &msg)?;
             self.spawn_tidy(&uri);
+            // Recompute undeclared-include diagnostics from the saved contents.
+            let text = msg
+                .get("params")
+                .and_then(|p| p.get("text"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| path_from_uri(&uri).and_then(|p| std::fs::read_to_string(p).ok()));
+            if let Some(text) = text {
+                self.compute_include_hygiene(&uri, &text);
+            }
             return Ok(());
         }
         if let Some(text) = msg
@@ -1047,7 +1067,11 @@ impl Server {
             let mut guard = cache.lock().unwrap();
             let entry = guard.entry(uri.clone()).or_default();
             entry.tidy = tidy_diags;
-            let merged: Vec<Value> = entry.clangd.iter().chain(entry.tidy.iter()).cloned().collect();
+            let merged: Vec<Value> = entry.clangd.iter()
+                .chain(entry.tidy.iter())
+                .chain(entry.freight.iter())
+                .cloned()
+                .collect();
             drop(guard);
             let msg = json!({
                 "jsonrpc": "2.0",
@@ -1056,6 +1080,131 @@ impl Server {
             });
             let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
         });
+    }
+
+    /// Compute undeclared-include diagnostics for a C/C++ source file and merge
+    /// them into the published set. `text` is the live document contents. No-op
+    /// for non-C/C++ files or when the `undeclared-include` lint is `allow`.
+    fn compute_include_hygiene(&mut self, uri: &str, text: &str) {
+        use crate::build::include_policy as ip;
+        if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
+            return;
+        }
+        let Some(path) = path_from_uri(uri) else { return };
+
+        let severity = match self.undeclared_include_level() {
+            crate::manifest::LintLevel::Allow => {
+                self.set_freight_diags(uri, Vec::new());
+                return;
+            }
+            crate::manifest::LintLevel::Warn => 2, // LSP DiagnosticSeverity::Warning
+            crate::manifest::LintLevel::Deny => 1, // LSP DiagnosticSeverity::Error
+        };
+
+        let file_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let (declared, compiler) = self.declared_dirs_and_compiler(&path);
+        let lang = ip::Language::from_path(&path);
+        let system = self.cached_system_dirs(compiler.as_deref(), lang);
+
+        let diags: Vec<Value> = ip::check_includes(text, &file_dir, &declared, &system, lang)
+            .iter()
+            .map(|f| {
+                json!({
+                    "range": {
+                        "start": { "line": f.line, "character": f.start_col },
+                        "end":   { "line": f.line, "character": f.end_col }
+                    },
+                    "severity": severity,
+                    "source": "freight",
+                    "code": "undeclared-include",
+                    "message": format!(
+                        "{} is not provided by any declared dependency; add it to \
+                         [dependencies] in freight.toml",
+                        f.spelling
+                    ),
+                })
+            })
+            .collect();
+
+        self.set_freight_diags(uri, diags);
+    }
+
+    /// Store freight-generated diagnostics for `uri` and re-publish the merged set.
+    fn set_freight_diags(&self, uri: &str, diags: Vec<Value>) {
+        let merged: Vec<Value> = {
+            let mut guard = self.state.diag_cache.lock().unwrap();
+            let entry = guard.entry(uri.to_string()).or_default();
+            entry.freight = diags;
+            entry.clangd.iter()
+                .chain(entry.tidy.iter())
+                .chain(entry.freight.iter())
+                .cloned()
+                .collect()
+        };
+        let _ = self.publish_diagnostics(uri, merged);
+    }
+
+    /// The `[lints].undeclared-include` level for the active project (default warn).
+    fn undeclared_include_level(&self) -> crate::manifest::LintLevel {
+        self.active_manifest_dir()
+            .and_then(|d| crate::manifest::load_manifest(&d).ok())
+            .map(|m| m.lints.undeclared_include)
+            .unwrap_or_default()
+    }
+
+    /// The declared include dirs (`-I`/`-isystem`/`-iquote`) and the compiler for
+    /// `path`, read from the generated compile_commands.json.
+    fn declared_dirs_and_compiler(&self, path: &Path) -> (Vec<PathBuf>, Option<String>) {
+        let Some(dir) = self.state.compile_commands_dir.clone() else {
+            return (Vec::new(), None);
+        };
+        let cmds = crate::build::compile_commands::load(&dir);
+        let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let Some(cmd) = cmds.iter().find(|c| {
+            c.file.canonicalize().map(|p| p == target).unwrap_or(c.file == *path)
+        }) else {
+            return (Vec::new(), None);
+        };
+        let base = &cmd.directory;
+        let args = &cmd.arguments;
+        let compiler = args.first().cloned();
+        let mut dirs = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            for flag in ["-I", "-isystem", "-iquote"] {
+                if let Some(rest) = a.strip_prefix(flag) {
+                    let raw = if rest.is_empty() {
+                        i += 1;
+                        args.get(i).cloned().unwrap_or_default()
+                    } else {
+                        rest.to_string()
+                    };
+                    if !raw.is_empty() {
+                        let pb = PathBuf::from(&raw);
+                        dirs.push(if pb.is_absolute() { pb } else { base.join(pb) });
+                    }
+                    break;
+                }
+            }
+            i += 1;
+        }
+        (dirs, compiler)
+    }
+
+    /// Probe (and cache) the compiler's built-in include dirs.
+    fn cached_system_dirs(
+        &mut self,
+        compiler: Option<&str>,
+        lang: crate::build::include_policy::Language,
+    ) -> Vec<PathBuf> {
+        if let Some(cached) = &self.state.system_include_dirs {
+            return cached.clone();
+        }
+        let cc = compiler.unwrap_or("c++");
+        let dirs = crate::build::include_policy::system_include_dirs(Path::new(cc), lang);
+        self.state.system_include_dirs = Some(dirs.clone());
+        dirs
     }
 
     fn publish_manifest_diagnostics(&mut self, uri: &str) -> io::Result<()> {
@@ -1301,6 +1450,7 @@ impl Server {
                         entry.clangd = new_diags;
                         let merged: Vec<Value> = entry.clangd.iter()
                             .chain(entry.tidy.iter())
+                            .chain(entry.freight.iter())
                             .cloned()
                             .collect();
                         drop(guard);
