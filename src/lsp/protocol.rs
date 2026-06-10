@@ -82,12 +82,12 @@ pub fn sanitize_code_action_diagnostics(msg: &Value) -> Value {
 // Capability merging
 // ---------------------------------------------------------------------------
 
-pub fn merged_capabilities(source_caps: Vec<Value>) -> Value {
+pub fn merged_capabilities(source_caps: Vec<Value>, use_clang_bridge: bool) -> Value {
     let mut caps = json!({});
     for source in source_caps {
         merge_capability_object(&mut caps, &source);
     }
-    merge_capability_object(&mut caps, &freight_capabilities());
+    merge_capability_object(&mut caps, &freight_capabilities(use_clang_bridge));
     caps
 }
 
@@ -192,8 +192,8 @@ fn merge_signature_help_provider(into_obj: &mut serde_json::Map<String, Value>, 
     }
 }
 
-pub fn freight_capabilities() -> Value {
-    json!({
+pub fn freight_capabilities(use_clang_bridge: bool) -> Value {
+    let mut caps = json!({
         "positionEncoding": "utf-16",
         "textDocumentSync": {
             "openClose": true,
@@ -211,16 +211,26 @@ pub fn freight_capabilities() -> Value {
         "inlayHintProvider": true,
         "definitionProvider": true,
         "declarationProvider": true,
-        "documentSymbolProvider": true,
-        "foldingRangeProvider": true,
-        "referencesProvider": true,
-        "documentHighlightProvider": true,
-        "semanticTokensProvider": {
-            "legend": super::index::semantic_tokens_legend(),
-            "full": true
-        },
         "documentLinkProvider": { "resolveProvider": false }
-    })
+    });
+
+    // The clang-bridge-owned C/C++ providers are only advertised by freight when
+    // the bridge is enabled. When it is off these requests forward to clangd, so
+    // clangd's own capabilities (notably the semantic-token *legend*, which must
+    // match the token indices the responder emits) are the ones the merge keeps.
+    if use_clang_bridge {
+        if let Some(obj) = caps.as_object_mut() {
+            obj.insert("documentSymbolProvider".into(), json!(true));
+            obj.insert("foldingRangeProvider".into(), json!(true));
+            obj.insert("referencesProvider".into(), json!(true));
+            obj.insert("documentHighlightProvider".into(), json!(true));
+            obj.insert(
+                "semanticTokensProvider".into(),
+                json!({ "legend": super::index::semantic_tokens_legend(), "full": true }),
+            );
+        }
+    }
+    caps
 }
 
 // ---------------------------------------------------------------------------

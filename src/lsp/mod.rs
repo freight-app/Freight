@@ -58,6 +58,13 @@ pub struct Args {
     pub no_asm_lsp: bool,
     #[arg(long, default_value = "dev")]
     pub profile: String,
+    /// Use the in-process clang bridge to serve C/C++ language features (hover,
+    /// goto, completion, document symbols, folding, references, highlight,
+    /// semantic tokens, inlay hints, diagnostics) instead of forwarding to
+    /// clangd. Off by default while the bridge matures — clangd is the reliable
+    /// path; enable this to test or use the bridge.
+    #[arg(long)]
+    pub use_clang_bridge: bool,
     /// Extra flags forwarded verbatim to clangd (repeatable).
     /// E.g. `--clangd-arg=--hover-style=detailed`
     #[arg(long = "clangd-arg", value_name = "ARG")]
@@ -198,6 +205,15 @@ impl Server {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let manifest_dir = find_manifest_dir(&cwd);
         let root_dir = manifest_dir.clone().unwrap_or(cwd);
+        // Off by default: clangd serves C/C++. The clang-bridge indexer is only
+        // registered when explicitly opted in, so every indexer-backed handler
+        // (hover/goto/completion/documentSymbol/folding/references/highlight/
+        // semanticTokens/inlay/diagnostics) falls through to the clangd forward.
+        let indexers: Vec<Box<dyn LanguageIndexer>> = if args.use_clang_bridge {
+            vec![Box::new(ClangIndexer::new())]
+        } else {
+            vec![]
+        };
         Self {
             args,
             out,
@@ -214,7 +230,7 @@ impl Server {
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
                 diag_cache: Arc::new(Mutex::new(HashMap::new())),
-                indexers: vec![Box::new(ClangIndexer::new())],
+                indexers,
             },
         }
     }
@@ -296,7 +312,7 @@ impl Server {
                 source_caps.push(caps);
             }
         }
-        let capabilities = merged_capabilities(source_caps);
+        let capabilities = merged_capabilities(source_caps, self.args.use_clang_bridge);
         self.respond(
             msg.get("id").cloned(),
             json!({
