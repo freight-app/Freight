@@ -204,6 +204,8 @@ pub fn freight_capabilities() -> Value {
         "inlayHintProvider": true,
         "definitionProvider": true,
         "declarationProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
         "documentLinkProvider": { "resolveProvider": false }
     })
 }

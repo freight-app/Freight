@@ -57,6 +57,13 @@ pub trait LanguageIndexer: Send {
     /// does not handle the file. The default returns `None` so existing
     /// indexers that do not implement this are unaffected.
     fn inlay_hints(&mut self, _uri: &str, _msg: &Value) -> Option<Vec<Value>> { None }
+
+    /// Serve `textDocument/documentSymbol`. Returns a hierarchical LSP
+    /// `DocumentSymbol[]` or `None` if this indexer does not handle the file.
+    fn document_symbols(&mut self, _uri: &str) -> Option<Vec<Value>> { None }
+
+    /// Serve `textDocument/foldingRange`. Returns LSP `FoldingRange[]` or `None`.
+    fn folding_ranges(&mut self, _uri: &str) -> Option<Vec<Value>> { None }
 }
 
 use crate::manifest::load_manifest;

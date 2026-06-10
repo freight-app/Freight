@@ -258,6 +258,8 @@ impl Server {
                 "textDocument/definition" => self.handle_definition_or_forward(msg)?,
                 "textDocument/declaration" => self.handle_definition_or_forward(msg)?,
                 "textDocument/documentLink" => self.handle_document_links(msg)?,
+                "textDocument/documentSymbol" => self.handle_document_symbol(msg)?,
+                "textDocument/foldingRange" => self.handle_folding_range(msg)?,
                 "freight/workspaceInfo" => self.handle_workspace_info(msg)?,
                 "freight/setConfig" => self.handle_set_config(msg)?,
                 _ => self.forward_or_null(msg)?,
@@ -568,6 +570,33 @@ impl Server {
             }));
         }
         Some(links)
+    }
+
+    /// `textDocument/documentSymbol` — prefer a language indexer (clang-bridge
+    /// for C/C++), otherwise forward to the source server (clangd/fortls/…).
+    fn handle_document_symbol(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let uri = text_document_uri(&msg);
+        let result = uri.as_deref().and_then(|u| {
+            self.state.indexers.iter_mut().find_map(|ix| ix.document_symbols(u))
+        });
+        if let Some(syms) = result {
+            return self.respond(Some(id), Value::Array(syms));
+        }
+        self.forward_or_null(msg)
+    }
+
+    /// `textDocument/foldingRange` — prefer a language indexer, else forward.
+    fn handle_folding_range(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let uri = text_document_uri(&msg);
+        let result = uri.as_deref().and_then(|u| {
+            self.state.indexers.iter_mut().find_map(|ix| ix.folding_ranges(u))
+        });
+        if let Some(ranges) = result {
+            return self.respond(Some(id), Value::Array(ranges));
+        }
+        self.forward_or_null(msg)
     }
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {

@@ -268,4 +268,97 @@ impl LanguageIndexer for ClangIndexer {
             .collect();
         Some(json!({ "isIncomplete": false, "items": items }))
     }
+
+    fn document_symbols(&mut self, uri: &str) -> Option<Vec<Value>> {
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+        let syms: Vec<clang_bridge::docsym::DocSym> =
+            tu.document_symbols()?.iter().collect();
+        let n = syms.len();
+        // Build child lists from the flat parent-index representation.
+        let mut kids: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut roots: Vec<usize> = Vec::new();
+        for (i, s) in syms.iter().enumerate() {
+            match usize::try_from(s.parent) {
+                Ok(p) if p < n => kids[p].push(i),
+                _ => roots.push(i),
+            }
+        }
+        Some(roots.iter().map(|&r| doc_symbol_node(r, &syms, &kids)).collect())
+    }
+
+    fn folding_ranges(&mut self, uri: &str) -> Option<Vec<Value>> {
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+        let out: Vec<Value> = clang_bridge::folding::folding_ranges(tu)
+            .iter()
+            .map(|r| {
+                // LSP foldingRange lines are 0-based; clang-bridge is 1-based.
+                let mut v = json!({
+                    "startLine": r.start_line.saturating_sub(1),
+                    "endLine":   r.end_line.saturating_sub(1),
+                });
+                // Only "comment" is a standard FoldingRangeKind we want to tag;
+                // brace/region folds are left untagged (default region behaviour).
+                if r.kind == "comment" {
+                    v["kind"] = json!("comment");
+                }
+                v
+            })
+            .collect();
+        Some(out)
+    }
+}
+
+/// Map a clang-bridge document-symbol kind string to an LSP `SymbolKind`.
+fn symbol_kind(kind: &str) -> u32 {
+    match kind {
+        "namespace" => 3,        // Namespace
+        "class" => 5,            // Class
+        "method" => 6,           // Method
+        "field" | "property" => 8, // Field
+        "enum" => 10,            // Enum
+        "function" => 12,        // Function
+        "var" => 13,             // Variable
+        "enumconst" => 22,       // EnumMember
+        "struct" | "union" => 23, // Struct
+        "concept" => 11,         // Interface (closest LSP kind for a concept)
+        "typedef" => 5,          // Class (type alias)
+        _ => 13,                 // Variable fallback
+    }
+}
+
+/// Recursively build a hierarchical LSP `DocumentSymbol` from the flat list.
+fn doc_symbol_node(
+    i: usize,
+    syms: &[clang_bridge::docsym::DocSym],
+    kids: &[Vec<usize>],
+) -> Value {
+    let s = &syms[i];
+    let children: Vec<Value> =
+        kids[i].iter().map(|&c| doc_symbol_node(c, syms, kids)).collect();
+    let sel_line = s.sel_line.saturating_sub(1);
+    let sel_start = s.sel_col.saturating_sub(1);
+    let mut node = json!({
+        "name": s.name,
+        "kind": symbol_kind(&s.kind),
+        "range": {
+            "start": { "line": s.range_start_line.saturating_sub(1), "character": s.range_start_col.saturating_sub(1) },
+            "end":   { "line": s.range_end_line.saturating_sub(1),   "character": s.range_end_col.saturating_sub(1) }
+        },
+        // selectionRange must be contained in range; cover the name token.
+        "selectionRange": {
+            "start": { "line": sel_line, "character": sel_start },
+            "end":   { "line": sel_line, "character": sel_start + s.name.chars().count() as u32 }
+        }
+    });
+    if !s.detail.is_empty() {
+        node["detail"] = json!(s.detail);
+    }
+    if !children.is_empty() {
+        node["children"] = json!(children);
+    }
+    node
 }
