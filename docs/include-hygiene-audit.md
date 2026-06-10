@@ -12,6 +12,23 @@ out commit-by-commit. Newest entries at the top.
 
 ## Log
 
+### Step 4 — system-dir probe + `check_includes` orchestration
+
+- `system_include_dirs(compiler, language)` runs `<cc> -E -x <lang> - -v` and
+  `parse_search_dirs()` extracts the `#include <...> search starts here:` block
+  (handles macOS `(framework directory)` suffix). Empty on failure → safe (an
+  unconfirmed header just isn't flagged).
+- `UndeclaredInclude { line, start_col, end_col, spelling }`.
+- `check_includes(source, file_dir, declared_dirs, system_dirs, language)` ties
+  parse → resolve (declared then system) → classify → finding. Flags only headers
+  that are undeclared **and** present; skips declared, stdlib (by name), and
+  not-found (clangd's file-not-found).
+- 2 new tests (system-block parse; full flow flags only `<pthread.h>`). **10
+  include_policy tests total.**
+- The whole classification/resolution logic is now complete and tested in
+  isolation. Remaining: wire `check_includes` into the LSP diagnostic publish
+  (gather declared_dirs from the file's compile command, probe system dirs once).
+
 ### Step 3 — `#include` directive parser + resolver (`include_policy.rs`)
 
 - `IncludeDirective { name, angled, line, start_col, end_col }` (0-based, span

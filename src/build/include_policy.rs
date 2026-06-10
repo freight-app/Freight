@@ -200,6 +200,55 @@ fn strip_comments(line: &str, in_block: &mut bool) -> String {
     out
 }
 
+/// The compiler's built-in system include directories (e.g. `/usr/include`,
+/// the libstdc++ dir). Probed by running the compiler's preprocessor in verbose
+/// mode; returns an empty list on any failure (callers degrade gracefully — an
+/// undeclared system header simply won't be confirmed to exist, so it isn't
+/// flagged, which is the safe direction).
+pub fn system_include_dirs(compiler: &Path, language: Language) -> Vec<PathBuf> {
+    let lang = match language {
+        Language::C => "c",
+        Language::Cxx => "c++",
+    };
+    let output = std::process::Command::new(compiler)
+        .args(["-E", "-x", lang, "-", "-v"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output();
+    match output {
+        Ok(o) => parse_search_dirs(&String::from_utf8_lossy(&o.stderr)),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Parse the `#include <...> search starts here:` block out of a compiler's
+/// `-v` preprocessor output.
+fn parse_search_dirs(stderr: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut in_list = false;
+    for line in stderr.lines() {
+        let t = line.trim();
+        if t.starts_with("#include <...> search starts here")
+            || t.starts_with("#include \"...\" search starts here")
+        {
+            in_list = true;
+            continue;
+        }
+        if t.starts_with("End of search list") {
+            break;
+        }
+        if in_list && !t.is_empty() {
+            // macOS appends " (framework directory)"; strip any " (...)" suffix.
+            let path = t.split(" (").next().unwrap_or(t).trim();
+            if !path.is_empty() {
+                dirs.push(PathBuf::from(path));
+            }
+        }
+    }
+    dirs
+}
+
 /// Resolve a `#include` against a set of search directories, returning the
 /// absolute path of the first match. For quote includes the file's own
 /// directory is searched first (the usual preprocessor rule).
@@ -221,6 +270,56 @@ pub fn resolve_include(
         }
     }
     None
+}
+
+// ── Orchestration ────────────────────────────────────────────────────────────
+
+/// One undeclared-include finding, ready to be turned into an LSP diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndeclaredInclude {
+    pub line: u32,
+    pub start_col: u32,
+    pub end_col: u32,
+    /// The include spelling with delimiters, e.g. `<pthread.h>`.
+    pub spelling: String,
+}
+
+/// Find every `#include` in `source` that resolves to a header provided by no
+/// declared package and is not a language standard-library header.
+///
+/// * `declared_dirs` — the file's compile-command include dirs (project + deps).
+/// * `system_dirs` — the compiler's built-in include dirs (used only to confirm
+///   an undeclared header actually exists; a header found nowhere is skipped, as
+///   that is clangd's file-not-found, not ours).
+pub fn check_includes(
+    source: &str,
+    file_dir: &Path,
+    declared_dirs: &[PathBuf],
+    system_dirs: &[PathBuf],
+    language: Language,
+) -> Vec<UndeclaredInclude> {
+    // Declared dirs are the allowlist; resolution also searches system dirs so we
+    // can tell "undeclared but present" from "missing".
+    let allow = IncludeAllowlist::new(language, declared_dirs.to_vec(), Vec::new());
+    let search: Vec<PathBuf> =
+        declared_dirs.iter().chain(system_dirs.iter()).cloned().collect();
+
+    let mut out = Vec::new();
+    for d in parse_includes(source) {
+        let Some(resolved) = resolve_include(&d, file_dir, &search) else {
+            continue; // not found anywhere — clangd reports file-not-found
+        };
+        if allow.classify(&d.name, &resolved) == IncludeClass::Undeclared {
+            let (l, r) = if d.angled { ("<", ">") } else { ("\"", "\"") };
+            out.push(UndeclaredInclude {
+                line: d.line,
+                start_col: d.start_col,
+                end_col: d.end_col,
+                spelling: format!("{l}{}{r}", d.name),
+            });
+        }
+    }
+    out
 }
 
 // ── Standard-header tables ───────────────────────────────────────────────────
@@ -365,6 +464,66 @@ int x;
         let incs = parse_includes(src);
         assert_eq!(incs.len(), 1);
         assert_eq!(incs[0].name, "real.h");
+    }
+
+    #[test]
+    fn check_includes_flags_only_undeclared_present_headers() {
+        let tmp = std::env::temp_dir().join(format!("inc_chk_{}", std::process::id()));
+        let declared = tmp.join("deps/zlib/include");
+        let system = tmp.join("usr/include");
+        let filedir = tmp.join("proj/src");
+        for d in [&declared, &system, &filedir] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(declared.join("zlib.h"), "").unwrap();
+        std::fs::write(system.join("pthread.h"), "").unwrap();
+        std::fs::write(system.join("stdio.h"), "").unwrap();
+        std::fs::create_dir_all(system.join("c++")).unwrap();
+        std::fs::write(system.join("c++/vector"), "").unwrap();
+
+        let src = "\
+#include <zlib.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <vector>
+#include <does_not_exist.h>
+";
+        let mut sys_dirs = vec![system.clone()];
+        sys_dirs.push(system.join("c++"));
+        let found = check_includes(src, &filedir, &[declared.clone()], &sys_dirs, Language::Cxx);
+
+        // Only <pthread.h> is undeclared *and* present: zlib is declared, stdio &
+        // vector are stdlib, and does_not_exist.h resolves nowhere.
+        assert_eq!(found.len(), 1, "got {found:?}");
+        assert_eq!(found[0].spelling, "<pthread.h>");
+        assert_eq!(found[0].line, 1);
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn parse_search_dirs_extracts_system_block() {
+        let stderr = "\
+ignored preamble
+#include \"...\" search starts here:
+ /proj/local
+#include <...> search starts here:
+ /usr/lib/clang/18/include
+ /usr/include/c++/13
+ /usr/include (framework directory)
+End of search list.
+trailing junk
+";
+        let dirs = parse_search_dirs(stderr);
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/proj/local"),
+                PathBuf::from("/usr/lib/clang/18/include"),
+                PathBuf::from("/usr/include/c++/13"),
+                PathBuf::from("/usr/include"),
+            ]
+        );
     }
 
     #[test]
