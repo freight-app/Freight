@@ -5,6 +5,7 @@ pub(crate) mod diagnostics;
 pub mod discover;
 pub mod features;
 pub mod header_units;
+pub mod include_policy;
 pub mod link;
 pub mod modules;
 pub mod pch;
