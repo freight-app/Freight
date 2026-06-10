@@ -12,6 +12,22 @@ out commit-by-commit. Newest entries at the top.
 
 ## Log
 
+### Step 3 — `#include` directive parser + resolver (`include_policy.rs`)
+
+- `IncludeDirective { name, angled, line, start_col, end_col }` (0-based, span
+  includes delimiters).
+- `parse_includes(source)` — line scan with a `/* */` + `//` comment state
+  machine so commented-out includes aren't flagged. Handles `#  include`.
+- `resolve_include(directive, file_dir, search_dirs)` — quote includes search
+  the file's dir first, then the search path; returns the first existing file.
+- 3 new tests (directive extraction incl. columns, multiline-block-comment skip,
+  quote/angle/missing resolution). 8 include_policy tests total.
+- **Resolution strategy (decided, bridge-free):** the LSP passes the file's
+  compile-command `-I` dirs (declared project+dep) plus the compiler's probed
+  system dirs as `search_dirs`. Resolved-under-declared → allowed; std-name →
+  allowed; resolved-under-system → undeclared; unresolved → skip (clangd already
+  reports file-not-found). Avoids depending on the (gated-off) bridge.
+
 ### Step 2 — `[lints]` manifest table
 
 - `src/manifest/types.rs`: added `LintLevel { Allow, Warn(default), Deny }`

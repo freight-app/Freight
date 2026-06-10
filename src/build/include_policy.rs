@@ -108,6 +108,121 @@ fn canon(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
+// ── #include directive parsing & resolution ──────────────────────────────────
+
+/// A parsed `#include` directive. Positions are 0-based (LSP convention) and
+/// span the full `<...>` / `"..."` token including delimiters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncludeDirective {
+    /// Header name as written, without delimiters, e.g. `"stdio.h"`, `"foo/bar.h"`.
+    pub name: String,
+    /// `true` for `<...>`, `false` for `"..."`.
+    pub angled: bool,
+    pub line: u32,
+    pub start_col: u32,
+    pub end_col: u32,
+}
+
+/// Extract `#include` directives from source text, skipping ones inside `//`
+/// line comments and `/* … */` block comments (so commented-out includes are
+/// not flagged). String-literal edge cases are not handled — `#include` only has
+/// meaning at the start of a logical line, which this approximates well enough.
+pub fn parse_includes(source: &str) -> Vec<IncludeDirective> {
+    let mut out = Vec::new();
+    let mut in_block_comment = false;
+    for (lineno, raw) in source.lines().enumerate() {
+        // Strip block comments, tracking state across lines.
+        let line = strip_comments(raw, &mut in_block_comment);
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('#') {
+            continue;
+        }
+        // Allow whitespace between '#' and 'include'.
+        let after_hash = trimmed[1..].trim_start();
+        let Some(rest) = after_hash.strip_prefix("include") else { continue };
+        let rest = rest.trim_start();
+        let (open, close, angled) = match rest.chars().next() {
+            Some('<') => ('<', '>', true),
+            Some('"') => ('"', '"', false),
+            _ => continue,
+        };
+        let _ = open;
+        let inner = &rest[1..];
+        let Some(end) = inner.find(close) else { continue };
+        let name = inner[..end].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        // Column of the opening delimiter within the original raw line.
+        let delim_byte = raw.len() - rest.len();
+        let start_col = raw[..delim_byte].chars().count() as u32;
+        // Full token width: delimiter + name + closing delimiter.
+        let token = &rest[..end + 2]; // <...> or "..."
+        let end_col = start_col + token.chars().count() as u32;
+        out.push(IncludeDirective {
+            name,
+            angled,
+            line: lineno as u32,
+            start_col,
+            end_col,
+        });
+    }
+    out
+}
+
+/// Remove comment content from a single line, carrying `/* */` state across
+/// lines via `in_block`. Returns the code-only portion of the line.
+fn strip_comments(line: &str, in_block: &mut bool) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if *in_block {
+            if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                *in_block = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+            break; // rest of line is a comment
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            *in_block = true;
+            i += 2;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// Resolve a `#include` against a set of search directories, returning the
+/// absolute path of the first match. For quote includes the file's own
+/// directory is searched first (the usual preprocessor rule).
+pub fn resolve_include(
+    d: &IncludeDirective,
+    file_dir: &Path,
+    search_dirs: &[PathBuf],
+) -> Option<PathBuf> {
+    if !d.angled {
+        let candidate = file_dir.join(&d.name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for dir in search_dirs {
+        let candidate = dir.join(&d.name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 // ── Standard-header tables ───────────────────────────────────────────────────
 
 /// C standard-library headers (C89 … C23). POSIX/OS headers are deliberately
@@ -221,5 +336,56 @@ mod tests {
         assert_eq!(a.classify("stdio.h", Path::new("/usr/include/stdio.h")), IncludeClass::Stdlib);
         // <vector> is not a C standard header.
         assert_eq!(a.classify("vector", Path::new("/usr/include/c++/13/vector")), IncludeClass::Undeclared);
+    }
+
+    #[test]
+    fn parse_includes_extracts_directives() {
+        let src = "\
+#include <stdio.h>
+#  include \"foo/bar.h\"
+int x;
+// #include <commented_out.h>
+/* #include <block.h> */
+#include <zlib.h>  // trailing comment
+";
+        let incs = parse_includes(src);
+        let names: Vec<_> = incs.iter().map(|d| (d.name.as_str(), d.angled, d.line)).collect();
+        assert_eq!(
+            names,
+            vec![("stdio.h", true, 0), ("foo/bar.h", false, 1), ("zlib.h", true, 5)]
+        );
+        // The <stdio.h> token spans columns 9..18 (0-based, end exclusive).
+        assert_eq!(incs[0].start_col, 9);
+        assert_eq!(incs[0].end_col, 18);
+    }
+
+    #[test]
+    fn parse_includes_skips_multiline_block_comment() {
+        let src = "/* opening\n#include <hidden.h>\nstill comment */\n#include <real.h>\n";
+        let incs = parse_includes(src);
+        assert_eq!(incs.len(), 1);
+        assert_eq!(incs[0].name, "real.h");
+    }
+
+    #[test]
+    fn resolve_include_searches_quote_dir_then_search_path() {
+        let tmp = std::env::temp_dir().join(format!("inc_policy_{}", std::process::id()));
+        let proj = tmp.join("proj");
+        let dep = tmp.join("dep");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&dep).unwrap();
+        std::fs::write(proj.join("local.h"), "").unwrap();
+        std::fs::write(dep.join("lib.h"), "").unwrap();
+
+        let quote = IncludeDirective { name: "local.h".into(), angled: false, line: 0, start_col: 0, end_col: 0 };
+        assert_eq!(resolve_include(&quote, &proj, &[dep.clone()]), Some(proj.join("local.h")));
+
+        let angle = IncludeDirective { name: "lib.h".into(), angled: true, line: 0, start_col: 0, end_col: 0 };
+        assert_eq!(resolve_include(&angle, &proj, &[dep.clone()]), Some(dep.join("lib.h")));
+
+        let missing = IncludeDirective { name: "nope.h".into(), angled: true, line: 0, start_col: 0, end_col: 0 };
+        assert_eq!(resolve_include(&missing, &proj, &[dep]), None);
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
