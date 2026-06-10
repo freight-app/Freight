@@ -260,6 +260,8 @@ impl Server {
                 "textDocument/documentLink" => self.handle_document_links(msg)?,
                 "textDocument/documentSymbol" => self.handle_document_symbol(msg)?,
                 "textDocument/foldingRange" => self.handle_folding_range(msg)?,
+                "textDocument/references" => self.handle_references(msg)?,
+                "textDocument/documentHighlight" => self.handle_document_highlight(msg)?,
                 "freight/workspaceInfo" => self.handle_workspace_info(msg)?,
                 "freight/setConfig" => self.handle_set_config(msg)?,
                 _ => self.forward_or_null(msg)?,
@@ -595,6 +597,32 @@ impl Server {
         });
         if let Some(ranges) = result {
             return self.respond(Some(id), Value::Array(ranges));
+        }
+        self.forward_or_null(msg)
+    }
+
+    /// `textDocument/references` — prefer a language indexer, else forward.
+    fn handle_references(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let uri = text_document_uri(&msg);
+        let result = uri.as_deref().and_then(|u| {
+            self.state.indexers.iter_mut().find_map(|ix| ix.references(u, &msg))
+        });
+        if let Some(locs) = result {
+            return self.respond(Some(id), Value::Array(locs));
+        }
+        self.forward_or_null(msg)
+    }
+
+    /// `textDocument/documentHighlight` — prefer a language indexer, else forward.
+    fn handle_document_highlight(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let uri = text_document_uri(&msg);
+        let result = uri.as_deref().and_then(|u| {
+            self.state.indexers.iter_mut().find_map(|ix| ix.document_highlight(u, &msg))
+        });
+        if let Some(hls) = result {
+            return self.respond(Some(id), Value::Array(hls));
         }
         self.forward_or_null(msg)
     }

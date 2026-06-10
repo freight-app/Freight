@@ -64,6 +64,13 @@ pub trait LanguageIndexer: Send {
 
     /// Serve `textDocument/foldingRange`. Returns LSP `FoldingRange[]` or `None`.
     fn folding_ranges(&mut self, _uri: &str) -> Option<Vec<Value>> { None }
+
+    /// Serve `textDocument/references`. Returns LSP `Location[]` or `None`.
+    fn references(&mut self, _uri: &str, _msg: &Value) -> Option<Vec<Value>> { None }
+
+    /// Serve `textDocument/documentHighlight`. Returns `DocumentHighlight[]` or
+    /// `None` if this indexer does not handle the file.
+    fn document_highlight(&mut self, _uri: &str, _msg: &Value) -> Option<Vec<Value>> { None }
 }
 
 use crate::manifest::load_manifest;

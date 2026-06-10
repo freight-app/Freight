@@ -288,6 +288,65 @@ impl LanguageIndexer for ClangIndexer {
         Some(roots.iter().map(|&r| doc_symbol_node(r, &syms, &kids)).collect())
     }
 
+    fn references(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let include_decl = msg
+            .get("params")
+            .and_then(|p| p.get("context"))
+            .and_then(|c| c.get("includeDeclaration"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let tu = self.ensure_tu(&path)?;
+        let sym = tu.symbol_at(line as u32 + 1, col as u32 + 1)?;
+        let usr = sym.usr().to_string();
+        // symbol_at reports the qualified name (e.g. `geo::Point::x`); each
+        // occurrence spells only the trailing identifier, so size the range to it.
+        let name = sym.name();
+        let name_len = name.rsplit("::").next().unwrap_or(name).chars().count() as u32;
+        let out: Vec<Value> = clang_bridge::refs::references(tu, &usr)
+            .iter()
+            .filter(|r| include_decl || !r.is_definition)
+            .map(|r| {
+                let l = r.line.saturating_sub(1);
+                let c = r.col.saturating_sub(1);
+                json!({
+                    "uri": uri_from_path(Path::new(&r.file)),
+                    "range": {
+                        "start": { "line": l, "character": c },
+                        "end":   { "line": l, "character": c + name_len }
+                    }
+                })
+            })
+            .collect();
+        Some(out)
+    }
+
+    fn document_highlight(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) { return None; }
+        let tu = self.ensure_tu(&path)?;
+        let hl = clang_bridge::highlight::highlight(tu, line as u32 + 1, col as u32 + 1);
+        if hl.is_empty() { return None; }
+        let out: Vec<Value> = hl
+            .iter()
+            .map(|h| {
+                let l = h.line.saturating_sub(1);
+                json!({
+                    "range": {
+                        "start": { "line": l, "character": h.col.saturating_sub(1) },
+                        "end":   { "line": l, "character": h.end_col.saturating_sub(1) }
+                    },
+                    // clang-bridge kind 1=text/2=read/3=write == LSP DocumentHighlightKind.
+                    "kind": h.kind
+                })
+            })
+            .collect();
+        Some(out)
+    }
+
     fn folding_ranges(&mut self, uri: &str) -> Option<Vec<Value>> {
         let path = path_from_uri(uri)?;
         if !Self::is_c_family(&path) { return None; }

@@ -206,6 +206,8 @@ pub fn freight_capabilities() -> Value {
         "declarationProvider": true,
         "documentSymbolProvider": true,
         "foldingRangeProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
         "documentLinkProvider": { "resolveProvider": false }
     })
 }
