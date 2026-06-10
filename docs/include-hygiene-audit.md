@@ -12,6 +12,17 @@ out commit-by-commit. Newest entries at the top.
 
 ## Log
 
+### Step 2 — `[lints]` manifest table
+
+- `src/manifest/types.rs`: added `LintLevel { Allow, Warn(default), Deny }`
+  (serde lowercase) and `LintsConfig { undeclared_include: LintLevel }`
+  (`#[serde(rename = "undeclared-include")]`). New `Manifest.lints` field
+  (`#[serde(default)]`).
+- Re-exported `LintLevel`, `LintsConfig` from `src/manifest/mod.rs`.
+- Default is `warn` even when `[lints]` is absent (matches the decision).
+- 2 parse tests in `validate.rs` (default = warn; deny/allow parse).
+- Test helpers build manifests from TOML strings, so no struct-literal breakage.
+
 ### Step 1 — classification core (`src/build/include_policy.rs`)
 
 - New module `include_policy` (registered in `src/build/mod.rs`).

@@ -4,7 +4,7 @@ pub mod types;
 pub mod validate;
 
 pub use find::find_manifest_dir;
-pub use types::{Manifest, WorkspaceSection};
+pub use types::{LintLevel, LintsConfig, Manifest, WorkspaceSection};
 pub use validate::{validate, validate_dep_compat, ValidationError};
 
 use std::path::Path;

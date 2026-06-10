@@ -62,6 +62,9 @@ pub struct Manifest {
     /// Linter requirements for this project (`[linter]`).
     #[serde(default)]
     pub linter: LinterConfig,
+    /// Freight lints (`[lints]`), e.g. `undeclared-include`.
+    #[serde(default)]
+    pub lints: LintsConfig,
     /// OS-conditional sources and defines — `[os.linux]`, `[os.windows]`, etc.
     /// Files listed here are excluded from the unconditional `src/` walk on
     /// non-matching platforms and only compiled on the named OS.
@@ -805,6 +808,36 @@ pub struct LinterConfig {
     /// Named settings resolved through the template's `settings` map.
     #[serde(flatten)]
     pub settings: HashMap<String, String>,
+}
+
+// ── Lints config ──────────────────────────────────────────────────────────────
+
+/// Severity of a Freight lint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LintLevel {
+    /// Do not report.
+    Allow,
+    /// Report as a warning (LSP) — the default.
+    #[default]
+    Warn,
+    /// Report as an error (LSP); a hard build failure once enforcement lands.
+    Deny,
+}
+
+/// Freight lints, `[lints]`. See `docs/include-hygiene.md`.
+///
+/// ```toml
+/// [lints]
+/// undeclared-include = "warn"   # "allow" | "warn" | "deny"
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LintsConfig {
+    /// How to report an `#include` that resolves to a header provided by no
+    /// declared package (and is not a language standard-library header).
+    /// Defaults to `warn`.
+    #[serde(rename = "undeclared-include", default)]
+    pub undeclared_include: LintLevel,
 }
 
 // ── Debugger config ───────────────────────────────────────────────────────────

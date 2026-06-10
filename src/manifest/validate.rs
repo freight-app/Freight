@@ -658,6 +658,25 @@ debug     = false
     }
 
     #[test]
+    fn lints_undeclared_include_defaults_to_warn() {
+        let m = load("[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.cpp]\n");
+        assert_eq!(
+            m.lints.undeclared_include,
+            crate::manifest::types::LintLevel::Warn
+        );
+    }
+
+    #[test]
+    fn lints_undeclared_include_parses_levels() {
+        use crate::manifest::types::LintLevel;
+        let base = "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.cpp]\n";
+        let deny = load(&format!("{base}[lints]\nundeclared-include=\"deny\"\n"));
+        assert_eq!(deny.lints.undeclared_include, LintLevel::Deny);
+        let allow = load(&format!("{base}[lints]\nundeclared-include=\"allow\"\n"));
+        assert_eq!(allow.lints.undeclared_include, LintLevel::Allow);
+    }
+
+    #[test]
     fn full_manifest_is_valid() {
         assert!(
             errors(FULL_MANIFEST).is_empty(),
