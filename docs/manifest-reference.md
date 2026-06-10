@@ -587,6 +587,30 @@ identically to `freight lint`.
 
 ---
 
+## `[lints]`
+
+Optional. Configures Freight's own lints. See
+[`include-hygiene.md`](include-hygiene.md) for the include-hygiene design.
+
+```toml
+[lints]
+undeclared-include = "warn"   # "allow" | "warn" | "deny"  (default: "warn")
+```
+
+| Lint | Levels | Meaning |
+|---|---|---|
+| `undeclared-include` | `allow` \| `warn` \| `deny` | Report an `#include` that resolves to a header provided by **no declared package**. |
+
+`undeclared-include` flags any `#include` that resolves outside the project and
+its declared dependencies and is **not** a language standard-library header. The
+standard library is recognised by header name and so passes on every platform;
+POSIX/OS headers (`<unistd.h>`, `<pthread.h>`, `<windows.h>`, …) are *not* part of
+it and must be provided by a declared dependency (e.g. a `system` dep or an
+`[os.*]` section). In the editor the warning appears inline on the `#include`;
+`deny` raises it to an error. Defaults to `warn` even when `[lints]` is absent.
+
+---
+
 ## Developer config — outside `freight.toml`
 
 Toolchain selection, debugger preferences, and cross-compilation settings are **developer
