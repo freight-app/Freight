@@ -24,8 +24,9 @@ use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
 use index::{
-    include_hover_markdown, include_inlay_label, module_hover_markdown, module_inlay_label,
-    parse_include_header, HeaderDirSpec, HeaderEntry, HeaderIndex, HeaderOrigin,
+    include_completion, include_hover_markdown, include_inlay_label, module_hover_markdown,
+    module_inlay_label, parse_include_header, HeaderDirSpec, HeaderEntry, HeaderIndex,
+    HeaderOrigin,
 };
 use manifest::{
     completion_result, hover_result, manifest_diagnostics, signature_help_result,
@@ -526,10 +527,29 @@ impl Server {
             );
             return self.respond(msg.get("id").cloned(), result);
         }
+        // Completion inside an `#include` / `import` directive is answered by
+        // freight, not clangd: only stdlib headers and declared-package headers
+        // are offered, each labelled with the library it comes from.
+        if matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd)) {
+            if let Some(result) = self.include_completion_result(&uri, &msg) {
+                return self.respond(msg.get("id").cloned(), result);
+            }
+        }
         if let Some(result) = self.state.indexers.iter_mut().find_map(|ix| ix.completion(&uri, &msg)) {
             return self.respond(msg.get("id").cloned(), result);
         }
         self.forward_or_null(msg)
+    }
+
+    /// Freight-owned completion for `#include` / `import` directives. `None`
+    /// when the cursor isn't inside one (the request is forwarded as usual).
+    fn include_completion_result(&self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line_no, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        let text = self.doc_text(uri, &path)?;
+        let line = text.lines().nth(line_no)?;
+        let lang = crate::build::include_policy::Language::from_path(&path);
+        include_completion(line, line_no, col, lang, &self.state.header_index)
     }
 
     fn handle_hover_or_forward(&mut self, msg: Value) -> io::Result<()> {

@@ -305,6 +305,29 @@ impl HeaderIndex {
     pub fn is_empty(&self) -> bool {
         self.by_path.is_empty()
     }
+
+    /// All indexed package/project headers as `(include_path, entry)`, one per
+    /// file, preferring the relative-path spelling (`pkg/file.h`) over the bare
+    /// basename when both are indexed. Sorted for stable completion lists.
+    pub fn completion_entries(&self) -> Vec<(&str, &HeaderEntry)> {
+        use std::collections::hash_map::Entry;
+        let mut best: HashMap<&Path, (&str, &HeaderEntry)> = HashMap::new();
+        for (key, entry) in &self.by_path {
+            match best.entry(entry.full_path.as_path()) {
+                Entry::Occupied(mut o) => {
+                    if key.contains('/') && !o.get().0.contains('/') {
+                        o.insert((key.as_str(), entry));
+                    }
+                }
+                Entry::Vacant(v) => {
+                    v.insert((key.as_str(), entry));
+                }
+            }
+        }
+        let mut out: Vec<_> = best.into_values().collect();
+        out.sort_by(|a, b| a.0.cmp(b.0));
+        out
+    }
 }
 
 impl Default for HeaderIndex {
@@ -608,12 +631,283 @@ pub fn include_inlay_label(entry: &HeaderEntry) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Include completion
+// ---------------------------------------------------------------------------
+
+/// What kind of `#include` / `import` name is being completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncludeCompletionCtx {
+    /// `#include <…` / `import <…` — payload is the prefix typed so far.
+    Angled(String),
+    /// `#include "…` / `import "…`.
+    Quoted(String),
+    /// `import std…` — a C++20 named-module import.
+    Module(String),
+}
+
+/// Detect whether character `col` of `line` sits inside the header/module name
+/// of an `#include` / `#import` / `import` directive being typed. Returns the
+/// context plus the column where the name starts (the text-edit anchor).
+pub fn include_completion_context(line: &str, col: usize) -> Option<(IncludeCompletionCtx, usize)> {
+    let mut col = col.min(line.len());
+    while !line.is_char_boundary(col) {
+        col -= 1;
+    }
+    let before = &line[..col];
+
+    // Angled / quoted: the opening delimiter must be preceded by a directive.
+    if let Some(open) = before.rfind(['<', '"']) {
+        let head: String = before[..open].chars().filter(|c| !c.is_whitespace()).collect();
+        if !matches!(head.as_str(), "#include" | "#import" | "import" | "exportimport") {
+            return None;
+        }
+        let prefix = &before[open + 1..];
+        if prefix.contains('>') || prefix.contains('"') {
+            return None; // cursor is past the closing delimiter
+        }
+        let ctx = if before.as_bytes()[open] == b'<' {
+            IncludeCompletionCtx::Angled(prefix.to_string())
+        } else {
+            IncludeCompletionCtx::Quoted(prefix.to_string())
+        };
+        return Some((ctx, open + 1));
+    }
+
+    // Named module: `import std.` — no delimiter, identifier chars only.
+    let t = before.trim_start();
+    let t = t.strip_prefix("export ").map(str::trim_start).unwrap_or(t);
+    let rest = t.strip_prefix("import")?;
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None; // e.g. `importer`
+    }
+    let prefix = rest.trim_start();
+    if !prefix.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+        return None;
+    }
+    Some((IncludeCompletionCtx::Module(prefix.to_string()), col - prefix.len()))
+}
+
+/// Build the completion response for an `#include` / `import` directive, or
+/// `None` if the cursor isn't inside one. Suggests only standard-library
+/// headers and headers from declared packages (the project, workspace members,
+/// path deps, and `.pkgs/` installs) — never undeclared system headers — and
+/// labels each item with the library it comes from.
+pub fn include_completion(
+    line_text: &str,
+    line_no: usize,
+    col: usize,
+    lang: crate::build::include_policy::Language,
+    index: &HeaderIndex,
+) -> Option<Value> {
+    use crate::build::include_policy::{self as ip, Language};
+
+    let (ctx, start_col) = include_completion_context(line_text, col)?;
+    let after: &str = {
+        let mut c = col.min(line_text.len());
+        while !line_text.is_char_boundary(c) {
+            c -= 1;
+        }
+        &line_text[c..]
+    };
+
+    let edit_range = serde_json::json!({
+        "start": { "line": line_no, "character": start_col },
+        "end":   { "line": line_no, "character": col },
+    });
+    let item = |name: &str, detail: &str, kind: u32, closer: Option<char>| {
+        // Append the closing delimiter only when it isn't already there.
+        let insert = match closer {
+            Some(c) if !after.starts_with(c) => format!("{name}{c}"),
+            _ => name.to_string(),
+        };
+        serde_json::json!({
+            "label": name,
+            "kind": kind,
+            "detail": detail,
+            "filterText": name,
+            "textEdit": { "range": edit_range.clone(), "newText": insert },
+        })
+    };
+
+    const KIND_FILE: u32 = 17;
+    const KIND_MODULE: u32 = 9;
+    let mut items = Vec::new();
+
+    match &ctx {
+        IncludeCompletionCtx::Module(_) => {
+            if lang == Language::Cxx {
+                for name in ["std", "std.compat"] {
+                    items.push(item(name, "C++ standard-library module", KIND_MODULE, Some(';')));
+                }
+            }
+        }
+        IncludeCompletionCtx::Angled(_) | IncludeCompletionCtx::Quoted(_) => {
+            let closer = if matches!(ctx, IncludeCompletionCtx::Angled(_)) { '>' } else { '"' };
+            // Stdlib headers only behind `<…>` — quoted form is for project files.
+            if closer == '>' {
+                for h in ip::c_std_headers() {
+                    items.push(item(h, "C standard library", KIND_FILE, Some(closer)));
+                }
+                if lang == Language::Cxx {
+                    for h in ip::cxx_std_headers() {
+                        items.push(item(h, "C++ standard library", KIND_FILE, Some(closer)));
+                    }
+                }
+            }
+            for (path, entry) in index.completion_entries() {
+                let detail = match &entry.origin {
+                    HeaderOrigin::System => continue, // stdlib handled by name above
+                    HeaderOrigin::Own => "this project".to_string(),
+                    HeaderOrigin::Workspace | HeaderOrigin::PathDep | HeaderOrigin::Fetched => {
+                        match entry.package_version.as_deref().filter(|v| !v.is_empty()) {
+                            Some(ver) => format!("{} {ver}", entry.package_name),
+                            None => entry.package_name.clone(),
+                        }
+                    }
+                };
+                items.push(item(path, &detail, KIND_FILE, Some(closer)));
+            }
+        }
+    }
+
+    Some(serde_json::json!({ "isIncomplete": false, "items": items }))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completion_context_angled_and_quoted() {
+        let line = "#include <vec";
+        assert_eq!(
+            include_completion_context(line, line.len()),
+            Some((IncludeCompletionCtx::Angled("vec".into()), 10))
+        );
+        let line = r#"#include "stats"#;
+        assert_eq!(
+            include_completion_context(line, line.len()),
+            Some((IncludeCompletionCtx::Quoted("stats".into()), 10))
+        );
+        // Cursor after the closing delimiter → no include completion.
+        let line = "#include <vector> ";
+        assert_eq!(include_completion_context(line, line.len()), None);
+        // `<` that isn't part of a directive.
+        let line = "if (a < b";
+        assert_eq!(include_completion_context(line, line.len()), None);
+    }
+
+    #[test]
+    fn completion_context_import_forms() {
+        let line = "import <vec";
+        assert_eq!(
+            include_completion_context(line, line.len()),
+            Some((IncludeCompletionCtx::Angled("vec".into()), 8))
+        );
+        let line = "import std.";
+        assert_eq!(
+            include_completion_context(line, line.len()),
+            Some((IncludeCompletionCtx::Module("std.".into()), 7))
+        );
+        let line = "export import st";
+        assert_eq!(
+            include_completion_context(line, line.len()),
+            Some((IncludeCompletionCtx::Module("st".into()), 14))
+        );
+        // Not an import statement.
+        assert_eq!(include_completion_context("importer x", 10), None);
+    }
+
+    #[test]
+    fn include_completion_lists_stdlib_with_source_detail() {
+        let index = HeaderIndex {
+            by_path: HashMap::new(),
+            system_dirs: Vec::new(),
+        };
+        let line = "#include <vec";
+        let result = include_completion(
+            line,
+            0,
+            line.len(),
+            crate::build::include_policy::Language::Cxx,
+            &index,
+        )
+        .expect("include completion context");
+        let items = result["items"].as_array().expect("items array");
+        let vector = items
+            .iter()
+            .find(|i| i["label"] == "vector")
+            .expect("vector in completion");
+        assert_eq!(vector["detail"], "C++ standard library");
+        // Closing `>` is appended because the line has none.
+        assert_eq!(vector["textEdit"]["newText"], "vector>");
+        assert_eq!(vector["textEdit"]["range"]["start"]["character"], 10);
+        // stdio.h comes from the C table.
+        let stdio = items
+            .iter()
+            .find(|i| i["label"] == "stdio.h")
+            .expect("stdio.h in completion");
+        assert_eq!(stdio["detail"], "C standard library");
+    }
+
+    #[test]
+    fn include_completion_labels_package_headers() {
+        let mut by_path = HashMap::new();
+        let entry = HeaderEntry {
+            package_name: "vecmath".into(),
+            package_version: Some("0.2.0".into()),
+            full_path: PathBuf::from("/x/vecmath/include/vecmath/vec2.h"),
+            origin: HeaderOrigin::PathDep,
+            dep_key: Some("vecmath".into()),
+        };
+        by_path.insert("vecmath/vec2.h".to_string(), entry.clone());
+        by_path.insert("vec2.h".to_string(), entry);
+        let index = HeaderIndex {
+            by_path,
+            system_dirs: Vec::new(),
+        };
+        let line = r#"#include "vec"#;
+        let result = include_completion(
+            line,
+            3,
+            line.len(),
+            crate::build::include_policy::Language::Cxx,
+            &index,
+        )
+        .expect("include completion context");
+        let items = result["items"].as_array().expect("items array");
+        // Quoted form: no stdlib, only the package header — path spelling wins.
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["label"], "vecmath/vec2.h");
+        assert_eq!(items[0]["detail"], "vecmath 0.2.0");
+        assert_eq!(items[0]["textEdit"]["newText"], "vecmath/vec2.h\"");
+    }
+
+    #[test]
+    fn include_completion_module_suggests_std() {
+        let index = HeaderIndex {
+            by_path: HashMap::new(),
+            system_dirs: Vec::new(),
+        };
+        let line = "import st";
+        let result = include_completion(
+            line,
+            0,
+            line.len(),
+            crate::build::include_policy::Language::Cxx,
+            &index,
+        )
+        .expect("module completion context");
+        let items = result["items"].as_array().expect("items array");
+        let labels: Vec<_> = items.iter().map(|i| i["label"].as_str().unwrap()).collect();
+        assert_eq!(labels, vec!["std", "std.compat"]);
+        assert_eq!(items[0]["detail"], "C++ standard-library module");
+        assert_eq!(items[0]["textEdit"]["newText"], "std;");
+    }
 
     #[test]
     fn parse_include_header_angle_brackets() {

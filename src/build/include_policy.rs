@@ -384,6 +384,18 @@ const CXX_HEADERS: &[&str] = &[
     "limits", "new", "stdfloat",
 ];
 
+/// The C standard-library header table, in stable order (for completion lists).
+pub fn c_std_headers() -> &'static [&'static str] {
+    C_HEADERS
+}
+
+/// The C++-only standard-library header table, in stable order (for completion
+/// lists). Does not include the C `.h` headers — chain [`c_std_headers`] for
+/// the full C++ set.
+pub fn cxx_std_headers() -> &'static [&'static str] {
+    CXX_HEADERS
+}
+
 /// Standard headers for `language`. The C++ set includes the C `.h` headers,
 /// which remain valid in C++ translation units.
 pub fn std_header_set(language: Language) -> &'static HashSet<&'static str> {
