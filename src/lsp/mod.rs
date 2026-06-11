@@ -371,6 +371,8 @@ impl Server {
             }
             // Flag undeclared #includes (no-op for non-C/C++).
             self.compute_include_hygiene(&uri, &text);
+            // Keep the live buffer so include/import hints reflect unsaved edits.
+            self.state.docs.insert(uri, text);
         }
         self.forward_by_text_document(&msg)
     }
@@ -385,6 +387,7 @@ impl Server {
             if let Some(text) = changed_full_text(&msg) {
                 for ix in &mut self.state.indexers { ix.reparse(&uri, &text); }
                 self.compute_include_hygiene(&uri, &text);
+                self.state.docs.insert(uri.clone(), text);
             }
             return self.forward_by_uri(&uri, &msg);
         }
@@ -412,6 +415,7 @@ impl Server {
                 .or_else(|| path_from_uri(&uri).and_then(|p| std::fs::read_to_string(p).ok()));
             if let Some(text) = text {
                 self.compute_include_hygiene(&uri, &text);
+                self.state.docs.insert(uri.clone(), text);
             }
             return Ok(());
         }
@@ -440,6 +444,7 @@ impl Server {
             self.publish_diagnostics(&uri, vec![])?;
             return Ok(());
         }
+        self.state.docs.remove(&uri);
         if let Some(path) = path_from_uri(&uri) {
             for ix in &mut self.state.indexers { ix.evict(&path); }
         }
@@ -541,7 +546,7 @@ impl Server {
 
     fn include_definition(&self, uri: &str, line: usize) -> Option<Value> {
         let path = path_from_uri(uri)?;
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = self.doc_text(uri, &path)?;
         let line_text = text.lines().nth(line)?;
         let (header, is_system) = parse_include_header(line_text)?;
 
@@ -585,7 +590,7 @@ impl Server {
     fn compute_document_links(&self, msg: &Value) -> Option<Vec<Value>> {
         let uri = text_document_uri(msg)?;
         let path = path_from_uri(&uri)?;
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = self.doc_text(&uri, &path)?;
 
         let mut links = Vec::new();
         for (idx, line_text) in text.lines().enumerate() {
@@ -746,7 +751,7 @@ impl Server {
     fn compute_inlay_hints(&self, msg: &Value) -> Option<Vec<Value>> {
         let uri = text_document_uri(msg)?;
         let path = path_from_uri(&uri)?;
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = self.doc_text(&uri, &path)?;
 
         let range = msg.get("params")?.get("range")?;
         let start_line = range.get("start")?.get("line")?.as_u64()? as usize;
@@ -1244,6 +1249,17 @@ impl Server {
             .get(uri)
             .cloned()
             .or_else(|| path_from_uri(uri).and_then(|p| std::fs::read_to_string(p).ok()))
+    }
+
+    /// The live document text for `uri` (the open editor buffer, kept current on
+    /// didOpen/didChange/didSave) falling back to the file on disk. Lets the
+    /// `#include`/`import` hints reflect unsaved edits.
+    fn doc_text(&self, uri: &str, path: &Path) -> Option<String> {
+        self.state
+            .docs
+            .get(uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(path).ok())
     }
 
     fn refresh_compile_commands(&mut self) {
