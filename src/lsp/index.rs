@@ -521,70 +521,24 @@ pub fn include_hover_markdown(header: &str, entry: &HeaderEntry) -> String {
 
     let mut out = String::new();
     out.push_str(&format!("**`{origin_label}::{header}`**\n\n"));
-    let path_str = display_include_path(&entry.full_path);
-    out.push_str(&format!("`{path_str}`"));
+    out.push_str(&format!("`{}`", package_qualified_name(header, entry)));
     out
 }
 
-fn display_include_path(path: &Path) -> String {
-    if let Some(rel) = relative_to_freight_package(path) {
-        return rel;
+/// `"<package>/<filename>"` for the header — e.g. `vecmath/vec2.h`, `stdlib/vector`
+/// — rather than the resolved (often absolute) path. Falls back to the header
+/// spelling when no package name is known.
+fn package_qualified_name(header: &str, entry: &HeaderEntry) -> String {
+    let filename = entry
+        .full_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(header);
+    if entry.package_name.is_empty() {
+        filename.to_string()
+    } else {
+        format!("{}/{}", entry.package_name, filename)
     }
-    if let Some(rel) = relative_to_pkgs_package(path) {
-        return rel;
-    }
-    if let Some(rel) = relative_to_include_root(path) {
-        return rel;
-    }
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-fn relative_to_freight_package(path: &Path) -> Option<String> {
-    for ancestor in path.ancestors() {
-        if ancestor.join("freight.toml").is_file() {
-            return path
-                .strip_prefix(ancestor)
-                .ok()
-                .map(|rel| rel.to_string_lossy().replace('\\', "/"));
-        }
-    }
-    None
-}
-
-fn relative_to_pkgs_package(path: &Path) -> Option<String> {
-    let parts: Vec<_> = path.components().collect();
-    let pkgs_idx = parts
-        .iter()
-        .position(|component| component.as_os_str() == ".pkgs")?;
-    let pkg_idx = pkgs_idx + 1;
-    if pkg_idx >= parts.len() {
-        return None;
-    }
-
-    let pkg_root: PathBuf = parts[..=pkg_idx].iter().collect();
-    let pkg_name = parts[pkg_idx].as_os_str().to_string_lossy();
-    let rel = path.strip_prefix(&pkg_root).ok()?;
-    Some(format!(
-        "{}/{}",
-        pkg_name,
-        rel.to_string_lossy().replace('\\', "/")
-    ))
-}
-
-fn relative_to_include_root(path: &Path) -> Option<String> {
-    let parts: Vec<_> = path.components().collect();
-    let include_idx = parts
-        .iter()
-        .rposition(|component| component.as_os_str() == "include")?;
-    let rel_start = include_idx + 1;
-    if rel_start >= parts.len() {
-        return None;
-    }
-    let rel: PathBuf = parts[rel_start..].iter().collect();
-    Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// Parse a header or module import directive from a line.
@@ -732,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn include_hover_uses_relative_path() {
+    fn include_hover_uses_package_qualified_path() {
         let tmp = tempfile::tempdir().unwrap();
         let header = tmp.path().join("include/mylib/api.h");
         std::fs::create_dir_all(header.parent().unwrap()).unwrap();
@@ -754,7 +708,8 @@ mod tests {
             },
         );
 
-        assert!(md.contains("`include/mylib/api.h`"));
+        // Path is shown as "<package>/<filename>", not the absolute resolved path.
+        assert!(md.contains("`mylib/api.h`"), "got: {md}");
         assert!(!md.contains(tmp.path().to_string_lossy().as_ref()));
     }
 }
