@@ -99,6 +99,19 @@ impl Args {
 
 /// Write PID to a well-known file and spin until a debugger attaches.
 /// Allows the VS Code extension to attach CodeLLDB before the LSP loop starts.
+/// Whether `clangd_bin --help` advertises `flag`. Used to gate recent flags so
+/// an older clangd (which would exit on an unknown flag) is left untouched.
+fn clangd_supports_flag(clangd_bin: &str, flag: &str) -> bool {
+    Command::new(clangd_bin)
+        .arg("--help")
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout).contains(flag)
+                || String::from_utf8_lossy(&o.stderr).contains(flag)
+        })
+        .unwrap_or(false)
+}
+
 fn wait_for_debugger() {
     let pid = std::process::id();
     let pid_file = "/tmp/freight-lsp-debug.pid";
@@ -1310,6 +1323,12 @@ impl Server {
             "--background-index=false".to_string(),
             "--header-insertion=never".to_string(),
         ];
+        // Enable clangd's experimental C++20 modules support when this clangd
+        // knows the flag (it is recent — clangd 19+). Passing an unknown flag
+        // makes clangd exit, so gate on `--help` advertising it.
+        if clangd_supports_flag(&self.args.clangd, "--experimental-modules-support") {
+            clangd_flags.push("--experimental-modules-support".to_string());
+        }
         clangd_flags.extend(self.args.clangd_args.clone());
         let diag_cache = Arc::clone(&self.state.diag_cache);
         let (server, caps) = self.start_passthrough_in(
