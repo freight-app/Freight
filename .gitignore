@@ -9,3 +9,4 @@ CLAUDE.md
 examples/**/.deps/
 examples/**/freight.lock
 examples/**/compile_commands.json
+examples/**/.freight/

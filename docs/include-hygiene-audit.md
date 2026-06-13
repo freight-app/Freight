@@ -7,10 +7,140 @@ out commit-by-commit. Newest entries at the top.
 ## Status
 
 - **Phase 1 (warn):** ✅ complete and verified end-to-end.
-- **Phase 2 (build enforcement):** not started.
-- **Phase 3 (system libs + stdlib matching):** stdlib matching folded into Phase 1.
+- **Phase 2 (build enforcement):** ✅ pre-compile validation pass in `freight
+  build` — `deny` fails the build, `warn` emits build warnings, `allow` skips.
+- **Phase 3 (system-lib header ownership):** ✅ first cut — declared
+  packages/slots own system headers via a Tier-A ownership table + Tier-B
+  pkg-config dedicated dirs, in both the build pass and the LSP. Remaining:
+  hosting/generating the per-OS Tier-A data file and a `pkg-config --list-all`
+  global reverse index for naming packages of *unknown* headers (see Step 11).
 
 ## Log
+
+### Step 11 — Phase 3: system-library header ownership
+
+A declared `system`/pkg-config dep can now own its headers, so a legitimately
+used `<zlib.h>`/`<cblas.h>` is no longer flagged under `deny`. New module
+`src/build/header_ownership.rs`, two complementary sources:
+
+- **Tier A** — `OwnershipData`: package/slot → header globs, keyed by **freight
+  package name** (distro-portable). In-core per-OS `seed()` (Linux: zlib,
+  sqlite3, bzip2, lzma, expat, pcre2, gmp, mpfr, ncurses, readline, uuid + BLAS
+  and LAPACK **slots** with their interchangeable providers) plus an optional
+  downloaded override at `~/.config/freight/header-ownership-<os>.toml` (merged
+  over the seed; missing/malformed → seed, **fail-open**). Shared headers are an
+  OR (declare any one BLAS provider → `cblas.h` is owned), never a conflict.
+- **Tier B** — `pkg_config_dedicated_dirs(dep)`: a declared dep's pkg-config
+  `--cflags` dirs **excluding** default roots (`/usr/include`,
+  `/usr/local/include`, `/include`) so a dedicated `…/SDL2` is allowed without
+  over-allowing all of `/usr/include`.
+
+Wiring:
+- **Build** (`validate_include_hygiene`): declared-dep Tier-B dirs added to the
+  allowlist; findings whose header matches a declared dep/slot's Tier-A glob are
+  suppressed; remaining diagnostics name candidate packages (`<cblas.h> is
+  provided by openblas, atlas, mkl — add one`). `FreightError::UndeclaredInclude`
+  message simplified to the per-finding lines.
+- **LSP** (`compute_include_hygiene`): same Tier-A suppression + candidate
+  naming (Tier-A only — subdir libs already reach the LSP via compile_commands,
+  and the hot path must avoid per-keystroke pkg-config). So editor and build now
+  agree.
+
+Two guards (the whole point):
+1. **No over-allow** — Tier B never folds in a default system root; bare
+   `/usr/include` headers are attributed *only* by Tier A's explicit lists.
+2. **Fail-open** — absent ownership data attributes nothing; it can only ever
+   *add* "declared", never manufacture an undeclared finding.
+
+Tests: 4 unit (`header_ownership`: globs, slot attribution, candidates, default-
+dir exclusion) + integration `declared_owner_suppresses_system_header`
+(`examples/broken/undeclared-include-owned/`). E2e verified both build and LSP:
+declaring `zlib` suppresses `<zlib.h>` while `<pthread.h>` stays flagged, and an
+undeclared `<zlib.h>` is reported as "provided by zlib".
+
+**Still open for Phase 3:** (a) host + generate the per-OS Tier-A files (hook the
+existing vcpkg/registry scraper; let registry stubs carry `provides-headers`);
+(b) a lazy `pkg-config --list-all` reverse index so even headers *not* in Tier A
+can name their owning package in the diagnostic; (c) macOS/Windows seeds;
+(d) finalize the POSIX/OS-header policy.
+
+### Step 10 — Phase 2: build-time enforcement (+ a non-ASCII crash fix)
+
+The include-hygiene check now runs in `freight build`, not just the LSP.
+
+- **`build::validate_include_hygiene`** (`src/build/mod.rs`) runs at the top of
+  `build_sources`, before any compiler is invoked. It re-runs the Phase-1
+  `include_policy::check_includes` over every C-family source's directives
+  (`c`/`cpp`/`cuda`/`hip`/`objc`/`objcpp`), using the build's declared include
+  dirs as the allowlist and probing each source's compiler (`select_compiler`)
+  for its system dirs (cached per compiler+language) to confirm an undeclared
+  header actually exists. Per `[lints].undeclared-include`:
+  - `deny` → `FreightError::UndeclaredInclude` (new variant) — build fails with
+    a `path:line: <header> is not provided…` list.
+  - `warn` → one `BuildEvent::Warning` per finding; build proceeds.
+  - `allow` → pass skipped entirely (no cost).
+- **Crash fixed:** `parse_includes` computed the directive column via
+  `raw.len() - rest.len()`, but `rest` is a slice of the *comment-stripped*
+  `line`, not `raw`. With a multi-byte char after the directive (e.g. a non-ASCII
+  comment) the resulting byte index landed inside a char and **panicked** — in
+  both the build pass and the LSP. Now computed against `line` (a valid suffix
+  boundary). Regression test `parse_includes_handles_non_ascii_comment`.
+- **Fixture + tests:** `examples/broken/undeclared-include/` (`<pthread.h>`
+  under `deny`); integration tests `undeclared_include_blocks_build_under_deny`
+  and `undeclared_include_names_the_header` (asserts `<stdio.h>` is *not*
+  flagged). End-to-end verified for all three lint levels.
+
+**Phase 3 still open — the design constraint:** a `system =`/pkg-config dep
+should contribute its headers to the allowlist so `#include <openssl/ssl.h>`
+from a declared `openssl` isn't flagged. The naive fix (add `pkg-config
+--cflags` `-I` dirs to the allowlist) is unsafe: pkg-config commonly returns
+`/usr/include`, which would mark *every* header there declared and gut the
+check. Phase 3 needs to add only the dep-specific include subdirs (and honour
+the detailed-dep `include = [...]` override) while still treating bare
+`/usr/include` as undeclared. Until then, `deny` is reliable for projects whose
+deps are project-local / path / git / url / cached-package; it can
+false-positive on pkg-config/`system` deps, so those projects should stay on
+`warn` (the default).
+
+### Step 9 — named C++20 module imports resolved to packages (`import foo;`)
+
+The last open piece of the include/import hints: a named-module import had no
+header path, so it was hardcoded to a generic `← module` label and never
+classified. Now it is handled the same as a header `#include`:
+
+- **`lsp::index::ModuleIndex`** — module name → owning package. Built alongside
+  `HeaderIndex` (same `HeaderDirSpec` list + `.pkgs/`) by scanning each declared
+  package's `src/` for `export module …;` via the now-`pub(crate)`
+  `build::modules::parse_export_module`. Records the interface unit's path.
+- **`include_policy`** — `IncludeDirective` gained a `DirectiveKind`
+  (`Header` | `Module`); `parse_includes` now emits `Module` directives (a
+  dotted identifier terminated by `;`; partitions `:part` and unterminated
+  lines rejected) instead of silently dropping them, so a module-line edit also
+  invalidates the hygiene fast-path. `check_includes` skips `Module` directives
+  (no header to resolve).
+- **Inlay hints** (`compute_inlay_hints`) — `import std;`/`std.*` → `← stdlib`;
+  a module a declared package exports → `← <pkg>`; the project's own module →
+  `← module`; anything else (when the lint isn't `allow`, on a complete `;`
+  statement) → `⚠ undeclared`. Tooltips via `module_hover_markdown_for`.
+- **Diagnostics** (`compute_include_hygiene`) — an undeclared module (not
+  `std`, not in the `ModuleIndex`) is published as `source:"freight"
+  code:"undeclared-module"` at the configured severity, parity with
+  `undeclared-include`.
+- **Completion** — `import …;` now offers `std`/`std.compat` **and** every
+  declared module, each labelled with its package.
+- **Goto-definition** — `import foo;` jumps to the interface unit
+  (`export module foo;`) when a declared package provides one.
+
+Tests: `parse_named_module_rejects_partitions_and_noise`,
+`module_index_scans_export_module_declarations`,
+`module_labels_reflect_provenance`,
+`include_completion_module_suggests_declared_packages`, plus updated existing
+parse/completion tests. End-to-end verified by driving `freight lsp` against a
+temp project (declared path-dep module → `← vecmod`; `boost.json` →
+`⚠ undeclared` + `undeclared-module` diagnostic; completion lists `vecmod.core`;
+goto opens `vecmod/src/core.cppm`). `cargo test -p freight --lib` green
+(679/680; the one failure is the known flaky `dap::server` parallel race, passes
+alone). Uncommitted.
 
 ### Step 8 — `#include`/`import` completion scoped to declared libraries (freight 1303ae8)
 

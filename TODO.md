@@ -13,6 +13,10 @@ This file covers items not tracked elsewhere.
 
 ### DAP: additional debugger backends
 
+**End goal:** `freight dap` can debug on every platform freight builds for.
+GDB-family and LLDB-family already work; the rest are investigations gated on
+tooling/hardware availability (cdb/windbg need a Windows machine).
+
 - [ ] Keep `freight dap` focused on GDB-family (`gdb`, `cuda-gdb`) and LLDB-family
   (`lldb-dap` / `lldb-vscode`) for the current editor MVP.
 - [ ] Investigate DAP support for remaining debugger templates:
@@ -24,47 +28,73 @@ This file covers items not tracked elsewhere.
 - [ ] Add fake-adapter unit tests and real smoke-test notes before exposing any
   new backend in VS Code or Neovim.
 
-### LSP: libclang integration
+### LSP: clang-bridge to parity with clangd, then default-on
 
-Replace the current text-based DocIndex and clangd proxy for hover/definition/inlay
-hints with direct AST queries via `libclang` (`clang-sys` crate). clangd stays as
-the subprocess for diagnostics and completions where it adds the most value.
+**End goal:** the in-process `clang-bridge` indexer (`src/lsp/indexers/Clang.rs`
++ `crates/clang-bridge`) replaces the clangd subprocess as the default C/C++
+backend. No clangd install required; freight controls flags, modules, and the
+include policy directly.
 
-**Status:** Paused. The prototype still lives in `src/lsp/clang_index.rs`, but
-active `freight lsp` wiring has been rolled back to the pre-libclang DocIndex +
-clangd passthrough path. Re-enable only after hover output and documentation
-fallbacks are production-ready. The checklist below records the paused prototype
-state, not what is currently compiled into `freight lsp`.
+**Status:** the bridge implements every LSP method `freight lsp` needs and has
+144 passing tests, but it is opt-in (`freight lsp --use-clang-bridge`) because
+it has not yet been differentially verified against clangd on every method.
+(This section supersedes the old libclang/`clang-sys` prototype plan — that
+path was abandoned in favour of the dedicated `clang-bridge` crate.)
 
-**Phase 1 — TU lifecycle (prerequisite)**
-- [x] Add `clang-sys` (runtime dlopen) to `Cargo.toml` — no link-time dep on libclang.
-- [x] `TuCache` in `src/lsp/clang_index.rs` — `CXIndex` + per-file `CXTranslationUnit` map.
-- [x] Open/reparse TU on `didOpen`/`didChange`; drop on `didClose`.
+**How to solve:**
+- [ ] Finish the clangd-oracle differential audit (driver pattern:
+      `/tmp/clangd_probe.py` from the 2026-06-10 session). Remaining methods:
+      diagnostics (clangd publishes async — read the raw fd, not a buffered
+      stream), signature-help active-parameter tracking, hover content/range,
+      call/type hierarchy edges, completion item kinds/details, formatting.
+- [ ] UTF-16 position encoding: LSP columns are UTF-16 code units; clang emits
+      byte columns. Add a multi-byte fixture line (`// café`) and fix the
+      conversion at the Rust LSP layer if (likely) broken.
+- [ ] Cross-file / multi-TU: references and workspace symbols that must span
+      TUs via `cb_workspace_index_add`; the current fixtures barely cross files.
+- [ ] Daily-driver the bridge on the `examples/` projects; when no regressions
+      vs clangd remain, flip the default and update the editor extensions.
 
-**Phase 2 — Hover via libclang** ✓
-- [x] `clang_getCursor` → `getCursorReferenced` → spelling + type string + brief doc.
-- [x] Falls back to DocIndex → fortls/asm-lsp on miss.
+### Include hygiene: Phases 2–3 (enforce + system libs)
 
-**Phase 3 — Go-to-definition via libclang** ✓
-- [x] `clang_getCursorDefinition` / `getCursorReferenced` with spelling location.
-- [x] `#include` line intercept still freight-owned as before.
+**End goal:** an `#include`/`import` of a header from an undeclared package is
+a hard `freight build` error under `[lints].undeclared-include = "deny"`; the
+compile command only exposes declared include dirs; declared system libs
+resolve their headers via pkg-config.
 
-**Phase 4 — Inlay hints via libclang** ✓
-- [x] AST visitor (`clang_visitChildren`) for `CXCursor_CallExpr` → parameter name hints
-  and `CXCursor_VarDecl` with `auto` → deduced-type hints.
-- [x] When TU is loaded, respond directly (no clangd round-trip).
-- [x] `clangd_pending` merge pipeline kept as fallback when TU is not yet parsed.
-- [x] Include-origin hints unchanged.
+**Status:** Phases 1–2 shipped. Phase 1: LSP warnings, `[lints]` table, scoped
+include completion, include/import inlay hints. Phase 2:
+`build::validate_include_hygiene` enforces at build time (`deny` → build error,
+`warn` → build warning). Plan: `docs/include-hygiene.md`; running log:
+`docs/include-hygiene-audit.md` (Step 10).
 
-**Phase 5 — clang-tidy diagnostics** ✓
-- [x] On `textDocument/didSave` for C/C++ files: spawn `clang-tidy <file> -p <cc_dir>`
-  in a background thread.
-- [x] Parse text output (`<file>:<line>:<col>: <sev>: <msg> [<check>]`).
-- [x] Emit `textDocument/publishDiagnostics` with `source = "clang-tidy"`.
-
-**What stays as clangd subprocess:**
-- Diagnostics (clangd's error recovery and incremental reparse is better)
-- Completions and signature help (clangd's ranking is better than libclang's)
+**How to solve:**
+- [x] Phase 2: pre-compile validation pass in `freight build` re-running the
+      Phase-1 `include_policy::check_includes` classification; `deny` →
+      `FreightError::UndeclaredInclude`, `warn` → `BuildEvent::Warning`. Fixture
+      `examples/broken/undeclared-include/` + integration tests. (Also fixed a
+      non-ASCII-comment panic in `parse_includes`.)
+- [x] **Phase 3 first cut (makes `deny` safe with system deps):**
+      `build::header_ownership` — Tier A (per-OS ownership table: package/slot →
+      header globs, in-core seed + downloadable override, fail-open) + Tier B
+      (declared dep's pkg-config dedicated dirs, default roots excluded). Wired
+      into both the build pass and the LSP: owned headers suppressed, candidates
+      named (`<cblas.h> provided by openblas, atlas, mkl`). BLAS/LAPACK modelled
+      as slots (shared header = OR). See audit Step 11.
+- [ ] **Phase 3 remaining:** host + generate the per-OS Tier-A data file (hook
+      the vcpkg/registry scraper; registry stubs carry `provides-headers`); a
+      lazy `pkg-config --list-all` reverse index to name owners of headers *not*
+      in Tier A; macOS/Windows seeds; finalize the POSIX/OS-header policy.
+- [ ] Phase 2 (stronger, optional): hermetic includes — stop relying on the
+      compiler's default search paths so undeclared headers can't even resolve,
+      rather than just being flagged after the fact.
+- [ ] Finalize the POSIX/OS-header policy (Phase 3).
+- [x] Module→package map so named-module imports (`import foo;`) classify like
+      header includes. Done: `lsp::index::ModuleIndex` scans declared packages'
+      sources for `export module …;`; `import` hints resolve to `← <pkg>` /
+      `← module` / `← stdlib` / `⚠ undeclared`, undeclared modules get an
+      `undeclared-module` diagnostic, `import …;` completion offers declared
+      modules, and goto-definition jumps to the interface unit.
 
 ---
 
@@ -80,15 +110,98 @@ state, not what is currently compiled into `freight lsp`.
   and the nearest manifest's `src/` tree. Workspace member indexing is done.
 - [x] Refresh the workspace compile DB and doc index when any member `freight.toml` changes.
 
-### LSP: native Fortran support
+### LSP ↔ build/: remove duplicated package/source discovery
 
-- [ ] Treat `fortls` as a reference implementation and temporary passthrough, not a required
-  long-term extension dependency.
-- [ ] Add native Freight Fortran symbol indexing for modules, subroutines, functions, types,
-  interfaces, includes, and `use` associations.
-- [ ] Add native Fortran hover/completion/navigation using Freight's manifest-scoped source graph.
-- [ ] Keep `fortls` passthrough available behind a flag until native Freight Fortran support covers
-  common workflows.
+**End goal:** the LSP derives "what packages and headers exist" from the same
+`build/` primitives the compile path uses, with no parallel re-implementation.
+
+**How to solve:**
+- [x] Shared package enumerator: `build::source_package_dirs` (project +
+      workspace members + path deps, read-only, tolerant of unfetched deps),
+      consumed by `lsp::refresh_header_index` (replaced the old
+      `build_header_specs`/`collect_path_dep_specs`).
+- [x] Manifest-load cache: `manifest::load_manifest_cached` (mtime-validated)
+      for read-heavy LSP callers; build/compile path stays on uncached
+      `load_manifest`.
+- [x] Single `src/` walk per package shared by the header and module indexes:
+      `lsp::index::build_source_indexes` walks each package's `src/` once,
+      classifying headers and `export module` declarations in the same pass
+      (`HeaderIndex::build`/`ModuleIndex::build` removed; the LSP refresh calls
+      the combined builder). `build::discover` stays separate — it is the
+      compile-path walk (single project, template-keyed languages, conditional
+      `[os.*]`/`[arch.*]` globs), a genuinely different scope.
+- [x] `ServerState` holds an owned project model (`active_manifest` +
+      `package_dirs`), recomputed once per manifest-set change in
+      `refresh_project_model` (driven from `refresh_compile_commands`). The
+      header/module refresh and the per-keystroke manifest read sites
+      (`undeclared_include_level`, `declared_dep_names`, sysroot) consume it
+      instead of re-deriving. (The build's `Project` itself isn't held — it
+      implies fetch/resolve, which the LSP must never do.)
+
+### LSP: native Fortran support via `fortran-lsp`
+
+**End goal:** Fortran files are served by the workspace's `crates/fortran-lsp`
+embedded as a `LanguageIndexer` (like ClangIndexer), scoped by freight's
+manifest source graph. `fortls` remains a reference implementation and
+flag-gated fallback until removal.
+
+**Status:** `fortran-lsp` already covers parsing (free/fixed form, preprocessor
+evaluation, recursive includes), indexing, hover, definition, completion,
+signature help, references, and a broad diagnostic set (48 tests) — but
+**`freight lsp` does not call it yet**; Fortran traffic still goes to fortls.
+
+**How to solve:**
+- [ ] `FortranIndexer` in `src/lsp/indexers/` wrapping `fortran_lsp::Workspace`:
+      feed it manifest source roots + include dirs; route Fortran URIs to it
+      behind a `--use-native-fortran` flag (mirror the clang-bridge gating).
+- [ ] Map `fortran-lsp` model types to LSP responses for supported methods;
+      forward unsupported methods to fortls while gaps remain.
+- [ ] Differential-test against fortls (same oracle technique as clang-bridge
+      vs clangd), close gaps, then flip the default.
+- [ ] See `crates/fortran-lsp/TODO.md` for crate-side gaps.
+
+### LSP: native assembly support (`AsmIndexer`)
+
+**End goal:** `.s`/`.S`/`.asm`/`.nasm` files are served by a native
+`AsmIndexer`, so the external `asm-lsp` binary is not required. (asm-lsp is pure
+Rust, so "native" here means an in-process indexer — same self-contained goal as
+clang-bridge/fortran-lsp.)
+
+**Status:** implemented — `src/lsp/indexers/Asm.rs`, a single-file model
+(GAS + NASM). `--no-native-asm` falls back to the external `asm-lsp`
+passthrough; otherwise that passthrough is not started and asm requests route to
+`AsmIndexer`. Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils
+handled. 12 unit tests + end-to-end verified through `freight lsp`.
+
+Implemented:
+- **Symbols** — labels, constants (`.equ`/`.set`/`.equiv`, GAS `name = …`, NASM
+  `name equ …`/`%define`/`%assign`), macros (`.macro`/`%macro`); each with
+  documentSymbol (kinded), goto, references (honours `includeDeclaration`),
+  hover, completion.
+- **Numeric local labels** — `1:` with directional `1f`/`1b` goto.
+- **Hover** — symbol provenance + curated **instruction** (x86-64), **register**
+  (x86-64), and **directive** help tables, dispatched by cursor context
+  (mnemonic slot vs operand).
+- **`.include "file"`** — goto opens the included file.
+- **Folding** — `.macro`/`.rept`/conditional blocks and per-label regions.
+- **Diagnostics** — duplicate symbol definition.
+
+**Remaining / how to grow it:**
+- [ ] **Cross-file symbol resolution** — merge symbols from `.include`d files so
+      goto/references/hover/completion span files (today only `.include`
+      *navigation* works; resolution is single-file). Needs include-root
+      resolution like `FortranIndexer::refresh_flags` + a multi-file index.
+- [ ] **Macro-parameter awareness** — `.macro foo a, b` parameters as locals;
+      handle `\arg` / `%1` substitutions; suppress duplicate-symbol false
+      positives for labels defined inside macro bodies that use `\@`.
+- [ ] **Broader instruction/register DB** — the curated x86-64 tables cover
+      common cases; ARM/RISC-V and fuller coverage could embed the upstream
+      `asm-lsp` crate's data tables rather than hand-rolling. Arch detection
+      from the manifest/target triple.
+- [ ] **Semantic tokens** — only once freight owns the global legend (see the
+      clang-bridge legend note); otherwise leave to TextMate.
+- [ ] Consider extracting the parser into a `crates/asm-lsp`-style crate if it
+      grows (kept inline in `Asm.rs` for now).
 
 ### ~~Compiler version gating for language standards~~
 Done. `TemplateDef` now has `standard_min_versions`; `CompilerTemplate::check_standard_floor`

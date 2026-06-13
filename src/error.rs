@@ -29,6 +29,9 @@ pub enum FreightError {
     #[error("{0}")]
     OptionError(String),
 
+    #[error("undeclared include(s) — blocked by [lints].undeclared-include = \"deny\":\n{0}")]
+    UndeclaredInclude(String),
+
     #[error("compilation failed: {0}\n{1}")]
     CompileFailed(String, String),
 

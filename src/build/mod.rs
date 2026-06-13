@@ -4,6 +4,7 @@ pub mod deps;
 pub(crate) mod diagnostics;
 pub mod discover;
 pub mod features;
+pub mod header_ownership;
 pub mod header_units;
 pub mod include_policy;
 pub mod link;
@@ -27,10 +28,8 @@ pub use modules::{
     ModuleBuildPlan, ModuleRole, ScannedSource,
 };
 pub use pipeline::{run_pipeline_at, PipelineConfig, PipelineGoal};
-pub use project::Project;
+pub use project::{source_package_dirs, PackageKind, Project};
 
-use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
 use crate::error::FreightError;
 use crate::event::{silent, BuildEvent, Progress};
 use crate::fetch::git;
@@ -43,6 +42,8 @@ use crate::toolchain::{
     backend_matches, check_manifest_version_bounds, detect_all_cached, load_all_templates,
     CompilerTemplate, DetectedCompiler, GlobalConfig,
 };
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 // ── Shared lang helper ────────────────────────────────────────────────────────
 
@@ -227,7 +228,6 @@ pub fn clean_workspace() -> Result<(), FreightError> {
     }
     Ok(())
 }
-
 
 /// Test every member of a workspace rooted at the current working directory.
 pub fn test_workspace(profile: &str, filter: Option<&str>) -> Result<TestSummary, FreightError> {
@@ -1114,6 +1114,178 @@ fn verify_git_dep_shas(
 
 /// Compile a project's sources, automatically switching to the module-aware pipeline
 /// if any C++ source file contains an `export module` declaration.
+/// Language keys whose sources use the C preprocessor and are subject to
+/// include hygiene.
+fn is_c_family_lang(lang_key: &str) -> bool {
+    matches!(
+        lang_key,
+        "c" | "cpp" | "cuda" | "hip" | "objc" | "objcpp"
+    )
+}
+
+/// Include-hygiene Phase 2 — the build-time enforcement pass.
+///
+/// Re-runs the Phase-1 classification ([`include_policy::check_includes`]) over
+/// every C-family source's `#include`/`import` directives. Headers that resolve
+/// to no declared dependency (and aren't standard-library headers) are reported
+/// per `[lints].undeclared-include`: `warn` emits build warnings, `deny` fails
+/// the build, `allow` skips the pass entirely.
+#[allow(clippy::too_many_arguments)]
+fn validate_include_hygiene(
+    project_dir: &Path,
+    manifest: &Manifest,
+    backend: &Backend,
+    sources: &[SourceFile],
+    include_dirs: &[PathBuf],
+    detected: &[DetectedCompiler],
+    progress: &Progress,
+) -> Result<(), FreightError> {
+    use crate::build::include_policy as ip;
+    use crate::manifest::LintLevel;
+
+    let level = manifest.lints.undeclared_include;
+    if level == LintLevel::Allow {
+        return Ok(());
+    }
+
+    // Names a project may declare to legitimise a system header. The dependency
+    // key is the freight package name — what pkg-config is queried by and what
+    // the ownership map is keyed on.
+    let declared_names: Vec<String> = {
+        let mut v: Vec<String> = manifest
+            .effective_dependencies()
+            .into_keys()
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    // The declared include dirs are the allowlist; make them absolute so
+    // resolution is independent of the process working directory.
+    let mut declared: Vec<PathBuf> = include_dirs
+        .iter()
+        .map(|d| {
+            if d.is_absolute() {
+                d.clone()
+            } else {
+                project_dir.join(d)
+            }
+        })
+        .collect();
+
+    // Phase 3 / Tier B: a declared dep's pkg-config dedicated include dirs (a
+    // `/usr/include/SDL2`-style subdir, never bare `/usr/include`) are part of
+    // the allowlist — version-correct and safe from over-allowing.
+    for name in &declared_names {
+        declared.extend(header_ownership::pkg_config_dedicated_dirs(name));
+    }
+    declared.sort();
+    declared.dedup();
+
+    // Phase 3 / Tier A: ownership of bare-`/usr/include` headers by declared
+    // packages/slots (e.g. a declared BLAS provider owns `cblas.h`).
+    let ownership = header_ownership::load();
+    let owned_globs = ownership.owned_globs_for(&declared_names);
+
+    // The compiler's built-in system dirs only confirm that an undeclared header
+    // actually exists (so "undeclared but present" is distinguished from a
+    // missing header, which the compiler reports itself). Probed once per
+    // (compiler, language) and cached.
+    let mut sys_cache: std::collections::HashMap<(PathBuf, bool), Vec<PathBuf>> =
+        std::collections::HashMap::new();
+
+    let mut findings: Vec<(PathBuf, ip::UndeclaredInclude)> = Vec::new();
+    for src in sources {
+        if !is_c_family_lang(&src.lang_key) {
+            continue;
+        }
+        let abs = project_dir.join(&src.path);
+        let Ok(text) = std::fs::read_to_string(&abs) else {
+            continue;
+        };
+        let file_dir = abs.parent().map(Path::to_path_buf).unwrap_or_default();
+        let lang = ip::Language::from_path(&abs);
+        let is_cxx = lang == ip::Language::Cxx;
+
+        let system = match compile::select_compiler(&src.lang_key, backend, detected, None) {
+            Some(cc) => sys_cache
+                .entry((cc.path.clone(), is_cxx))
+                .or_insert_with(|| ip::system_include_dirs(&cc.path, lang))
+                .clone(),
+            None => Vec::new(),
+        };
+
+        for f in ip::check_includes(&text, &file_dir, &declared, &system, lang) {
+            // Tier A: suppress a header a declared package/slot owns.
+            let name = header_name(&f.spelling);
+            if owned_globs
+                .iter()
+                .any(|g| header_ownership::glob_match(g, name))
+            {
+                continue;
+            }
+            findings.push((src.path.clone(), f));
+        }
+    }
+
+    if findings.is_empty() {
+        return Ok(());
+    }
+
+    // Turn a finding into a message — naming the candidate package(s) when the
+    // header is one the ownership map knows about ("provided by openblas, mkl").
+    let describe = |f: &ip::UndeclaredInclude| -> String {
+        let name = header_name(&f.spelling);
+        let candidates: Vec<String> = ownership
+            .candidates_for_header(name)
+            .into_iter()
+            .filter(|c| !declared_names.contains(c))
+            .collect();
+        if candidates.is_empty() {
+            format!(
+                "{} is not provided by any declared dependency; add the dependency that \
+                 provides it to [dependencies] in freight.toml",
+                f.spelling
+            )
+        } else {
+            format!(
+                "{} is provided by {} — add one to [dependencies] in freight.toml",
+                f.spelling,
+                candidates.join(", ")
+            )
+        }
+    };
+
+    match level {
+        LintLevel::Deny => {
+            let lines: Vec<String> = findings
+                .iter()
+                .map(|(path, f)| format!("  {}:{}: {}", path.display(), f.line + 1, describe(f)))
+                .collect();
+            Err(FreightError::UndeclaredInclude(lines.join("\n")))
+        }
+        LintLevel::Warn => {
+            for (path, f) in &findings {
+                progress(BuildEvent::Warning(format!(
+                    "{}:{}: {}",
+                    path.display(),
+                    f.line + 1,
+                    describe(f)
+                )));
+            }
+            Ok(())
+        }
+        LintLevel::Allow => Ok(()),
+    }
+}
+
+/// Strip the `<…>` / `"…"` delimiters from an include spelling.
+fn header_name(spelling: &str) -> &str {
+    spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_sources(
     project_dir: &Path,
     target_dir: &Path,
@@ -1127,6 +1299,18 @@ fn build_sources(
     header_unit_flags: &[String],
     progress: &Progress,
 ) -> Result<CompileResult, FreightError> {
+    // Include-hygiene Phase 2: reject (or warn about) `#include`/`import` of
+    // headers no declared dependency provides, before invoking the compiler.
+    validate_include_hygiene(
+        project_dir,
+        manifest,
+        backend,
+        sources,
+        include_dirs,
+        detected,
+        progress,
+    )?;
+
     let scanned = scan_sources(project_dir, sources);
 
     // C++23 `import std;` — build the standard-library module BMI and add

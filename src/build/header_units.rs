@@ -69,15 +69,31 @@ pub fn precompile_dep_headers(
     let mut work: Vec<WorkItem> = Vec::new();
 
     for inc_dir in include_dirs {
-        if !inc_dir.is_dir() { continue; }
+        if !inc_dir.is_dir() {
+            continue;
+        }
 
-        let i_flag = compiler.template.structure.include_dir.replace("{path}", &inc_dir.to_string_lossy());
+        let i_flag = compiler
+            .template
+            .structure
+            .include_dir
+            .replace("{path}", &inc_dir.to_string_lossy());
         let include_flags: Vec<String> = i_flag.split_whitespace().map(str::to_owned).collect();
 
-        for entry in WalkDir::new(inc_dir).follow_links(false).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
+        for entry in WalkDir::new(inc_dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
             let header_abs = entry.path();
-            let ext = header_abs.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !matches!(ext, "h" | "hpp" | "hh" | "hxx") { continue; }
+            let ext = header_abs
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if !matches!(ext, "h" | "hpp" | "hh" | "hxx") {
+                continue;
+            }
 
             let rel_path = match header_abs.strip_prefix(inc_dir) {
                 Ok(r) => r.to_string_lossy().replace('\\', "/"),
@@ -87,43 +103,64 @@ pub fn precompile_dep_headers(
 
             let dummy_dep = PathBuf::new();
             if is_up_to_date(header_abs, &pcm_path, &dummy_dep) {
-                work.push(WorkItem { rel_path, pcm_path, cmd: None });
+                work.push(WorkItem {
+                    rel_path,
+                    pcm_path,
+                    cmd: None,
+                });
                 continue;
             }
 
             if let Some(parent) = pcm_path.parent() {
-                if std::fs::create_dir_all(parent).is_err() { continue; }
+                if std::fs::create_dir_all(parent).is_err() {
+                    continue;
+                }
             }
 
             let Some((binary, args)) = compiler.template.precompile_header_unit_cmd(
-                header_abs, &pcm_path, &std_flag, &include_flags,
-            ) else { continue; };
+                header_abs,
+                &pcm_path,
+                &std_flag,
+                &include_flags,
+            ) else {
+                continue;
+            };
 
-            work.push(WorkItem { rel_path, pcm_path, cmd: Some((binary, args)) });
+            work.push(WorkItem {
+                rel_path,
+                pcm_path,
+                cmd: Some((binary, args)),
+            });
         }
     }
 
     // Compile dirty header units in parallel.
-    work.into_par_iter().filter_map(|item| {
-        let WorkItem { rel_path, pcm_path, cmd } = item;
-        match cmd {
-            None => Some(HeaderUnit { rel_path, pcm_path }),
-            Some((binary, args)) => {
-                match Command::new(&binary).args(&args).output() {
+    work.into_par_iter()
+        .filter_map(|item| {
+            let WorkItem {
+                rel_path,
+                pcm_path,
+                cmd,
+            } = item;
+            match cmd {
+                None => Some(HeaderUnit { rel_path, pcm_path }),
+                Some((binary, args)) => match Command::new(&binary).args(&args).output() {
                     Ok(out) if out.status.success() => Some(HeaderUnit { rel_path, pcm_path }),
                     Ok(out) => {
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        eprintln!("warning: header unit precompile skipped for {rel_path}: {stderr}");
+                        eprintln!(
+                            "warning: header unit precompile skipped for {rel_path}: {stderr}"
+                        );
                         None
                     }
                     Err(e) => {
                         eprintln!("warning: header unit precompile failed for {rel_path}: {e}");
                         None
                     }
-                }
+                },
             }
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Build the `-fmodule-file=rel_path=pcm_path` flags for each header unit.

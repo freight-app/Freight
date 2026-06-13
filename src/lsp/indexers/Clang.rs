@@ -59,7 +59,7 @@ pub(crate) fn diag_to_lsp(d: &clang_bridge::diag::Diagnostic, source: &str) -> V
         Severity::Error | Severity::Fatal => 1,
     };
     let line = d.line.saturating_sub(1) as u64;
-    let col  = d.col.saturating_sub(1) as u64;
+    let col = d.col.saturating_sub(1) as u64;
     let mut v = json!({
         "range": {
             "start": { "line": line, "character": col },
@@ -107,9 +107,15 @@ impl ClangIndexer {
 
     fn ensure_tu(&mut self, path: &Path) -> Option<&TranslationUnit> {
         if !self.tus.contains_key(path) {
-            let (wd, flags) = self.source_data
+            let (wd, flags) = self
+                .source_data
                 .get(path)
-                .map(|(wd, f)| (wd.as_str(), f.iter().map(String::as_str).collect::<Vec<_>>()))
+                .map(|(wd, f)| {
+                    (
+                        wd.as_str(),
+                        f.iter().map(String::as_str).collect::<Vec<_>>(),
+                    )
+                })
                 .unwrap_or(("", vec![]));
             let tu = self.index.parse(path.to_str()?, wd, &flags)?;
             self.tus.insert(path.to_path_buf(), tu);
@@ -119,7 +125,9 @@ impl ClangIndexer {
 }
 
 impl Default for ClangIndexer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LanguageIndexer for ClangIndexer {
@@ -128,7 +136,9 @@ impl LanguageIndexer for ClangIndexer {
     }
 
     fn refresh_flags(&mut self, manifest_dir: &Path, profile: &str) {
-        let Ok(per_file) = lsp_source_flags(manifest_dir, profile) else { return };
+        let Ok(per_file) = lsp_source_flags(manifest_dir, profile) else {
+            return;
+        };
 
         // Pass an explicit -resource-dir so ClangTool (running inside the
         // freight binary, not an installed clang binary) finds builtins like
@@ -174,7 +184,9 @@ impl LanguageIndexer for ClangIndexer {
     fn hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
         let md = clang_bridge::hover::hover_full(tu, line as u32 + 1, col as u32 + 1)?;
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
@@ -183,7 +195,9 @@ impl LanguageIndexer for ClangIndexer {
     fn goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
         let loc = clang_bridge::goto::goto_definition(tu, line as u32 + 1, col as u32 + 1)?;
         let target_uri = uri_from_path(Path::new(&loc.file));
@@ -197,8 +211,12 @@ impl LanguageIndexer for ClangIndexer {
     }
 
     fn reparse(&mut self, uri: &str, content: &str) {
-        let Some(path) = path_from_uri(uri) else { return };
-        if !Self::is_c_family(&path) { return; }
+        let Some(path) = path_from_uri(uri) else {
+            return;
+        };
+        if !Self::is_c_family(&path) {
+            return;
+        }
         // Ensure the TU exists (parses from disk on first call).
         self.ensure_tu(&path);
         if let Some(tu) = self.tus.get(&path) {
@@ -207,9 +225,15 @@ impl LanguageIndexer for ClangIndexer {
     }
 
     fn diagnostics(&mut self, uri: &str) -> Vec<Value> {
-        let Some(path) = path_from_uri(uri) else { return vec![] };
-        if !Self::is_c_family(&path) { return vec![]; }
-        let Some(tu) = self.ensure_tu(&path) else { return vec![] };
+        let Some(path) = path_from_uri(uri) else {
+            return vec![];
+        };
+        if !Self::is_c_family(&path) {
+            return vec![];
+        }
+        let Some(tu) = self.ensure_tu(&path) else {
+            return vec![];
+        };
         let source_str = path.to_string_lossy().into_owned();
         tu.diagnostics()
             .filter(|d| d.file == source_str)
@@ -218,37 +242,50 @@ impl LanguageIndexer for ClangIndexer {
     }
 
     fn flags_for(&self, path: &Path) -> Vec<String> {
-        self.source_data.get(path).map(|(_, f)| f.clone()).unwrap_or_default()
+        self.source_data
+            .get(path)
+            .map(|(_, f)| f.clone())
+            .unwrap_or_default()
     }
 
     fn inlay_hints(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
 
         let range = msg.get("params")?.get("range")?;
         let start_line = range.get("start")?.get("line")?.as_u64()? as u32;
-        let end_line   = range.get("end")?.get("line")?.as_u64()? as u32;
+        let end_line = range.get("end")?.get("line")?.as_u64()? as u32;
 
         // clang-bridge uses 1-based lines; LSP uses 0-based.
         let hints = clang_bridge::inlay::inlay_hints(tu, start_line + 1, end_line + 1);
-        let items: Vec<serde_json::Value> = hints.iter().map(|h| {
-            // clang-bridge kind: 0 = param, 1 = type, 2 = block-end, 3 = designator
-            // LSP InlayHintKind:  2 = Parameter, 1 = Type, 4 = BlockEnd (ext), 0 = None
-            let lsp_kind: u8 = match h.kind { 0 => 2, 2 => 4, 3 => 0, _ => 1 };
-            let padding_right = h.kind == 0; // param hints: space after label
-            let padding_left  = h.kind == 1; // type hints: space before ": T"
-            json!({
-                "position": {
-                    "line":      h.line.saturating_sub(1),
-                    "character": h.col.saturating_sub(1)
-                },
-                "label":        h.label,
-                "kind":         lsp_kind,
-                "paddingLeft":  padding_left,
-                "paddingRight": padding_right
+        let items: Vec<serde_json::Value> = hints
+            .iter()
+            .map(|h| {
+                // clang-bridge kind: 0 = param, 1 = type, 2 = block-end, 3 = designator
+                // LSP InlayHintKind:  2 = Parameter, 1 = Type, 4 = BlockEnd (ext), 0 = None
+                let lsp_kind: u8 = match h.kind {
+                    0 => 2,
+                    2 => 4,
+                    3 => 0,
+                    _ => 1,
+                };
+                let padding_right = h.kind == 0; // param hints: space after label
+                let padding_left = h.kind == 1; // type hints: space before ": T"
+                json!({
+                    "position": {
+                        "line":      h.line.saturating_sub(1),
+                        "character": h.col.saturating_sub(1)
+                    },
+                    "label":        h.label,
+                    "kind":         lsp_kind,
+                    "paddingLeft":  padding_left,
+                    "paddingRight": padding_right
+                })
             })
-        }).collect();
+            .collect();
 
         Some(items)
     }
@@ -256,25 +293,33 @@ impl LanguageIndexer for ClangIndexer {
     fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
-        let items: Vec<Value> = clang_bridge::completion::complete(tu, line as u32 + 1, col as u32 + 1, None)
-            .map(|item| {
-                let mut v = json!({ "label": item.label, "kind": item.kind });
-                if let Some(d) = item.detail        { v["detail"] = Value::String(d); }
-                if let Some(d) = item.documentation { v["documentation"] = json!({ "kind": "markdown", "value": d }); }
-                v
-            })
-            .collect();
+        let items: Vec<Value> =
+            clang_bridge::completion::complete(tu, line as u32 + 1, col as u32 + 1, None)
+                .map(|item| {
+                    let mut v = json!({ "label": item.label, "kind": item.kind });
+                    if let Some(d) = item.detail {
+                        v["detail"] = Value::String(d);
+                    }
+                    if let Some(d) = item.documentation {
+                        v["documentation"] = json!({ "kind": "markdown", "value": d });
+                    }
+                    v
+                })
+                .collect();
         Some(json!({ "isIncomplete": false, "items": items }))
     }
 
     fn document_symbols(&mut self, uri: &str) -> Option<Vec<Value>> {
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
-        let syms: Vec<clang_bridge::docsym::DocSym> =
-            tu.document_symbols()?.iter().collect();
+        let syms: Vec<clang_bridge::docsym::DocSym> = tu.document_symbols()?.iter().collect();
         let n = syms.len();
         // Build child lists from the flat parent-index representation.
         let mut kids: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -285,13 +330,20 @@ impl LanguageIndexer for ClangIndexer {
                 _ => roots.push(i),
             }
         }
-        Some(roots.iter().map(|&r| doc_symbol_node(r, &syms, &kids)).collect())
+        Some(
+            roots
+                .iter()
+                .map(|&r| doc_symbol_node(r, &syms, &kids))
+                .collect(),
+        )
     }
 
     fn references(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let include_decl = msg
             .get("params")
             .and_then(|p| p.get("context"))
@@ -326,10 +378,14 @@ impl LanguageIndexer for ClangIndexer {
     fn document_highlight(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
         let hl = clang_bridge::highlight::highlight(tu, line as u32 + 1, col as u32 + 1);
-        if hl.is_empty() { return None; }
+        if hl.is_empty() {
+            return None;
+        }
         let out: Vec<Value> = hl
             .iter()
             .map(|h| {
@@ -349,7 +405,9 @@ impl LanguageIndexer for ClangIndexer {
 
     fn semantic_tokens(&mut self, uri: &str) -> Option<Vec<u32>> {
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
         let toks = clang_bridge::semtok::semantic_tokens(tu);
         // Encode as the LSP relative-delta format. clang-bridge already sorts by
@@ -361,7 +419,11 @@ impl LanguageIndexer for ClangIndexer {
             let line = t.line.saturating_sub(1);
             let col = t.col.saturating_sub(1);
             let delta_line = line.saturating_sub(prev_line);
-            let delta_col = if delta_line == 0 { col.saturating_sub(prev_col) } else { col };
+            let delta_col = if delta_line == 0 {
+                col.saturating_sub(prev_col)
+            } else {
+                col
+            };
             data.extend_from_slice(&[delta_line, delta_col, t.length, t.token_type as u32, 0]);
             prev_line = line;
             prev_col = col;
@@ -371,7 +433,9 @@ impl LanguageIndexer for ClangIndexer {
 
     fn folding_ranges(&mut self, uri: &str) -> Option<Vec<Value>> {
         let path = path_from_uri(uri)?;
-        if !Self::is_c_family(&path) { return None; }
+        if !Self::is_c_family(&path) {
+            return None;
+        }
         let tu = self.ensure_tu(&path)?;
         let out: Vec<Value> = clang_bridge::folding::folding_ranges(tu)
             .iter()
@@ -396,30 +460,28 @@ impl LanguageIndexer for ClangIndexer {
 /// Map a clang-bridge document-symbol kind string to an LSP `SymbolKind`.
 fn symbol_kind(kind: &str) -> u32 {
     match kind {
-        "namespace" => 3,        // Namespace
-        "class" => 5,            // Class
-        "method" => 6,           // Method
+        "namespace" => 3,          // Namespace
+        "class" => 5,              // Class
+        "method" => 6,             // Method
         "field" | "property" => 8, // Field
-        "enum" => 10,            // Enum
-        "function" => 12,        // Function
-        "var" => 13,             // Variable
-        "enumconst" => 22,       // EnumMember
-        "struct" | "union" => 23, // Struct
-        "concept" => 11,         // Interface (closest LSP kind for a concept)
-        "typedef" => 5,          // Class (type alias)
-        _ => 13,                 // Variable fallback
+        "enum" => 10,              // Enum
+        "function" => 12,          // Function
+        "var" => 13,               // Variable
+        "enumconst" => 22,         // EnumMember
+        "struct" | "union" => 23,  // Struct
+        "concept" => 11,           // Interface (closest LSP kind for a concept)
+        "typedef" => 5,            // Class (type alias)
+        _ => 13,                   // Variable fallback
     }
 }
 
 /// Recursively build a hierarchical LSP `DocumentSymbol` from the flat list.
-fn doc_symbol_node(
-    i: usize,
-    syms: &[clang_bridge::docsym::DocSym],
-    kids: &[Vec<usize>],
-) -> Value {
+fn doc_symbol_node(i: usize, syms: &[clang_bridge::docsym::DocSym], kids: &[Vec<usize>]) -> Value {
     let s = &syms[i];
-    let children: Vec<Value> =
-        kids[i].iter().map(|&c| doc_symbol_node(c, syms, kids)).collect();
+    let children: Vec<Value> = kids[i]
+        .iter()
+        .map(|&c| doc_symbol_node(c, syms, kids))
+        .collect();
     let sel_line = s.sel_line.saturating_sub(1);
     let sel_start = s.sel_col.saturating_sub(1);
     let mut node = json!({

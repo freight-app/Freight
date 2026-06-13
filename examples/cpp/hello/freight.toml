@@ -5,7 +5,7 @@ description = "Example freight project — multi-file C++"
 license     = "MIT"
 
 [language.cpp]
-std = "c++20"
+std = "c++23"
 
 [[bin]]
 name = "hello-cpp"
@@ -16,6 +16,7 @@ backend   = "auto"
 opt-level = 2
 debug     = false
 warnings  = "all"
+includes  = ["inc"]
 
 [profile.dev]
 opt-level = 0

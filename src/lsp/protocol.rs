@@ -82,12 +82,19 @@ pub fn sanitize_code_action_diagnostics(msg: &Value) -> Value {
 // Capability merging
 // ---------------------------------------------------------------------------
 
-pub fn merged_capabilities(source_caps: Vec<Value>, use_clang_bridge: bool) -> Value {
+pub fn merged_capabilities(
+    source_caps: Vec<Value>,
+    use_clang_bridge: bool,
+    use_native_fortran: bool,
+) -> Value {
     let mut caps = json!({});
     for source in source_caps {
         merge_capability_object(&mut caps, &source);
     }
-    merge_capability_object(&mut caps, &freight_capabilities(use_clang_bridge));
+    merge_capability_object(
+        &mut caps,
+        &freight_capabilities(use_clang_bridge, use_native_fortran),
+    );
     caps
 }
 
@@ -192,7 +199,7 @@ fn merge_signature_help_provider(into_obj: &mut serde_json::Map<String, Value>, 
     }
 }
 
-pub fn freight_capabilities(use_clang_bridge: bool) -> Value {
+pub fn freight_capabilities(use_clang_bridge: bool, use_native_fortran: bool) -> Value {
     let mut caps = json!({
         "positionEncoding": "utf-16",
         "textDocumentSync": {
@@ -201,10 +208,13 @@ pub fn freight_capabilities(use_clang_bridge: bool) -> Value {
             "save": { "includeText": true }
         },
         "completionProvider": {
-            "triggerCharacters": ["[", ".", "=", "\"", " "]
+            "triggerCharacters": ["[", ".", "=", "\"", " ", "%"],
+            // freight resolves its own `#include`/`import` items lazily to render
+            // the target file's Doxygen banner in the doc panel.
+            "resolveProvider": true
         },
         "signatureHelpProvider": {
-            "triggerCharacters": ["{", "=", ","],
+            "triggerCharacters": ["{", "=", ",", "("],
             "retriggerCharacters": [","]
         },
         "hoverProvider": true,
@@ -214,20 +224,39 @@ pub fn freight_capabilities(use_clang_bridge: bool) -> Value {
         "documentLinkProvider": { "resolveProvider": false }
     });
 
-    // The clang-bridge-owned C/C++ providers are only advertised by freight when
-    // the bridge is enabled. When it is off these requests forward to clangd, so
-    // clangd's own capabilities (notably the semantic-token *legend*, which must
-    // match the token indices the responder emits) are the ones the merge keeps.
-    if use_clang_bridge {
+    // Per-file providers that freight routes by language (Fortran → native
+    // indexer, C/C++ → clang bridge or a clangd forward). Safe to advertise
+    // whenever either native backend is active: each request is dispatched to
+    // the right responder, and these have no shared global legend to clash over.
+    if use_clang_bridge || use_native_fortran {
         if let Some(obj) = caps.as_object_mut() {
             obj.insert("documentSymbolProvider".into(), json!(true));
             obj.insert("foldingRangeProvider".into(), json!(true));
             obj.insert("referencesProvider".into(), json!(true));
             obj.insert("documentHighlightProvider".into(), json!(true));
+        }
+    }
+    // The semantic-token *legend* is a single global the client applies to every
+    // file, so it must match whoever actually serves the tokens. Freight only
+    // advertises its own legend when the clang bridge is on — then freight serves
+    // C/C++ (and Fortran) tokens under that legend. With the bridge off, clangd
+    // serves C/C++ tokens under *its* legend (kept via the capability merge);
+    // overriding it here would make the client decode clangd's token indices with
+    // freight's legend, scrambling all C/C++ highlighting. (Native-Fortran tokens
+    // are correspondingly only served when the bridge is on; see
+    // `handle_semantic_tokens`.)
+    if use_clang_bridge {
+        if let Some(obj) = caps.as_object_mut() {
             obj.insert(
                 "semanticTokensProvider".into(),
                 json!({ "legend": super::index::semantic_tokens_legend(), "full": true }),
             );
+        }
+    }
+    if use_native_fortran {
+        if let Some(obj) = caps.as_object_mut() {
+            obj.insert("codeActionProvider".into(), json!(true));
+            obj.insert("renameProvider".into(), json!(true));
         }
     }
     caps

@@ -82,7 +82,16 @@ pub fn install_project(
     let manifest = load_manifest(project_dir)?;
     let profile = if opts.release { "release" } else { "dev" };
     if !opts.no_build {
-        build_project_at(project_dir, profile, &[], true, opts.target.as_deref(), &[], &silent(), None)?;
+        build_project_at(
+            project_dir,
+            profile,
+            &[],
+            true,
+            opts.target.as_deref(),
+            &[],
+            &silent(),
+            None,
+        )?;
     }
     install_project_built(project_dir, &manifest, opts)
 }
@@ -214,7 +223,16 @@ pub fn package_project(
 ) -> Result<PathBuf, FreightError> {
     let manifest = load_manifest(project_dir)?;
     let profile = if release { "release" } else { "dev" };
-    build_project_at(project_dir, profile, &[], true, target, &[], &silent(), None)?;
+    build_project_at(
+        project_dir,
+        profile,
+        &[],
+        true,
+        target,
+        &[],
+        &silent(),
+        None,
+    )?;
     package_project_built(project_dir, &manifest, release, target)
 }
 
@@ -230,22 +248,34 @@ pub fn package_project_built(
         .or_else(|| global_target.as_deref())
         .map(parse_triple)
         .unwrap_or_else(|| {
-            (std::env::consts::ARCH.to_string(), std::env::consts::OS.to_string())
+            (
+                std::env::consts::ARCH.to_string(),
+                std::env::consts::OS.to_string(),
+            )
         });
 
-    let stem = format!("{}-{}-{}-{}", manifest.package.name, manifest.package.version, pkg_arch, pkg_os);
+    let stem = format!(
+        "{}-{}-{}-{}",
+        manifest.package.name, manifest.package.version, pkg_arch, pkg_os
+    );
     let pkg_dir = project_dir.join("target").join("package");
     fs::create_dir_all(&pkg_dir)?;
     let staging = pkg_dir.join(&stem);
-    if staging.exists() { fs::remove_dir_all(&staging)?; }
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
 
-    install_project_built(project_dir, manifest, &InstallOptions {
-        prefix: staging.clone(),
-        destdir: None,
-        release,
-        no_build: true,
-        target: target.map(str::to_string),
-    })?;
+    install_project_built(
+        project_dir,
+        manifest,
+        &InstallOptions {
+            prefix: staging.clone(),
+            destdir: None,
+            release,
+            no_build: true,
+            target: target.map(str::to_string),
+        },
+    )?;
 
     let archive = if pkg_os == "windows" {
         let archive = pkg_dir.join(format!("{stem}.zip"));

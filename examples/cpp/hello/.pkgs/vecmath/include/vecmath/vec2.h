@@ -1,3 +1,8 @@
+/**
+ * @file vec2.h
+ * @brief A simple 2D vector class for demonstration purposes.
+ */
+
 #pragma once
 #include <cmath>
 

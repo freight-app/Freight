@@ -1,6 +1,7 @@
 //! `freight lsp` — Language Server Protocol multiplexer for freight.toml and
 //! source files (clangd, fortls, asm-lsp passthroughs).
 
+pub mod doxygen;
 mod index;
 pub mod indexers;
 pub mod log;
@@ -14,19 +15,18 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use indexers::ClangIndexer;
 use index::LanguageIndexer;
+use indexers::{AsmIndexer, ClangIndexer, FortranIndexer};
 
 use crate::build::generate_lsp_compile_commands_at;
-use crate::manifest::types::{Dependency, Manifest};
-use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
+use crate::manifest::{find_manifest_dir, load_manifest_cached, load_workspace_manifest};
 use crate::toolchain::{detect_all_cached, load_all_templates};
 use serde_json::{json, Value};
 
 use index::{
-    include_completion, include_hover_markdown, include_inlay_label, module_hover_markdown,
-    module_inlay_label, parse_include_header, HeaderDirSpec, HeaderEntry, HeaderIndex,
-    HeaderOrigin,
+    include_completion, include_hint_line, include_inlay_label, is_std_module, module_hint_line,
+    module_inlay_label_for, parse_include_header, HeaderDirSpec, HeaderEntry, HeaderIndex,
+    HeaderOrigin, ModuleIndex,
 };
 use manifest::{
     completion_result, hover_result, manifest_diagnostics, signature_help_result,
@@ -57,6 +57,10 @@ pub struct Args {
     pub asm_lsp: String,
     #[arg(long)]
     pub no_asm_lsp: bool,
+    /// Disable the native assembly indexer and fall back to the external
+    /// `asm-lsp` passthrough.
+    #[arg(long)]
+    pub no_native_asm: bool,
     #[arg(long, default_value = "dev")]
     pub profile: String,
     /// Use the in-process clang bridge to serve C/C++ language features (hover,
@@ -89,7 +93,17 @@ impl Args {
         log::init_lsp_logging(Arc::clone(&out));
         tracing::info!("freight lsp starting");
         if let Err(e) = Server::with_out(self, out).run() {
-            eprintln!("freight lsp: {e}");
+            // The client closing the connection (it exited, restarted, or the
+            // editor window reconnected) surfaces as a broken pipe on the next
+            // stdout write, or EOF on stdin. That is a normal shutdown, not an
+            // error — exit quietly so the editor doesn't show a spurious
+            // "freight lsp: Broken pipe" in its Output panel.
+            if !matches!(
+                e.kind(),
+                io::ErrorKind::BrokenPipe | io::ErrorKind::UnexpectedEof
+            ) {
+                eprintln!("freight lsp: {e}");
+            }
         }
     }
 }
@@ -111,6 +125,17 @@ fn clangd_supports_flag(clangd_bin: &str, flag: &str) -> bool {
                 || String::from_utf8_lossy(&o.stderr).contains(flag)
         })
         .unwrap_or(false)
+}
+
+fn native_fortran_enabled() -> bool {
+    true
+}
+
+/// Whether the native assembly indexer serves `.s`/`.asm`/`.nasm` files. When
+/// true the external `asm-lsp` passthrough is not started. Disabled with
+/// `--no-native-asm` to fall back to the passthrough.
+fn native_asm_enabled(args: &Args) -> bool {
+    !args.no_native_asm
 }
 
 /// Build an end-of-line inlay hint (dimmed text + markdown tooltip).
@@ -174,8 +199,8 @@ struct Server {
 /// the union to the client so the client always sees a consistent set.
 #[derive(Default)]
 struct DiagCache {
-    clangd:  Vec<Value>,
-    tidy:    Vec<Value>,
+    clangd: Vec<Value>,
+    tidy: Vec<Value>,
     /// Freight-generated diagnostics (e.g. undeclared-include warnings).
     freight: Vec<Value>,
 }
@@ -191,6 +216,18 @@ struct ServerState {
     asm_lsp: Option<Passthrough>,
     /// Header → package mapping for `#include` hover.
     header_index: HeaderIndex,
+    /// C++20 module → declaring package mapping for `import …;` hints.
+    module_index: ModuleIndex,
+    /// Owned active-project model, recomputed by [`Server::refresh_project_model`]
+    /// whenever the manifest set changes. The active package's parsed manifest
+    /// (lint levels, declared deps) so per-keystroke handlers read it instead of
+    /// reloading on each request. `None` until a project manifest is located, or
+    /// when the active root is a workspace (no `[package]`).
+    active_manifest: Option<crate::manifest::Manifest>,
+    /// Owned package layout (project + workspace members + path deps) for the
+    /// active project. The single derivation behind the header/module index
+    /// refresh; recomputed only when the manifest set changes.
+    package_dirs: Vec<(PathBuf, crate::build::PackageKind, Option<String>)>,
     workspace_inventory: WorkspaceInventory,
     /// Pending clangd intercepts: rewritten-id → request metadata.
     /// Shared with the clangd reader thread so it can merge clangd's semantic
@@ -254,11 +291,13 @@ impl Server {
         // registered when explicitly opted in, so every indexer-backed handler
         // (hover/goto/completion/documentSymbol/folding/references/highlight/
         // semanticTokens/inlay/diagnostics) falls through to the clangd forward.
-        let indexers: Vec<Box<dyn LanguageIndexer>> = if args.use_clang_bridge {
-            vec![Box::new(ClangIndexer::new())]
-        } else {
-            vec![]
-        };
+        let mut indexers: Vec<Box<dyn LanguageIndexer>> = vec![Box::new(FortranIndexer::new())];
+        if native_asm_enabled(&args) {
+            indexers.push(Box::new(AsmIndexer::new()));
+        }
+        if args.use_clang_bridge {
+            indexers.push(Box::new(ClangIndexer::new()));
+        }
         Self {
             args,
             out,
@@ -272,6 +311,9 @@ impl Server {
                 fortls: None,
                 asm_lsp: None,
                 header_index: HeaderIndex::default(),
+                module_index: ModuleIndex::default(),
+                active_manifest: None,
+                package_dirs: Vec::new(),
                 workspace_inventory: WorkspaceInventory::default(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
                 diag_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -316,9 +358,11 @@ impl Server {
                 "textDocument/didClose" => self.handle_did_close(msg)?,
                 "workspace/didChangeWatchedFiles" => self.handle_watched_files_changed(msg)?,
                 "textDocument/completion" => self.handle_completion_or_forward(msg)?,
+                "completionItem/resolve" => self.handle_completion_resolve(msg)?,
                 "textDocument/hover" => self.handle_hover_or_forward(msg)?,
                 "textDocument/signatureHelp" => self.handle_signature_help_or_forward(msg)?,
                 "textDocument/codeAction" => self.handle_code_action_or_forward(msg)?,
+                "textDocument/rename" => self.handle_rename_or_forward(msg)?,
                 "textDocument/inlayHint" => self.handle_inlay_hints(msg)?,
                 "textDocument/definition" => self.handle_definition_or_forward(msg)?,
                 "textDocument/declaration" => self.handle_definition_or_forward(msg)?,
@@ -351,17 +395,17 @@ impl Server {
                 source_caps.push(caps);
             }
         }
-        if !self.args.no_fortls {
+        if !native_fortran_enabled() && !self.args.no_fortls {
             if let Some(caps) = self.start_fortls(&msg) {
                 source_caps.push(caps);
             }
         }
-        if !self.args.no_asm_lsp {
+        if !native_asm_enabled(&self.args) && !self.args.no_asm_lsp {
             if let Some(caps) = self.start_asm_lsp(&msg) {
                 source_caps.push(caps);
             }
         }
-        let capabilities = merged_capabilities(source_caps, self.args.use_clang_bridge);
+        let capabilities = merged_capabilities(source_caps, self.args.use_clang_bridge, true);
         self.respond(
             msg.get("id").cloned(),
             json!({
@@ -401,7 +445,11 @@ impl Server {
             // Flag undeclared #includes (no-op for non-C/C++).
             self.compute_include_hygiene(&uri, &text);
             // Keep the live buffer so include/import hints reflect unsaved edits.
-            self.state.docs.insert(uri, text);
+            for ix in &mut self.state.indexers {
+                ix.reparse(&uri, &text);
+            }
+            self.state.docs.insert(uri.clone(), text);
+            self.publish_indexer_diagnostics(&uri)?;
         }
         self.forward_by_text_document(&msg)
     }
@@ -414,14 +462,19 @@ impl Server {
             // Reparse the clang-bridge TU so hover/completion reflect the live buffer.
             // Full-text sync (change: 1) guarantees changed_full_text is always present.
             if let Some(text) = changed_full_text(&msg) {
-                for ix in &mut self.state.indexers { ix.reparse(&uri, &text); }
+                for ix in &mut self.state.indexers {
+                    ix.reparse(&uri, &text);
+                }
                 self.compute_include_hygiene(&uri, &text);
                 self.state.docs.insert(uri.clone(), text);
+                self.publish_indexer_diagnostics(&uri)?;
             }
             return self.forward_by_uri(&uri, &msg);
         }
         if let Some(text) = changed_full_text(&msg) {
-            for ix in &mut self.state.indexers { ix.reparse(&uri, &text); }
+            for ix in &mut self.state.indexers {
+                ix.reparse(&uri, &text);
+            }
             self.state.docs.insert(uri.clone(), text);
             self.publish_manifest_diagnostics(&uri)?;
         }
@@ -443,8 +496,12 @@ impl Server {
                 .map(str::to_string)
                 .or_else(|| path_from_uri(&uri).and_then(|p| std::fs::read_to_string(p).ok()));
             if let Some(text) = text {
+                for ix in &mut self.state.indexers {
+                    ix.reparse(&uri, &text);
+                }
                 self.compute_include_hygiene(&uri, &text);
                 self.state.docs.insert(uri.clone(), text);
+                self.publish_indexer_diagnostics(&uri)?;
             }
             return Ok(());
         }
@@ -477,7 +534,9 @@ impl Server {
         self.state.undeclared_includes.remove(&uri);
         self.state.last_includes.remove(&uri);
         if let Some(path) = path_from_uri(&uri) {
-            for ix in &mut self.state.indexers { ix.evict(&path); }
+            for ix in &mut self.state.indexers {
+                ix.evict(&path);
+            }
         }
         self.forward_by_uri(&uri, &msg)
     }
@@ -535,10 +594,65 @@ impl Server {
                 return self.respond(msg.get("id").cloned(), result);
             }
         }
-        if let Some(result) = self.state.indexers.iter_mut().find_map(|ix| ix.completion(&uri, &msg)) {
+        if let Some(result) = self
+            .state
+            .indexers
+            .iter_mut()
+            .find_map(|ix| ix.completion(&uri, &msg))
+        {
             return self.respond(msg.get("id").cloned(), result);
         }
         self.forward_or_null(msg)
+    }
+
+    /// `completionItem/resolve` — for freight's own `#include`/`import` items,
+    /// render the target file's Doxygen banner into the documentation panel.
+    /// Other items (clangd's lazily-resolved completions) are forwarded.
+    fn handle_completion_resolve(&mut self, msg: Value) -> io::Result<()> {
+        let item = msg.get("params").cloned().unwrap_or(Value::Null);
+        let is_freight = item
+            .get("data")
+            .and_then(|d| d.get("freightInclude"))
+            .and_then(Value::as_bool)
+            == Some(true);
+        if is_freight {
+            let resolved = self.resolve_include_completion_item(item);
+            return self.respond(msg.get("id").cloned(), resolved);
+        }
+        // Not ours — let clangd fill in its item's docs/edits. If clangd isn't
+        // running, echo the item back unchanged.
+        if self.forward_to_passthrough(SourceServer::Clangd, &msg)? {
+            return Ok(());
+        }
+        self.respond(msg.get("id").cloned(), item)
+    }
+
+    /// Add the resolved header/module file's Doxygen banner as the item's
+    /// `documentation`. Reads the file lazily (only when the user scrolls to it).
+    fn resolve_include_completion_item(&self, mut item: Value) -> Value {
+        let data = item.get("data").cloned().unwrap_or(Value::Null);
+        let path: Option<std::path::PathBuf> = data
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                data.get("header")
+                    .and_then(Value::as_str)
+                    .and_then(|h| self.state.header_index.lookup_system(h))
+                    .map(|e| e.full_path)
+            });
+        if let Some(p) = path {
+            if let Some(md) = doxygen::file_doc_markdown(&p) {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert(
+                        "documentation".to_string(),
+                        json!({ "kind": "markdown", "value": md }),
+                    );
+                }
+            }
+        }
+        item
     }
 
     /// Freight-owned completion for `#include` / `import` directives. `None`
@@ -549,7 +663,14 @@ impl Server {
         let text = self.doc_text(uri, &path)?;
         let line = text.lines().nth(line_no)?;
         let lang = crate::build::include_policy::Language::from_path(&path);
-        include_completion(line, line_no, col, lang, &self.state.header_index)
+        include_completion(
+            line,
+            line_no,
+            col,
+            lang,
+            &self.state.header_index,
+            &self.state.module_index,
+        )
     }
 
     fn handle_hover_or_forward(&mut self, msg: Value) -> io::Result<()> {
@@ -563,7 +684,20 @@ impl Server {
             return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
         }
 
-        if let Some(result) = self.state.indexers.iter_mut().find_map(|ix| ix.hover(&uri, &msg)) {
+        // Hover on an `#include` / `import` directive is answered by freight, not
+        // clangd: we show the owning package / stdlib / undeclared status rather
+        // than clangd's resolved-path hint. This must run before the indexer and
+        // the clangd forward so freight's hover always wins for these lines.
+        if let Some(result) = self.include_hover_result(&uri, &msg) {
+            return self.respond(msg.get("id").cloned(), result);
+        }
+
+        if let Some(result) = self
+            .state
+            .indexers
+            .iter_mut()
+            .find_map(|ix| ix.hover(&uri, &msg))
+        {
             return self.respond(msg.get("id").cloned(), result);
         }
 
@@ -576,6 +710,106 @@ impl Server {
         }
     }
 
+    /// Freight-owned hover for an `#include` / `import` directive line. Returns
+    /// `None` when the cursor isn't on such a line (so hover falls through to the
+    /// language indexer / clangd). Scoped to C-family files, where clangd would
+    /// otherwise answer with its own (path-only) hover.
+    fn include_hover_result(&self, uri: &str, msg: &Value) -> Option<Value> {
+        if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
+            return None;
+        }
+        let (line_no, _col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        let text = self.doc_text(uri, &path)?;
+        let line_text = text.lines().nth(line_no)?;
+        let (header, is_system, is_module) = parse_include_header(line_text)?;
+
+        // Undeclared cases keep their actionable warning. Everything else uses
+        // the compact hint: **pkg@version**/header, then brief, then author.
+        let (title, banner_path): (String, Option<std::path::PathBuf>) = if is_module {
+            let entry = self.state.module_index.lookup(&header);
+            if entry.is_none()
+                && !is_std_module(&header)
+                && line_text.contains(';')
+                && !matches!(
+                    self.undeclared_include_level(),
+                    crate::manifest::LintLevel::Allow
+                )
+            {
+                let md = format!(
+                    "**⚠ undeclared module** `{header}`\n\nNot provided by any declared \
+                     dependency. Add the package that exports it to `[dependencies]` in \
+                     `freight.toml`."
+                );
+                return Some(json!({ "contents": { "kind": "markdown", "value": md } }));
+            }
+            (
+                module_hint_line(&header, entry),
+                entry.map(|e| e.interface_path.clone()),
+            )
+        } else if let Some(spelling) = self
+            .state
+            .undeclared_includes
+            .get(uri)
+            .and_then(|v| v.iter().find(|(l, _)| *l as usize == line_no))
+            .map(|(_, s)| s.clone())
+        {
+            let md = format!(
+                "**⚠ undeclared include** `{spelling}`\n\nNot provided by any declared \
+                 dependency. Add the dependency that provides it to `[dependencies]` in \
+                 `freight.toml`."
+            );
+            return Some(json!({ "contents": { "kind": "markdown", "value": md } }));
+        } else if let Some(entry) = self.state.header_index.lookup(&header) {
+            (
+                include_hint_line(&header, entry),
+                Some(entry.full_path.clone()),
+            )
+        } else if is_system {
+            // File-based system lookup (e.g. <vector> → the libstdc++ path), or a
+            // synthetic stdlib entry so a recognised header still reads as stdlib.
+            let entry = self
+                .state
+                .header_index
+                .lookup_system(&header)
+                .unwrap_or(HeaderEntry {
+                    package_name: "stdlib".to_string(),
+                    package_version: None,
+                    full_path: std::path::PathBuf::new(),
+                    origin: HeaderOrigin::System,
+                    dep_key: None,
+                    pkg_dir: None,
+                });
+            let path = (!entry.full_path.as_os_str().is_empty()).then(|| entry.full_path.clone());
+            (include_hint_line(&header, &entry), path)
+        } else {
+            // An unknown quoted header — let clangd answer (it may resolve it).
+            return None;
+        };
+
+        // Quote include next to the source file (not in the index).
+        let banner_path = banner_path
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(|| {
+                let cand = path.parent()?.join(&header);
+                cand.is_file().then_some(cand)
+            });
+
+        // Compose: title, then the file's `@brief`, then `author (contact)`.
+        let mut value = title;
+        if let Some(doc) = banner_path.as_deref().and_then(doxygen::file_doc) {
+            if let Some(brief) = doc.brief_line() {
+                value.push_str("\n\n");
+                value.push_str(&brief);
+            }
+            if let Some(author) = doc.author_line() {
+                value.push_str("\n\n");
+                value.push_str(&author);
+            }
+        }
+
+        Some(json!({ "contents": { "kind": "markdown", "value": value } }))
+    }
 
     /// Go-to-definition / go-to-declaration on an `#include` line:
     /// jump directly to the header file. Falls through to clangd for non-include lines.
@@ -588,7 +822,12 @@ impl Server {
                 return self.respond(msg.get("id").cloned(), location);
             }
         }
-        if let Some(location) = self.state.indexers.iter_mut().find_map(|ix| ix.goto_definition(&uri, &msg)) {
+        if let Some(location) = self
+            .state
+            .indexers
+            .iter_mut()
+            .find_map(|ix| ix.goto_definition(&uri, &msg))
+        {
             return self.respond(msg.get("id").cloned(), location);
         }
         self.forward_by_uri(&uri, &msg)
@@ -600,7 +839,17 @@ impl Server {
         let line_text = text.lines().nth(line)?;
         let (header, is_system, is_module) = parse_include_header(line_text)?;
         if is_module {
-            return None; // a named module has no header file to open
+            // A named module: jump to the interface unit that declares it, when
+            // a declared package provides one. (std and unknown modules have no
+            // openable interface in this project.)
+            let entry = self.state.module_index.lookup(&header)?;
+            if entry.interface_path.as_os_str().is_empty() || !entry.interface_path.exists() {
+                return None;
+            }
+            return Some(json!({
+                "uri": uri_from_path(&entry.interface_path),
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }
+            }));
         }
 
         let full_path = if let Some(e) = self.state.header_index.lookup(&header) {
@@ -625,7 +874,9 @@ impl Server {
     // ── Indexer delegates ─────────────────────────────────────────────────────
 
     fn refresh_indexer_flags(&mut self) {
-        let Some(ref manifest_dir) = self.state.manifest_dir.clone() else { return; };
+        let Some(ref manifest_dir) = self.state.manifest_dir.clone() else {
+            return;
+        };
         let profile = self.args.profile.clone();
         for ix in &mut self.state.indexers {
             ix.refresh_flags(&manifest_dir, &profile);
@@ -691,7 +942,10 @@ impl Server {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let uri = text_document_uri(&msg);
         let result = uri.as_deref().and_then(|u| {
-            self.state.indexers.iter_mut().find_map(|ix| ix.document_symbols(u))
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.document_symbols(u))
         });
         if let Some(syms) = result {
             return self.respond(Some(id), Value::Array(syms));
@@ -704,7 +958,10 @@ impl Server {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let uri = text_document_uri(&msg);
         let result = uri.as_deref().and_then(|u| {
-            self.state.indexers.iter_mut().find_map(|ix| ix.folding_ranges(u))
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.folding_ranges(u))
         });
         if let Some(ranges) = result {
             return self.respond(Some(id), Value::Array(ranges));
@@ -717,7 +974,10 @@ impl Server {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let uri = text_document_uri(&msg);
         let result = uri.as_deref().and_then(|u| {
-            self.state.indexers.iter_mut().find_map(|ix| ix.references(u, &msg))
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.references(u, &msg))
         });
         if let Some(locs) = result {
             return self.respond(Some(id), Value::Array(locs));
@@ -730,7 +990,10 @@ impl Server {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let uri = text_document_uri(&msg);
         let result = uri.as_deref().and_then(|u| {
-            self.state.indexers.iter_mut().find_map(|ix| ix.document_highlight(u, &msg))
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.document_highlight(u, &msg))
         });
         if let Some(hls) = result {
             return self.respond(Some(id), Value::Array(hls));
@@ -740,12 +1003,26 @@ impl Server {
 
     /// `textDocument/semanticTokens/full` — prefer a language indexer, else
     /// forward.  The indexer returns the LSP-encoded `data` array directly.
+    ///
+    /// Freight's indexers emit tokens against freight's legend, which is only the
+    /// advertised global legend when the clang bridge is on (see
+    /// `freight_capabilities`). With the bridge off, clangd owns the legend, so we
+    /// forward *every* request to it rather than mixing freight-legend tokens
+    /// (e.g. from the Fortran indexer) into a clangd-legend stream — that mismatch
+    /// is what scrambles highlighting colours.
     fn handle_semantic_tokens(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let uri = text_document_uri(&msg);
-        let result = uri.as_deref().and_then(|u| {
-            self.state.indexers.iter_mut().find_map(|ix| ix.semantic_tokens(u))
-        });
+        let result = if self.args.use_clang_bridge {
+            let uri = text_document_uri(&msg);
+            uri.as_deref().and_then(|u| {
+                self.state
+                    .indexers
+                    .iter_mut()
+                    .find_map(|ix| ix.semantic_tokens(u))
+            })
+        } else {
+            None
+        };
         if let Some(data) = result {
             return self.respond(Some(id), json!({ "data": data }));
         }
@@ -765,7 +1042,10 @@ impl Server {
         // its unfiltered output does not overwrite ours.
         let uri = text_document_uri(&msg);
         let source_hints: Option<Vec<Value>> = uri.as_deref().and_then(|u| {
-            self.state.indexers.iter_mut().find_map(|ix| ix.inlay_hints(u, &msg))
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.inlay_hints(u, &msg))
         });
 
         if let Some(mut all) = source_hints {
@@ -815,6 +1095,12 @@ impl Server {
 
         // Lines flagged as undeclared by the include-hygiene check (if any).
         let undeclared = self.state.undeclared_includes.get(&uri);
+        // Whether undeclared imports should be surfaced at all (lint != allow).
+        // Computed once: the per-line loop must not reload the manifest.
+        let flag_undeclared = !matches!(
+            self.undeclared_include_level(),
+            crate::manifest::LintLevel::Allow
+        );
 
         let mut hints = Vec::new();
         for (idx, line_text) in text.lines().enumerate() {
@@ -826,14 +1112,34 @@ impl Server {
             };
             let col = line_text.len();
 
-            // C++20 named module import (`import std;`, `import foo;`).
+            // C++20 named module import (`import std;`, `import mylib.core;`).
             if is_module {
-                hints.push(inlay_hint_json(
-                    idx,
-                    col,
-                    &module_inlay_label(&header),
-                    &module_hover_markdown(&header),
-                ));
+                let entry = self.state.module_index.lookup(&header);
+                // An undeclared module (not stdlib, not provided by any declared
+                // package) gets the same ⚠ marker as an undeclared header — but
+                // only on a complete statement and when the lint is active.
+                if entry.is_none()
+                    && !is_std_module(&header)
+                    && flag_undeclared
+                    && line_text.contains(';')
+                {
+                    hints.push(inlay_hint_json(
+                        idx,
+                        col,
+                        "⚠ undeclared",
+                        &format!(
+                            "Module `{header}` is not provided by any declared dependency.\n\n\
+                             Add the package that exports it to `[dependencies]` in `freight.toml`.",
+                        ),
+                    ));
+                } else {
+                    hints.push(inlay_hint_json(
+                        idx,
+                        col,
+                        &module_inlay_label_for(&header, entry),
+                        &index::module_tooltip(&header, entry),
+                    ));
+                }
                 continue;
             }
 
@@ -850,7 +1156,7 @@ impl Server {
                     "⚠ undeclared",
                     &format!(
                         "`{spelling}` is not provided by any declared dependency.\n\n\
-                         Add it to `[dependencies]` in `freight.toml`.",
+                         Add the dependency that provides it to `[dependencies]` in `freight.toml`.",
                     ),
                 ));
                 continue;
@@ -871,6 +1177,7 @@ impl Server {
                         full_path: std::path::PathBuf::new(),
                         origin: HeaderOrigin::System,
                         dep_key: None,
+                        pkg_dir: None,
                     });
                 &owned
             } else {
@@ -881,7 +1188,12 @@ impl Server {
                 idx,
                 col,
                 &include_inlay_label(entry),
-                &include_hover_markdown(&header, entry),
+                &index::package_tooltip(
+                    entry.pkg_dir.as_deref(),
+                    &entry.package_name,
+                    entry.package_version.as_deref(),
+                    &entry.origin,
+                ),
             ));
         }
         Some(hints)
@@ -892,6 +1204,14 @@ impl Server {
             return self.forward_or_null(msg);
         };
         if !is_freight_manifest_uri(&uri) {
+            if let Some(result) = self
+                .state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.signature_help(&uri, &msg))
+            {
+                return self.respond(msg.get("id").cloned(), result);
+            }
             return self.forward_by_uri(&uri, &msg);
         }
         let text = self.manifest_text(&uri);
@@ -906,7 +1226,30 @@ impl Server {
         if is_freight_manifest_uri(&uri) {
             return self.respond(msg.get("id").cloned(), json!([]));
         }
+        if let Some(result) = self
+            .state
+            .indexers
+            .iter_mut()
+            .find_map(|ix| ix.code_actions(&uri, &msg))
+        {
+            return self.respond(msg.get("id").cloned(), Value::Array(result));
+        }
         self.forward_by_uri(&uri, &sanitize_code_action_diagnostics(&msg))
+    }
+
+    fn handle_rename_or_forward(&mut self, msg: Value) -> io::Result<()> {
+        let Some(uri) = text_document_uri(&msg) else {
+            return self.forward_or_null(msg);
+        };
+        if let Some(result) = self
+            .state
+            .indexers
+            .iter_mut()
+            .find_map(|ix| ix.rename(&uri, &msg))
+        {
+            return self.respond(msg.get("id").cloned(), result);
+        }
+        self.forward_by_uri(&uri, &msg)
     }
 
     fn handle_workspace_info(&self, msg: Value) -> io::Result<()> {
@@ -934,13 +1277,16 @@ impl Server {
             }).collect()
         };
 
-        // Current sysroot from the active manifest's [compiler] section.
+        // Current sysroot from the active manifest's [compiler] section (owned
+        // project model).
         let manifest_dir = self
             .active_manifest_dir()
             .unwrap_or_else(|| self.state.root_dir.clone());
-        let current_sysroot: Option<String> = load_manifest(&manifest_dir)
-            .ok()
-            .and_then(|m| m.compiler.sysroot);
+        let current_sysroot: Option<String> = self
+            .state
+            .active_manifest
+            .as_ref()
+            .and_then(|m| m.compiler.sysroot.clone());
 
         self.respond(
             msg.get("id").cloned(),
@@ -1147,26 +1493,32 @@ impl Server {
         if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
             return;
         }
-        let Some(path) = path_from_uri(uri) else { return };
-        let flags: Vec<String> = self.state.indexers.iter()
+        let Some(path) = path_from_uri(uri) else {
+            return;
+        };
+        let flags: Vec<String> = self
+            .state
+            .indexers
+            .iter()
             .flat_map(|ix| ix.flags_for(&path))
             .collect();
-        let uri  = uri.to_string();
-        let out  = Arc::clone(&self.out);
+        let uri = uri.to_string();
+        let out = Arc::clone(&self.out);
         let cache = Arc::clone(&self.state.diag_cache);
         thread::spawn(move || {
-            let path_str   = path.to_string_lossy().into_owned();
+            let path_str = path.to_string_lossy().into_owned();
             let flag_refs: Vec<&str> = flags.iter().map(String::as_str).collect();
-            let tidy_diags: Vec<Value> =
-                clang_bridge::tidy::run(None, &path_str, None, &flag_refs)
-                    .filter(|d| d.file == path_str)
-                    .map(|d| indexers::Clang::diag_to_lsp(&d, "clang-tidy"))
-                    .collect();
+            let tidy_diags: Vec<Value> = clang_bridge::tidy::run(None, &path_str, None, &flag_refs)
+                .filter(|d| d.file == path_str)
+                .map(|d| indexers::Clang::diag_to_lsp(&d, "clang-tidy"))
+                .collect();
             tracing::debug!(file = %path_str, count = tidy_diags.len(), "clang-tidy done");
             let mut guard = cache.lock().unwrap();
             let entry = guard.entry(uri.clone()).or_default();
             entry.tidy = tidy_diags;
-            let merged: Vec<Value> = entry.clangd.iter()
+            let merged: Vec<Value> = entry
+                .clangd
+                .iter()
                 .chain(entry.tidy.iter())
                 .chain(entry.freight.iter())
                 .cloned()
@@ -1189,7 +1541,9 @@ impl Server {
         if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
             return;
         }
-        let Some(path) = path_from_uri(uri) else { return };
+        let Some(path) = path_from_uri(uri) else {
+            return;
+        };
 
         // Fast path: if the #include/import directives are unchanged, the
         // diagnostics and undeclared markers are already current — do no work.
@@ -1198,6 +1552,13 @@ impl Server {
         if self.state.last_includes.get(uri) == Some(&directives) {
             return;
         }
+        // Named-module imports for the module-undeclared check below; captured
+        // before `directives` is moved into the cache.
+        let module_imports: Vec<(u32, u32, u32, String)> = directives
+            .iter()
+            .filter(|d| d.kind == ip::DirectiveKind::Module)
+            .map(|d| (d.line, d.start_col, d.end_col, d.name.clone()))
+            .collect();
         self.state.last_includes.insert(uri.to_string(), directives);
 
         let severity = match self.undeclared_include_level() {
@@ -1216,12 +1577,49 @@ impl Server {
         let system = self.cached_system_dirs(compiler.as_deref(), lang);
 
         let findings = ip::check_includes(text, &file_dir, &declared, &system, lang);
+
+        // Phase 3 ownership: a header a declared package/slot owns (e.g. a
+        // declared BLAS provider owns `cblas.h`) is not undeclared. Tier A only
+        // here — pkg-config subdir libs already appear in `declared` via the
+        // compile command, and the LSP hot path must avoid per-keystroke
+        // subprocesses. Suppress owned headers and name candidates for the rest.
+        use crate::build::header_ownership as ho;
+        let declared_names = self.declared_dep_names();
+        let ownership = ho::load();
+        let owned_globs = ownership.owned_globs_for(&declared_names);
+        let describe = |spelling: &str| -> String {
+            let name = spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
+            let candidates: Vec<String> = ownership
+                .candidates_for_header(name)
+                .into_iter()
+                .filter(|c| !declared_names.contains(c))
+                .collect();
+            if candidates.is_empty() {
+                format!(
+                    "{spelling} is not provided by any declared dependency; add the \
+                     dependency that provides it to [dependencies] in freight.toml"
+                )
+            } else {
+                format!(
+                    "{spelling} is provided by {} — add one to [dependencies] in freight.toml",
+                    candidates.join(", ")
+                )
+            }
+        };
+        let findings: Vec<_> = findings
+            .into_iter()
+            .filter(|f| {
+                let name = f.spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
+                !owned_globs.iter().any(|g| ho::glob_match(g, name))
+            })
+            .collect();
+
         // Remember the undeclared lines so the inlay-hint path can mark them.
-        self.state.undeclared_includes.insert(
-            uri.to_string(),
-            findings.iter().map(|f| (f.line, f.spelling.clone())).collect(),
-        );
-        let diags: Vec<Value> = findings
+        let mut undeclared_lines: Vec<(u32, String)> = findings
+            .iter()
+            .map(|f| (f.line, f.spelling.clone()))
+            .collect();
+        let mut diags: Vec<Value> = findings
             .iter()
             .map(|f| {
                 json!({
@@ -1232,14 +1630,36 @@ impl Server {
                     "severity": severity,
                     "source": "freight",
                     "code": "undeclared-include",
-                    "message": format!(
-                        "{} is not provided by any declared dependency; add it to \
-                         [dependencies] in freight.toml",
-                        f.spelling
-                    ),
+                    "message": describe(&f.spelling),
                 })
             })
             .collect();
+
+        // Named-module imports that no declared package exports (and that aren't
+        // standard-library modules) are flagged the same way as headers.
+        for (line, start_col, end_col, name) in &module_imports {
+            if is_std_module(name) || self.state.module_index.lookup(name).is_some() {
+                continue;
+            }
+            undeclared_lines.push((*line, format!("module {name}")));
+            diags.push(json!({
+                "range": {
+                    "start": { "line": line, "character": start_col },
+                    "end":   { "line": line, "character": end_col }
+                },
+                "severity": severity,
+                "source": "freight",
+                "code": "undeclared-module",
+                "message": format!(
+                    "module {name} is not provided by any declared dependency; add the \
+                     package that exports it to [dependencies] in freight.toml"
+                ),
+            }));
+        }
+
+        self.state
+            .undeclared_includes
+            .insert(uri.to_string(), undeclared_lines);
 
         self.set_freight_diags(uri, diags);
     }
@@ -1250,7 +1670,9 @@ impl Server {
             let mut guard = self.state.diag_cache.lock().unwrap();
             let entry = guard.entry(uri.to_string()).or_default();
             entry.freight = diags;
-            entry.clangd.iter()
+            entry
+                .clangd
+                .iter()
                 .chain(entry.tidy.iter())
                 .chain(entry.freight.iter())
                 .cloned()
@@ -1261,10 +1683,25 @@ impl Server {
 
     /// The `[lints].undeclared-include` level for the active project (default warn).
     fn undeclared_include_level(&self) -> crate::manifest::LintLevel {
-        self.active_manifest_dir()
-            .and_then(|d| crate::manifest::load_manifest(&d).ok())
+        self.state
+            .active_manifest
+            .as_ref()
             .map(|m| m.lints.undeclared_include)
             .unwrap_or_default()
+    }
+
+    /// Declared dependency keys for the active project — the freight package
+    /// names that legitimise a system header under include hygiene.
+    fn declared_dep_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .state
+            .active_manifest
+            .as_ref()
+            .map(|m| m.effective_dependencies().into_keys().collect())
+            .unwrap_or_default();
+        v.sort();
+        v.dedup();
+        v
     }
 
     /// Cached wrapper around [`Self::declared_dirs_and_compiler`]. Loading and
@@ -1291,7 +1728,10 @@ impl Server {
         let cmds = crate::build::compile_commands::load(&dir);
         let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let Some(cmd) = cmds.iter().find(|c| {
-            c.file.canonicalize().map(|p| p == target).unwrap_or(c.file == *path)
+            c.file
+                .canonicalize()
+                .map(|p| p == target)
+                .unwrap_or(c.file == *path)
         }) else {
             return (Vec::new(), None);
         };
@@ -1347,6 +1787,24 @@ impl Server {
         self.publish_diagnostics(uri, diagnostics)
     }
 
+    fn publish_indexer_diagnostics(&mut self, uri: &str) -> io::Result<()> {
+        let Some(path) = path_from_uri(uri) else {
+            return Ok(());
+        };
+        let mut handled = false;
+        let mut diagnostics = Vec::new();
+        for ix in &mut self.state.indexers {
+            if ix.handles(&path) {
+                handled = true;
+                diagnostics.extend(ix.diagnostics(uri));
+            }
+        }
+        if handled {
+            self.publish_diagnostics(uri, diagnostics)?;
+        }
+        Ok(())
+    }
+
     fn publish_diagnostics(&self, uri: &str, diagnostics: Vec<Value>) -> io::Result<()> {
         self.write_to_client(&json!({
             "jsonrpc": "2.0",
@@ -1374,7 +1832,27 @@ impl Server {
             .or_else(|| std::fs::read_to_string(path).ok())
     }
 
+    /// Recompute the owned active-project model — the active package's parsed
+    /// manifest and the package layout (project + workspace members + path deps).
+    /// Driven from [`Server::refresh_compile_commands`], the convergence point for
+    /// every manifest-set change, so per-request handlers read owned state instead
+    /// of re-deriving it. `active_manifest` is `None` for a workspace root (no
+    /// `[package]`) or before any manifest is located.
+    fn refresh_project_model(&mut self) {
+        let active_dir = self.active_manifest_dir();
+        self.state.active_manifest = active_dir
+            .as_deref()
+            .and_then(|d| load_manifest_cached(d).ok());
+        self.state.package_dirs = active_dir
+            .as_deref()
+            .map(crate::build::source_package_dirs)
+            .unwrap_or_default();
+    }
+
     fn refresh_compile_commands(&mut self) {
+        // Refresh the owned project model first so the header index and the
+        // manifest-backed read sites see the current package set.
+        self.refresh_project_model();
         let Some(dir) = self.active_manifest_dir() else {
             tracing::info!(
                 root_dir = %self.state.root_dir.display(),
@@ -1399,14 +1877,32 @@ impl Server {
         let base = self
             .active_manifest_dir()
             .unwrap_or_else(|| self.state.root_dir.clone());
-        let header_specs = build_header_specs(&base, self.root_is_workspace());
+        // Package source dirs come from the owned project model (computed in
+        // refresh_project_model); the index just maps them to HeaderDirSpec.
+        // `.pkgs/` (fetched) is handled inside the index builder.
+        let specs: Vec<HeaderDirSpec<'_>> = self
+            .state
+            .package_dirs
+            .iter()
+            .map(|(dir, kind, dep_key)| HeaderDirSpec {
+                path: dir.as_path(),
+                origin: match kind {
+                    crate::build::PackageKind::Own => HeaderOrigin::Own,
+                    crate::build::PackageKind::PathDep => HeaderOrigin::PathDep,
+                },
+                dep_key: dep_key.clone(),
+            })
+            .collect();
         let pkgs_dir = base.join(".pkgs");
         let pkgs_opt = if pkgs_dir.is_dir() {
             Some(pkgs_dir.as_path())
         } else {
             None
         };
-        self.state.header_index = HeaderIndex::build(&header_specs, pkgs_opt);
+        // One traversal of each package's src/ fills both indexes.
+        let indexes = crate::lsp::index::build_source_indexes(&specs, pkgs_opt);
+        self.state.header_index = indexes.headers;
+        self.state.module_index = indexes.modules;
     }
 
     fn refresh_workspace_inventory(&mut self) {
@@ -1592,14 +2088,17 @@ impl Server {
                     == Some("textDocument/publishDiagnostics")
                 {
                     if let Some(ref cache) = diag_cache {
-                        let uri = msg["params"]["uri"]
-                            .as_str().unwrap_or("").to_string();
+                        let uri = msg["params"]["uri"].as_str().unwrap_or("").to_string();
                         let new_diags = msg["params"]["diagnostics"]
-                            .as_array().cloned().unwrap_or_default();
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default();
                         let mut guard = cache.lock().unwrap();
                         let entry = guard.entry(uri.clone()).or_default();
                         entry.clangd = new_diags;
-                        let merged: Vec<Value> = entry.clangd.iter()
+                        let merged: Vec<Value> = entry
+                            .clangd
+                            .iter()
                             .chain(entry.tidy.iter())
                             .chain(entry.freight.iter())
                             .cloned()
@@ -1672,7 +2171,7 @@ fn build_workspace_inventory(root: &Path) -> WorkspaceInventory {
 }
 
 fn package_inventory(dir: &Path, path: String) -> Option<WorkspacePackage> {
-    let manifest = load_manifest(dir).ok()?;
+    let manifest = load_manifest_cached(dir).ok()?;
     let mut bins: Vec<String> = manifest.bins.iter().map(|bin| bin.name.clone()).collect();
     bins.sort();
     let lib = manifest
@@ -1685,108 +2184,6 @@ fn package_inventory(dir: &Path, path: String) -> Option<WorkspacePackage> {
         bins,
         lib,
     })
-}
-
-/// Build `HeaderDirSpec` entries from the freight manifest graph rooted at `base`.
-///
-/// - `base` itself (or workspace root) → `Own`
-/// - Path dependencies → `PathDep` with their dep key
-/// - Workspace members → `Workspace`
-fn build_header_specs(base: &Path, is_workspace: bool) -> Vec<HeaderDirSpec<'_>> {
-    let mut specs: Vec<(PathBuf, HeaderOrigin, Option<String>)> = Vec::new();
-    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-
-    let push = |specs: &mut Vec<(PathBuf, HeaderOrigin, Option<String>)>,
-                seen: &mut std::collections::HashSet<PathBuf>,
-                dir: PathBuf,
-                origin: HeaderOrigin,
-                dep_key: Option<String>| {
-        if !dir.is_dir() {
-            return;
-        }
-        let canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-        if seen.insert(canon) {
-            specs.push((dir, origin, dep_key));
-        }
-    };
-
-    if is_workspace {
-        // Workspace root is not a package; add each member as Own and collect their path deps.
-        if let Some(ws) = load_workspace_manifest(base) {
-            for member_path in &ws.members {
-                let member_dir = base.join(member_path);
-                push(
-                    &mut specs,
-                    &mut seen,
-                    member_dir.clone(),
-                    HeaderOrigin::Own,
-                    None,
-                );
-                // Path deps of this workspace member
-                if let Ok(manifest) = load_manifest(&member_dir) {
-                    collect_path_dep_specs(&member_dir, &manifest, &mut specs, &mut seen);
-                }
-            }
-        }
-    } else {
-        push(
-            &mut specs,
-            &mut seen,
-            base.to_path_buf(),
-            HeaderOrigin::Own,
-            None,
-        );
-        if let Ok(manifest) = load_manifest(base) {
-            collect_path_dep_specs(base, &manifest, &mut specs, &mut seen);
-        }
-    }
-
-    // We need owned PathBufs to survive the borrow. Allocate and leak refs.
-    // (HeaderDirSpec<'_> holds &'_ Path — we need a stable backing store.)
-    // Use a boxed slice to pin the paths.
-    specs
-        .into_iter()
-        .map(|(dir, origin, dep_key)| {
-            // Safety: HeaderDirSpec borrows a path. We need the path to outlive
-            // the Vec. Box it and leak — this is an LSP process, memory is fine.
-            let boxed: Box<Path> = dir.into_boxed_path();
-            let path: &'static Path = Box::leak(boxed);
-            HeaderDirSpec {
-                path,
-                origin,
-                dep_key,
-            }
-        })
-        .collect()
-}
-
-fn collect_path_dep_specs(
-    project_dir: &Path,
-    manifest: &Manifest,
-    specs: &mut Vec<(PathBuf, HeaderOrigin, Option<String>)>,
-    seen: &mut std::collections::HashSet<PathBuf>,
-) {
-    for (dep_key, dep) in manifest.effective_dependencies().into_iter().chain(
-        manifest
-            .dev_dependencies
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone())),
-    ) {
-        let Dependency::Detailed(detail) = dep else {
-            continue;
-        };
-        let Some(rel_path) = detail.path else {
-            continue;
-        };
-        let dep_dir = project_dir.join(&rel_path);
-        if !dep_dir.is_dir() {
-            continue;
-        }
-        let canon = dep_dir.canonicalize().unwrap_or_else(|_| dep_dir.clone());
-        if seen.insert(canon) {
-            specs.push((dep_dir, HeaderOrigin::PathDep, Some(dep_key)));
-        }
-    }
 }
 
 fn level_for_method(method: &str) -> tracing::Level {
@@ -1807,8 +2204,8 @@ fn level_for_method(method: &str) -> tracing::Level {
 
 #[cfg(test)]
 mod tests {
-    use super::protocol::sanitize_code_action_diagnostics;
     use super::build_workspace_inventory;
+    use super::protocol::sanitize_code_action_diagnostics;
     use serde_json::json;
 
     #[test]

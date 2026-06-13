@@ -684,7 +684,9 @@ fn resolve_version_dep(
                     }
                     progress(BuildEvent::DepBuildDone);
                     let built_lib = pkgs_root
-                        .join("target").join("deps").join(name)
+                        .join("target")
+                        .join("deps")
+                        .join(name)
                         .join(profile)
                         .join(format!("lib{name}.a"));
                     if built_lib.exists() {

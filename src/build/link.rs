@@ -15,8 +15,12 @@ use super::compile::object_path;
 
 /// Returns true if `output` exists and is newer than every file in `inputs`.
 fn output_is_fresh(output: &Path, inputs: &[&Path]) -> bool {
-    let Ok(out_meta) = std::fs::metadata(output) else { return false; };
-    let Ok(out_mtime) = out_meta.modified() else { return false; };
+    let Ok(out_meta) = std::fs::metadata(output) else {
+        return false;
+    };
+    let Ok(out_mtime) = out_meta.modified() else {
+        return false;
+    };
     inputs.iter().all(|inp| {
         std::fs::metadata(inp)
             .and_then(|m| m.modified())
@@ -192,7 +196,8 @@ pub fn link_test_binary(
         profile,
         dep_libs,
         extra_link_flags,
-    ).map(|_| ())
+    )
+    .map(|_| ())
 }
 
 /// Archive a set of object files into a static library.
@@ -283,10 +288,14 @@ fn link_executable(
     extra_link_flags: &[String],
 ) -> Result<bool, FreightError> {
     // Skip link if binary is newer than all inputs.
-    let all_inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path)
+    let all_inputs: Vec<&Path> = objects
+        .iter()
+        .map(PathBuf::as_path)
         .chain(dep_libs.iter().map(PathBuf::as_path))
         .collect();
-    if output_is_fresh(out, &all_inputs) { return Ok(false); }
+    if output_is_fresh(out, &all_inputs) {
+        return Ok(false);
+    }
 
     // Whole-program builders (e.g. gnatmake for Ada) receive source file paths instead
     // of object files and handle compile + bind + link themselves.
@@ -338,7 +347,9 @@ fn link_executable(
 /// Returns `true` if archiving was performed, `false` if the output was already fresh.
 fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<bool, FreightError> {
     let inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path).collect();
-    if output_is_fresh(out, &inputs) { return Ok(false); }
+    if output_is_fresh(out, &inputs) {
+        return Ok(false);
+    }
     let mut cmd = Command::new(ar_bin);
     cmd.arg("rcs").arg(out).args(objects);
     run_cmd(cmd, out)?;
@@ -381,10 +392,14 @@ fn link_shared(
     dep_libs: &[PathBuf],
     extra_link_flags: &[String],
 ) -> Result<bool, FreightError> {
-    let all_inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path)
+    let all_inputs: Vec<&Path> = objects
+        .iter()
+        .map(PathBuf::as_path)
         .chain(dep_libs.iter().map(PathBuf::as_path))
         .collect();
-    if output_is_fresh(out, &all_inputs) { return Ok(false); }
+    if output_is_fresh(out, &all_inputs) {
+        return Ok(false);
+    }
     let target_os = link_target_os(manifest);
     let shared_flag = if target_os == "macos" {
         "-dynamiclib"

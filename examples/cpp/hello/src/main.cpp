@@ -1,12 +1,11 @@
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include <optional>
-#include <map>
-#include <algorithm>
 #include "stats.hpp"
 
 #include "vecmath/vec2.h"
+
+#include <pthread.h>
+#include <stdio.h>
+
+import std;
 
 int main() {
     std::vector<double> data = {2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0};
@@ -25,7 +24,7 @@ int main() {
     auto min_it = std::min_element(data.begin(), data.end());
 
     // optional
-    std::optional<double> opt = 3.14;
+    std::optional opt = 3.012f;
     auto opt_val = opt.value_or(0.0);
 
     // map + auto iterator
@@ -37,14 +36,17 @@ int main() {
     auto square = [](double x) { return x * x; };
     auto sq = square(v);
 
-    throw std::runtime_error("yeet");
-
-    std::cout << "data:     ";
-    for (double x : data) std::cout << x << " ";
-    std::cout << "\n";
-    std::cout << "mean:     " << m << "\n";
-    std::cout << "variance: " << v << "\n";
-    std::cout << "std dev:  " << std::sqrt(v) << "\n";
+    // throw std::runtime_error("yeet");
+    
+    {
+        // std::ostringstream ss;
+        std::cout << "data:     ";
+        for (double x : data) std::cout << x << " ";
+        std::cout << std::endl;
+    }
+    std::cout << "mean:     " << m << std::endl;
+    std::cout << "variance: " << v << std::endl;
+    std::cout << "std dev:  " << std::sqrt(v) << std::endl;
 
     vm::Vec2 g(1, 1);
     g = g * 10;

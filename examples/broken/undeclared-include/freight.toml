@@ -1,0 +1,14 @@
+[package]
+name        = "undeclared-include"
+version     = "0.1.0"
+description = "Intentionally broken: includes <pthread.h>, which no declared dependency provides, under [lints].undeclared-include = \"deny\""
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "undeclared-include"
+src  = "src/main.c"
+
+[lints]
+undeclared-include = "deny"

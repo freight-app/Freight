@@ -794,7 +794,13 @@ impl EmitTarget {
             Self::Asm => "s",
             Self::LlvmIr => "ll",
             Self::LlvmBc => "bc",
-            Self::Preprocessed => if lang_key == "cpp" { "ii" } else { "i" },
+            Self::Preprocessed => {
+                if lang_key == "cpp" {
+                    "ii"
+                } else {
+                    "i"
+                }
+            }
         }
     }
 
@@ -841,7 +847,8 @@ pub fn emit_sources(
     fs::create_dir_all(&out_dir)?;
 
     let skip = target.skip_langs();
-    let eligible: Vec<&SourceFile> = sources.iter()
+    let eligible: Vec<&SourceFile> = sources
+        .iter()
         .filter(|s| !skip.contains(&s.lang_key.as_str()))
         .collect();
 
@@ -857,41 +864,64 @@ pub fn emit_sources(
 
         if let Some(parent) = out_path.parent() {
             if let Err(e) = fs::create_dir_all(parent) {
-                progress(BuildEvent::Warning(format!("emit-{label}: cannot create dir: {e}")));
+                progress(BuildEvent::Warning(format!(
+                    "emit-{label}: cannot create dir: {e}"
+                )));
                 return;
             }
         }
 
-        let Some(compiler) = select_compiler(&src.lang_key, backend, detected, pf) else { return; };
+        let Some(compiler) = select_compiler(&src.lang_key, backend, detected, pf) else {
+            return;
+        };
 
-        let settings = settings_for_lang(manifest, profile, &src.lang_key, include_dirs, project_dir, feature_defines);
+        let settings = settings_for_lang(
+            manifest,
+            profile,
+            &src.lang_key,
+            include_dirs,
+            project_dir,
+            feature_defines,
+        );
         let compile_bin = resolve_compile_binary(compiler, &src.lang_key);
 
         let mut cmd = if let Some(wrapper) = cache_wrapper() {
             let mut c = Command::new(wrapper);
             c.arg(&compile_bin);
-            if let Some(sub) = compiler.template.subcommand.as_deref() { c.arg(sub); }
+            if let Some(sub) = compiler.template.subcommand.as_deref() {
+                c.arg(sub);
+            }
             c
         } else {
             let mut c = Command::new(&compile_bin);
-            if let Some(sub) = compiler.template.subcommand.as_deref() { c.arg(sub); }
+            if let Some(sub) = compiler.template.subcommand.as_deref() {
+                c.arg(sub);
+            }
             c
         };
         cmd.args(compiler.template.assemble_flags(&settings));
-        for flag in target.flags() { cmd.arg(flag); }
+        for flag in target.flags() {
+            cmd.arg(flag);
+        }
         cmd.arg(&src_abs).arg("-o").arg(&out_path);
 
-        if std::env::var_os("FREIGHT_VERBOSE").is_some() { print_cmd(&cmd); }
+        if std::env::var_os("FREIGHT_VERBOSE").is_some() {
+            print_cmd(&cmd);
+        }
 
         match cmd.output() {
             Ok(out) if out.status.success() => {
-                progress(BuildEvent::Emitted { target: label.to_string(), path: out_path });
+                progress(BuildEvent::Emitted {
+                    target: label.to_string(),
+                    path: out_path,
+                });
             }
             Ok(out) => {
                 let msg = String::from_utf8_lossy(&out.stderr).into_owned();
                 progress(BuildEvent::Warning(format!(
                     "emit-{label} failed for {}: {}",
-                    src.path.display(), msg.lines().next().unwrap_or("unknown error")
+                    src.path.display(),
+                    msg.lines().next().unwrap_or("unknown error")
                 )));
             }
             Err(e) => progress(BuildEvent::Warning(format!("emit-{label}: {e}"))),

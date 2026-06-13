@@ -60,6 +60,7 @@ tui-markdown = "0.3.7"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clang-bridge       = { path = "../clang-bridge" }
+fortran-lsp        = { path = "../fortran-lsp" }
 
 [dev-dependencies]
 tempfile = "3"

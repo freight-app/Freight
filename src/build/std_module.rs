@@ -44,10 +44,19 @@ fn manifest_modules(compiler: &Path) -> Option<Vec<ManifestModule>> {
             continue;
         }
         let dir = manifest.parent().unwrap_or(Path::new("."));
-        let Ok(text) = std::fs::read_to_string(&manifest) else { continue };
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let Ok(text) = std::fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
         let mut modules = Vec::new();
-        for m in json.get("modules").and_then(|v| v.as_array()).into_iter().flatten() {
+        for m in json
+            .get("modules")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
             let (Some(logical), Some(src)) = (
                 m.get("logical-name").and_then(|v| v.as_str()),
                 m.get("source-path").and_then(|v| v.as_str()),
@@ -89,7 +98,9 @@ pub fn module_file_flags(
     if wanted.is_empty() {
         return Vec::new();
     }
-    let Some(manifest) = manifest_modules(compiler) else { return Vec::new() };
+    let Some(manifest) = manifest_modules(compiler) else {
+        return Vec::new();
+    };
     let available: HashMap<&str, &Path> = manifest
         .iter()
         .map(|m| (m.logical_name.as_str(), m.source.as_path()))
@@ -109,14 +120,19 @@ pub fn module_file_flags(
     let _ = std::fs::create_dir_all(cache_dir);
     let mut built: Vec<StdModuleBmi> = Vec::new();
     for name in order {
-        let Some(source) = available.get(name) else { continue };
+        let Some(source) = available.get(name) else {
+            continue;
+        };
         let bmi = cache_dir.join(format!("{name}.pcm"));
         if needs_rebuild(&bmi, source) {
             if !precompile(compiler, std_flag, name, source, &bmi, &built) {
                 continue;
             }
         }
-        built.push(StdModuleBmi { logical_name: name.to_string(), bmi });
+        built.push(StdModuleBmi {
+            logical_name: name.to_string(),
+            bmi,
+        });
     }
 
     built
@@ -156,7 +172,11 @@ fn precompile(
         .arg(bmi);
     // A module that imports an already-built one (std.compat -> std) needs its BMI.
     for d in deps {
-        cmd.arg(format!("-fmodule-file={}={}", d.logical_name, d.bmi.display()));
+        cmd.arg(format!(
+            "-fmodule-file={}={}",
+            d.logical_name,
+            d.bmi.display()
+        ));
     }
     matches!(cmd.status(), Ok(s) if s.success()) && bmi.is_file()
 }

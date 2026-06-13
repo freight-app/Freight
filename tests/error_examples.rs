@@ -55,6 +55,60 @@ fn bad_dep_names_missing_package() {
     assert_output_contains(&out, &["libdoesnotexist"]);
 }
 
+// ── Undeclared include (hygiene Phase 2 enforcement) ──────────────────────────
+
+#[test]
+fn undeclared_include_blocks_build_under_deny() {
+    let dir = example(&["broken", "undeclared-include"]);
+    let out = freight(&dir, &["build"]);
+    assert_failure(
+        &out,
+        "broken/undeclared-include should be blocked by the include-hygiene pass",
+    );
+}
+
+#[test]
+fn undeclared_include_names_the_header() {
+    let dir = example(&["broken", "undeclared-include"]);
+    let out = freight(&dir, &["build"]);
+    // The pass must name the offending header and not flag the stdlib one.
+    assert_output_contains(&out, &["<pthread.h>", "undeclared"]);
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        !combined.contains("<stdio.h>"),
+        "standard-library <stdio.h> must not be flagged, but it was:\n{combined}"
+    );
+}
+
+#[test]
+fn declared_owner_suppresses_system_header() {
+    // `<zlib.h>` lives bare in /usr/include; declaring `zlib` must attribute it
+    // (Phase 3 ownership) so only the still-undeclared `<pthread.h>` is named.
+    // Skipped where zlib's header isn't installed (the check can't confirm it).
+    if !std::path::Path::new("/usr/include/zlib.h").exists() {
+        return;
+    }
+    let dir = example(&["broken", "undeclared-include-owned"]);
+    let out = freight(&dir, &["build"]);
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        !combined.contains("<zlib.h>"),
+        "declared `zlib` should suppress <zlib.h>, but it was flagged:\n{combined}"
+    );
+    assert!(
+        combined.contains("<pthread.h>"),
+        "the undeclared <pthread.h> should still be reported:\n{combined}"
+    );
+}
+
 // ── Runtime crash ─────────────────────────────────────────────────────────────
 
 #[test]

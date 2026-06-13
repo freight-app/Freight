@@ -137,7 +137,11 @@ fn strip_line_comment(line: &str) -> &str {
     line.find("//").map_or(line, |i| &line[..i])
 }
 
-fn parse_export_module(line: &str) -> Option<String> {
+/// Parse a primary module-interface declaration (`export module foo;`),
+/// returning the module name. Partitions (`export module foo:part;`) are
+/// skipped. Shared with the LSP module index so both agree on what a module
+/// declaration looks like.
+pub(crate) fn parse_export_module(line: &str) -> Option<String> {
     let rest = line.strip_prefix("export")?.trim_start();
     let rest = rest.strip_prefix("module")?.trim_start();
     let name = rest.strip_suffix(';')?.trim();

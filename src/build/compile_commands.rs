@@ -296,8 +296,37 @@ pub fn write(project_dir: &Path, commands: &[CompileCommand]) -> Result<(), Frei
 }
 
 /// Serialise `commands` to an explicit compile database path.
+/// Compiler flags the real (GCC) compiler needs but clangd's clang front-end
+/// rejects with "unknown argument". The generated `compile_commands.json` is
+/// consumed only by clangd, so these are stripped on write. (`-fmodules-ts`
+/// enables GCC's modules; clang dropped it in favour of standard module flags.)
+const CLANGD_INCOMPATIBLE_FLAGS: &[&str] = &["-fmodules-ts"];
+
+/// Drop flags clangd can't parse from each command (rebuilding the joined
+/// `command` string to match the filtered `arguments`).
+fn sanitize_for_clangd(commands: &[CompileCommand]) -> Vec<CompileCommand> {
+    commands
+        .iter()
+        .map(|c| {
+            if !c
+                .arguments
+                .iter()
+                .any(|a| CLANGD_INCOMPATIBLE_FLAGS.contains(&a.as_str()))
+            {
+                return c.clone();
+            }
+            let mut c = c.clone();
+            c.arguments
+                .retain(|a| !CLANGD_INCOMPATIBLE_FLAGS.contains(&a.as_str()));
+            c.command = c.arguments.join(" ");
+            c
+        })
+        .collect()
+}
+
 pub fn write_to(path: &Path, commands: &[CompileCommand]) -> Result<(), FreightError> {
-    let json = serde_json::to_string_pretty(commands)
+    let commands = sanitize_for_clangd(commands);
+    let json = serde_json::to_string_pretty(&commands)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     // Only write when content actually changed.
     if let Ok(existing) = std::fs::read_to_string(path) {
@@ -314,7 +343,38 @@ pub fn write_to(path: &Path, commands: &[CompileCommand]) -> Result<(), FreightE
 
 #[cfg(test)]
 mod tests {
-    use super::clangd_only_flags;
+    use super::{clangd_only_flags, sanitize_for_clangd, CompileCommand};
+    use std::path::PathBuf;
+
+    #[test]
+    fn sanitize_strips_gcc_only_module_flag() {
+        let cmd = CompileCommand {
+            directory: PathBuf::from("/p"),
+            file: PathBuf::from("src/a.cpp"),
+            command: "g++ -std=c++20 -fmodules-ts -c src/a.cpp -o a.o".to_string(),
+            arguments: vec![
+                "g++".into(),
+                "-std=c++20".into(),
+                "-fmodules-ts".into(),
+                "-c".into(),
+                "src/a.cpp".into(),
+                "-o".into(),
+                "a.o".into(),
+            ],
+            output: PathBuf::from("a.o"),
+        };
+        let out = sanitize_for_clangd(&[cmd]);
+        assert!(
+            !out[0].arguments.iter().any(|a| a == "-fmodules-ts"),
+            "clangd-incompatible -fmodules-ts must be removed from arguments"
+        );
+        assert!(
+            !out[0].command.contains("-fmodules-ts"),
+            "and from the joined command string"
+        );
+        // Other flags are untouched.
+        assert!(out[0].arguments.iter().any(|a| a == "-std=c++20"));
+    }
 
     #[test]
     fn c_family_compile_commands_suppress_include_next_extension_warning() {

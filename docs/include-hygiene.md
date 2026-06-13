@@ -143,7 +143,7 @@ Resolving `#include` directives to absolute paths:
                source:   "freight",
                code:     "undeclared-include",
                message:  "`<name>` is not provided by any declared dependency; \
-                          add it to [dependencies] in freight.toml",
+                          add the dependency that provides it to [dependencies] in freight.toml",
            }
 3. Merge these into the URI's diagnostic set and publish.
 ```
@@ -188,6 +188,12 @@ undeclared-include = "warn"   # "allow" | "warn" | "deny"   (default: "warn")
 ---
 
 ## Phase 2 — enforce in the build
+
+**Status: done** via the "lighter intermediate option" below — a pre-compile
+validation pass (`build::validate_include_hygiene`) that re-runs the Phase-1
+classification and fails the build on `deny` / warns on `warn`. The stronger
+hermetic-includes variant (stop relying on the compiler's default search paths)
+remains optional/future. See `include-hygiene-audit.md` Step 10.
 
 Make the compile command itself unable to reach undeclared headers, so an
 undeclared include is a real build error (matching `clangd`'s view in the
@@ -263,9 +269,14 @@ the same treatment.
 - **`import` / `#import`**: header-bringing forms — `#import <h>` (Objective-C)
   and `import <h>;` / `export import "h";` (C++20 header units) — resolve to a
   header and are checked exactly like `#include` (done in Phase 1). A
-  named-module import (`import foo;`, `import std;`) has no header path; flagging
-  an undeclared *module* needs a module→package map (build/modules.rs knows
-  `export module` decls) — a later step.
+  named-module import (`import foo;`, `import std;`) has no header path; it is
+  classified against a module→package map instead (**done**): `lsp::index::
+  ModuleIndex` scans the project's and each declared package's sources for
+  `export module …;` (via `build::modules::parse_export_module`). An import of a
+  module no declared package exports — and that isn't a `std`/`std.*` module —
+  is flagged with an `undeclared-module` diagnostic and a `⚠ undeclared` inlay
+  hint; a resolved one is labelled with its owning package, completes from the
+  declared set, and goto-definition opens its interface unit.
 - **Generated headers** (proto codegen, `[language.proto]`, header units): their
   output dirs must be in the allowlist. Wire from the existing generated-include
   paths in the pipeline.

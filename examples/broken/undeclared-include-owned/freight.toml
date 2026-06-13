@@ -1,0 +1,17 @@
+[package]
+name        = "undeclared-include-owned"
+version     = "0.1.0"
+description = "Declares zlib (which owns <zlib.h>) but not the provider of <pthread.h> — only the latter is flagged under deny."
+
+[language.c]
+std = "c17"
+
+[[bin]]
+name = "undeclared-include-owned"
+src  = "src/main.c"
+
+[dependencies]
+zlib = "*"
+
+[lints]
+undeclared-include = "deny"

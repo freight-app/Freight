@@ -359,7 +359,9 @@ fn run_emit_targets(emit: &[String], profile: &str, progress: &Progress) {
                             print_error(&format!("--emit {s} failed: {e}"));
                         }
                     }
-                    None => print_error(&format!("unknown emit target `{s}` (known: asm, llvm-ir, llvm-bc, preprocessed)")),
+                    None => print_error(&format!(
+                        "unknown emit target `{s}` (known: asm, llvm-ir, llvm-bc, preprocessed)"
+                    )),
                 }
             }
         }

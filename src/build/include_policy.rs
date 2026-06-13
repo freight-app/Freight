@@ -110,17 +110,31 @@ fn canon(p: &Path) -> PathBuf {
 
 // ── #include directive parsing & resolution ──────────────────────────────────
 
-/// A parsed `#include` directive. Positions are 0-based (LSP convention) and
-/// span the full `<...>` / `"..."` token including delimiters.
+/// What an `import`/`#include` directive brings in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectiveKind {
+    /// `#include <h>` / `import "h";` etc. — resolves to a header file.
+    Header,
+    /// `import foo;` — a C++20 named module. No header to resolve; classified
+    /// against the declared module set rather than the include search path.
+    Module,
+}
+
+/// A parsed `#include` / `import` directive. Positions are 0-based (LSP
+/// convention) and span the full token: `<...>` / `"..."` including delimiters
+/// for headers, or the module name for a named-module import.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncludeDirective {
-    /// Header name as written, without delimiters, e.g. `"stdio.h"`, `"foo/bar.h"`.
+    /// Header name (without delimiters, e.g. `"stdio.h"`, `"foo/bar.h"`) or the
+    /// module name for a `Module` directive (e.g. `"std"`, `"mylib.core"`).
     pub name: String,
-    /// `true` for `<...>`, `false` for `"..."`.
+    /// `true` for `<...>`, `false` for `"..."`. Always `false` for modules.
     pub angled: bool,
     pub line: u32,
     pub start_col: u32,
     pub end_col: u32,
+    /// Whether this directive brings in a header file or a named module.
+    pub kind: DirectiveKind,
 }
 
 /// Extract `#include` directives from source text, skipping ones inside `//`
@@ -142,7 +156,8 @@ pub fn parse_includes(source: &str) -> Vec<IncludeDirective> {
         // skipped — it carries no `<...>`/`"..."` token.
         let after_keyword = if let Some(after_hash) = trimmed.strip_prefix('#') {
             let h = after_hash.trim_start();
-            h.strip_prefix("include").or_else(|| h.strip_prefix("import"))
+            h.strip_prefix("include")
+                .or_else(|| h.strip_prefix("import"))
         } else {
             let e = trimmed
                 .strip_prefix("export")
@@ -151,22 +166,39 @@ pub fn parse_includes(source: &str) -> Vec<IncludeDirective> {
             e.strip_prefix("import")
         };
         let Some(rest) = after_keyword else { continue };
+        // Only the keyword-less `import` form (not `#include`/`#import`) can be a
+        // named module — preprocessor includes always carry a header token.
+        let is_import_keyword = !trimmed.starts_with('#');
         let rest = rest.trim_start();
         let (open, close, angled) = match rest.chars().next() {
             Some('<') => ('<', '>', true),
             Some('"') => ('"', '"', false),
+            // `import foo;` — a named C++20 module, no `<...>`/`"..."` token.
+            _ if is_import_keyword => {
+                if let Some(d) = parse_named_module(raw, rest, lineno as u32) {
+                    out.push(d);
+                }
+                continue;
+            }
             _ => continue,
         };
         let _ = open;
         let inner = &rest[1..];
-        let Some(end) = inner.find(close) else { continue };
+        let Some(end) = inner.find(close) else {
+            continue;
+        };
         let name = inner[..end].trim().to_string();
         if name.is_empty() {
             continue;
         }
-        // Column of the opening delimiter within the original raw line.
-        let delim_byte = raw.len() - rest.len();
-        let start_col = raw[..delim_byte].chars().count() as u32;
+        // Column of the opening delimiter. `rest` is a suffix slice of the
+        // comment-stripped `line` (not `raw`), so the offset is computed against
+        // `line`; char positions there match `raw` up to the first comment, and
+        // the directive always precedes any comment. Using `raw` here would slice
+        // at a byte index that can land inside a multi-byte char (e.g. a non-ASCII
+        // comment after the include) and panic.
+        let delim_byte = line.len() - rest.len();
+        let start_col = line[..delim_byte].chars().count() as u32;
         // Full token width: delimiter + name + closing delimiter.
         let token = &rest[..end + 2]; // <...> or "..."
         let end_col = start_col + token.chars().count() as u32;
@@ -176,9 +208,48 @@ pub fn parse_includes(source: &str) -> Vec<IncludeDirective> {
             line: lineno as u32,
             start_col,
             end_col,
+            kind: DirectiveKind::Header,
         });
     }
     out
+}
+
+/// Parse a named-module import (`import foo.bar;`) from the text after the
+/// `import` keyword. `rest` is the comment-stripped remainder; returns `None`
+/// for a partition import (`import :part;`) or empty/malformed names.
+fn parse_named_module(raw: &str, rest: &str, lineno: u32) -> Option<IncludeDirective> {
+    // Require a terminating `;` so a half-typed `import myli` isn't flagged,
+    // mirroring how an unterminated `#include <foo` is skipped.
+    if !rest.contains(';') {
+        return None;
+    }
+    let name = rest.split([';', ' ', '\t']).next()?.trim();
+    // Reject anything that isn't a dotted identifier: partitions (`:part`),
+    // global-module noise, or stray braces.
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+    {
+        return None;
+    }
+    // `rest` is a slice of the comment-stripped copy, so byte arithmetic against
+    // `raw` is unsafe (see strip_comments). Locate the name in the original line
+    // after the `import` keyword to get a column that lines up with the editor.
+    let kw_end = raw.find("import").map(|i| i + "import".len()).unwrap_or(0);
+    let start_col = raw[kw_end..]
+        .find(name)
+        .map(|b| raw[..kw_end + b].chars().count() as u32)
+        .unwrap_or(0);
+    let end_col = start_col + name.chars().count() as u32;
+    Some(IncludeDirective {
+        name: name.to_string(),
+        angled: false,
+        line: lineno,
+        start_col,
+        end_col,
+        kind: DirectiveKind::Module,
+    })
 }
 
 /// Remove comment content from a single line, carrying `/* */` state across
@@ -310,13 +381,26 @@ pub fn check_includes(
     language: Language,
 ) -> Vec<UndeclaredInclude> {
     // Declared dirs are the allowlist; resolution also searches system dirs so we
-    // can tell "undeclared but present" from "missing".
-    let allow = IncludeAllowlist::new(language, declared_dirs.to_vec(), Vec::new());
-    let search: Vec<PathBuf> =
-        declared_dirs.iter().chain(system_dirs.iter()).cloned().collect();
+    // can tell "undeclared but present" from "missing". The including file's own
+    // directory is always a project root — a quote include resolving next to the
+    // source (`#include "util.h"`) is project-local by definition, even when no
+    // compile_commands declared an `-I` for it.
+    let mut project_roots = declared_dirs.to_vec();
+    project_roots.push(file_dir.to_path_buf());
+    let allow = IncludeAllowlist::new(language, project_roots, Vec::new());
+    let search: Vec<PathBuf> = declared_dirs
+        .iter()
+        .chain(system_dirs.iter())
+        .cloned()
+        .collect();
 
     let mut out = Vec::new();
     for d in parse_includes(source) {
+        // Named modules have no header file; they are classified against the
+        // declared module set by the LSP layer, not the include search path.
+        if d.kind == DirectiveKind::Module {
+            continue;
+        }
         let Some(resolved) = resolve_include(&d, file_dir, &search) else {
             continue; // not found anywhere — clangd reports file-not-found
         };
@@ -338,11 +422,36 @@ pub fn check_includes(
 /// C standard-library headers (C89 … C23). POSIX/OS headers are deliberately
 /// excluded.
 const C_HEADERS: &[&str] = &[
-    "assert.h", "complex.h", "ctype.h", "errno.h", "fenv.h", "float.h",
-    "inttypes.h", "iso646.h", "limits.h", "locale.h", "math.h", "setjmp.h",
-    "signal.h", "stdalign.h", "stdarg.h", "stdatomic.h", "stdbit.h", "stdbool.h",
-    "stdckdint.h", "stddef.h", "stdint.h", "stdio.h", "stdlib.h", "stdnoreturn.h",
-    "string.h", "tgmath.h", "threads.h", "time.h", "uchar.h", "wchar.h",
+    "assert.h",
+    "complex.h",
+    "ctype.h",
+    "errno.h",
+    "fenv.h",
+    "float.h",
+    "inttypes.h",
+    "iso646.h",
+    "limits.h",
+    "locale.h",
+    "math.h",
+    "setjmp.h",
+    "signal.h",
+    "stdalign.h",
+    "stdarg.h",
+    "stdatomic.h",
+    "stdbit.h",
+    "stdbool.h",
+    "stdckdint.h",
+    "stddef.h",
+    "stdint.h",
+    "stdio.h",
+    "stdlib.h",
+    "stdnoreturn.h",
+    "string.h",
+    "tgmath.h",
+    "threads.h",
+    "time.h",
+    "uchar.h",
+    "wchar.h",
     "wctype.h",
 ];
 
@@ -350,38 +459,126 @@ const C_HEADERS: &[&str] = &[
 /// headers which are added from `C_HEADERS` and the `c*` list below.
 const CXX_HEADERS: &[&str] = &[
     // C library wrappers
-    "cassert", "ccomplex", "cctype", "cerrno", "cfenv", "cfloat", "cinttypes",
-    "ciso646", "climits", "clocale", "cmath", "csetjmp", "csignal", "cstdalign",
-    "cstdarg", "cstdbool", "cstddef", "cstdint", "cstdio", "cstdlib", "cstring",
-    "ctgmath", "ctime", "cuchar", "cwchar", "cwctype",
+    "cassert",
+    "ccomplex",
+    "cctype",
+    "cerrno",
+    "cfenv",
+    "cfloat",
+    "cinttypes",
+    "ciso646",
+    "climits",
+    "clocale",
+    "cmath",
+    "csetjmp",
+    "csignal",
+    "cstdalign",
+    "cstdarg",
+    "cstdbool",
+    "cstddef",
+    "cstdint",
+    "cstdio",
+    "cstdlib",
+    "cstring",
+    "ctgmath",
+    "ctime",
+    "cuchar",
+    "cwchar",
+    "cwctype",
     // Containers / sequences
-    "array", "deque", "flat_map", "flat_set", "forward_list", "list", "map",
-    "mdspan", "queue", "set", "span", "stack", "unordered_map", "unordered_set",
+    "array",
+    "deque",
+    "flat_map",
+    "flat_set",
+    "forward_list",
+    "list",
+    "map",
+    "mdspan",
+    "queue",
+    "set",
+    "span",
+    "stack",
+    "unordered_map",
+    "unordered_set",
     "vector",
     // Strings / text
-    "charconv", "format", "string", "string_view",
+    "charconv",
+    "format",
+    "string",
+    "string_view",
     // Algorithms / ranges / numerics
-    "algorithm", "bit", "execution", "numbers", "numeric", "random", "ranges",
-    "ratio", "valarray",
+    "algorithm",
+    "bit",
+    "execution",
+    "numbers",
+    "numeric",
+    "random",
+    "ranges",
+    "ratio",
+    "valarray",
     // Utilities
-    "any", "bitset", "compare", "concepts", "expected", "functional",
-    "initializer_list", "iterator", "memory", "memory_resource", "optional",
-    "scoped_allocator", "source_location", "stacktrace", "tuple", "type_traits",
-    "typeindex", "typeinfo", "utility", "variant", "version",
+    "any",
+    "bitset",
+    "compare",
+    "concepts",
+    "expected",
+    "functional",
+    "initializer_list",
+    "iterator",
+    "memory",
+    "memory_resource",
+    "optional",
+    "scoped_allocator",
+    "source_location",
+    "stacktrace",
+    "tuple",
+    "type_traits",
+    "typeindex",
+    "typeinfo",
+    "utility",
+    "variant",
+    "version",
     // Time / locale / regex
-    "chrono", "codecvt", "locale", "regex",
+    "chrono",
+    "codecvt",
+    "locale",
+    "regex",
     // Diagnostics / errors
-    "exception", "stdexcept", "system_error",
+    "exception",
+    "stdexcept",
+    "system_error",
     // I/O
-    "filesystem", "fstream", "iomanip", "ios", "iosfwd", "iostream", "istream",
-    "ostream", "print", "spanstream", "sstream", "streambuf", "strstream",
+    "filesystem",
+    "fstream",
+    "iomanip",
+    "ios",
+    "iosfwd",
+    "iostream",
+    "istream",
+    "ostream",
+    "print",
+    "spanstream",
+    "sstream",
+    "streambuf",
+    "strstream",
     "syncstream",
     // Concurrency
-    "atomic", "barrier", "condition_variable", "coroutine", "future",
-    "generator", "latch", "mutex", "semaphore", "shared_mutex", "stop_token",
+    "atomic",
+    "barrier",
+    "condition_variable",
+    "coroutine",
+    "future",
+    "generator",
+    "latch",
+    "mutex",
+    "semaphore",
+    "shared_mutex",
+    "stop_token",
     "thread",
     // Language support / misc
-    "limits", "new", "stdfloat",
+    "limits",
+    "new",
+    "stdfloat",
 ];
 
 /// The C standard-library header table, in stable order (for completion lists).
@@ -404,7 +601,11 @@ pub fn std_header_set(language: Language) -> &'static HashSet<&'static str> {
     match language {
         Language::C => C_SET.get_or_init(|| C_HEADERS.iter().copied().collect()),
         Language::Cxx => CXX_SET.get_or_init(|| {
-            C_HEADERS.iter().chain(CXX_HEADERS.iter()).copied().collect()
+            C_HEADERS
+                .iter()
+                .chain(CXX_HEADERS.iter())
+                .copied()
+                .collect()
         }),
     }
 }
@@ -425,39 +626,69 @@ mod tests {
     fn stdlib_recognised_by_name_regardless_of_path() {
         let a = allowlist();
         // A real toolchain path; only the *name* matters.
-        assert_eq!(a.classify("vector", Path::new("/usr/include/c++/13/vector")), IncludeClass::Stdlib);
-        assert_eq!(a.classify("stdio.h", Path::new("/usr/include/stdio.h")), IncludeClass::Stdlib);
+        assert_eq!(
+            a.classify("vector", Path::new("/usr/include/c++/13/vector")),
+            IncludeClass::Stdlib
+        );
+        assert_eq!(
+            a.classify("stdio.h", Path::new("/usr/include/stdio.h")),
+            IncludeClass::Stdlib
+        );
     }
 
     #[test]
     fn posix_and_os_headers_are_undeclared() {
         let a = allowlist();
         // POSIX / OS headers are NOT standard-library headers.
-        assert_eq!(a.classify("pthread.h", Path::new("/usr/include/pthread.h")), IncludeClass::Undeclared);
-        assert_eq!(a.classify("unistd.h", Path::new("/usr/include/unistd.h")), IncludeClass::Undeclared);
+        assert_eq!(
+            a.classify("pthread.h", Path::new("/usr/include/pthread.h")),
+            IncludeClass::Undeclared
+        );
+        assert_eq!(
+            a.classify("unistd.h", Path::new("/usr/include/unistd.h")),
+            IncludeClass::Undeclared
+        );
     }
 
     #[test]
     fn undeclared_third_party_header() {
         let a = allowlist();
-        assert_eq!(a.classify("openssl/ssl.h", Path::new("/usr/include/openssl/ssl.h")), IncludeClass::Undeclared);
+        assert_eq!(
+            a.classify("openssl/ssl.h", Path::new("/usr/include/openssl/ssl.h")),
+            IncludeClass::Undeclared
+        );
     }
 
     #[test]
     fn project_and_dependency_paths_win_over_name() {
         let a = allowlist();
-        assert_eq!(a.classify("widget.h", Path::new("/proj/src/widget.h")), IncludeClass::Project);
-        assert_eq!(a.classify("zlib.h", Path::new("/deps/zlib/include/zlib.h")), IncludeClass::Dependency("zlib".into()));
+        assert_eq!(
+            a.classify("widget.h", Path::new("/proj/src/widget.h")),
+            IncludeClass::Project
+        );
+        assert_eq!(
+            a.classify("zlib.h", Path::new("/deps/zlib/include/zlib.h")),
+            IncludeClass::Dependency("zlib".into())
+        );
         // A dependency file named like a std header is still attributed to the dep.
-        assert_eq!(a.classify("vector", Path::new("/deps/zlib/include/vector")), IncludeClass::Dependency("zlib".into()));
+        assert_eq!(
+            a.classify("vector", Path::new("/deps/zlib/include/vector")),
+            IncludeClass::Dependency("zlib".into())
+        );
     }
 
     #[test]
     fn c_language_excludes_cxx_headers() {
         let a = IncludeAllowlist::new(Language::C, vec![], vec![]);
-        assert_eq!(a.classify("stdio.h", Path::new("/usr/include/stdio.h")), IncludeClass::Stdlib);
+        assert_eq!(
+            a.classify("stdio.h", Path::new("/usr/include/stdio.h")),
+            IncludeClass::Stdlib
+        );
         // <vector> is not a C standard header.
-        assert_eq!(a.classify("vector", Path::new("/usr/include/c++/13/vector")), IncludeClass::Undeclared);
+        assert_eq!(
+            a.classify("vector", Path::new("/usr/include/c++/13/vector")),
+            IncludeClass::Undeclared
+        );
     }
 
     #[test]
@@ -471,10 +702,17 @@ int x;
 #include <zlib.h>  // trailing comment
 ";
         let incs = parse_includes(src);
-        let names: Vec<_> = incs.iter().map(|d| (d.name.as_str(), d.angled, d.line)).collect();
+        let names: Vec<_> = incs
+            .iter()
+            .map(|d| (d.name.as_str(), d.angled, d.line))
+            .collect();
         assert_eq!(
             names,
-            vec![("stdio.h", true, 0), ("foo/bar.h", false, 1), ("zlib.h", true, 5)]
+            vec![
+                ("stdio.h", true, 0),
+                ("foo/bar.h", false, 1),
+                ("zlib.h", true, 5)
+            ]
         );
         // The <stdio.h> token spans columns 9..18 (0-based, end exclusive).
         assert_eq!(incs[0].start_col, 9);
@@ -488,22 +726,65 @@ int x;
 import <pthread.h>;
 export import \"mylib.h\";
 import std;
+import mylib.core;
 int importance = 5;
 ";
         let got: Vec<_> = parse_includes(src)
             .iter()
-            .map(|d| (d.name.clone(), d.angled, d.line))
+            .map(|d| (d.name.clone(), d.angled, d.line, d.kind))
             .collect();
         assert_eq!(
             got,
             vec![
-                ("Foundation/Foundation.h".to_string(), true, 0),
-                ("pthread.h".to_string(), true, 1),
-                ("mylib.h".to_string(), false, 2),
+                (
+                    "Foundation/Foundation.h".to_string(),
+                    true,
+                    0,
+                    DirectiveKind::Header
+                ),
+                ("pthread.h".to_string(), true, 1, DirectiveKind::Header),
+                ("mylib.h".to_string(), false, 2, DirectiveKind::Header),
+                // Named modules are captured as Module directives (resolved
+                // against the declared module set, not the include path).
+                ("std".to_string(), false, 3, DirectiveKind::Module),
+                ("mylib.core".to_string(), false, 4, DirectiveKind::Module),
             ]
         );
-        // `import std;` (named module) and `int importance = 5;` are not header
-        // imports and must be ignored.
+        // `int importance = 5;` is not an import and must be ignored.
+        assert!(!got.iter().any(|(n, ..)| n == "importance"));
+    }
+
+    #[test]
+    fn parse_named_module_rejects_partitions_and_noise() {
+        // Partition imports (`import :part;`) and module-declaration lines are
+        // not whole-module imports and must not be captured as Module directives.
+        let src = "\
+import :part;
+module;
+export module mylib;
+import   spaced.mod  ;
+";
+        let mods: Vec<_> = parse_includes(src)
+            .iter()
+            .filter(|d| d.kind == DirectiveKind::Module)
+            .map(|d| d.name.clone())
+            .collect();
+        // `module mylib;` after `export` is not an `import`, so it isn't here;
+        // only the well-formed `import spaced.mod;` is captured.
+        assert_eq!(mods, vec!["spaced.mod".to_string()]);
+    }
+
+    #[test]
+    fn parse_includes_handles_non_ascii_comment() {
+        // A multi-byte char after the directive must not break column math
+        // (regression: `raw.len() - rest.len()` sliced inside the em-dash).
+        let src = "#include <pthread.h> /* platform — needs a dep */\n";
+        let incs = parse_includes(src);
+        assert_eq!(incs.len(), 1);
+        assert_eq!(incs[0].name, "pthread.h");
+        // `<pthread.h>` starts at column 9 and spans 11 chars.
+        assert_eq!(incs[0].start_col, 9);
+        assert_eq!(incs[0].end_col, 20);
     }
 
     #[test]
@@ -550,6 +831,19 @@ int importance = 5;
     }
 
     #[test]
+    fn header_next_to_source_is_project_local() {
+        // A quote include resolving to the source file's own directory must not
+        // be flagged even with no declared dirs (the no-compile_commands case).
+        let tmp = std::env::temp_dir().join(format!("inc_proj_{}", std::process::id()));
+        let src = tmp.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("util.h"), "").unwrap();
+        let found = check_includes("#include \"util.h\"\n", &src, &[], &[], Language::Cxx);
+        assert!(found.is_empty(), "header next to source flagged: {found:?}");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn parse_search_dirs_extracts_system_block() {
         let stderr = "\
 ignored preamble
@@ -584,13 +878,40 @@ trailing junk
         std::fs::write(proj.join("local.h"), "").unwrap();
         std::fs::write(dep.join("lib.h"), "").unwrap();
 
-        let quote = IncludeDirective { name: "local.h".into(), angled: false, line: 0, start_col: 0, end_col: 0 };
-        assert_eq!(resolve_include(&quote, &proj, &[dep.clone()]), Some(proj.join("local.h")));
+        let quote = IncludeDirective {
+            name: "local.h".into(),
+            angled: false,
+            line: 0,
+            start_col: 0,
+            end_col: 0,
+            kind: DirectiveKind::Header,
+        };
+        assert_eq!(
+            resolve_include(&quote, &proj, &[dep.clone()]),
+            Some(proj.join("local.h"))
+        );
 
-        let angle = IncludeDirective { name: "lib.h".into(), angled: true, line: 0, start_col: 0, end_col: 0 };
-        assert_eq!(resolve_include(&angle, &proj, &[dep.clone()]), Some(dep.join("lib.h")));
+        let angle = IncludeDirective {
+            name: "lib.h".into(),
+            angled: true,
+            line: 0,
+            start_col: 0,
+            end_col: 0,
+            kind: DirectiveKind::Header,
+        };
+        assert_eq!(
+            resolve_include(&angle, &proj, &[dep.clone()]),
+            Some(dep.join("lib.h"))
+        );
 
-        let missing = IncludeDirective { name: "nope.h".into(), angled: true, line: 0, start_col: 0, end_col: 0 };
+        let missing = IncludeDirective {
+            name: "nope.h".into(),
+            angled: true,
+            line: 0,
+            start_col: 0,
+            end_col: 0,
+            kind: DirectiveKind::Header,
+        };
         assert_eq!(resolve_include(&missing, &proj, &[dep]), None);
 
         std::fs::remove_dir_all(&tmp).ok();
