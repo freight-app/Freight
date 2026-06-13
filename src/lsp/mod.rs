@@ -269,6 +269,10 @@ enum PendingClangdRequest {
         original_id: Value,
         freight_hints: Vec<Value>,
     },
+    CodeAction {
+        original_id: Value,
+        freight_actions: Vec<Value>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1234,7 +1238,134 @@ impl Server {
         {
             return self.respond(msg.get("id").cloned(), Value::Array(result));
         }
+
+        // Freight-native quick-fixes for our own `undeclared-include` diagnostics:
+        // "Add dependency `<pkg>` to freight.toml" for each package that owns the
+        // header. These are merged with clangd's actions when clangd is serving.
+        let freight_actions = self.undeclared_include_quickfixes(&uri, &msg);
+
+        let goes_to_clangd = matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd));
+        if goes_to_clangd && self.state.clangd.is_some() {
+            let id = msg.get("id").cloned().unwrap_or(Value::Null);
+            if freight_actions.is_empty() {
+                return self.forward_by_uri(&uri, &sanitize_code_action_diagnostics(&msg));
+            }
+            let orig_id_str = match &id {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => "0".to_string(),
+            };
+            let rewritten = format!("__freight_codeaction_{orig_id_str}");
+            self.state.clangd_pending.lock().unwrap().insert(
+                rewritten.clone(),
+                PendingClangdRequest::CodeAction {
+                    original_id: id,
+                    freight_actions,
+                },
+            );
+            let mut fwd = sanitize_code_action_diagnostics(&msg);
+            fwd.as_object_mut()
+                .unwrap()
+                .insert("id".to_string(), json!(rewritten));
+            self.forward_to_passthrough(SourceServer::Clangd, &fwd)?;
+            return Ok(());
+        }
+
+        if !freight_actions.is_empty() {
+            return self.respond(msg.get("id").cloned(), Value::Array(freight_actions));
+        }
         self.forward_by_uri(&uri, &sanitize_code_action_diagnostics(&msg))
+    }
+
+    /// Build "Add dependency `<pkg>` to freight.toml" quick-fixes for every
+    /// `undeclared-include` diagnostic in the request's range whose header a
+    /// known package owns (Tier A ownership). Returns an empty vec when there is
+    /// nothing freight can fix, so the caller can fall through to clangd.
+    fn undeclared_include_quickfixes(&self, uri: &str, msg: &Value) -> Vec<Value> {
+        use crate::build::header_ownership as ho;
+
+        let diagnostics = msg
+            .get("params")
+            .and_then(|p| p.get("context"))
+            .and_then(|c| c.get("diagnostics"))
+            .and_then(Value::as_array);
+        let Some(diagnostics) = diagnostics else {
+            return Vec::new();
+        };
+
+        // Resolve the freight.toml the edit will target, and the buffer/disk
+        // content the WorkspaceEdit applies against.
+        let Some(manifest_dir) = self.active_manifest_dir() else {
+            return Vec::new();
+        };
+        let manifest_path = manifest_dir.join("freight.toml");
+        let manifest_uri = uri_from_path(&manifest_path);
+        let Some(manifest_text) = self
+            .state
+            .docs
+            .get(&manifest_uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&manifest_path).ok())
+        else {
+            return Vec::new();
+        };
+        let end_pos = lsp_end_position(&manifest_text);
+
+        let declared = self.declared_dep_names();
+        let ownership = ho::load();
+        let mut actions = Vec::new();
+        for diag in diagnostics {
+            if diag.get("source").and_then(Value::as_str) != Some("freight") {
+                continue;
+            }
+            if diag.get("code").and_then(Value::as_str) != Some("undeclared-include") {
+                continue; // modules have no header-ownership mapping yet
+            }
+            // The header spelling lives in the recorded undeclared markers, keyed
+            // by the diagnostic's start line.
+            let line = diag
+                .get("range")
+                .and_then(|r| r.get("start"))
+                .and_then(|s| s.get("line"))
+                .and_then(Value::as_u64)
+                .map(|l| l as u32);
+            let Some(line) = line else { continue };
+            let Some(spelling) = self
+                .state
+                .undeclared_includes
+                .get(uri)
+                .and_then(|v| v.iter().find(|(l, _)| *l == line))
+                .map(|(_, s)| s.clone())
+            else {
+                continue;
+            };
+            let header = spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
+            for pkg in ownership.candidates_for_header(header) {
+                if declared.contains(&pkg) {
+                    continue;
+                }
+                let Some(new_text) = insert_dependency_toml(&manifest_text, &pkg) else {
+                    continue;
+                };
+                actions.push(json!({
+                    "title": format!("Add dependency `{pkg}` to freight.toml"),
+                    "kind": "quickfix",
+                    "diagnostics": [diag],
+                    "edit": {
+                        "changes": {
+                            manifest_uri.clone(): [{
+                                "range": {
+                                    "start": { "line": 0, "character": 0 },
+                                    "end": end_pos,
+                                },
+                                "newText": new_text,
+                            }]
+                        }
+                    }
+                }));
+            }
+        }
+        actions
     }
 
     fn handle_rename_or_forward(&mut self, msg: Value) -> io::Result<()> {
@@ -1362,6 +1493,61 @@ fn set_manifest_config(path: &Path, key: &str, value: Option<&Value>) -> anyhow:
 
     std::fs::write(path, doc.to_string())?;
     Ok(())
+}
+
+/// Insert `pkg = "*"` into the `[dependencies]` table of a `freight.toml`,
+/// preserving comments/formatting via `toml_edit`. Returns the rewritten file
+/// text, or `None` if the dep is already present or the document won't parse.
+fn insert_dependency_toml(text: &str, pkg: &str) -> Option<String> {
+    use toml_edit::{value as tv, DocumentMut, Item, Table};
+    let mut doc: DocumentMut = text.parse().ok()?;
+    if doc.get("dependencies").is_none() {
+        let mut t = Table::new();
+        t.set_implicit(false);
+        doc["dependencies"] = Item::Table(t);
+    }
+    let deps = doc.get_mut("dependencies").and_then(Item::as_table_mut)?;
+    if deps.contains_key(pkg) {
+        return None; // already declared — nothing to add
+    }
+    deps[pkg] = tv("*");
+    Some(doc.to_string())
+}
+
+/// The LSP `Position` just past the last character of `text` (UTF-16 units), used
+/// as the end of a whole-document replace range.
+fn lsp_end_position(text: &str) -> Value {
+    let mut line: u32 = 0;
+    let mut col: u32 = 0;
+    for ch in text.chars() {
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += ch.len_utf16() as u32;
+        }
+    }
+    json!({ "line": line, "character": col })
+}
+
+fn merge_clangd_codeaction_response(
+    mut msg: Value,
+    original_id: Value,
+    mut freight_actions: Vec<Value>,
+) -> Value {
+    // Freight quick-fixes first (they're the targeted fix for our own
+    // diagnostic), then whatever clangd offered for the same range.
+    let clangd_actions = msg
+        .get("result")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    freight_actions.extend(clangd_actions);
+    if let Some(obj) = msg.as_object_mut() {
+        obj.insert("id".to_string(), original_id);
+        obj.insert("result".to_string(), Value::Array(freight_actions));
+    }
+    msg
 }
 
 fn merge_clangd_inlay_response(
@@ -2078,6 +2264,18 @@ impl Server {
                                 let _ = write_lsp_message(&mut *out.lock().unwrap(), &response);
                                 continue;
                             }
+                            Some(PendingClangdRequest::CodeAction {
+                                original_id,
+                                freight_actions,
+                            }) => {
+                                let response = merge_clangd_codeaction_response(
+                                    msg,
+                                    original_id,
+                                    freight_actions,
+                                );
+                                let _ = write_lsp_message(&mut *out.lock().unwrap(), &response);
+                                continue;
+                            }
                             None => {}
                         }
                     }
@@ -2206,7 +2404,51 @@ fn level_for_method(method: &str) -> tracing::Level {
 mod tests {
     use super::build_workspace_inventory;
     use super::protocol::sanitize_code_action_diagnostics;
+    use super::{insert_dependency_toml, lsp_end_position, merge_clangd_codeaction_response};
     use serde_json::json;
+
+    #[test]
+    fn insert_dependency_adds_to_dependencies_table() {
+        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nzlib = \"*\"\n";
+        let out = insert_dependency_toml(src, "openssl").expect("inserts dep");
+        assert!(out.contains("openssl = \"*\""), "got:\n{out}");
+        assert!(out.contains("zlib = \"*\""), "keeps existing dep:\n{out}");
+        // Idempotent: re-adding an already-declared dep yields None.
+        assert!(insert_dependency_toml(&out, "openssl").is_none());
+    }
+
+    #[test]
+    fn insert_dependency_creates_section_when_missing() {
+        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
+        let out = insert_dependency_toml(src, "fmt").expect("inserts dep + section");
+        assert!(out.contains("[dependencies]"), "got:\n{out}");
+        assert!(out.contains("fmt = \"*\""), "got:\n{out}");
+        // Round-trips back into a valid manifest.
+        assert!(crate::manifest::load_manifest_str(&out).is_ok());
+    }
+
+    #[test]
+    fn end_position_counts_lines_and_utf16() {
+        assert_eq!(lsp_end_position("a\nbc"), json!({"line": 1, "character": 2}));
+        // Trailing newline → cursor at column 0 of the next line.
+        assert_eq!(lsp_end_position("a\n"), json!({"line": 1, "character": 0}));
+        // Astral char (emoji) is 2 UTF-16 units.
+        assert_eq!(lsp_end_position("x😀"), json!({"line": 0, "character": 3}));
+    }
+
+    #[test]
+    fn codeaction_merge_puts_freight_actions_first() {
+        let clangd = json!({
+            "jsonrpc": "2.0", "id": "__freight_codeaction_7",
+            "result": [{ "title": "clangd fix" }]
+        });
+        let freight = vec![json!({ "title": "Add dependency `zlib` to freight.toml" })];
+        let merged = merge_clangd_codeaction_response(clangd, json!(7), freight);
+        assert_eq!(merged["id"], json!(7));
+        let arr = merged["result"].as_array().unwrap();
+        assert_eq!(arr[0]["title"], "Add dependency `zlib` to freight.toml");
+        assert_eq!(arr[1]["title"], "clangd fix");
+    }
 
     #[test]
     fn code_action_diagnostic_codes_are_sanitized_to_strings() {

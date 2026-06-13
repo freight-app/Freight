@@ -85,6 +85,11 @@ include completion, include/import inlay hints. Phase 2:
       the vcpkg/registry scraper; registry stubs carry `provides-headers`); a
       lazy `pkg-config --list-all` reverse index to name owners of headers *not*
       in Tier A; macOS/Windows seeds; finalize the POSIX/OS-header policy.
+- [x] Quick-fix code action: on an `undeclared-include` diagnostic the LSP
+      offers "Add dependency `<pkg>` to freight.toml" for each Tier-A owner of
+      the header, editing `[dependencies]` via `toml_edit` (formatting preserved)
+      and merging with clangd's own actions. `undeclared-module` has no owner map
+      yet, so no fix is offered there.
 - [ ] Phase 2 (stronger, optional): hermetic includes — stop relying on the
       compiler's default search paths so undeclared headers can't even resolve,
       rather than just being flagged after the fact.
