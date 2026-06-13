@@ -76,6 +76,17 @@ impl OwnershipData {
         globs
     }
 
+    /// Every package name freight knows about (direct owners + all slot
+    /// providers), sorted and de-duplicated. Used to offer `[dependencies]`
+    /// completions for common system libraries in `freight.toml`.
+    pub fn known_packages(&self) -> Vec<String> {
+        let mut out: BTreeSet<String> = self.packages.keys().cloned().collect();
+        for slot in self.slots.values() {
+            out.extend(slot.providers.iter().cloned());
+        }
+        out.into_iter().collect()
+    }
+
     /// Packages a user could declare to legitimately obtain `header` — used to
     /// turn an undeclared-include diagnostic into "declare one of: …".
     pub fn candidates_for_header(&self, header: &str) -> Vec<String> {

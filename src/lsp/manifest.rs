@@ -575,7 +575,40 @@ pub fn completion_result(
         })
         .collect();
     items.extend(inventory_completion_items(&section, inventory));
+    if section.contains("dependencies") {
+        let existing: std::collections::HashSet<String> = items
+            .iter()
+            .filter_map(|i| i.get("label").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        items.extend(system_package_completion_items(&existing));
+    }
     json!({ "isIncomplete": false, "items": items })
+}
+
+/// `[dependencies]` completions for the common system libraries freight knows
+/// about (the Tier-A header-ownership table): `zlib`, `sqlite3`, `openssl`, …
+/// Inserts `name = "*"`; skips any name already offered (e.g. a workspace lib).
+fn system_package_completion_items(existing: &std::collections::HashSet<String>) -> Vec<Value> {
+    crate::build::header_ownership::load()
+        .known_packages()
+        .into_iter()
+        .filter(|name| !existing.contains(name))
+        .map(|name| {
+            json!({
+                "label": name,
+                "kind": 9, // Module
+                "detail": "Known system library",
+                "documentation": {
+                    "kind": "markdown",
+                    "value": format!(
+                        "Add a dependency on `{name}`. Freight resolves it via \
+                         pkg-config / system stubs / the registry."
+                    )
+                },
+                "insertText": format!("{name} = \"*\"")
+            })
+        })
+        .collect()
 }
 
 fn inventory_completion_items(section: &str, inventory: Option<&WorkspaceInventory>) -> Vec<Value> {
@@ -1100,5 +1133,28 @@ members = ["missing"]
                 && item["insertText"] == json!("core = { path = \"core\" }")
         }));
         assert!(!items.iter().any(|item| item["label"] == json!("app")));
+    }
+
+    #[test]
+    fn dependency_completion_offers_known_system_packages() {
+        let result = completion_result(Some("[dependencies]\n"), Some((1, 0)), None);
+        let items = result["items"].as_array().unwrap();
+        // zlib is in the Tier-A ownership seed; offered with a bare-version insert.
+        let zlib = items
+            .iter()
+            .find(|i| i["label"] == json!("zlib"))
+            .expect("zlib offered as a known system package");
+        assert_eq!(zlib["insertText"], json!("zlib = \"*\""));
+        assert_eq!(zlib["detail"], json!("Known system library"));
+    }
+
+    #[test]
+    fn system_package_completion_skips_already_offered_names() {
+        let existing = ["zlib".to_string()].into_iter().collect();
+        let items = system_package_completion_items(&existing);
+        assert!(
+            !items.iter().any(|i| i["label"] == json!("zlib")),
+            "an already-offered name must not be duplicated"
+        );
     }
 }
