@@ -543,6 +543,11 @@ intrinsic headers each unlocks); add or override entries with `.toml` files in
 `$FREIGHT_HOME/toolchains/cpu-features/`. A feature declared under an `[arch.*]` section it
 doesn't belong to (e.g. `avx2` under `[arch.aarch64]`) is a validation error.
 
+Additive `-m<ext>` flags (AVX, SSE, FMA, …) simply stack. `-march=<base>+<ext>` features that
+share a base are merged into one flag (`sve` + `sve2` → `-march=armv8-a+sve+sve2`) so they don't
+clobber each other under the compiler's last-`-march`-wins rule; `-march`/`-mcpu`/`-mtune`/… flags
+with genuinely different values that can't be merged are kept as-is and reported as a build warning.
+
 Files matched by `srcs` globs in any `[os.*]` or `[arch.*]` section are automatically
 excluded from the unconditional source walk — they will never be compiled on a non-matching
 platform, even if they live under `src/`.

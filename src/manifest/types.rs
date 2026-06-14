@@ -153,6 +153,11 @@ impl Manifest {
             }
         }
 
+        // Fold same-base `-march` flags together (e.g. sve + sve2 →
+        // `-march=armv8-a+sve+sve2`) so stacked ISA features don't clobber each
+        // other under the compiler's last-`-march`-wins rule.
+        merge_march_flags(&mut flags);
+
         let base = BuildSettings {
             opt_level: self.compiler.opt_level.to_string(),
             debug: self.compiler.debug,
@@ -212,6 +217,37 @@ impl Manifest {
             }
         }
         features
+    }
+
+    /// Warnings for CPU-tuning flags that still conflict after same-base `-march`
+    /// merging: more than one `-march` (different arch bases) or more than one of
+    /// any single-value knob (`-mcpu`, `-mtune`, `-mfpu`, `-mabi`, `-mfloat-abi`).
+    /// The compiler uses the last in each case, so the rest are silently ignored.
+    pub fn cpu_tuning_warnings(&self, profile: &str) -> Vec<String> {
+        let flags = self.build_settings_for(profile).extra_flags;
+        let mut warnings = Vec::new();
+        for knob in [
+            "-march",
+            "-mcpu",
+            "-mtune",
+            "-mfpu",
+            "-mabi",
+            "-mfloat-abi",
+        ] {
+            let prefix = format!("{knob}=");
+            let hits: Vec<&String> = flags.iter().filter(|f| f.starts_with(&prefix)).collect();
+            if hits.len() > 1 {
+                let list = hits
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                warnings.push(format!(
+                    "conflicting {knob} flags ({list}); the compiler uses the last one"
+                ));
+            }
+        }
+        warnings
     }
 
     /// Walk the `inherits` chain for `name` and return a merged `Profile`.
@@ -458,6 +494,59 @@ fn merge_string_vec(into: &mut Vec<String>, items: &[String]) {
             into.push(item.clone());
         }
     }
+}
+
+/// Collapse `-march` flags that share an architecture base into a single flag.
+///
+/// `-march=armv8-a+sve` and `-march=armv8-a+sve2` → `-march=armv8-a+sve+sve2`
+/// (feature suffixes unioned, order preserved). This matters because the compiler
+/// honours only the *last* `-march`, so stacked ISA features (e.g. from several
+/// `[arch.*] features`) would otherwise clobber each other. Flags with *different*
+/// bases are left intact — that is a genuine conflict (surfaced as a build
+/// warning) and last-wins still applies, matching the compiler.
+fn merge_march_flags(flags: &mut Vec<String>) {
+    if flags.iter().filter(|f| f.starts_with("-march=")).count() < 2 {
+        return;
+    }
+    // Per base (first-seen order): the unioned feature suffixes.
+    let mut order: Vec<String> = Vec::new();
+    let mut feats: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for f in flags.iter() {
+        if let Some(spec) = f.strip_prefix("-march=") {
+            let mut parts = spec.split('+');
+            let base = parts.next().unwrap_or("").to_string();
+            if !feats.contains_key(&base) {
+                order.push(base.clone());
+            }
+            let bucket = feats.entry(base).or_default();
+            for ext in parts {
+                if !bucket.contains(&ext.to_string()) {
+                    bucket.push(ext.to_string());
+                }
+            }
+        }
+    }
+    // Rebuild: the first `-march` of each base becomes the merged flag; later
+    // `-march` flags for an already-emitted base are dropped. Order preserved.
+    let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result: Vec<String> = Vec::with_capacity(flags.len());
+    for f in flags.drain(..) {
+        match f.strip_prefix("-march=") {
+            Some(spec) => {
+                let base = spec.split('+').next().unwrap_or("").to_string();
+                if written.insert(base.clone()) {
+                    let exts = &feats[&base];
+                    result.push(if exts.is_empty() {
+                        format!("-march={base}")
+                    } else {
+                        format!("-march={base}+{}", exts.join("+"))
+                    });
+                }
+            }
+            None => result.push(f),
+        }
+    }
+    *flags = result;
 }
 
 /// Platform names that match the current host, ordered family-first so
@@ -1217,6 +1306,57 @@ features = ["ws2_32"]
         assert!(feats.contains(&"m".to_string()));
         // The non-matching OS section is ignored.
         assert!(!feats.contains(&"ws2_32".to_string()));
+    }
+
+    #[test]
+    fn merge_march_same_base_combines() {
+        let mut flags = vec![
+            "-O2".to_string(),
+            "-march=armv8-a+sve".to_string(),
+            "-mfma".to_string(),
+            "-march=armv8-a+sve2".to_string(),
+        ];
+        merge_march_flags(&mut flags);
+        assert_eq!(
+            flags,
+            vec!["-O2", "-march=armv8-a+sve+sve2", "-mfma"]
+        );
+    }
+
+    #[test]
+    fn merge_march_different_bases_kept() {
+        let mut flags = vec![
+            "-march=armv8-a+sve".to_string(),
+            "-march=armv9-a".to_string(),
+        ];
+        merge_march_flags(&mut flags);
+        // Different bases are a conflict — left intact (compiler takes the last).
+        assert_eq!(flags, vec!["-march=armv8-a+sve", "-march=armv9-a"]);
+    }
+
+    #[test]
+    fn cpu_tuning_warnings_on_conflicting_march() {
+        let host = std::env::consts::ARCH;
+        let s = format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.c]
+[[bin]]
+name = "p"
+src  = "src/main.c"
+
+[arch.{host}]
+flags = ["-march=foo", "-march=bar"]
+"#
+        );
+        let m = load_manifest_str(&s).unwrap();
+        let warns = m.cpu_tuning_warnings("dev");
+        assert!(
+            warns.iter().any(|w| w.contains("-march")),
+            "expected a conflicting -march warning, got {warns:?}"
+        );
     }
 
     #[test]

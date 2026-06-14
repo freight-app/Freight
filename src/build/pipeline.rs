@@ -677,6 +677,9 @@ pub fn run_pipeline_at(
 
     // ── Stage 2: Features ────────────────────────────────────────────────────
     let feat = stage_features(manifest, config)?;
+    for w in manifest.cpu_tuning_warnings(profile) {
+        progress(BuildEvent::Warning(w));
+    }
 
     // ── Stage 3: Fetch ───────────────────────────────────────────────────────
     stage_fetch(project_dir, root_dir, manifest, progress)?;
