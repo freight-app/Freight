@@ -87,6 +87,10 @@ pub struct BuiltDepsOutput {
     pub include_dirs: Vec<PathBuf>,
     pub raw_link_flags: Vec<String>,
     pub tool_paths: Vec<PathBuf>,
+    /// `[os.*] features` declared by dependencies — folded into the final link's
+    /// system libraries so a dep's needs (e.g. pthread) are linked without the
+    /// root re-declaring them.
+    pub system_features: Vec<String>,
 }
 
 /// Compiler flags from the PCH stage.
@@ -210,11 +214,23 @@ pub(crate) fn stage_build_deps(
         progress,
     )?;
 
+    // System-lib features each dependency declares (`[os.*] features`), unioned so
+    // the final link picks them up without the root having to re-declare them.
+    let mut system_features: Vec<String> = Vec::new();
+    for d in &resolved {
+        for f in d.manifest.system_features() {
+            if !system_features.contains(&f) {
+                system_features.push(f);
+            }
+        }
+    }
+
     let mut output = BuiltDepsOutput {
         libs: built.libs,
         include_dirs: built.include_dirs,
         raw_link_flags: Vec::new(),
         tool_paths,
+        system_features,
     };
     for f in foreign {
         output.libs.extend(f.libs);
@@ -495,6 +511,7 @@ fn run_test_goal(
             &ctx.detected,
             &ctx.templates,
             &deps.libs,
+            &deps.system_features,
             &deps.raw_link_flags,
         )?;
         progress(BuildEvent::TestRunning {
@@ -589,6 +606,7 @@ fn run_bench_goal(
             &ctx.detected,
             &ctx.templates,
             &deps.libs,
+            &deps.system_features,
             &deps.raw_link_flags,
         )?;
         progress(BuildEvent::BenchRunning {
@@ -768,6 +786,7 @@ pub fn run_pipeline_at(
                 &ctx.detected,
                 &ctx.templates,
                 &deps.libs,
+                &deps.system_features,
                 &deps.raw_link_flags,
                 progress,
             )?;

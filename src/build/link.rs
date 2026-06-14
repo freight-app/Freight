@@ -64,6 +64,7 @@ pub fn link_targets(
     detected: &[DetectedCompiler],
     templates: &[CompilerTemplate],
     dep_libs: &[PathBuf],
+    dep_system_features: &[String],
     extra_link_flags: &[String],
     progress: &Progress,
 ) -> Result<LinkResult, FreightError> {
@@ -109,6 +110,7 @@ pub fn link_targets(
             manifest,
             profile,
             dep_libs,
+            dep_system_features,
             extra_link_flags,
         )?;
         if linked {
@@ -155,6 +157,7 @@ pub fn link_targets(
                         manifest,
                         profile,
                         dep_libs,
+                        dep_system_features,
                         extra_link_flags,
                     )? {
                         progress(BuildEvent::Linking {
@@ -184,6 +187,7 @@ pub fn link_test_binary(
     detected: &[DetectedCompiler],
     templates: &[CompilerTemplate],
     dep_libs: &[PathBuf],
+    dep_system_features: &[String],
     extra_link_flags: &[String],
 ) -> Result<(), FreightError> {
     let linker = select_linker(manifest, backend, detected, templates)
@@ -195,6 +199,7 @@ pub fn link_test_binary(
         manifest,
         profile,
         dep_libs,
+        dep_system_features,
         extra_link_flags,
     )
     .map(|_| ())
@@ -285,6 +290,7 @@ fn link_executable(
     manifest: &Manifest,
     profile: &str,
     dep_libs: &[PathBuf],
+    dep_system_features: &[String],
     extra_link_flags: &[String],
 ) -> Result<bool, FreightError> {
     // Skip link if binary is newer than all inputs.
@@ -334,10 +340,12 @@ fn link_executable(
         );
         cmd.args(objects);
         cmd.args(dep_libs);
-        for flag in collect_system_lib_flags(manifest, &linker.template) {
-            cmd.arg(flag);
-        }
-        cmd.args(extra_link_flags);
+        cmd.args(system_and_extra_link_flags(
+            manifest,
+            dep_system_features,
+            extra_link_flags,
+            &linker.template,
+        ));
     }
     cmd.args(linker.template.output_bin_flag(out));
     run_cmd(cmd, out)?;
@@ -392,6 +400,7 @@ fn link_shared(
     manifest: &Manifest,
     profile: &str,
     dep_libs: &[PathBuf],
+    dep_system_features: &[String],
     extra_link_flags: &[String],
 ) -> Result<bool, FreightError> {
     let all_inputs: Vec<&Path> = objects
@@ -425,10 +434,12 @@ fn link_shared(
     cmd.arg(shared_flag);
     cmd.args(objects);
     cmd.args(dep_libs);
-    for flag in collect_system_lib_flags(manifest, &linker.template) {
-        cmd.arg(flag);
-    }
-    cmd.args(extra_link_flags);
+    cmd.args(system_and_extra_link_flags(
+        manifest,
+        dep_system_features,
+        extra_link_flags,
+        &linker.template,
+    ));
     cmd.args(linker.template.output_bin_flag(out));
     run_cmd(cmd, out)?;
     Ok(true)
@@ -480,27 +491,55 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), FreightError> {
 /// Each feature of a platform dep maps to a link flag:
 /// - macOS: leading-uppercase feature → `-framework <Name>`; otherwise → `-l<name>`
 /// - All others: → toolchain `system_lib_flag(name)` (GCC/Clang: `-l<name>`, MSVC: `<name>.lib`)
-fn collect_system_lib_flags(manifest: &Manifest, linker: &CompilerTemplate) -> Vec<String> {
+/// Resolve `[os.*] features` names to linker flags for the active linker:
+/// macOS frameworks (uppercase initial) → `-framework <name>`, otherwise the
+/// stub's canonical link name formatted by the template (`-l<x>` / `<x>.lib`).
+fn resolve_system_lib_flags(features: &[String], linker: &CompilerTemplate) -> Vec<String> {
     use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs};
     let is_macos = std::env::consts::OS == "macos";
     let stubs = load_system_lib_stubs();
-    manifest
-        .system_features()
+    features
         .iter()
         .map(|feat| {
-            // macOS frameworks (e.g. `CoreFoundation`) are detected by an
-            // uppercase initial and linked with `-framework`.
             if is_macos && feat.chars().next().is_some_and(|c| c.is_uppercase()) {
                 return format!("-framework {feat}");
             }
-            // Resolve the stub's canonical link name (fallback: the feature name),
-            // then format it for the active linker (`-l<x>` / `<x>.lib`).
             let link = find_stub(feat, &stubs)
                 .map(|s| s.link_name.clone())
                 .unwrap_or_else(|| feat.clone());
             linker.system_lib_flag(&link)
         })
         .collect()
+}
+
+/// Order-preserving de-duplication: keep the first occurrence of each flag.
+/// Used on the link tail so duplicate `-l`/`-L`/pkg-config flags contributed by
+/// multiple dependencies collapse to one.
+fn dedup_preserve_order(flags: &mut Vec<String>) {
+    let mut seen: HashSet<String> = HashSet::new();
+    flags.retain(|f| seen.insert(f.clone()));
+}
+
+/// The de-duplicated link tail: system libraries from the root *and* every
+/// dependency's `[os.*] features` (so a dep that needs `pthread` links without
+/// the root re-declaring it), followed by raw/pkg-config flags. Order-preserving
+/// dedup collapses libraries pulled in by more than one dependency.
+fn system_and_extra_link_flags(
+    manifest: &Manifest,
+    dep_system_features: &[String],
+    extra_link_flags: &[String],
+    linker: &CompilerTemplate,
+) -> Vec<String> {
+    let mut features = manifest.system_features();
+    for f in dep_system_features {
+        if !features.contains(f) {
+            features.push(f.clone());
+        }
+    }
+    let mut tail = resolve_system_lib_flags(&features, linker);
+    tail.extend(extra_link_flags.iter().cloned());
+    dedup_preserve_order(&mut tail);
+    tail
 }
 
 /// Strip link-irrelevant fields from BuildSettings before passing to the linker.
@@ -649,7 +688,7 @@ backend = "ldc2"
         );
     }
 
-    // ── collect_system_lib_flags ──────────────────────────────────────────────
+    // ── resolve_system_lib_flags ──────────────────────────────────────────────
 
     #[test]
     fn system_dep_produces_dash_l_flag() {
@@ -666,7 +705,7 @@ src  = "src/main.cpp"
 features = ["pthread", "dl"]
 "#;
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
-        let flags = collect_system_lib_flags(&m, &gcc());
+        let flags = resolve_system_lib_flags(&m.system_features(), &gcc());
         if cfg!(unix) {
             assert!(flags.contains(&"-lpthread".to_string()));
             assert!(flags.contains(&"-ldl".to_string()));
@@ -676,7 +715,48 @@ features = ["pthread", "dl"]
     #[test]
     fn no_system_deps_returns_empty() {
         let m = manifest("cpp");
-        assert!(collect_system_lib_flags(&m, &gcc()).is_empty());
+        assert!(resolve_system_lib_flags(&m.system_features(), &gcc()).is_empty());
+    }
+
+    #[test]
+    fn dedup_preserve_order_keeps_first() {
+        let mut v = vec![
+            "-L/a".to_string(),
+            "-lz".to_string(),
+            "-L/a".to_string(),
+            "-lz".to_string(),
+            "-lm".to_string(),
+        ];
+        dedup_preserve_order(&mut v);
+        assert_eq!(v, vec!["-L/a", "-lz", "-lm"]);
+    }
+
+    #[test]
+    fn dep_system_features_folded_and_deduped() {
+        // Root needs pthread; a dep also needs pthread + m; pkg-config also pulls -lz.
+        let manifest_src = r#"
+[package]
+name    = "p"
+version = "0.1.0"
+[language.cpp]
+[[bin]]
+name = "p"
+src  = "src/main.cpp"
+[os.unix]
+features = ["pthread"]
+"#;
+        let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
+        let dep_feats = vec!["pthread".to_string(), "m".to_string()];
+        let extra = vec!["-lz".to_string(), "-lz".to_string()];
+        let tail = system_and_extra_link_flags(&m, &dep_feats, &extra, &gcc());
+        if cfg!(unix) {
+            // pthread appears once despite root + dep both declaring it.
+            assert_eq!(tail.iter().filter(|f| *f == "-lpthread").count(), 1);
+            // dep's `m` is linked even though the root never declared it.
+            assert!(tail.contains(&"-lm".to_string()));
+            // duplicate pkg-config -lz collapses to one.
+            assert_eq!(tail.iter().filter(|f| *f == "-lz").count(), 1);
+        }
     }
 
     #[test]
@@ -695,7 +775,7 @@ features = ["ws2_32", "crypt32"]
         // Uses `[os.unix]` so the section is active on the unix test host; the
         // point is the `.lib` formatting routed through the MSVC linker template.
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
-        let flags = collect_system_lib_flags(&m, &msvc());
+        let flags = resolve_system_lib_flags(&m.system_features(), &msvc());
         if cfg!(unix) {
             assert!(
                 flags.contains(&"ws2_32.lib".to_string()),
