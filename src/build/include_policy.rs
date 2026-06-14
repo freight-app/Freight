@@ -21,7 +21,12 @@ pub enum IncludeClass {
     Dependency(String),
     /// A language standard-library header (matched by name).
     Stdlib,
-    /// Resolves from outside any declared package and is not a stdlib header.
+    /// A platform/OS or compiler-provided header (POSIX `unistd.h`, `sys/*`,
+    /// Windows `windows.h`, compiler intrinsics like `immintrin.h`). Provided by
+    /// the system/toolchain, not by any declarable freight package — so allowed
+    /// without a declaration, like the stdlib.
+    SystemOs,
+    /// Resolves from outside any declared package and is not a stdlib/OS header.
     Undeclared,
 }
 
@@ -98,9 +103,158 @@ impl IncludeAllowlist {
         if self.std_headers.contains(header_name) {
             return IncludeClass::Stdlib;
         }
+        // POSIX / OS / compiler-provided headers are system-supplied — no freight
+        // package owns them, so they are allowed like the stdlib.
+        if is_os_system_header(header_name) {
+            return IncludeClass::SystemOs;
+        }
         IncludeClass::Undeclared
     }
 }
+
+/// Whether `name` is a platform/OS or compiler-provided header that no freight
+/// package owns: POSIX (`unistd.h`, `pthread.h`, `sys/*`, …), common Windows SDK
+/// headers (`windows.h`, `winsock2.h`, …), Apple/Darwin (`mach/*`, …), and
+/// compiler intrinsics (`*intrin.h`, `arm_*.h`, `cpuid.h`).
+///
+/// The set is the union across platforms: a header that resolves nowhere is
+/// skipped before classification, so listing (e.g.) Windows headers on Linux is
+/// harmless. This keeps the policy simple and correct under cross-compilation.
+pub fn is_os_system_header(name: &str) -> bool {
+    // Compiler intrinsics: every SSE/AVX/NEON/etc. header ends in `intrin.h`,
+    // and the ARM ACLE/SVE/FP16 headers are `arm_*.h`.
+    if name.ends_with("intrin.h") || (name.starts_with("arm_") && name.ends_with(".h")) {
+        return true;
+    }
+    // Subpath families that are entirely OS/kernel/compiler-owned.
+    const OS_PREFIXES: &[&str] = &[
+        "sys/",
+        "netinet/",
+        "arpa/",
+        "net/",
+        "rpc/",
+        "bits/",
+        "gnu/",
+        "asm/",
+        "asm-generic/",
+        "linux/",
+        "scsi/",
+        "mach/",
+        "mach-o/",
+        "objc/",
+        "libkern/",
+        "os/",
+    ];
+    if OS_PREFIXES.iter().any(|p| name.starts_with(p)) {
+        return true;
+    }
+    OS_SYSTEM_HEADERS.contains(&name)
+}
+
+/// Bare POSIX / Windows / Darwin / compiler header names (the non-subpath set).
+const OS_SYSTEM_HEADERS: &[&str] = &[
+    // ── POSIX / Unix ──
+    "aio.h",
+    "cpio.h",
+    "dirent.h",
+    "dlfcn.h",
+    "fcntl.h",
+    "fmtmsg.h",
+    "fnmatch.h",
+    "ftw.h",
+    "glob.h",
+    "grp.h",
+    "iconv.h",
+    "langinfo.h",
+    "libgen.h",
+    "monetary.h",
+    "mqueue.h",
+    "ndbm.h",
+    "netdb.h",
+    "nl_types.h",
+    "poll.h",
+    "pthread.h",
+    "pwd.h",
+    "regex.h",
+    "sched.h",
+    "search.h",
+    "semaphore.h",
+    "spawn.h",
+    "strings.h",
+    "stropts.h",
+    "syslog.h",
+    "tar.h",
+    "termios.h",
+    "trace.h",
+    "ucontext.h",
+    "ulimit.h",
+    "unistd.h",
+    "utime.h",
+    "utmpx.h",
+    "wordexp.h",
+    "endian.h",
+    "byteswap.h",
+    "alloca.h",
+    "malloc.h",
+    "memory.h",
+    "getopt.h",
+    "err.h",
+    "error.h",
+    "execinfo.h",
+    "sysexits.h",
+    "pty.h",
+    "ifaddrs.h",
+    "resolv.h",
+    "crypt.h",
+    "ftw.h",
+    "mntent.h",
+    "fts.h",
+    // ── Compiler builtins (non-`*intrin.h`) ──
+    "cpuid.h",
+    "mm_malloc.h",
+    // ── Windows SDK / CRT (harmless on other OSes — they resolve nowhere) ──
+    "windows.h",
+    "windowsx.h",
+    "winsock.h",
+    "winsock2.h",
+    "ws2tcpip.h",
+    "mswsock.h",
+    "winbase.h",
+    "winuser.h",
+    "wingdi.h",
+    "wininet.h",
+    "winreg.h",
+    "winnt.h",
+    "winerror.h",
+    "windef.h",
+    "process.h",
+    "io.h",
+    "direct.h",
+    "tchar.h",
+    "conio.h",
+    "dos.h",
+    "share.h",
+    "basetsd.h",
+    "objbase.h",
+    "ole2.h",
+    "oleauto.h",
+    "shlobj.h",
+    "shlwapi.h",
+    "shellapi.h",
+    "commctrl.h",
+    "commdlg.h",
+    "psapi.h",
+    "tlhelp32.h",
+    "dbghelp.h",
+    "intsafe.h",
+    "strsafe.h",
+    // ── Apple / Darwin ──
+    "TargetConditionals.h",
+    "Availability.h",
+    "AvailabilityMacros.h",
+    "Block.h",
+    "xlocale.h",
+];
 
 /// Canonicalise a path, falling back to the input on error so classification is
 /// still best-effort for not-yet-existing paths.
@@ -639,16 +793,21 @@ mod tests {
     }
 
     #[test]
-    fn posix_and_os_headers_are_undeclared() {
+    fn posix_and_os_headers_are_system_provided() {
         let a = allowlist();
-        // POSIX / OS headers are NOT standard-library headers.
+        // POSIX / OS headers are not stdlib, but they are system-provided — no
+        // freight package owns them, so they classify as SystemOs (allowed).
         assert_eq!(
             a.classify("pthread.h", Path::new("/usr/include/pthread.h")),
-            IncludeClass::Undeclared
+            IncludeClass::SystemOs
         );
         assert_eq!(
             a.classify("unistd.h", Path::new("/usr/include/unistd.h")),
-            IncludeClass::Undeclared
+            IncludeClass::SystemOs
+        );
+        assert_eq!(
+            a.classify("sys/mman.h", Path::new("/usr/include/sys/mman.h")),
+            IncludeClass::SystemOs
         );
     }
 
@@ -808,6 +967,7 @@ import   spaced.mod  ;
             std::fs::create_dir_all(d).unwrap();
         }
         std::fs::write(declared.join("zlib.h"), "").unwrap();
+        std::fs::write(system.join("foreignlib.h"), "").unwrap();
         std::fs::write(system.join("pthread.h"), "").unwrap();
         std::fs::write(system.join("stdio.h"), "").unwrap();
         std::fs::create_dir_all(system.join("c++")).unwrap();
@@ -815,6 +975,7 @@ import   spaced.mod  ;
 
         let src = "\
 #include <zlib.h>
+#include <foreignlib.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <vector>
@@ -824,11 +985,34 @@ import   spaced.mod  ;
         sys_dirs.push(system.join("c++"));
         let found = check_includes(src, &filedir, &[declared.clone()], &sys_dirs, Language::Cxx);
 
-        // Only <pthread.h> is undeclared *and* present: zlib is declared, stdio &
-        // vector are stdlib, and does_not_exist.h resolves nowhere.
+        // Only <foreignlib.h> is undeclared *and* present: zlib is declared,
+        // pthread is a POSIX/OS header (allowed), stdio & vector are stdlib, and
+        // does_not_exist.h resolves nowhere.
         assert_eq!(found.len(), 1, "got {found:?}");
-        assert_eq!(found[0].spelling, "<pthread.h>");
+        assert_eq!(found[0].spelling, "<foreignlib.h>");
         assert_eq!(found[0].line, 1);
+    }
+
+    #[test]
+    fn os_and_compiler_headers_are_not_undeclared() {
+        // POSIX, kernel sub-paths, Windows, and compiler-intrinsic headers are
+        // system-provided and must classify as SystemOs (allowed), not Undeclared.
+        for h in [
+            "unistd.h",
+            "pthread.h",
+            "sys/mman.h",
+            "netinet/in.h",
+            "immintrin.h",
+            "x86intrin.h",
+            "arm_neon.h",
+            "windows.h",
+            "cpuid.h",
+        ] {
+            assert!(is_os_system_header(h), "{h} should be a system header");
+        }
+        // A plain third-party header is not.
+        assert!(!is_os_system_header("foreignlib.h"));
+        assert!(!is_os_system_header("zlib.h"));
     }
 
     #[test]

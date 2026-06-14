@@ -81,10 +81,27 @@ include completion, include/import inlay hints. Phase 2:
       into both the build pass and the LSP: owned headers suppressed, candidates
       named (`<cblas.h> provided by openblas, atlas, mkl`). BLAS/LAPACK modelled
       as slots (shared header = OR). See audit Step 11.
-- [ ] **Phase 3 remaining:** host + generate the per-OS Tier-A data file (hook
-      the vcpkg/registry scraper; registry stubs carry `provides-headers`); a
-      lazy `pkg-config --list-all` reverse index to name owners of headers *not*
-      in Tier A; macOS/Windows seeds; finalize the POSIX/OS-header policy.
+- [x] **POSIX/OS-header policy:** `include_policy::is_os_system_header` +
+      `IncludeClass::SystemOs`. POSIX (`unistd.h`, `pthread.h`, `sys/*`, …),
+      Windows SDK, Apple/Darwin, and compiler-intrinsic (`*intrin.h`, `arm_*.h`,
+      `cpuid.h`) headers are system-provided and never flagged. The set is the
+      cross-platform union (unresolvable headers are skipped first, so this is
+      safe under cross-compilation).
+- [x] **Cross-platform Tier-A seed:** the header→package map is platform-agnostic
+      (`zlib.h` ⇒ `zlib` everywhere), so `seed()` is now unconditional (covers
+      macOS/Windows) and expanded to common libs whose headers resolve via the
+      default search (openssl, libpng, libjpeg, libcurl, zstd, lz4, libevent,
+      libpcap, libffi, pcre, yaml, jansson, libzip …).
+- [ ] **Per-OS Tier-A data file generation:** hook the vcpkg/registry scraper so
+      registry stubs carry `provides-headers` and emit a downloadable override
+      (`header-ownership-<os>.toml`, already consumed by `load()`). Cross-crate
+      (lives in `vcpkg-converter` + registry), so tracked there.
+- [ ] ~~Lazy `pkg-config --list-all` reverse index~~ — dropped: a header is only
+      *flagged* when it resolves via the compiler's default search (bare
+      `/usr/include` or a subdir of it), which is exactly what pkg-config's
+      dedicated-dir lookup can't disambiguate; dedicated-subdir headers (SDL2,
+      gtk) don't resolve without their `-I` so are never flagged. The Tier-A seed
+      is the correct lever instead.
 - [x] Quick-fix code action: on an `undeclared-include` diagnostic the LSP
       offers "Add dependency `<pkg>` to freight.toml" for each Tier-A owner of
       the header, editing `[dependencies]` via `toml_edit` (formatting preserved)
@@ -93,7 +110,6 @@ include completion, include/import inlay hints. Phase 2:
 - [ ] Phase 2 (stronger, optional): hermetic includes — stop relying on the
       compiler's default search paths so undeclared headers can't even resolve,
       rather than just being flagged after the fact.
-- [ ] Finalize the POSIX/OS-header policy (Phase 3).
 - [x] Module→package map so named-module imports (`import foo;`) classify like
       header includes. Done: `lsp::index::ModuleIndex` scans declared packages'
       sources for `export module …;`; `import` hints resolve to `← <pkg>` /

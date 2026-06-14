@@ -237,62 +237,90 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     helper(pattern.as_bytes(), text.as_bytes())
 }
 
-/// The in-core, per-OS Tier-A seed. Focused on libraries whose headers sit bare
-/// in `/usr/include` (where Tier B / pkg-config can't disambiguate) plus the
-/// BLAS/LAPACK slots. Other OSes start empty and rely on Tier B + the override
-/// file until seeded.
+/// The in-core Tier-A seed. Focused on libraries whose headers sit bare in a
+/// default include dir (`/usr/include`, Homebrew's `include`, a vcpkg
+/// `installed/.../include`) where Tier B / pkg-config can't disambiguate, plus
+/// the BLAS/LAPACK slots.
+///
+/// The header → package attribution is platform-independent — `zlib.h` is owned
+/// by `zlib` whether resolved on Linux, macOS, or Windows — so the seed is the
+/// same on every OS. The optional per-OS override file ([`override_path`]) layers
+/// distro/SDK-specific additions on top.
 pub fn seed() -> OwnershipData {
     let mut data = OwnershipData::default();
-    if cfg!(target_os = "linux") {
-        let pkg = |d: &mut OwnershipData, name: &str, globs: &[&str]| {
-            d.packages.insert(
-                name.to_string(),
-                globs.iter().map(|s| s.to_string()).collect(),
-            );
-        };
-        pkg(&mut data, "zlib", &["zlib.h", "zconf.h"]);
-        pkg(&mut data, "sqlite3", &["sqlite3.h", "sqlite3ext.h"]);
-        pkg(&mut data, "bzip2", &["bzlib.h"]);
-        pkg(&mut data, "liblzma", &["lzma.h", "lzma/*"]);
-        pkg(&mut data, "expat", &["expat.h", "expat_external.h"]);
-        pkg(&mut data, "pcre2", &["pcre2.h"]);
-        pkg(&mut data, "gmp", &["gmp.h", "gmpxx.h"]);
-        pkg(&mut data, "mpfr", &["mpfr.h", "mpf2mpfr.h"]);
-        pkg(
-            &mut data,
-            "ncurses",
-            &["ncurses.h", "curses.h", "term.h", "ncurses/*"],
+    let pkg = |d: &mut OwnershipData, name: &str, globs: &[&str]| {
+        d.packages.insert(
+            name.to_string(),
+            globs.iter().map(|s| s.to_string()).collect(),
         );
-        pkg(&mut data, "readline", &["readline/*"]);
-        pkg(&mut data, "uuid", &["uuid/uuid.h"]);
+    };
+    // Compression / archives.
+    pkg(&mut data, "zlib", &["zlib.h", "zconf.h"]);
+    pkg(&mut data, "bzip2", &["bzlib.h"]);
+    pkg(&mut data, "liblzma", &["lzma.h", "lzma/*"]);
+    pkg(&mut data, "zstd", &["zstd.h", "zdict.h", "zstd_errors.h"]);
+    pkg(&mut data, "lz4", &["lz4.h", "lz4hc.h", "lz4frame.h"]);
+    pkg(&mut data, "libzip", &["zip.h", "zipconf.h"]);
+    // Databases.
+    pkg(&mut data, "sqlite3", &["sqlite3.h", "sqlite3ext.h"]);
+    // Parsing / text.
+    pkg(&mut data, "expat", &["expat.h", "expat_external.h"]);
+    pkg(&mut data, "pcre2", &["pcre2.h"]);
+    pkg(&mut data, "pcre", &["pcre.h", "pcreposix.h"]);
+    pkg(&mut data, "yaml", &["yaml.h"]);
+    pkg(&mut data, "jansson", &["jansson.h", "jansson_config.h"]);
+    // Math / numerics.
+    pkg(&mut data, "gmp", &["gmp.h", "gmpxx.h"]);
+    pkg(&mut data, "mpfr", &["mpfr.h", "mpf2mpfr.h"]);
+    // Crypto / TLS (headers resolve under the default `/usr/include/openssl`).
+    pkg(&mut data, "openssl", &["openssl/*"]);
+    // Imaging.
+    pkg(&mut data, "libpng", &["png.h", "pngconf.h", "pnglibconf.h"]);
+    pkg(
+        &mut data,
+        "libjpeg",
+        &["jpeglib.h", "jerror.h", "jconfig.h", "jmorecfg.h"],
+    );
+    // Networking / transfer.
+    pkg(&mut data, "libcurl", &["curl/*"]);
+    pkg(&mut data, "libpcap", &["pcap.h", "pcap/*"]);
+    pkg(&mut data, "libevent", &["event.h", "evutil.h", "event2/*"]);
+    // FFI / terminal / misc.
+    pkg(&mut data, "libffi", &["ffi.h", "ffitarget.h"]);
+    pkg(
+        &mut data,
+        "ncurses",
+        &["ncurses.h", "curses.h", "term.h", "ncurses/*"],
+    );
+    pkg(&mut data, "readline", &["readline/*"]);
+    pkg(&mut data, "uuid", &["uuid/uuid.h"]);
 
-        data.slots.insert(
-            "blas".to_string(),
-            Slot {
-                providers: vec![
-                    "openblas".into(),
-                    "atlas".into(),
-                    "blis".into(),
-                    "mkl".into(),
-                    "blas".into(),
-                    "reference-blas".into(),
-                ],
-                headers: vec!["cblas.h".into(), "blas.h".into(), "f77blas.h".into()],
-            },
-        );
-        data.slots.insert(
-            "lapack".to_string(),
-            Slot {
-                providers: vec![
-                    "lapack".into(),
-                    "openblas".into(),
-                    "atlas".into(),
-                    "mkl".into(),
-                ],
-                headers: vec!["lapack.h".into(), "lapacke.h".into(), "clapack.h".into()],
-            },
-        );
-    }
+    data.slots.insert(
+        "blas".to_string(),
+        Slot {
+            providers: vec![
+                "openblas".into(),
+                "atlas".into(),
+                "blis".into(),
+                "mkl".into(),
+                "blas".into(),
+                "reference-blas".into(),
+            ],
+            headers: vec!["cblas.h".into(), "blas.h".into(), "f77blas.h".into()],
+        },
+    );
+    data.slots.insert(
+        "lapack".to_string(),
+        Slot {
+            providers: vec![
+                "lapack".into(),
+                "openblas".into(),
+                "atlas".into(),
+                "mkl".into(),
+            ],
+            headers: vec!["lapack.h".into(), "lapacke.h".into(), "clapack.h".into()],
+        },
+    );
     data
 }
 
@@ -313,9 +341,6 @@ mod tests {
     #[test]
     fn declared_blas_provider_owns_slot_headers() {
         let d = seed();
-        if !cfg!(target_os = "linux") {
-            return; // seed is Linux-only for now
-        }
         // Declaring OpenBLAS attributes the BLAS + LAPACK slot headers.
         let globs = d.owned_globs_for(&["openblas".to_string()]);
         assert!(globs.iter().any(|g| g == "cblas.h"));
@@ -329,9 +354,6 @@ mod tests {
     #[test]
     fn candidates_lists_all_blas_providers() {
         let d = seed();
-        if !cfg!(target_os = "linux") {
-            return;
-        }
         let cands = d.candidates_for_header("cblas.h");
         assert!(cands.contains(&"openblas".to_string()));
         assert!(cands.contains(&"mkl".to_string()));
@@ -339,6 +361,25 @@ mod tests {
         assert_eq!(d.candidates_for_header("zlib.h"), vec!["zlib".to_string()]);
         // An unknown header has no candidates.
         assert!(d.candidates_for_header("definitely_not_a_lib.h").is_empty());
+    }
+
+    #[test]
+    fn seed_is_cross_platform_and_covers_common_libs() {
+        // The seed is identical on every OS (header→package is platform-agnostic).
+        let d = seed();
+        // Subdir-glob owner: `<openssl/ssl.h>` resolves under the default
+        // `/usr/include/openssl` and is attributed to openssl.
+        assert_eq!(
+            d.candidates_for_header("openssl/ssl.h"),
+            vec!["openssl".to_string()]
+        );
+        // A few more common bare-header libs added to the seed.
+        assert_eq!(d.candidates_for_header("png.h"), vec!["libpng".to_string()]);
+        assert_eq!(d.candidates_for_header("zstd.h"), vec!["zstd".to_string()]);
+        assert_eq!(
+            d.candidates_for_header("curl/curl.h"),
+            vec!["libcurl".to_string()]
+        );
     }
 
     #[test]
