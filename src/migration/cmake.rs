@@ -19,6 +19,9 @@
 ///   - `if(WIN32)/if(MSVC)` blocks → deps go to `[os.windows.dependencies]`
 ///   - `if(APPLE)` blocks → deps go to `[os.macos.dependencies]`
 ///   - `if(UNIX)` blocks → deps go to `[os.unix.dependencies]`
+///   - OS system libraries (pthread, m, ws2_32, …) and `find_package(Threads)` →
+///     `[os.<os>] features = [...]` (linked via `-l`, not packages)
+///   - resolved deps are version-pinned via pkg-config `--modversion` (else `*`)
 ///   - `function()` and `macro()` bodies are skipped (can't evaluate calls)
 ///   - `FetchContent_Declare(name GIT_REPOSITORY … GIT_TAG …)` → `{ git, tag }`
 ///   - `FetchContent_Declare(name URL … URL_HASH SHA256=…)` → `{ url, sha256 }`
@@ -202,6 +205,9 @@ struct Extracted {
     fetched_deps: Vec<FetchedDep>,
     /// Platform-conditional deps: OS name (e.g. "windows", "macos", "unix") → dep list.
     platform_deps: HashMap<String, Vec<String>>,
+    /// System-library link features per OS (`[os.<os>] features`): pthread, m,
+    /// ws2_32, … — versionless OS libraries linked via `-l`, not packages.
+    os_features: HashMap<String, Vec<String>>,
     c_std: Option<String>,
     cxx_std: Option<String>,
     defines: Vec<String>,
@@ -231,6 +237,7 @@ impl Extracted {
             pkg_modules: Vec::new(),
             fetched_deps: Vec::new(),
             platform_deps: HashMap::new(),
+            os_features: HashMap::new(),
             c_std: None,
             cxx_std: None,
             defines: Vec::new(),
@@ -245,6 +252,13 @@ impl Extracted {
         let vec = self.platform_deps.entry(os.to_string()).or_default();
         if !vec.contains(&dep) {
             vec.push(dep);
+        }
+    }
+
+    fn add_os_feature(&mut self, feat: String, os: &str) {
+        let vec = self.os_features.entry(os.to_string()).or_default();
+        if !vec.contains(&feat) {
+            vec.push(feat);
         }
     }
 }
@@ -532,12 +546,21 @@ fn handle_link_libraries(args: &[&str], ex: &mut Extracted, scope: Option<&str>)
         if VIS.contains(&arg.to_ascii_uppercase().as_str()) {
             continue;
         }
-        if let Some(dep) = extract_link_dep(arg) {
+        if let Some(lib) = extract_link_dep(arg) {
+            if DRIVER_LINKED.contains(&lib.as_str()) {
+                continue; // linked automatically by the compiler driver
+            }
+            // OS system libraries (pthread, m, ws2_32, …) → `[os.<os>] features`,
+            // by their natural OS regardless of the surrounding if() scope.
+            if let Some(feat_os) = system_lib_os(&lib) {
+                ex.add_os_feature(lib, feat_os);
+                continue;
+            }
             match scope {
-                Some(os) => ex.add_platform_dep(dep, os),
+                Some(os) => ex.add_platform_dep(lib, os),
                 None => {
-                    if !ex.deps.contains(&dep) {
-                        ex.deps.push(dep);
+                    if !ex.deps.contains(&lib) {
+                        ex.deps.push(lib);
                     }
                 }
             }
@@ -560,6 +583,13 @@ fn handle_find_package(args: &[&str], ex: &mut Extracted, scope: Option<&str>) {
     ];
     let pkg = args[0];
     if SKIP.contains(&pkg.to_ascii_uppercase().as_str()) {
+        return;
+    }
+    // `find_package(Threads)` + `Threads::Threads` is the CMake idiom for pthread;
+    // route it to the unix pthread feature (the imported target has `::`, so it
+    // never reaches the link-library classifier).
+    if pkg.eq_ignore_ascii_case("Threads") {
+        ex.add_os_feature("pthread".to_string(), "unix");
         return;
     }
     for m in map_find_package(pkg) {
@@ -1105,10 +1135,7 @@ fn extract_link_dep(s: &str) -> Option<String> {
     } else {
         s
     };
-    if lib.is_empty() || AUTO_LINKED.contains(&lib) {
-        return None;
-    }
-    if lib.starts_with('-') {
+    if lib.is_empty() || lib.starts_with('-') {
         return None;
     }
     Some(lib.to_string())
@@ -1168,9 +1195,21 @@ fn map_c_std(val: &str) -> Option<String> {
     }
 }
 
-const AUTO_LINKED: &[&str] = &[
-    "m", "pthread", "dl", "rt", "c", "gcc", "gcc_s", "stdc++", "c++", "atomic", "util", "resolv",
-];
+/// Libraries the compiler driver links automatically — never emitted.
+const DRIVER_LINKED: &[&str] = &["c", "gcc", "gcc_s", "stdc++", "c++", "supc++"];
+
+/// Known OS system libraries → the `[os.<os>]` section they belong under. These
+/// become `features = [...]` (linked via `-l`), not dependency entries.
+fn system_lib_os(lib: &str) -> Option<&'static str> {
+    match lib {
+        "m" | "pthread" | "dl" | "rt" | "atomic" | "util" | "resolv" | "execinfo" => Some("unix"),
+        "ws2_32" | "kernel32" | "user32" | "gdi32" | "shell32" | "ole32" | "oleaut32"
+        | "advapi32" | "iphlpapi" | "ntdll" | "dbghelp" | "psapi" | "winmm" | "setupapi"
+        | "comctl32" | "comdlg32" | "bcrypt" | "uuid" | "crypt32" | "secur32" | "d3d11"
+        | "d3d12" | "dxgi" => Some("windows"),
+        _ => None,
+    }
+}
 
 fn sanitize_name(s: &str) -> String {
     s.chars()
@@ -1338,18 +1377,39 @@ fn emit_toml(name: &str, version: &str, ex: &Extracted, warnings: &[String]) -> 
         extra.push_str(&format!("\n[language.c]\nstd = \"{std}\"\n"));
     }
 
-    // Platform-conditional dependency sections (sorted for deterministic output).
-    let mut platforms: Vec<(&str, &Vec<String>)> = ex
-        .platform_deps
-        .iter()
-        .map(|(k, v)| (k.as_str(), v))
+    // Per-OS sections: system-lib `features` and platform-conditional dependencies
+    // (sorted for deterministic output). `[os.<os>]` must precede its
+    // `[os.<os>.dependencies]` sub-table.
+    let mut os_keys: Vec<&str> = ex
+        .os_features
+        .keys()
+        .chain(ex.platform_deps.keys())
+        .map(String::as_str)
         .collect();
-    platforms.sort_by_key(|(k, _)| *k);
-    for (os, pdeps) in platforms {
-        if !pdeps.is_empty() {
+    os_keys.sort_unstable();
+    os_keys.dedup();
+    for os in os_keys {
+        let feats = ex.os_features.get(os).filter(|v| !v.is_empty());
+        let pdeps = ex.platform_deps.get(os).filter(|v| !v.is_empty());
+        if feats.is_none() && pdeps.is_none() {
+            continue;
+        }
+        if let Some(feats) = feats {
+            let list = feats
+                .iter()
+                .map(|f| format!("\"{f}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            extra.push_str(&format!("\n[os.{os}]\nfeatures = [{list}]\n"));
+        }
+        if let Some(pdeps) = pdeps {
             extra.push_str(&format!("\n[os.{os}.dependencies]\n"));
             for d in pdeps {
-                extra.push_str(&format!("{d} = \"*\"\n"));
+                // pkg-config `--modversion` when available, else `*` (a draft
+                // placeholder `freight build` flags so the user pins it).
+                let v = crate::adaptors::pkg_config_version(d);
+                let v = if v.is_empty() { "*" } else { &v };
+                extra.push_str(&format!("{d} = \"{v}\"\n"));
             }
         }
     }
@@ -1505,23 +1565,25 @@ mod tests {
     // ── Platform-conditional dep mapping ──────────────────────────────────────
 
     #[test]
-    fn win32_deps_in_platform_section() {
+    fn win32_syslib_in_os_features() {
+        // ws2_32 is an OS system library → `[os.windows] features`, not a dep.
         let src = "if(WIN32)\n  target_link_libraries(app ws2_32)\nendif()";
         let (ex, _) = extract_src(src);
         assert!(ex.deps.is_empty());
+        assert!(ex.platform_deps.get("windows").map_or(true, Vec::is_empty));
         assert_eq!(
-            ex.platform_deps.get("windows").map(Vec::as_slice),
+            ex.os_features.get("windows").map(Vec::as_slice),
             Some(&["ws2_32".to_string()][..])
         );
     }
 
     #[test]
-    fn msvc_deps_in_windows_section() {
+    fn msvc_syslib_in_os_features() {
         let src = "if(MSVC)\n  target_link_libraries(app dbghelp)\nendif()";
         let (ex, _) = extract_src(src);
         assert!(ex.deps.is_empty());
         assert_eq!(
-            ex.platform_deps.get("windows").map(Vec::as_slice),
+            ex.os_features.get("windows").map(Vec::as_slice),
             Some(&["dbghelp".to_string()][..])
         );
     }
@@ -1538,11 +1600,14 @@ mod tests {
     }
 
     #[test]
-    fn unix_deps_in_unix_section() {
+    fn unix_syslibs_in_os_features() {
         let src = "if(UNIX)\n  target_link_libraries(app dl rt)\nendif()";
         let (ex, _) = extract_src(src);
-        // dl and rt are in AUTO_LINKED, so they get filtered out
+        // dl and rt are OS system libraries → `[os.unix] features`, not deps.
         assert!(ex.platform_deps.get("unix").map_or(true, Vec::is_empty));
+        let unix = ex.os_features.get("unix").cloned().unwrap_or_default();
+        assert!(unix.contains(&"dl".to_string()));
+        assert!(unix.contains(&"rt".to_string()));
     }
 
     #[test]
@@ -1554,14 +1619,15 @@ mod tests {
               target_link_libraries(app z)\n\
             endif()";
         let (ex, _) = extract_src(src);
-        // Windows-specific deps in platform bucket
-        let win = ex.platform_deps.get("windows").cloned().unwrap_or_default();
+        // Windows-specific system libs → os_features, not the dep bucket.
+        let win = ex.os_features.get("windows").cloned().unwrap_or_default();
         assert!(win.contains(&"ws2_32".to_string()));
         assert!(win.contains(&"crypt32".to_string()));
-        // Unconditional (else) dep in regular bucket
+        // Unconditional (else) dep `z` is a real library → regular bucket.
         assert!(ex.deps.contains(&"z".to_string()));
         // Nothing in the wrong bucket
         assert!(!ex.deps.contains(&"ws2_32".to_string()));
+        assert!(ex.platform_deps.get("windows").map_or(true, Vec::is_empty));
     }
 
     #[test]
@@ -1575,15 +1641,15 @@ mod tests {
               target_link_libraries(app z)\n\
             endif()";
         let (ex, _) = extract_src(src);
-        let win = ex.platform_deps.get("windows").cloned().unwrap_or_default();
+        let win = ex.os_features.get("windows").cloned().unwrap_or_default();
         let mac = ex.platform_deps.get("macos").cloned().unwrap_or_default();
         assert!(
             win.contains(&"ws2_32".to_string()),
-            "ws2_32 should be windows-only"
+            "ws2_32 should be a windows-only feature"
         );
         assert!(
             mac.contains(&"openssl".to_string()),
-            "openssl should be macos-only"
+            "openssl should be a macos-only dep"
         );
         assert!(
             ex.deps.contains(&"z".to_string()),
@@ -1606,15 +1672,18 @@ mod tests {
         let (ex, w) = extract_src(src);
         let toml = emit_toml("myapp", "0.1.0", &ex, &w);
         assert!(
-            toml.contains("[os.windows.dependencies]"),
+            toml.contains("[os.windows]"),
             "should have windows section"
         );
-        assert!(toml.contains("ws2_32 ="), "should have ws2_32");
+        assert!(
+            toml.contains("features = [\"ws2_32\"]"),
+            "ws2_32 should be a windows feature, got:\n{toml}"
+        );
         assert!(
             toml.contains("[dependencies]"),
             "should have main deps section"
         );
-        assert!(toml.contains("z ="), "should have z");
+        assert!(toml.contains("z ="), "should have z as a dep");
         assert!(
             !toml.contains("[os.linux.dependencies]"),
             "no spurious linux section"
