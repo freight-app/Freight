@@ -1,0 +1,26 @@
+[package]
+name        = "simd"
+version     = "0.1.0"
+description = "CPU/ISA features via [arch.*] features — AVX2 with a scalar fallback"
+
+[language.c]
+std = "c11"
+
+[[bin]]
+name = "simd"
+src  = "src/main.c"
+
+# `[arch.*] features` enable CPU/ISA extensions at compile time (the arch
+# counterpart to `[os.*] features`, which link system libraries). Each name
+# resolves through freight's cpu-features table to a compiler flag and unlocks
+# that feature's intrinsic headers for include hygiene:
+#
+#   avx2 → -mavx2 (defines __AVX2__, so <immintrin.h>'s AVX2 intrinsics compile)
+#   fma  → -mfma
+#
+# On non-x86 hosts this section simply doesn't apply and the scalar path is built.
+[arch.x86_64]
+features = ["avx2", "fma"]
+
+[arch.x86]
+features = ["avx2", "fma"]

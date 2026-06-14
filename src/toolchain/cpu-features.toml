@@ -1,0 +1,88 @@
+# Built-in CPU-feature (ISA extension) table.
+#
+# Each table maps a feature name (used in `[arch.<arch>] features = [...]`) to the
+# compiler flag that enables it and the intrinsic headers it unlocks. Unlike
+# `[os.*] features` (which link system libraries), `[arch.*] features` enable
+# SIMD / ISA extensions at compile time so the matching intrinsics compile and
+# the right instructions are emitted.
+#
+# Fields:
+#   flag     = "<flag>"  compiler flag, verbatim (GCC/Clang shape). Optional —
+#                        omit when the feature is baseline for the arch (e.g. NEON
+#                        on AArch64); the headers are still recognized.
+#   arch     = "<expr>"  `|`-separated arch names this feature belongs to. Used to
+#                        reject a feature declared under the wrong `[arch.*]` section.
+#   headers  = [...]     intrinsic headers this feature provides — used by include
+#                        hygiene to allow them without a declared dep. Entries may
+#                        be glob patterns (`*intrin.h`, `arm_*.h`).
+#
+# A bare `-m<name>` flag is the fallback for any name not in this table, so common
+# x86 toggles work even when unlisted. Add or override entries with `.toml` files
+# in `$FREIGHT_HOME/toolchains/cpu-features/` (default `~/.freight/toolchains/cpu-features/`).
+
+# ── x86 / x86-64 ────────────────────────────────────────────────────────────────
+[sse4.2]
+arch    = "x86_64 | x86"
+flag    = "-msse4.2"
+headers = ["nmmintrin.h", "x86intrin.h"]
+
+[avx]
+arch    = "x86_64 | x86"
+flag    = "-mavx"
+# `*intrin.h` is the umbrella for every x86 SSE/AVX/… intrinsic header.
+headers = ["immintrin.h", "x86intrin.h", "*intrin.h"]
+
+[avx2]
+arch    = "x86_64 | x86"
+flag    = "-mavx2"
+headers = ["immintrin.h"]
+
+[avx512f]
+arch    = "x86_64"
+flag    = "-mavx512f"
+headers = ["immintrin.h"]
+
+[fma]
+arch    = "x86_64 | x86"
+flag    = "-mfma"
+headers = ["immintrin.h"]
+
+[aes]
+arch    = "x86_64 | x86"
+flag    = "-maes"
+headers = ["wmmintrin.h"]
+
+# ── ARM ─────────────────────────────────────────────────────────────────────────
+# NEON is baseline on AArch64 (no flag needed); on 32-bit ARM it needs -mfpu=neon.
+[neon]
+arch    = "arm"
+flag    = "-mfpu=neon"
+# `arm_*.h` covers the ARM NEON / ACLE / SVE / FP16 intrinsic headers.
+headers = ["arm_neon.h", "arm_*.h"]
+
+[sve]
+arch    = "aarch64"
+flag    = "-march=armv8-a+sve"
+headers = ["arm_sve.h"]
+
+[sve2]
+arch    = "aarch64"
+flag    = "-march=armv8-a+sve2"
+headers = ["arm_sve.h"]
+
+# ── PowerPC ─────────────────────────────────────────────────────────────────────
+[altivec]
+arch    = "powerpc | powerpc64"
+flag    = "-maltivec"
+headers = ["altivec.h"]
+
+[vsx]
+arch    = "powerpc64"
+flag    = "-mvsx"
+headers = ["altivec.h"]
+
+# ── RISC-V ──────────────────────────────────────────────────────────────────────
+[rvv]
+arch    = "riscv64"
+flag    = "-march=rv64gcv"
+headers = ["riscv_vector.h"]

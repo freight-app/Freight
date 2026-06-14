@@ -502,7 +502,7 @@ All fields are optional within each section:
 | `defines` | Extra `-D` flags applied only on this platform. |
 | `flags` | Extra compiler flags applied only on this platform. |
 | `includes` | Extra include paths (`-I`) applied only on this platform. |
-| `features` | <a id="osplatform-features"></a>System libraries to link on this platform. Each name resolves through the system-lib stub table to `-l<lib>` (macOS frameworks → `-framework`, MSVC → `<name>.lib`); unknown names fall back to `-l<name>`. The canonical way to link versionless OS libraries. |
+| `features` | <a id="osplatform-features"></a>Context-dependent. In `[os.*]`: **system libraries** to link — each name resolves through the system-lib stub table to `-l<lib>` (macOS frameworks → `-framework`, MSVC → `<name>.lib`); unknown names fall back to `-l<name>`. In `[arch.*]`: **CPU/ISA features** to enable — each resolves through the cpu-features table to a compiler flag (`avx2` → `-mavx2`, `sve` → `-march=armv8-a+sve`; unknown → `-m<name>`) and unlocks that feature's intrinsic headers for include hygiene. |
 | `version` | Minimum target OS / SDK version. On Apple targets → `-mmacosx-version-min` / `-miphoneos-version-min`; always exposed to source as `-DFREIGHT_OS_VERSION="<v>"`. |
 | `dependencies` | Inline dependency table — same syntax as `[dependencies]`. |
 | `language` | Per-language overrides — same keys as `[language.<key>]`. |
@@ -528,13 +528,20 @@ features = ["Foundation"]                        # -framework Foundation
 defines = ["POSIX_BUILD"]
 
 [arch.x86_64]
-srcs    = ["src/arch/x86_64/**"]
-defines = ["HAVE_SSE2"]
+srcs     = ["src/arch/x86_64/**"]
+defines  = ["HAVE_SSE2"]
+features = ["avx2", "fma"]                       # -mavx2 -mfma; unlocks <immintrin.h>
 
 [arch.aarch64]
-srcs    = ["src/arch/aarch64/**"]
-defines = ["HAVE_NEON"]
+srcs     = ["src/arch/aarch64/**"]
+defines  = ["HAVE_NEON"]
+features = ["sve"]                               # -march=armv8-a+sve; unlocks <arm_sve.h>
 ```
+
+CPU-feature names come from a bundled `cpu-features.toml` (link name/flag, arch, and the
+intrinsic headers each unlocks); add or override entries with `.toml` files in
+`$FREIGHT_HOME/toolchains/cpu-features/`. A feature declared under an `[arch.*]` section it
+doesn't belong to (e.g. `avx2` under `[arch.aarch64]`) is a validation error.
 
 Files matched by `srcs` globs in any `[os.*]` or `[arch.*]` section are automatically
 excluded from the unconditional source walk — they will never be compiled on a non-matching

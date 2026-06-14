@@ -52,8 +52,34 @@ pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<Vali
     validate_foreign_deps(manifest, &mut errors);
     validate_dep_versions(manifest, &mut errors);
     validate_no_platform_deps(manifest, &mut errors);
+    validate_cpu_features(manifest, &mut errors);
 
     errors
+}
+
+/// Reject a known CPU feature declared under an `[arch.*]` section it does not
+/// belong to (e.g. `[arch.aarch64] features = ["avx2"]` would emit `-mavx2` on
+/// ARM). Unknown names fall back to `-m<name>` and are not validated here.
+fn validate_cpu_features(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    use crate::toolchain::cpu_features::{
+        feature_allows_arch, find_cpu_feature, load_cpu_features,
+    };
+    let table = load_cpu_features();
+    for (arch_key, sec) in &m.arch {
+        for feat in &sec.features {
+            if let Some(cf) = find_cpu_feature(feat, &table) {
+                if !feature_allows_arch(cf, arch_key) {
+                    errors.push(ValidationError::new(
+                        &format!("[arch.{arch_key}]"),
+                        format!(
+                            "CPU feature '{feat}' is not valid for arch '{arch_key}' (belongs to: {})",
+                            cf.arch.as_deref().unwrap_or("any")
+                        ),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// Reject dependency keys named after an OS/family (`unix`, `windows`, …). These
@@ -1426,6 +1452,38 @@ sse_lib = { version = "1", arch = "x86_64" }
             field_errors(s, "[dependencies.").is_empty(),
             "known os/arch dep filters should validate clean"
         );
+    }
+
+    #[test]
+    fn cpu_feature_under_wrong_arch_is_rejected() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[arch.aarch64]
+features = ["avx2"]
+"#;
+        let errs = field_errors(s, "[arch.aarch64]");
+        assert!(!errs.is_empty(), "avx2 under aarch64 must be rejected");
+        assert!(errs.iter().any(|e| e.message.contains("avx2")));
+    }
+
+    #[test]
+    fn cpu_feature_under_correct_arch_validates() {
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[arch.x86_64]
+features = ["avx2", "fma"]
+"#;
+        assert!(field_errors(s, "[arch.x86_64]").is_empty());
     }
 
     #[test]

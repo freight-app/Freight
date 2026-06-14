@@ -438,8 +438,8 @@ pub fn completion_result(
             ),
             (
                 "features",
-                "System libraries",
-                "System libraries to link when this OS/arch is active (→ -l<lib>, macOS -framework, MSVC <name>.lib).",
+                "System libraries / CPU features",
+                "In [os.*]: system libraries to link (→ -l<lib>, macOS -framework, MSVC <name>.lib). In [arch.*]: CPU/ISA features to enable (avx2 → -mavx2, sve → -march=...+sve).",
             ),
             (
                 "version",
@@ -894,7 +894,7 @@ const CONDITIONAL_PARAMS: &[(&str, &str)] = &[
     ("includes", "Platform-specific include paths."),
     (
         "features",
-        "System libraries to link on this platform (→ -l<lib>, macOS -framework, MSVC <name>.lib).",
+        "In [os.*]: system libraries to link (-l<lib>). In [arch.*]: CPU/ISA features to enable (avx2 → -mavx2).",
     ),
     (
         "version",

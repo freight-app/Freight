@@ -144,6 +144,13 @@ impl Manifest {
                     include_paths.push(buf);
                 }
             }
+            // `[arch.*] features` enable CPU/ISA extensions → compiler flags
+            // (e.g. ["avx2"] → -mavx2). Resolved through the cpu-features table.
+            for f in crate::toolchain::cpu_features::resolve_cpu_feature_flags(&ov.features) {
+                if !flags.contains(&f) {
+                    flags.push(f);
+                }
+            }
         }
 
         let base = BuildSettings {
@@ -188,9 +195,10 @@ impl Manifest {
     }
 
     /// System-library link features for the current host, collected from matching
-    /// `[os.*]` and `[arch.*]` sections (family-first, de-duplicated). Each entry
-    /// resolves to a `-l<lib>` flag via the system-lib stub table at link time.
-    /// Mirrors the overlay order used by [`build_settings_for`].
+    /// `[os.*]` sections (family-first, de-duplicated). Each entry resolves to a
+    /// `-l<lib>` flag via the system-lib stub table at link time. (`[arch.*]
+    /// features` are CPU/ISA extensions, not libraries — they become compiler
+    /// flags in [`build_settings_for`], not link flags.)
     pub fn system_features(&self) -> Vec<String> {
         let mut features: Vec<String> = Vec::new();
         for os_key in host_platforms() {
@@ -202,19 +210,6 @@ impl Manifest {
             {
                 merge_string_vec(&mut features, &ov.features);
             }
-        }
-        let current_arch = self
-            .target
-            .arch
-            .as_deref()
-            .unwrap_or(std::env::consts::ARCH);
-        if let Some(ov) = self
-            .arch
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(current_arch))
-            .map(|(_, v)| v)
-        {
-            merge_string_vec(&mut features, &ov.features);
         }
         features
     }

@@ -1,5 +1,6 @@
 pub mod builtin;
 pub mod cache;
+pub mod cpu_features;
 pub mod debugger;
 pub mod detect;
 pub mod system_libs;

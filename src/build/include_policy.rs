@@ -121,9 +121,14 @@ impl IncludeAllowlist {
 /// skipped before classification, so listing (e.g.) Windows headers on Linux is
 /// harmless. This keeps the policy simple and correct under cross-compilation.
 pub fn is_os_system_header(name: &str) -> bool {
-    // Compiler intrinsics: every SSE/AVX/NEON/etc. header ends in `intrin.h`,
-    // and the ARM ACLE/SVE/FP16 headers are `arm_*.h`.
-    if name.ends_with("intrin.h") || (name.starts_with("arm_") && name.ends_with(".h")) {
+    // Arch/compiler intrinsic headers (immintrin.h, arm_neon.h, altivec.h,
+    // riscv_vector.h, …) are data-driven: they come from the `headers` fields of
+    // the cpu-features table (cpu-features.toml + user files), where entries may
+    // be glob patterns like `*intrin.h` or `arm_*.h`.
+    if cpu_feature_header_patterns()
+        .iter()
+        .any(|pat| header_glob_match(pat, name))
+    {
         return true;
     }
     // Subpath families that are entirely OS/kernel/compiler-owned.
@@ -149,6 +154,29 @@ pub fn is_os_system_header(name: &str) -> bool {
         return true;
     }
     OS_SYSTEM_HEADERS.contains(&name)
+}
+
+/// Header name patterns provided by CPU/ISA features, collected once from the
+/// cpu-features table (`cpu-features.toml` + user files). Entries may be globs
+/// (`*intrin.h`, `arm_*.h`). Cached for the include-hygiene hot path.
+fn cpu_feature_header_patterns() -> &'static [String] {
+    static PATS: OnceLock<Vec<String>> = OnceLock::new();
+    PATS.get_or_init(|| {
+        crate::toolchain::cpu_features::load_cpu_features()
+            .into_iter()
+            .flat_map(|f| f.headers)
+            .collect()
+    })
+}
+
+/// Minimal single-`*` glob match: `arm_*.h`, `*intrin.h`, or an exact name.
+fn header_glob_match(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        Some((pre, suf)) => {
+            name.len() >= pre.len() + suf.len() && name.starts_with(pre) && name.ends_with(suf)
+        }
+        None => pattern == name,
+    }
 }
 
 /// Bare POSIX / Windows / Darwin / compiler header names (the non-subpath set).
@@ -1008,6 +1036,11 @@ import   spaced.mod  ;
             "windows.h",
             "cpuid.h",
         ] {
+            assert!(is_os_system_header(h), "{h} should be a system header");
+        }
+        // Data-driven intrinsic headers: covered by globs / specific entries in
+        // cpu-features.toml (emmintrin.h via `*intrin.h`; altivec / riscv-v).
+        for h in ["emmintrin.h", "arm_sve.h", "altivec.h", "riscv_vector.h"] {
             assert!(is_os_system_header(h), "{h} should be a system header");
         }
         // A plain third-party header is not.

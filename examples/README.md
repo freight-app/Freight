@@ -29,6 +29,7 @@ freight run
 |---|---|
 | `cpp/features` | `[features]` → `-D<NAME>` conditional compilation; `--features` / `--no-default-features` |
 | `deps/dep-defines` | Forwarding a `-D` into a dependency's build via `<dep>/define:NAME`; defines are per-package |
+| `c/simd` | `[arch.*] features` enable CPU/ISA extensions (`avx2` → `-mavx2`) with a scalar fallback |
 
 ## Broken examples
 
