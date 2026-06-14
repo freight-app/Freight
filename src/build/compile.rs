@@ -80,6 +80,12 @@ pub fn compile_sources(
     let lf = linker_family(manifest, backend, detected);
     let progress = progress.clone();
 
+    // If compile flags changed since the last build (features, forwarded defines,
+    // manifest edits, …), every object is stale regardless of mtime.
+    let fingerprint =
+        config_fingerprint(project_dir, profile, feature_defines, header_unit_flags, include_dirs);
+    let flags_changed = config_changed(target_dir, profile, &fingerprint);
+
     let results: Result<Vec<(PathBuf, bool)>, FreightError> = sources
         .par_iter()
         .map(|src| -> Result<(PathBuf, bool), FreightError> {
@@ -87,7 +93,7 @@ pub fn compile_sources(
             let obj = object_path(target_dir, profile, &src.path);
             let dep = dep_file_path(target_dir, profile, &src.path);
 
-            if is_up_to_date(&src_abs, &obj, &dep) {
+            if !flags_changed && is_up_to_date(&src_abs, &obj, &dep) {
                 progress(BuildEvent::Fresh {
                     path: src.path.clone(),
                 });
@@ -159,6 +165,8 @@ pub fn compile_sources(
         .collect();
 
     let pairs = results?;
+    // Record the fingerprint only after all objects compiled successfully.
+    write_fingerprint(target_dir, profile, &fingerprint);
     let objects = pairs.iter().map(|(o, _)| o.clone()).collect();
     let compiled_sources = sources
         .iter()
@@ -200,6 +208,12 @@ pub fn compile_sources_unity(
 
     let pf = primary_family(backend, detected);
     let progress_clone = progress.clone();
+
+    // Capture flag-change state up front: the inner compile_sources call below
+    // rewrites the fingerprint file, so it must be read before then.
+    let fingerprint =
+        config_fingerprint(project_dir, profile, feature_defines, header_unit_flags, include_dirs);
+    let flags_changed = config_changed(target_dir, profile, &fingerprint);
 
     // Split sources: unifiable langs vs. compile-individually langs.
     let (unity_srcs, regular_srcs): (Vec<SourceFile>, Vec<SourceFile>) = sources
@@ -274,7 +288,8 @@ pub fn compile_sources_unity(
 
         // Up-to-date: object must exist and be newer than every constituent source.
         let obj_mtime = mtime(&obj);
-        let up_to_date = obj_mtime.is_some()
+        let up_to_date = !flags_changed
+            && obj_mtime.is_some()
             && !lang_sources.iter().any(|s| {
                 mtime(&project_dir.join(&s.path))
                     .is_none_or(|sm| obj_mtime.is_none_or(|om| sm >= om))
@@ -323,6 +338,10 @@ pub fn compile_sources_unity(
         total_compiled += lang_sources.len();
         all_objects.push(obj);
     }
+
+    // Covers the unity-only case where the inner compile_sources call (which
+    // also writes this) never ran.
+    write_fingerprint(target_dir, profile, &fingerprint);
 
     Ok(CompileResult {
         objects: all_objects,
@@ -545,6 +564,73 @@ pub(crate) fn is_up_to_date(source: &Path, object: &Path, dep_file: &Path) -> bo
         }
     }
     true
+}
+
+// ── Build-config fingerprint ──────────────────────────────────────────────────
+//
+// `is_up_to_date` only compares mtimes, so a change that alters compile *flags*
+// without touching any source — toggling a feature, forwarding a `<dep>/define`,
+// editing `freight.toml`, or a dep appearing on the include path — would leave
+// stale objects in place. To catch that, each (target_dir, profile) records a
+// fingerprint of the inputs that affect every object's command line. When the
+// fingerprint changes, objects are treated as stale regardless of mtime.
+
+/// Compute a fingerprint of the per-build compile configuration.
+fn config_fingerprint(
+    project_dir: &Path,
+    profile: &str,
+    feature_defines: &[String],
+    header_unit_flags: &[String],
+    include_dirs: &[PathBuf],
+) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut h = DefaultHasher::new();
+    profile.hash(&mut h);
+
+    let mut defs: Vec<&str> = feature_defines.iter().map(String::as_str).collect();
+    defs.sort_unstable();
+    defs.hash(&mut h);
+
+    header_unit_flags.hash(&mut h);
+
+    let mut incs: Vec<String> = include_dirs
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    incs.sort_unstable();
+    incs.hash(&mut h);
+
+    // Manifest contents cover std / opt-level / [compiler] defines+flags changes.
+    if let Ok(bytes) = fs::read(project_dir.join("freight.toml")) {
+        bytes.hash(&mut h);
+    }
+
+    format!("{:016x}", h.finish())
+}
+
+fn fingerprint_path(target_dir: &Path, profile: &str) -> PathBuf {
+    target_dir.join(profile).join(".build-fingerprint")
+}
+
+/// Return `true` when the stored fingerprint differs from `current` (or is
+/// absent) — i.e. compile flags changed since the last build and every object
+/// must be rebuilt.
+fn config_changed(target_dir: &Path, profile: &str, current: &str) -> bool {
+    match fs::read_to_string(fingerprint_path(target_dir, profile)) {
+        Ok(stored) => stored.trim() != current,
+        Err(_) => true,
+    }
+}
+
+/// Persist `current` so the next build can detect flag changes. Best-effort.
+fn write_fingerprint(target_dir: &Path, profile: &str, current: &str) {
+    let path = fingerprint_path(target_dir, profile);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, current);
 }
 
 /// Parse a Makefile dependency file and return all listed prerequisites.
