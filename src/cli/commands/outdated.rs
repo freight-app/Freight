@@ -76,7 +76,7 @@ fn cmd_outdated(repo: Option<&str>) {
                     && !freight::manifest::types::is_platform_dep(name) =>
             {
                 let ver = d.version.as_deref().unwrap();
-                if ver.is_empty() || ver == "*" {
+                if freight::manifest::types::is_unpinned_version(ver) {
                     continue;
                 }
                 registry_deps.push(RegistryDep {

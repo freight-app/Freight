@@ -615,6 +615,16 @@ pub fn is_platform_dep(name: &str) -> bool {
     PLATFORM_PACKAGES.contains(&name)
 }
 
+/// Whether a version string places no constraint — empty or a bare `*`.
+///
+/// Rejected for declared deps by manifest validation (every dependency needs a
+/// concrete version), but still recognised across the resolver/fetch/query paths
+/// to stay robust against transitive or legacy manifests that carry one.
+pub fn is_unpinned_version(version: &str) -> bool {
+    let v = version.trim();
+    v.is_empty() || v == "*"
+}
+
 /// A dependency can be either a bare version string or a detailed table.
 ///
 /// ```toml

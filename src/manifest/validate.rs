@@ -4,8 +4,8 @@ use std::path::Path;
 use semver::Version;
 
 use super::types::{
-    is_platform_dep, known_arch_keys, known_platform_keys, Dependency, DetailedDep, LibType,
-    Manifest, Profile,
+    is_platform_dep, is_unpinned_version, known_arch_keys, known_platform_keys, Dependency,
+    DetailedDep, LibType, Manifest, Profile,
 };
 use crate::toolchain::CompilerTemplate;
 
@@ -78,13 +78,7 @@ fn validate_dep_versions(m: &Manifest, errors: &mut Vec<ValidationError>) {
                 d.version.as_deref()
             }
         };
-        let unpinned = match version {
-            None => true,
-            Some(v) => {
-                let v = v.trim();
-                v.is_empty() || v == "*"
-            }
-        };
+        let unpinned = version.map(is_unpinned_version).unwrap_or(true);
         if unpinned {
             errors.push(ValidationError::new(
                 &format!("[{section}.{name}]"),

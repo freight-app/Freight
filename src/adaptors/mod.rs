@@ -396,19 +396,18 @@ fn cmake_build_dep_constraint(manifest: &Manifest) -> Option<String> {
     let dep = manifest.build_dependencies.get("cmake")?;
     match dep {
         Dependency::Simple(v) => {
-            let v = v.trim();
-            if v.is_empty() || v == "*" {
+            if crate::manifest::types::is_unpinned_version(v) {
                 None
             } else {
-                Some(v.to_string())
+                Some(v.trim().to_string())
             }
         }
         Dependency::Detailed(d) => {
-            let v = d.version.as_deref()?.trim();
-            if v.is_empty() || v == "*" {
+            let v = d.version.as_deref()?;
+            if crate::manifest::types::is_unpinned_version(v) {
                 None
             } else {
-                Some(v.to_string())
+                Some(v.trim().to_string())
             }
         }
     }
@@ -493,11 +492,14 @@ fn dep_repo(dep: &Dependency) -> Option<&str> {
     }
 }
 
-fn package_query(name: &str, version: &str) -> String {
-    let version = version.trim();
-    if version.is_empty() || version == "*" {
+/// Build a pkg-config query string from a dep name + version constraint:
+/// unconstrained → bare name; `<`/`>`/`=`/`!`-prefixed → passed through; bare
+/// number → `>=`. Shared by the build resolver and the fetch path.
+pub(crate) fn package_query(name: &str, version: &str) -> String {
+    if crate::manifest::types::is_unpinned_version(version) {
         return name.to_string();
     }
+    let version = version.trim();
     if matches!(version.as_bytes().first(), Some(b'<' | b'>' | b'=' | b'!')) {
         format!("{name} {version}")
     } else {

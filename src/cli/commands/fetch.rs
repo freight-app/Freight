@@ -243,7 +243,7 @@ fn fetch_prebuilt_deps(
             _ => continue,
         };
 
-        if version.is_empty() || version == "*" {
+        if freight::manifest::types::is_unpinned_version(version) {
             continue;
         }
 

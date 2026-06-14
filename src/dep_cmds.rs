@@ -6,11 +6,12 @@ use std::path::Path;
 
 use toml_edit::{value, DocumentMut, Item, Table, Value};
 
+use crate::adaptors::package_query;
 use crate::build::deps::resolve_dep_graph;
 use crate::error::FreightError;
 use crate::fetch::{self, git};
 use crate::lock::LockFile;
-use crate::manifest::types::{Dependency, Manifest};
+use crate::manifest::types::{is_unpinned_version, Dependency, Manifest};
 use crate::manifest::{find_manifest_dir, load_manifest};
 use crate::registry::{FreightRegistry, PackageRepo};
 use crate::toolchain::cache::GlobalConfig;
@@ -340,8 +341,8 @@ pub fn fetch_registry_deps(
             _ => continue,
         };
 
-        // Skip wildcard versions — no specific version to fetch.
-        if version.trim().is_empty() || version == "*" {
+        // Skip unconstrained versions — no specific version to fetch.
+        if is_unpinned_version(version) {
             continue;
         }
 
@@ -626,18 +627,6 @@ fn package_dep_version(dep: &Dependency) -> Option<&str> {
             d.version.as_deref()
         }
         _ => None,
-    }
-}
-
-fn package_query(name: &str, version: &str) -> String {
-    let version = version.trim();
-    if version.is_empty() || version == "*" {
-        return name.to_string();
-    }
-    if matches!(version.as_bytes().first(), Some(b'<' | b'>' | b'=' | b'!')) {
-        format!("{name} {version}")
-    } else {
-        format!("{name} >= {version}")
     }
 }
 
