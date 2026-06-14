@@ -114,8 +114,15 @@ fn validate_features(m: &Manifest, errors: &mut Vec<ValidationError>) {
             }
             // `dep:name` activates an optional dependency and `define:NAME[=value]`
             // injects a preprocessor define — neither is a reference to another
-            // feature, so skip the known-feature check.
-            if dep.starts_with("dep:") || dep.starts_with("define:") {
+            // feature, so skip the known-feature check. `<dep>/define:NAME` (and
+            // the weak `<dep>?/define:NAME`) forwards a define into a dependency's
+            // build, so it isn't a feature reference either.
+            if dep.starts_with("dep:")
+                || dep.starts_with("define:")
+                || dep
+                    .split_once('/')
+                    .is_some_and(|(_, rhs)| rhs.trim_start().starts_with("define:"))
+            {
                 continue;
             }
             if !m.features.contains_key(dep.as_str()) {

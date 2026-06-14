@@ -111,6 +111,7 @@ pub fn build_foreign_deps(
     root_dir: &std::path::Path,
     manifest: &Manifest,
     profile: &str,
+    dep_defines: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     progress: &Progress,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
     let pkgs_root = root_dir;
@@ -345,11 +346,17 @@ pub fn build_foreign_deps(
             }
         };
 
+        // Per-dep defines: the dep's own `defines = [...]` plus any forwarded from
+        // the root manifest via `<dep>/define:NAME` feature entries.
+        let mut defines = d.defines.clone();
+        if let Some(fwd) = dep_defines.get(name) {
+            defines.extend(fwd.iter().cloned());
+        }
         jobs.push(BuildJob {
             name: name.clone(),
             dep_dir,
             backend: bs,
-            defines: d.defines.clone(),
+            defines,
             include: d.include.clone(),
             target: manifest.compiler.target.clone(),
             tool_paths: tool_paths.clone(),

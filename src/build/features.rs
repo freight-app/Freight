@@ -8,10 +8,17 @@
 //! `dep:name` entries inside a feature's value list activate an optional dep
 //! instead of producing a define — matching Cargo's syntax. A `define:NAME` or
 //! `define:NAME=value` entry injects an explicit preprocessor define (`-DNAME`
-//! or `-DNAME=value`) so a feature can drive a specific macro/value, not just
-//! the auto `-D<FEATURE>`.
+//! or `-DNAME=value`) into *this* package, so a feature can drive a specific
+//! macro/value, not just the auto `-D<FEATURE>`.
+//!
+//! A `<dep>/define:NAME[=value]` entry forwards an explicit define into the
+//! build of dependency `<dep>` instead of this package — mirroring Cargo's
+//! `<dep>/<feature>` syntax (where enabling a dep's feature flips a `cfg` inside
+//! that dep). The strong form activates `<dep>` if it is optional; the weak form
+//! `<dep>?/define:NAME[=value]` forwards the define only when `<dep>` is already
+//! activated by something else, and never activates it itself.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::error::FreightError;
 
@@ -26,6 +33,10 @@ pub struct FeatureResolution {
     /// Explicit defines from `define:NAME` / `define:NAME=value` entries, ready
     /// for `-D` prefixing (e.g. `"NAME"`, `"NAME=value"`). Sorted, de-duplicated.
     pub defines: BTreeSet<String>,
+    /// Defines forwarded into a dependency's build via `<dep>/define:NAME` (or the
+    /// weak `<dep>?/define:NAME`). Keyed by dep name; values ready for `-D`
+    /// prefixing. Sorted, de-duplicated per dep.
+    pub dep_defines: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// The prefix marking an explicit-define entry in a feature list.
@@ -52,6 +63,7 @@ pub fn resolve_features(
             active: BTreeSet::new(),
             activated_deps: BTreeSet::new(),
             defines: BTreeSet::new(),
+            dep_defines: BTreeMap::new(),
         });
     }
 
@@ -63,6 +75,10 @@ pub fn resolve_features(
     let mut active: BTreeSet<String> = BTreeSet::new();
     let mut activated_deps: BTreeSet<String> = BTreeSet::new();
     let mut defines: BTreeSet<String> = BTreeSet::new();
+    let mut dep_defines: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Weak `<dep>?/define:NAME` entries, resolved after the BFS once the full
+    // activated-dep set is known: (dep, define).
+    let mut weak_dep_defines: Vec<(String, String)> = Vec::new();
     let mut queue: VecDeque<&str> = VecDeque::new();
 
     if use_defaults {
@@ -77,6 +93,36 @@ pub fn resolve_features(
     while let Some(feat) = queue.pop_front() {
         if feat == "default" {
             continue;
+        }
+
+        // <dep>/define:NAME[=value] (or weak <dep>?/define:NAME) → forward an
+        // explicit define into that dependency's build, mirroring Cargo's
+        // `<dep>/<feature>` syntax. Checked before the bare `dep:`/`define:`
+        // arms because those prefixes never contain a `/`.
+        if let Some((dep_part, rhs)) = feat.split_once('/') {
+            if let Some(def) = rhs.trim().strip_prefix(DEFINE_PREFIX) {
+                let def = def.trim();
+                if let Some(dep_name) = dep_part.strip_suffix('?') {
+                    // Weak: only forwarded if the dep ends up activated.
+                    let dep_name = dep_name.trim();
+                    if !dep_name.is_empty() && !def.is_empty() {
+                        weak_dep_defines.push((dep_name.to_string(), def.to_string()));
+                    }
+                } else {
+                    // Strong: activate the dep (if optional) and forward the define.
+                    let dep_name = dep_part.trim();
+                    if !dep_name.is_empty() {
+                        activated_deps.insert(dep_name.to_string());
+                        if !def.is_empty() {
+                            dep_defines
+                                .entry(dep_name.to_string())
+                                .or_default()
+                                .insert(def.to_string());
+                        }
+                    }
+                }
+                continue;
+            }
         }
 
         // dep:name → activate the optional dep, don't produce a define.
@@ -110,10 +156,18 @@ pub fn resolve_features(
         }
     }
 
+    // Resolve weak dep-defines now that the full activated-dep set is known.
+    for (dep_name, def) in weak_dep_defines {
+        if activated_deps.contains(&dep_name) {
+            dep_defines.entry(dep_name).or_default().insert(def);
+        }
+    }
+
     Ok(FeatureResolution {
         active,
         activated_deps,
         defines,
+        dep_defines,
     })
 }
 
@@ -247,6 +301,46 @@ mod tests {
         // `define:` entries are not treated as feature names or deps.
         assert!(!r.active.iter().any(|a| a.starts_with("define:")));
         assert!(r.activated_deps.is_empty());
+    }
+
+    #[test]
+    fn dep_slash_define_forwards_into_dependency() {
+        let f = map(&[
+            ("default", &["tls"]),
+            // Strong form: activates openssl AND forwards the define into its build.
+            ("tls", &["openssl/define:WITH_TLS=1", "openssl/define:SHA2"]),
+        ]);
+        let r = resolve_features(&f, &[], true).unwrap();
+        assert!(r.active.contains("tls"));
+        // Strong form activates the (optional) dep.
+        assert!(r.activated_deps.contains("openssl"));
+        let fwd = r.dep_defines.get("openssl").expect("openssl dep_defines");
+        assert!(fwd.contains("WITH_TLS=1"));
+        assert!(fwd.contains("SHA2"));
+        // Not leaked into this package's own defines.
+        assert!(!r.defines.contains("WITH_TLS=1"));
+    }
+
+    #[test]
+    fn weak_dep_define_only_when_dep_active() {
+        // Weak entry alone: openssl not otherwise activated → no forwarding.
+        let f = map(&[("only_weak", &["openssl?/define:WITH_TLS"])]);
+        let r = resolve_features(&f, &["only_weak".to_string()], false).unwrap();
+        assert!(!r.activated_deps.contains("openssl"));
+        assert!(r.dep_defines.get("openssl").is_none());
+
+        // Weak entry + a strong activation elsewhere → define is forwarded.
+        let f = map(&[(
+            "tls",
+            &["dep:openssl", "openssl?/define:WITH_TLS"],
+        )]);
+        let r = resolve_features(&f, &["tls".to_string()], false).unwrap();
+        assert!(r.activated_deps.contains("openssl"));
+        assert!(
+            r.dep_defines
+                .get("openssl")
+                .is_some_and(|d| d.contains("WITH_TLS"))
+        );
     }
 
     #[test]

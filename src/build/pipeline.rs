@@ -77,6 +77,8 @@ pub struct PipelineConfig {
 pub struct FeatureResolution {
     pub defines: Vec<String>,
     pub activated_deps: std::collections::BTreeSet<String>,
+    /// Defines forwarded into specific deps via `<dep>/define:NAME`, keyed by dep.
+    pub dep_defines: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 /// Aggregated dep output: static libs + include dirs + raw link flags + tool paths.
@@ -134,6 +136,7 @@ pub fn stage_features(
     Ok(FeatureResolution {
         defines,
         activated_deps: resolution.activated_deps,
+        dep_defines: resolution.dep_defines,
     })
 }
 
@@ -176,6 +179,7 @@ pub(crate) fn stage_build_deps(
     profile: &str,
     include_dev: bool,
     activated_deps: &std::collections::BTreeSet<String>,
+    dep_defines: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     ctx: &ProjectContext,
     progress: &Progress,
 ) -> Result<(Vec<ResolvedDep>, BuiltDepsOutput), FreightError> {
@@ -194,10 +198,17 @@ pub(crate) fn stage_build_deps(
         &ctx.templates,
         &ctx.detected,
         &resolved,
+        dep_defines,
         progress,
     )?;
-    let (foreign, _pc, tool_paths) =
-        crate::adaptors::build_foreign_deps(project_dir, root_dir, manifest, profile, progress)?;
+    let (foreign, _pc, tool_paths) = crate::adaptors::build_foreign_deps(
+        project_dir,
+        root_dir,
+        manifest,
+        profile,
+        dep_defines,
+        progress,
+    )?;
 
     let mut output = BuiltDepsOutput {
         libs: built.libs,
@@ -679,6 +690,7 @@ pub fn run_pipeline_at(
         profile,
         include_dev,
         &feat.activated_deps,
+        &feat.dep_defines,
         &ctx,
         progress,
     )?;

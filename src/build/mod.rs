@@ -1419,6 +1419,7 @@ fn build_resolved_deps(
     templates: &[CompilerTemplate],
     detected: &[DetectedCompiler],
     resolved: &[ResolvedDep],
+    dep_defines: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     progress: &Progress,
 ) -> Result<BuiltDeps, FreightError> {
     if resolved.is_empty() {
@@ -1450,7 +1451,12 @@ fn build_resolved_deps(
                 .unwrap_or_default();
             let resolution =
                 features::resolve_features(&dep.manifest.features, &req, use_defaults)?;
-            features::to_defines(&resolution.active)
+            let mut defs = features::to_defines(&resolution.active);
+            // Explicit defines forwarded from the root via `<dep>/define:NAME`.
+            if let Some(fwd) = dep_defines.get(&dep.name) {
+                defs.extend(fwd.iter().cloned());
+            }
+            defs
         };
 
         let dep_found = discover(&dep.dir, &dep.manifest, templates);
