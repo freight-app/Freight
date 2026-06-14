@@ -117,6 +117,32 @@ include completion, include/import inlay hints. Phase 2:
       `undeclared-module` diagnostic, `import …;` completion offers declared
       modules, and goto-definition jumps to the interface unit.
 
+### Cross-compilation: resolve deps for non-host targets
+
+**End goal:** a cross build (`[compiler] target`/`sysroot`, `--target`,
+`FREIGHT_SYSROOT`) never links host libraries — system deps come from the target
+sysroot, everything else from a freight-fetched source package built for the
+target. Triple and sysroot are complementary (the Yocto/Petalinux pattern):
+the compiler gets `--sysroot`, pkg-config is scoped into the sysroot.
+
+**How to solve:**
+- [x] `adaptors::cross_build(manifest)` / `is_cross_triple` detect a cross build
+      (target ≠ host arch/OS, or a sysroot set).
+- [x] `pkg_config_query_cross` runs pkg-config with `PKG_CONFIG_SYSROOT_DIR` +
+      `PKG_CONFIG_LIBDIR`/`PATH` restricted to the sysroot (no host `/usr/lib`
+      leakage). Compiler `--sysroot` was already emitted by the gnu/llvm/amd/intel
+      templates.
+- [x] `resolve_version_dep` cross branch: never host pkg-config; sysroot
+      pkg-config → libc stub (`-lpthread`, resolved by the cross linker) →
+      freight-fetched source (`resolve_fetched_dep`, shared with native) → clear
+      error. `fetch_package_deps` status report is sysroot-aware too.
+- [ ] **Hygiene/LSP under cross:** include-hygiene resolves "system" headers from
+      the host `/usr/include`; when a sysroot is set it should resolve against the
+      sysroot instead (else cross headers look undeclared).
+- [ ] **Wildcard cross:** `zlib = "*"` isn't fetched (no concrete version). Decide
+      whether `*` should pull the registry's latest when cross + not in sysroot,
+      or require a concrete pin.
+
 ---
 
 ### LSP: workspace/package recognition

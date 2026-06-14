@@ -15,8 +15,8 @@ pub mod scons;
 pub mod system_pm;
 
 pub use pkg_config::{
-    pkg_config_query, pkg_config_query_with_path, pkg_config_version, PkgConfigResult,
-    ResolvedPkgConfig,
+    pkg_config_query, pkg_config_query_cross, pkg_config_query_with_path, pkg_config_version,
+    PkgConfigResult, ResolvedPkgConfig,
 };
 pub use pkg_config_cache::PkgConfigCache;
 
@@ -118,6 +118,8 @@ pub fn build_foreign_deps(
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
     let all_stubs = load_system_lib_stubs();
+    // Cross build? Then host pkg-config must not feed this build (see CrossBuild).
+    let cross = cross_build(manifest);
 
     // ── Build-dependency pass (sequential, before everything else) ────────────
     // Build-deps are tools (cmake, ninja, protoc, …).  We build them first and
@@ -262,6 +264,7 @@ pub fn build_foreign_deps(
                     pkgs_root,
                     progress,
                     &mut pc_cache,
+                    cross.as_ref(),
                 )? {
                     if let Some(pc) = maybe_pc {
                         pkg_results.push(pc);
@@ -502,6 +505,79 @@ fn package_query(name: &str, version: &str) -> String {
     }
 }
 
+// ── Cross-compilation context ────────────────────────────────────────────────
+
+/// Cross-compilation inputs for dependency resolution, derived from the
+/// manifest's `[compiler]` section. `None` for a native (host) build.
+///
+/// Present when the effective target triple differs from the host **or** a
+/// `[compiler].sysroot` is set. When cross-compiling, host pkg-config and the
+/// host include/lib paths must never feed the build — system libs come from the
+/// sysroot (if any) and everything else from a freight-fetched source package.
+pub(crate) struct CrossBuild {
+    pub target: Option<String>,
+    pub sysroot: Option<PathBuf>,
+}
+
+/// Derive the [`CrossBuild`] context from a manifest, or `None` for a host build.
+pub(crate) fn cross_build(manifest: &Manifest) -> Option<CrossBuild> {
+    let target = manifest.compiler.target.clone();
+    let sysroot = manifest
+        .compiler
+        .sysroot
+        .clone()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    let cross_triple = target.as_deref().map(is_cross_triple).unwrap_or(false);
+    if cross_triple || sysroot.is_some() {
+        Some(CrossBuild { target, sysroot })
+    } else {
+        None
+    }
+}
+
+/// Whether a target triple/arch string denotes a different platform than the
+/// host (a different CPU arch or OS). Coarse but sufficient to decide between
+/// host pkg-config and a cross/source resolution path.
+fn is_cross_triple(target: &str) -> bool {
+    fn norm(a: &str) -> &str {
+        match a {
+            "amd64" => "x86_64",
+            "arm64" => "aarch64",
+            x => x,
+        }
+    }
+    let t = target.to_ascii_lowercase();
+    let host_arch = norm(std::env::consts::ARCH);
+    let target_arch = norm(t.split('-').next().unwrap_or(""));
+    if target_arch != host_arch {
+        return true;
+    }
+    // Same arch, different OS (e.g. x86_64 host building x86_64-pc-windows).
+    let os_token = |s: &str| {
+        if s.contains("windows") || s.contains("mingw") || s.contains("msvc") {
+            "windows"
+        } else if s.contains("darwin") || s.contains("macos") || s.contains("apple") {
+            "macos"
+        } else if s.contains("linux") {
+            "linux"
+        } else {
+            "other"
+        }
+    };
+    let host_os = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "other"
+    };
+    let to = os_token(&t);
+    to != "other" && to != host_os
+}
+
 // ── Version dep resolution chain ─────────────────────────────────────────────
 
 /// Resolve a version dep (`name = "1.3"` or `{ version = "1.3", repo = "..." }`)
@@ -512,6 +588,7 @@ fn package_query(name: &str, version: &str) -> String {
 /// resolvers fail.
 ///
 /// Default chain (no explicit `repo`): pkg-config → system-lib stubs → target/deps cache.
+#[allow(clippy::too_many_arguments)]
 fn resolve_version_dep(
     name: &str,
     query: &str,
@@ -523,6 +600,7 @@ fn resolve_version_dep(
     root_dir: &Path,
     progress: &Progress,
     pc_cache: &mut PkgConfigCache,
+    cross: Option<&CrossBuild>,
 ) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
     let pkgs_root = root_dir;
     // Suppress unused warning; version may be used by future resolvers.
@@ -561,7 +639,51 @@ fn resolve_version_dep(
                 pkgs_root,
                 progress,
                 pc_cache,
+                cross,
             )
+        }
+        None if cross.is_some() => {
+            // Cross build: host pkg-config would inject host `-I`/`-L` paths, so
+            // it is never consulted. Resolve system libs from the sysroot's
+            // pkg-config (if a sysroot is configured); libc stubs (`-lpthread`,
+            // `-lm`, …) are fine — the cross linker resolves them against its
+            // sysroot. Anything else must be a freight-fetched source package
+            // (handled by the shared `.pkgs/` path below).
+            let cb = cross.expect("cross.is_some()");
+            if let Some(sysroot) = &cb.sysroot {
+                if let Ok(pc) =
+                    pkg_config_query_cross(query, cb.target.as_deref(), sysroot)
+                {
+                    return Ok(Some((
+                        ForeignBuilt {
+                            name: name.to_string(),
+                            libs: vec![],
+                            include_dirs: pc.include_dirs.clone(),
+                            raw_link_flags: pc.link_flags,
+                        },
+                        Some(ResolvedPkgConfig {
+                            name: name.to_string(),
+                            found: true,
+                            version: String::new(),
+                            include_dirs: pc.include_dirs,
+                        }),
+                    )));
+                }
+            }
+            let stubs = load_system_lib_stubs();
+            if let Some(stub) = find_stub(name, &stubs) {
+                return Ok(Some((
+                    ForeignBuilt {
+                        name: name.to_string(),
+                        libs: vec![],
+                        include_dirs: vec![],
+                        raw_link_flags: vec![format!("-l{}", stub.link_name)],
+                    },
+                    None,
+                )));
+            }
+            // Fall through to the shared `.pkgs/` source-package resolution.
+            resolve_fetched_dep(name, query, version, optional, profile, pkgs_root, progress, pc_cache)
         }
         None => {
             // Default chain: pkg-config (cached) → system-lib stubs → target/deps/ cache.
@@ -595,140 +717,161 @@ fn resolve_version_dep(
                     None,
                 )));
             }
-            // All freight-fetched deps (source, prebuilt, git, url) live in .deps/<name>/
-            let dep_dir = pkgs_root.join(".pkgs").join(name);
-            let cached = dep_dir.join(".freight-fetched").exists();
+            // All freight-fetched deps (source, prebuilt, git, url) live in
+            // `.pkgs/<name>/` — shared with the cross-build path.
+            resolve_fetched_dep(
+                name, query, version, optional, profile, pkgs_root, progress, pc_cache,
+            )
+        }
+    }
+}
 
-            if cached {
-                let dep_dir = dep_dir;
-                // Try pkg-config if the dep ships a .pc file.
-                let pc_dir = dep_dir.join("lib").join("pkgconfig");
-                if pc_dir.is_dir() {
-                    if let Ok((pc, ver)) = pc_cache.query_with_path(query, &[pc_dir]) {
-                        return Ok(Some((
-                            ForeignBuilt {
-                                name: name.to_string(),
-                                libs: vec![],
-                                include_dirs: pc.include_dirs.clone(),
-                                raw_link_flags: pc.link_flags,
-                            },
-                            Some(ResolvedPkgConfig {
-                                name: name.to_string(),
-                                found: true,
-                                version: ver,
-                                include_dirs: pc.include_dirs,
-                            }),
-                        )));
-                    }
-                }
+/// Resolve a dependency from the freight-fetched `.pkgs/<name>/` cache (source,
+/// prebuilt, git, or url). Tries a shipped `.pc` file, then bare `include/`+`lib/`
+/// dirs, then a source build from a bundled `freight.toml`. Returns the
+/// not-found error (or `Ok(None)` when optional) if the package was never
+/// fetched. Used by both the native and cross resolution paths.
+#[allow(clippy::too_many_arguments)]
+fn resolve_fetched_dep(
+    name: &str,
+    query: &str,
+    version: &str,
+    optional: bool,
+    profile: &str,
+    pkgs_root: &Path,
+    progress: &Progress,
+    pc_cache: &mut PkgConfigCache,
+) -> Result<Option<(ForeignBuilt, Option<ResolvedPkgConfig>)>, FreightError> {
+    let dep_dir = pkgs_root.join(".pkgs").join(name);
+    let cached = dep_dir.join(".freight-fetched").exists();
 
-                // No .pc file — collect include/ and lib/ dirs directly.
-                let mut include_dirs: Vec<PathBuf> = Vec::new();
-                for candidate in &["include", "inc"] {
-                    let d = dep_dir.join(candidate);
-                    if d.is_dir() {
-                        include_dirs.push(d);
-                    }
-                }
-                let mut link_flags: Vec<String> = Vec::new();
-                let lib_dir = dep_dir.join("lib");
-                if lib_dir.is_dir() {
-                    link_flags.push(format!("-L{}", lib_dir.display()));
-                    if let Ok(entries) = std::fs::read_dir(&lib_dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                            if matches!(ext, "a" | "so" | "dylib" | "lib") {
-                                let lname = stem.strip_prefix("lib").unwrap_or(stem);
-                                link_flags.push(format!("-l{lname}"));
-                            }
-                        }
-                    }
-                }
-
-                // No prebuilt libs found — if the dep ships a freight.toml (source
-                // tarball downloaded from the registry), build it in-place and point
-                // at the resulting static lib in target/{profile}/.
-                if link_flags.is_empty() && dep_dir.join("freight.toml").exists() {
-                    progress(BuildEvent::DepBuildStarted {
-                        name: format!("{name}@{version}"),
-                    });
-                    // Suppress BuildStarted/Compiling from the inner build; translate Compiling
-                    // to DepCompiling so the CLI can show an inline dot bar instead.
-                    let outer = std::sync::Arc::clone(progress);
-                    let inner_progress: Progress = std::sync::Arc::new(move |ev| match ev {
-                        BuildEvent::BuildStarted { .. }
-                        | BuildEvent::DepBuildStarted { .. }
-                        | BuildEvent::DepBuildDone => {}
-                        BuildEvent::Compiling { .. } => outer(BuildEvent::DepCompiling),
-                        BuildEvent::DepCompiling => outer(BuildEvent::DepCompiling),
-                        other => outer(other),
-                    });
-                    if let Err(e) = crate::build::build_project_at(
-                        &dep_dir,
-                        profile,
-                        &[],
-                        true,
-                        None,
-                        &[],
-                        &inner_progress,
-                        Some(pkgs_root),
-                    ) {
-                        progress(BuildEvent::Warning(format!(
-                            "source-build of {name} failed: {e}"
-                        )));
-                    }
-                    progress(BuildEvent::DepBuildDone);
-                    let built_lib = pkgs_root
-                        .join("target")
-                        .join("deps")
-                        .join(name)
-                        .join(profile)
-                        .join(format!("lib{name}.a"));
-                    if built_lib.exists() {
-                        let out_dir = built_lib.parent().unwrap().to_path_buf();
-                        link_flags.push(format!("-L{}", out_dir.display()));
-                        link_flags.push(format!("-l{name}"));
-                        // Also pick up include dirs from the dep itself.
-                        for candidate in &["include", "inc"] {
-                            let d = dep_dir.join(candidate);
-                            if d.is_dir() && !include_dirs.contains(&d) {
-                                include_dirs.push(d);
-                            }
-                        }
-                    }
-                }
-
+    if cached {
+        // Try pkg-config if the dep ships a .pc file.
+        let pc_dir = dep_dir.join("lib").join("pkgconfig");
+        if pc_dir.is_dir() {
+            if let Ok((pc, ver)) = pc_cache.query_with_path(query, &[pc_dir]) {
                 return Ok(Some((
                     ForeignBuilt {
                         name: name.to_string(),
                         libs: vec![],
-                        include_dirs,
-                        raw_link_flags: link_flags,
+                        include_dirs: pc.include_dirs.clone(),
+                        raw_link_flags: pc.link_flags,
                     },
-                    None,
+                    Some(ResolvedPkgConfig {
+                        name: name.to_string(),
+                        found: true,
+                        version: ver,
+                        include_dirs: pc.include_dirs,
+                    }),
                 )));
-            }
-
-            if let Some(pm) = system_pm::detect() {
-                progress(BuildEvent::Warning(format!(
-                    "hint: try `{}` to install the system package",
-                    pm.install_hint(name),
-                )));
-            }
-            if optional {
-                progress(BuildEvent::Warning(format!(
-                    "'{name}' not found at build time (optional, skipping)"
-                )));
-                Ok(None)
-            } else {
-                Err(FreightError::ManifestParse(format!(
-                    "dep '{name}' not found via pkg-config or system stubs; \
-                     run `freight fetch` to download it from the registry first"
-                )))
             }
         }
+
+        // No .pc file — collect include/ and lib/ dirs directly.
+        let mut include_dirs: Vec<PathBuf> = Vec::new();
+        for candidate in &["include", "inc"] {
+            let d = dep_dir.join(candidate);
+            if d.is_dir() {
+                include_dirs.push(d);
+            }
+        }
+        let mut link_flags: Vec<String> = Vec::new();
+        let lib_dir = dep_dir.join("lib");
+        if lib_dir.is_dir() {
+            link_flags.push(format!("-L{}", lib_dir.display()));
+            if let Ok(entries) = std::fs::read_dir(&lib_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                    if matches!(ext, "a" | "so" | "dylib" | "lib") {
+                        let lname = stem.strip_prefix("lib").unwrap_or(stem);
+                        link_flags.push(format!("-l{lname}"));
+                    }
+                }
+            }
+        }
+
+        // No prebuilt libs found — if the dep ships a freight.toml (source
+        // tarball downloaded from the registry), build it in-place and point
+        // at the resulting static lib in target/{profile}/.
+        if link_flags.is_empty() && dep_dir.join("freight.toml").exists() {
+            progress(BuildEvent::DepBuildStarted {
+                name: format!("{name}@{version}"),
+            });
+            // Suppress BuildStarted/Compiling from the inner build; translate Compiling
+            // to DepCompiling so the CLI can show an inline dot bar instead.
+            let outer = std::sync::Arc::clone(progress);
+            let inner_progress: Progress = std::sync::Arc::new(move |ev| match ev {
+                BuildEvent::BuildStarted { .. }
+                | BuildEvent::DepBuildStarted { .. }
+                | BuildEvent::DepBuildDone => {}
+                BuildEvent::Compiling { .. } => outer(BuildEvent::DepCompiling),
+                BuildEvent::DepCompiling => outer(BuildEvent::DepCompiling),
+                other => outer(other),
+            });
+            if let Err(e) = crate::build::build_project_at(
+                &dep_dir,
+                profile,
+                &[],
+                true,
+                None,
+                &[],
+                &inner_progress,
+                Some(pkgs_root),
+            ) {
+                progress(BuildEvent::Warning(format!(
+                    "source-build of {name} failed: {e}"
+                )));
+            }
+            progress(BuildEvent::DepBuildDone);
+            let built_lib = pkgs_root
+                .join("target")
+                .join("deps")
+                .join(name)
+                .join(profile)
+                .join(format!("lib{name}.a"));
+            if built_lib.exists() {
+                let out_dir = built_lib.parent().unwrap().to_path_buf();
+                link_flags.push(format!("-L{}", out_dir.display()));
+                link_flags.push(format!("-l{name}"));
+                // Also pick up include dirs from the dep itself.
+                for candidate in &["include", "inc"] {
+                    let d = dep_dir.join(candidate);
+                    if d.is_dir() && !include_dirs.contains(&d) {
+                        include_dirs.push(d);
+                    }
+                }
+            }
+        }
+
+        return Ok(Some((
+            ForeignBuilt {
+                name: name.to_string(),
+                libs: vec![],
+                include_dirs,
+                raw_link_flags: link_flags,
+            },
+            None,
+        )));
+    }
+
+    if let Some(pm) = system_pm::detect() {
+        progress(BuildEvent::Warning(format!(
+            "hint: try `{}` to install the system package",
+            pm.install_hint(name),
+        )));
+    }
+    if optional {
+        progress(BuildEvent::Warning(format!(
+            "'{name}' not found at build time (optional, skipping)"
+        )));
+        Ok(None)
+    } else {
+        Err(FreightError::ManifestParse(format!(
+            "dep '{name}' not found via pkg-config or system stubs; \
+             run `freight fetch` to download it from the registry first"
+        )))
     }
 }
 
@@ -1034,4 +1177,62 @@ fn find_libs(search_dir: &Path) -> Result<Vec<PathBuf>, FreightError> {
     }
     libs.sort();
     Ok(libs)
+}
+
+#[cfg(test)]
+mod cross_tests {
+    use super::{cross_build, is_cross_triple};
+    use std::path::Path;
+
+    #[test]
+    fn is_cross_triple_detects_foreign_arch_and_os() {
+        let host = std::env::consts::ARCH;
+        let foreign_arch = if host == "aarch64" {
+            "x86_64-unknown-linux-gnu"
+        } else {
+            "aarch64-unknown-linux-gnu"
+        };
+        assert!(is_cross_triple(foreign_arch));
+
+        // Host arch + host OS family is not cross.
+        let native_os = if cfg!(target_os = "windows") {
+            "pc-windows-msvc"
+        } else if cfg!(target_os = "macos") {
+            "apple-darwin"
+        } else {
+            "unknown-linux-gnu"
+        };
+        assert!(!is_cross_triple(&format!("{host}-{native_os}")));
+
+        // Same arch, foreign OS is cross.
+        let foreign_os = if cfg!(target_os = "linux") {
+            format!("{host}-pc-windows-msvc")
+        } else {
+            format!("{host}-unknown-linux-gnu")
+        };
+        assert!(is_cross_triple(&foreign_os));
+    }
+
+    #[test]
+    fn cross_build_from_sysroot_or_foreign_target() {
+        let mut m =
+            crate::manifest::load_manifest_str("[package]\nname=\"a\"\nversion=\"0.1.0\"\n").unwrap();
+        // Native: no target, no sysroot.
+        assert!(cross_build(&m).is_none());
+
+        // A sysroot alone marks a cross build.
+        m.compiler.sysroot = Some("/opt/sysroot".to_string());
+        let cb = cross_build(&m).expect("sysroot ⇒ cross");
+        assert_eq!(cb.sysroot.as_deref(), Some(Path::new("/opt/sysroot")));
+
+        // A foreign target triple alone marks a cross build.
+        m.compiler.sysroot = None;
+        let host = std::env::consts::ARCH;
+        m.compiler.target = Some(if host == "aarch64" {
+            "x86_64-unknown-linux-gnu".into()
+        } else {
+            "aarch64-unknown-linux-gnu".into()
+        });
+        assert!(cross_build(&m).is_some());
+    }
 }

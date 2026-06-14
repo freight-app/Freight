@@ -7,7 +7,7 @@
 //! - `PKG_CONFIG_LIBDIR` and `PKG_CONFIG_SYSROOT_DIR` cross-compile passthrough
 //! - Static mode via `PKG_CONFIG_ALL_STATIC`
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::FreightError;
@@ -38,8 +38,8 @@ pub fn pkg_config_query_for_target(
     target: Option<&str>,
 ) -> Result<PkgConfigResult, FreightError> {
     let is_static = std::env::var_os("PKG_CONFIG_ALL_STATIC").is_some();
-    let cflags = run_pkg_config(query, "--cflags", target, is_static, None)?;
-    let libs = run_pkg_config(query, "--libs", target, is_static, None)?;
+    let cflags = run_pkg_config(query, "--cflags", target, is_static, None, None)?;
+    let libs = run_pkg_config(query, "--libs", target, is_static, None, None)?;
 
     let include_dirs = cflags
         .split_ascii_whitespace()
@@ -49,6 +49,34 @@ pub fn pkg_config_query_for_target(
 
     let link_flags = libs.split_ascii_whitespace().map(str::to_owned).collect();
 
+    Ok(PkgConfigResult {
+        include_dirs,
+        link_flags,
+    })
+}
+
+/// Query pkg-config for a cross-compilation `target`, scoped to a `sysroot`.
+///
+/// Sets `PKG_CONFIG_SYSROOT_DIR` to `sysroot` and **restricts** the search to the
+/// sysroot's pkg-config dirs via `PKG_CONFIG_LIBDIR` (so the host's
+/// `/usr/lib/pkgconfig` can't leak host paths into a cross build). Returns
+/// sysroot-relative `-I`/`-L` paths. With no `.pc` file in the sysroot the query
+/// fails like any other miss, and the caller falls through to a source build.
+pub fn pkg_config_query_cross(
+    query: &str,
+    target: Option<&str>,
+    sysroot: &Path,
+) -> Result<PkgConfigResult, FreightError> {
+    let is_static = std::env::var_os("PKG_CONFIG_ALL_STATIC").is_some();
+    let cflags = run_pkg_config(query, "--cflags", target, is_static, None, Some(sysroot))?;
+    let libs = run_pkg_config(query, "--libs", target, is_static, None, Some(sysroot))?;
+
+    let include_dirs = cflags
+        .split_ascii_whitespace()
+        .filter_map(|f| f.strip_prefix("-I"))
+        .map(PathBuf::from)
+        .collect();
+    let link_flags = libs.split_ascii_whitespace().map(str::to_owned).collect();
     Ok(PkgConfigResult {
         include_dirs,
         link_flags,
@@ -73,8 +101,8 @@ pub fn pkg_config_query_with_path(
     }
     let pkg_config_path = parts.join(":");
 
-    let cflags = run_pkg_config(query, "--cflags", None, false, Some(&pkg_config_path))?;
-    let libs = run_pkg_config(query, "--libs", None, false, Some(&pkg_config_path))?;
+    let cflags = run_pkg_config(query, "--cflags", None, false, Some(&pkg_config_path), None)?;
+    let libs = run_pkg_config(query, "--libs", None, false, Some(&pkg_config_path), None)?;
 
     let include_dirs = cflags
         .split_ascii_whitespace()
@@ -139,13 +167,14 @@ fn run_pkg_config(
     target: Option<&str>,
     is_static: bool,
     override_path: Option<&str>,
+    sysroot: Option<&Path>,
 ) -> Result<String, FreightError> {
     let parts: Vec<&str> = query.split_whitespace().collect();
 
     let exe =
         targeted_env_var("PKG_CONFIG", target).unwrap_or_else(|| OsString::from("pkg-config"));
 
-    let out = build_command(&exe, flag, &parts, is_static, target, override_path)
+    let out = build_command(&exe, flag, &parts, is_static, target, override_path, sysroot)
         .output()
         .or_else(|e| {
             // Fallback to pkgconf when pkg-config binary is not found and no
@@ -160,6 +189,7 @@ fn run_pkg_config(
                     is_static,
                     target,
                     override_path,
+                    sysroot,
                 )
                 .output()
             } else {
@@ -184,12 +214,26 @@ fn build_command(
     is_static: bool,
     target: Option<&str>,
     override_path: Option<&str>,
+    sysroot: Option<&Path>,
 ) -> Command {
     let mut cmd = Command::new(exe);
     if is_static {
         cmd.arg("--static");
     }
     cmd.arg(flag).args(parts);
+
+    // An explicit sysroot (cross build) wins: point pkg-config entirely inside
+    // it — `PKG_CONFIG_LIBDIR` *restricts* the search to the sysroot so the host
+    // `/usr/lib/pkgconfig` can't leak host `-I`/`-L` paths, and
+    // `PKG_CONFIG_SYSROOT_DIR` rewrites `-I`/`-L` prefixes to the sysroot. This
+    // mirrors a Yocto/Petalinux SDK `environment-setup` script.
+    if let Some(root) = sysroot {
+        let libdir = sysroot_pkgconfig_path(root);
+        cmd.env("PKG_CONFIG_LIBDIR", &libdir);
+        cmd.env("PKG_CONFIG_PATH", &libdir);
+        cmd.env("PKG_CONFIG_SYSROOT_DIR", root);
+        return cmd;
+    }
 
     if let Some(path) = override_path {
         cmd.env("PKG_CONFIG_PATH", path);
@@ -199,9 +243,44 @@ fn build_command(
     if let Some(libdir) = targeted_env_var("PKG_CONFIG_LIBDIR", target) {
         cmd.env("PKG_CONFIG_LIBDIR", libdir);
     }
-    if let Some(sysroot) = targeted_env_var("PKG_CONFIG_SYSROOT_DIR", target) {
-        cmd.env("PKG_CONFIG_SYSROOT_DIR", sysroot);
+    if let Some(sr) = targeted_env_var("PKG_CONFIG_SYSROOT_DIR", target) {
+        cmd.env("PKG_CONFIG_SYSROOT_DIR", sr);
     }
 
     cmd
+}
+
+/// The `.pc` search path inside a cross sysroot, joined for `PKG_CONFIG_LIBDIR`
+/// / `PKG_CONFIG_PATH`. Covers the standard `usr/lib`, `usr/share`, and the
+/// common Debian multiarch dirs (harmless when absent).
+fn sysroot_pkgconfig_path(sysroot: &Path) -> std::ffi::OsString {
+    let candidates = [
+        sysroot.join("usr/lib/pkgconfig"),
+        sysroot.join("usr/lib/x86_64-linux-gnu/pkgconfig"),
+        sysroot.join("usr/lib/aarch64-linux-gnu/pkgconfig"),
+        sysroot.join("usr/lib/arm-linux-gnueabihf/pkgconfig"),
+        sysroot.join("usr/share/pkgconfig"),
+        sysroot.join("usr/local/lib/pkgconfig"),
+    ];
+    let joined = candidates
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(":");
+    std::ffi::OsString::from(joined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sysroot_pkgconfig_path_lists_standard_dirs() {
+        let p = sysroot_pkgconfig_path(Path::new("/opt/root"));
+        let s = p.to_string_lossy();
+        assert!(s.contains("/opt/root/usr/lib/pkgconfig"), "{s}");
+        assert!(s.contains("/opt/root/usr/share/pkgconfig"), "{s}");
+        // Restricting to the sysroot means the host root must not appear.
+        assert!(!s.split(':').any(|d| d == "/usr/lib/pkgconfig"), "{s}");
+    }
 }

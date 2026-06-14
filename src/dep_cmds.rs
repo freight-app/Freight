@@ -559,9 +559,19 @@ pub struct PackageDepOutcome {
 }
 
 pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, FreightError> {
-    use crate::adaptors::pkg_config_query;
+    use crate::adaptors::{cross_build, pkg_config_query, pkg_config_query_cross};
 
-    let manifest = load_manifest(project_dir)?;
+    let mut manifest = load_manifest(project_dir)?;
+    // Apply machine-local cross settings (same source as the build pipeline) so a
+    // dep counts as "system present" only when the *target* provides it — host
+    // pkg-config must not satisfy a cross build.
+    let global = crate::toolchain::GlobalConfig::load();
+    manifest.compiler.target = global.target.clone();
+    manifest.compiler.sysroot = std::env::var_os("FREIGHT_SYSROOT")
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string_lossy().into_owned())
+        .or_else(|| global.sysroot.clone());
+    let cross = cross_build(&manifest);
     let mut outcomes = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
@@ -570,7 +580,17 @@ pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, 
         };
         let query = package_query(name, version);
 
-        if pkg_config_query(&query).is_ok() {
+        // Native: host pkg-config. Cross: only the sysroot's pkg-config counts;
+        // with no sysroot a cross dep is never "present" (it must be fetched).
+        let system_present = match &cross {
+            None => pkg_config_query(&query).is_ok(),
+            Some(cb) => cb
+                .sysroot
+                .as_deref()
+                .map(|sr| pkg_config_query_cross(&query, cb.target.as_deref(), sr).is_ok())
+                .unwrap_or(false),
+        };
+        if system_present {
             outcomes.push(PackageDepOutcome {
                 name: name.clone(),
                 action: PackageDepAction::SystemPresent,
