@@ -16,7 +16,7 @@ src  = "src/main.cpp"
 # g++ drives the final link step (cpp > fortran in linker priority).
 # The Fortran runtime must be linked explicitly when not using gfortran as the linker.
 [dependencies]
-gfortran-runtime = { system = "gfortran" }
+unix = { features = ["gfortran"] }
 
 [compiler]
 backend  = "auto"

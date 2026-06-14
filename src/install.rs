@@ -121,7 +121,7 @@ pub fn install_project_built(
 
     // ── Binaries ──────────────────────────────────────────────────────────────
     for bin in &manifest.bins {
-        let bin_file = executable_name(&bin.name, &target_os);
+        let bin_file = crate::build::link::executable_name(&bin.name, &target_os);
         let src = project_dir.join("target").join(profile).join(&bin_file);
         if !src.exists() {
             return Err(FreightError::InstallFailed(format!(
@@ -460,13 +460,6 @@ fn make_symlink(_dir: &Path, _link: &str, _target: &str) -> Result<(), FreightEr
     Ok(()) // Symlinks on Windows require elevated rights; skip silently.
 }
 
-fn executable_name(name: &str, target_os: &str) -> String {
-    if target_os == "windows" && !name.ends_with(".exe") {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    }
-}
 
 fn create_zip_archive(parent: &Path, stem: &str, archive: &Path) -> Result<(), FreightError> {
     let root = parent.join(stem);

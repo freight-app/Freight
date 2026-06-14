@@ -364,7 +364,9 @@ fn shared_lib_name(name: &str, target_os: &str) -> String {
     }
 }
 
-fn executable_name(name: &str, target_os: &str) -> String {
+/// The on-disk executable file name for `name` on `target_os` (adds `.exe` on
+/// Windows). Shared with the install/package path.
+pub(crate) fn executable_name(name: &str, target_os: &str) -> String {
     if target_os == "windows" && !name.ends_with(".exe") {
         format!("{name}.exe")
     } else {

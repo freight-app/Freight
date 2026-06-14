@@ -13,7 +13,7 @@ name = "migrated-from-cmake"
 src  = "src/main.cpp"
 
 [dependencies]
-pthread = { system = "pthread" }
+unix = { features = ["pthread"] }
 
 [compiler]
 backend   = "auto"
