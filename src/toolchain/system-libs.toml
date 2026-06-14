@@ -1,0 +1,131 @@
+# Built-in system-library stubs.
+#
+# Each table maps a feature name (used in `[os.*] features = [...]`) to the
+# system library it links and the headers that library provides. Freight uses
+# these as the final step of dependency resolution when pkg-config has nothing,
+# and to link versionless OS libraries declared via `[os.*]/[arch.*] features`.
+#
+# Fields:
+#   link     = "<lib>"   linker name → `-l<lib>` (GCC/Clang) / `<lib>.lib` (MSVC).
+#                        Optional; defaults to the table name.
+#   supports = "<expr>"  boolean platform expression (idents + ! & | parens),
+#                        evaluated against the host; the stub is ignored when false.
+#   headers  = [...]     header files this library provides — used to attribute a
+#                        `#include` to a declared feature (include hygiene) and by
+#                        the package browser. Not turned into `-I` flags.
+#
+# Users can add or override entries by dropping `.toml` files (same format) into
+# `$FREIGHT_HOME/toolchains/system-libs/` (default `~/.freight/toolchains/system-libs/`).
+# A user entry with the same name as a built-in replaces it.
+
+# ── Cross-platform ────────────────────────────────────────────────────────────
+[m]
+supports = "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos | android"
+headers  = ["math.h", "complex.h", "tgmath.h", "fenv.h"]
+
+# ── Unix / POSIX ──────────────────────────────────────────────────────────────
+[pthread]
+supports = "unix"
+headers  = ["pthread.h", "semaphore.h", "sched.h"]
+
+[dl]
+supports = "linux | android | freebsd | netbsd | openbsd | dragonfly | solaris | illumos"
+headers  = ["dlfcn.h"]
+
+[rt]
+supports = "linux | android | solaris | illumos"
+headers  = ["time.h", "mqueue.h", "aio.h"]
+
+[resolv]
+supports = "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos"
+headers  = ["resolv.h", "arpa/nameser.h"]
+
+[execinfo]
+supports = "freebsd | openbsd | netbsd | dragonfly"
+headers  = ["execinfo.h"]
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+[kernel32]
+supports = "windows"
+headers  = ["windows.h"]
+
+[user32]
+supports = "windows"
+headers  = ["windows.h", "winuser.h"]
+
+[gdi32]
+supports = "windows"
+headers  = ["windows.h", "wingdi.h"]
+
+[shell32]
+supports = "windows"
+headers  = ["shlobj.h", "shellapi.h"]
+
+[ole32]
+supports = "windows"
+headers  = ["objbase.h", "combaseapi.h"]
+
+[oleaut32]
+supports = "windows"
+headers  = ["oaidl.h", "oleauto.h"]
+
+[advapi32]
+supports = "windows"
+headers  = ["windows.h", "wincrypt.h", "aclapi.h"]
+
+[ws2_32]
+supports = "windows"
+headers  = ["winsock2.h", "ws2tcpip.h", "mswsock.h"]
+
+[iphlpapi]
+supports = "windows"
+headers  = ["iphlpapi.h", "iptypes.h"]
+
+[ntdll]
+supports = "windows"
+headers  = ["winternl.h"]
+
+[dbghelp]
+supports = "windows"
+headers  = ["dbghelp.h"]
+
+[psapi]
+supports = "windows"
+headers  = ["psapi.h"]
+
+[winmm]
+supports = "windows"
+headers  = ["mmsystem.h", "timeapi.h"]
+
+[setupapi]
+supports = "windows"
+headers  = ["setupapi.h", "devguid.h"]
+
+[comctl32]
+supports = "windows"
+headers  = ["commctrl.h"]
+
+[comdlg32]
+supports = "windows"
+headers  = ["commdlg.h"]
+
+[bcrypt]
+supports = "windows"
+headers  = ["bcrypt.h"]
+
+[uuid]
+supports = "windows"
+headers  = ["guiddef.h", "basetyps.h"]
+
+# ── Direct3D / DXGI ───────────────────────────────────────────────────────────
+[d3d11]
+supports = "windows"
+headers  = ["d3d11.h", "d3dcommon.h"]
+
+[d3d12]
+supports = "windows"
+headers  = ["d3d12.h", "d3d12sdklayers.h"]
+
+[dxgi]
+supports = "windows"
+headers  = ["dxgi.h", "dxgi1_2.h", "dxgi1_6.h"]

@@ -1,211 +1,91 @@
-//! Built-in system-library stubs.
+//! System-library stubs.
 //!
-//! Each stub describes a well-known OS library (pthread, ws2_32, …). Freight
-//! uses these as the final step in `resolve_version_dep` when pkg-config fails.
+//! Each stub describes a well-known OS library (pthread, ws2_32, …): the linker
+//! name it maps to and the headers it provides. Freight uses these as the final
+//! step in `resolve_version_dep` when pkg-config fails, and to link versionless
+//! OS libraries declared via `[os.*]/[arch.*] features`.
+//!
+//! The stub data is **data-driven**: the built-in set lives in the bundled
+//! `system-libs.toml` (embedded at compile time), and users can add or override
+//! entries with `.toml` files in `$FREIGHT_HOME/toolchains/system-libs/`
+//! (default `~/.freight/toolchains/system-libs/`) — no recompile needed.
+
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
 
 use crate::supports::eval_supports;
+use crate::toolchain::cache::freight_home;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct SystemLibStub {
-    /// Package name (matches the dep key in `freight.toml`).
+    /// Package name (matches the feature name in `[os.*] features = [...]`).
     pub name: String,
-    /// Linker flag: `-l<link_name>`.
+    /// Linker flag: `-l<link_name>` (GCC/Clang) or `<link_name>.lib` (MSVC).
     pub link_name: String,
-    /// Header filenames (display / TUI only).
+    /// Header filenames this library provides (include-hygiene attribution / TUI).
     pub headers: Vec<String>,
 }
 
-// ── Hardcoded stubs ───────────────────────────────────────────────────────────
+// ── Data file format ────────────────────────────────────────────────────────────
 
+/// The built-in stub table, embedded at compile time.
+const BUNDLED_STUBS: &str = include_str!("system-libs.toml");
+
+#[derive(Debug, Clone, Deserialize)]
 struct RawStub {
-    name: &'static str,
-    link: &'static str,
-    supports: &'static str,
-    hdrs: &'static [&'static str],
+    /// Linker name; defaults to the table key when omitted.
+    #[serde(default)]
+    link: Option<String>,
+    /// Boolean platform expression evaluated against the host.
+    supports: String,
+    #[serde(default)]
+    headers: Vec<String>,
 }
 
-const STUBS: &[RawStub] = &[
-    // ── Cross-platform ────────────────────────────────────────────────────────
-    RawStub {
-        name: "m",
-        link: "m",
-        supports: "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos | android",
-        hdrs: &["math.h", "complex.h", "tgmath.h", "fenv.h"],
-    },
-    // ── Unix / POSIX ──────────────────────────────────────────────────────────
-    RawStub {
-        name: "pthread",
-        link: "pthread",
-        supports: "unix",
-        hdrs: &["pthread.h", "semaphore.h", "sched.h"],
-    },
-    RawStub {
-        name: "dl",
-        link: "dl",
-        supports: "linux | android | freebsd | netbsd | openbsd | dragonfly | solaris | illumos",
-        hdrs: &["dlfcn.h"],
-    },
-    RawStub {
-        name: "rt",
-        link: "rt",
-        supports: "linux | android | solaris | illumos",
-        hdrs: &["time.h", "mqueue.h", "aio.h"],
-    },
-    RawStub {
-        name: "resolv",
-        link: "resolv",
-        supports: "linux | freebsd | openbsd | netbsd | dragonfly | solaris | illumos",
-        hdrs: &["resolv.h", "arpa/nameser.h"],
-    },
-    RawStub {
-        name: "execinfo",
-        link: "execinfo",
-        supports: "freebsd | openbsd | netbsd | dragonfly",
-        hdrs: &["execinfo.h"],
-    },
-    // ── Windows ───────────────────────────────────────────────────────────────
-    RawStub {
-        name: "kernel32",
-        link: "kernel32",
-        supports: "windows",
-        hdrs: &["windows.h"],
-    },
-    RawStub {
-        name: "user32",
-        link: "user32",
-        supports: "windows",
-        hdrs: &["windows.h", "winuser.h"],
-    },
-    RawStub {
-        name: "gdi32",
-        link: "gdi32",
-        supports: "windows",
-        hdrs: &["windows.h", "wingdi.h"],
-    },
-    RawStub {
-        name: "shell32",
-        link: "shell32",
-        supports: "windows",
-        hdrs: &["shlobj.h", "shellapi.h"],
-    },
-    RawStub {
-        name: "ole32",
-        link: "ole32",
-        supports: "windows",
-        hdrs: &["objbase.h", "combaseapi.h"],
-    },
-    RawStub {
-        name: "oleaut32",
-        link: "oleaut32",
-        supports: "windows",
-        hdrs: &["oaidl.h", "oleauto.h"],
-    },
-    RawStub {
-        name: "advapi32",
-        link: "advapi32",
-        supports: "windows",
-        hdrs: &["windows.h", "wincrypt.h", "aclapi.h"],
-    },
-    RawStub {
-        name: "ws2_32",
-        link: "ws2_32",
-        supports: "windows",
-        hdrs: &["winsock2.h", "ws2tcpip.h", "mswsock.h"],
-    },
-    RawStub {
-        name: "iphlpapi",
-        link: "iphlpapi",
-        supports: "windows",
-        hdrs: &["iphlpapi.h", "iptypes.h"],
-    },
-    RawStub {
-        name: "ntdll",
-        link: "ntdll",
-        supports: "windows",
-        hdrs: &["winternl.h"],
-    },
-    RawStub {
-        name: "dbghelp",
-        link: "dbghelp",
-        supports: "windows",
-        hdrs: &["dbghelp.h"],
-    },
-    RawStub {
-        name: "psapi",
-        link: "psapi",
-        supports: "windows",
-        hdrs: &["psapi.h"],
-    },
-    RawStub {
-        name: "winmm",
-        link: "winmm",
-        supports: "windows",
-        hdrs: &["mmsystem.h", "timeapi.h"],
-    },
-    RawStub {
-        name: "setupapi",
-        link: "setupapi",
-        supports: "windows",
-        hdrs: &["setupapi.h", "devguid.h"],
-    },
-    RawStub {
-        name: "comctl32",
-        link: "comctl32",
-        supports: "windows",
-        hdrs: &["commctrl.h"],
-    },
-    RawStub {
-        name: "comdlg32",
-        link: "comdlg32",
-        supports: "windows",
-        hdrs: &["commdlg.h"],
-    },
-    RawStub {
-        name: "bcrypt",
-        link: "bcrypt",
-        supports: "windows",
-        hdrs: &["bcrypt.h"],
-    },
-    RawStub {
-        name: "uuid",
-        link: "uuid",
-        supports: "windows",
-        hdrs: &["guiddef.h", "basetyps.h"],
-    },
-    // ── Direct3D / DXGI ───────────────────────────────────────────────────────
-    RawStub {
-        name: "d3d11",
-        link: "d3d11",
-        supports: "windows",
-        hdrs: &["d3d11.h", "d3dcommon.h"],
-    },
-    RawStub {
-        name: "d3d12",
-        link: "d3d12",
-        supports: "windows",
-        hdrs: &["d3d12.h", "d3d12sdklayers.h"],
-    },
-    RawStub {
-        name: "dxgi",
-        link: "dxgi",
-        supports: "windows",
-        hdrs: &["dxgi.h", "dxgi1_2.h", "dxgi1_6.h"],
-    },
-];
+/// Parse a stub `.toml` document into a name→entry map; empty on parse error.
+fn parse_stub_doc(src: &str) -> BTreeMap<String, RawStub> {
+    toml::from_str(src).unwrap_or_default()
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Return all built-in system-lib stubs that match the current host platform.
+/// Return all system-lib stubs that match the current host platform.
+///
+/// Built-in entries are loaded from the bundled table, then overridden/extended
+/// by any user `.toml` files under `$FREIGHT_HOME/toolchains/system-libs/`
+/// (a user entry with the same name replaces the built-in). Only stubs whose
+/// `supports` expression matches the host are returned.
 pub fn load_system_lib_stubs() -> Vec<SystemLibStub> {
-    STUBS
-        .iter()
-        .filter(|s| eval_supports(s.supports))
-        .map(|s| SystemLibStub {
-            name: s.name.to_string(),
-            link_name: s.link.to_string(),
-            headers: s.hdrs.iter().map(|h| h.to_string()).collect(),
+    let mut table = parse_stub_doc(BUNDLED_STUBS);
+
+    if let Some(dir) = freight_home().map(|h| h.join("toolchains").join("system-libs")) {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut files: Vec<_> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+                .collect();
+            files.sort(); // deterministic override order
+            for path in files {
+                if let Ok(src) = std::fs::read_to_string(&path) {
+                    for (name, stub) in parse_stub_doc(&src) {
+                        table.insert(name, stub); // user entry wins
+                    }
+                }
+            }
+        }
+    }
+
+    table
+        .into_iter()
+        .filter(|(_, s)| eval_supports(&s.supports))
+        .map(|(name, s)| SystemLibStub {
+            link_name: s.link.unwrap_or_else(|| name.clone()),
+            name,
+            headers: s.headers,
         })
         .collect()
 }
@@ -220,6 +100,19 @@ pub fn find_stub<'a>(name: &str, stubs: &'a [SystemLibStub]) -> Option<&'a Syste
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_stubs_parse() {
+        let table = parse_stub_doc(BUNDLED_STUBS);
+        assert!(!table.is_empty(), "bundled system-libs.toml must parse");
+        let pthread = table.get("pthread").expect("pthread stub present");
+        assert_eq!(pthread.supports, "unix");
+        assert!(pthread.headers.iter().any(|h| h == "pthread.h"));
+        // `link` defaults to the table key when omitted.
+        assert!(pthread.link.is_none());
+        let ws2 = table.get("ws2_32").expect("ws2_32 stub present");
+        assert_eq!(ws2.supports, "windows");
+    }
 
     #[test]
     fn pthread_loaded_on_unix() {

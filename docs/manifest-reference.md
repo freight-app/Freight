@@ -200,10 +200,20 @@ openssl = "3.0"   # pkg-config `openssl` → stub → registry
 zlib    = "1.3"   # pkg-config `zlib`   → `z` stub → registry
 ```
 
-For well-known OS libraries (pthread, ws2_32, libm, dl, rt, d3d11, …), Freight ships built-in
-stubs in `toolchains/system-libs/`. A stub carries the correct `-l` name, header list, and a
-`supports` expression (e.g. `supports = "unix"`) so it is only applied on matching platforms.
-Users can add their own stubs to `~/.freight/toolchains/system-libs/`.
+For well-known OS libraries (pthread, ws2_32, libm, dl, rt, d3d11, …), Freight ships a built-in
+stub table (bundled `system-libs.toml`). A stub carries the correct `-l` name, header list, and a
+`supports` expression (e.g. `supports = "unix"`) so it is only applied on matching platforms. The
+table is data-driven: add or override entries by dropping `.toml` files (same format) into
+`$FREIGHT_HOME/toolchains/system-libs/` (default `~/.freight/toolchains/system-libs/`) — a user
+entry with the same name replaces the built-in. Stub file format:
+
+```toml
+# ~/.freight/toolchains/system-libs/mylib.toml
+[mylib]
+link     = "mylib"          # optional; defaults to the table name → -lmylib
+supports = "linux | macos"  # host platforms this stub applies to
+headers  = ["mylib.h"]      # headers it provides (include-hygiene / browser)
+```
 
 **Versionless system libraries** (pthread, m, the OpenCL loader, …) have no meaningful version and
 are linked via *platform features* under the relevant `[os.*]` / `[arch.*]` section, not as a
