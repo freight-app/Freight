@@ -59,8 +59,11 @@ resvg          = { version = "0.47", optional = true }
 tui-markdown = "0.3.7"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clang-bridge       = { path = "../clang-bridge" }
-fortran-lsp        = { path = "../fortran-lsp" }
+# Git deps so the freight repo builds standalone (CI checks it out alone). In the
+# monorepo workspace these are redirected to the local submodules via [patch] in
+# the workspace Cargo.toml.
+clang-bridge       = { git = "https://github.com/freight-app/clang-bridge.git" }
+fortran-lsp        = { git = "https://github.com/freight-app/fortran-lsp.git" }
 
 [dev-dependencies]
 tempfile = "3"
