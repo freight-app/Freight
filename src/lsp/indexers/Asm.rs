@@ -7,17 +7,21 @@
 //! with directional `1f`/`1b` references), then answer:
 //!
 //! - `documentSymbol` — the symbol outline,
-//! - `definition` — label/constant/macro references, directional numeric
-//!   labels, and `.include "file"` navigation,
-//! - `references` — every use of a named symbol,
-//! - `hover` — symbol provenance, plus curated instruction / register /
-//!   directive help,
-//! - `completion` — symbols plus common directives,
+//! - `definition` — label/constant/macro references (resolved across the
+//!   `.include` closure), directional numeric labels, and `.include "file"`
+//!   navigation,
+//! - `references` — every use of a named symbol across the include closure,
+//! - `hover` — symbol provenance, plus curated per-arch instruction / register
+//!   / directive help (x86-64, AArch64, RISC-V; arch from the manifest target),
+//! - `completion` — symbols (current file + includes) plus common directives,
 //! - `foldingRange` — `.macro`/conditional blocks and per-label regions,
-//! - `diagnostics` — a symbol defined more than once.
+//! - `diagnostics` — a symbol defined more than once (macro-body labels, which
+//!   are templated per expansion, are excluded).
 //!
-//! Cross-file symbol resolution (merging symbols from `.include`d files) and a
-//! full instruction/register database are tracked in `crates/freight/TODO.md`.
+//! Cross-file resolution follows `.include`/`%include` transitively from the
+//! queried file. Macro parameters (`\name`) and macro-body labels are treated as
+//! macro-locals. Semantic tokens are left to the client until freight owns the
+//! global token legend (see the clang-bridge note in `crates/freight/TODO.md`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -66,6 +70,10 @@ struct Symbol {
     line: u32,
     start_col: u32,
     end_col: u32,
+    /// Defined inside a `.macro`/`%macro` body. Such labels are templated per
+    /// expansion (often via `\@`), so they are excluded from duplicate-symbol
+    /// diagnostics — two macros may legitimately use the same internal label.
+    in_macro: bool,
 }
 
 /// A numeric local label (`1:`). These may repeat; references are directional
@@ -114,12 +122,16 @@ struct AsmFile {
 
 pub struct AsmIndexer {
     files: HashMap<PathBuf, AsmFile>,
+    /// CPU architecture for instruction/register help, from the manifest target
+    /// (or the host) via [`refresh_flags`]. Defaults to the host arch.
+    arch: Arch,
 }
 
 impl AsmIndexer {
     pub fn new() -> Self {
         Self {
             files: HashMap::new(),
+            arch: Arch::host(),
         }
     }
 
@@ -149,6 +161,45 @@ impl AsmIndexer {
             .iter()
             .find(|i| i.line == line && character >= i.start_col && character < i.end_col)
     }
+
+    /// The transitive closure of asm files reachable from `path` via `.include`
+    /// / `%include`, starting with `path` itself. Breadth-first so the queried
+    /// file ranks before its includes (a symbol it defines wins over an included
+    /// one). Cycle-safe (dedup by canonical path); missing/unreadable includes
+    /// are skipped. Ensures every file in the closure is parsed and cached.
+    fn include_closure(&mut self, path: &Path) -> Vec<PathBuf> {
+        use std::collections::{HashSet, VecDeque};
+        let mut order: Vec<PathBuf> = Vec::new();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        let mut queue: VecDeque<PathBuf> = VecDeque::new();
+        queue.push_back(path.to_path_buf());
+        while let Some(p) = queue.pop_front() {
+            let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
+            if !seen.insert(canon) {
+                continue;
+            }
+            if self.ensure_file(&p).is_none() {
+                continue;
+            }
+            order.push(p.clone());
+            let dir = p.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let targets: Vec<PathBuf> = self
+                .files
+                .get(&p)
+                .map(|f| {
+                    f.includes
+                        .iter()
+                        .map(|i| dir.join(&i.path))
+                        .filter(|t| t.is_file())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for t in targets {
+                queue.push_back(t);
+            }
+        }
+        order
+    }
 }
 
 impl Default for AsmIndexer {
@@ -162,8 +213,14 @@ impl LanguageIndexer for AsmIndexer {
         Self::is_asm(path)
     }
 
-    fn refresh_flags(&mut self, _manifest_dir: &Path, _profile: &str) {
-        // Single-file model — no include roots / compile flags consumed yet.
+    fn refresh_flags(&mut self, manifest_dir: &Path, _profile: &str) {
+        // Pick the instruction/register help arch from the project's target
+        // (e.g. `[target] arch = "aarch64"`), falling back to the host arch.
+        let arch_str = crate::manifest::load_manifest_cached(manifest_dir)
+            .ok()
+            .and_then(|m| m.target.arch.clone())
+            .unwrap_or_else(|| std::env::consts::ARCH.to_string());
+        self.arch = Arch::from_target(&arch_str);
     }
 
     fn evict(&mut self, path: &Path) {
@@ -193,13 +250,15 @@ impl LanguageIndexer for AsmIndexer {
 
         // A named symbol defined more than once is an assembler error. Numeric
         // local labels are allowed to repeat and are excluded by construction.
+        // Symbols defined inside a macro body are templated per expansion (often
+        // via `\@`) and excluded — counted neither as duplicates nor as causes.
         let mut counts: HashMap<&str, usize> = HashMap::new();
-        for s in &file.symbols {
+        for s in file.symbols.iter().filter(|s| !s.in_macro) {
             *counts.entry(s.name.as_str()).or_insert(0) += 1;
         }
         file.symbols
             .iter()
-            .filter(|s| counts.get(s.name.as_str()).copied().unwrap_or(0) > 1)
+            .filter(|s| !s.in_macro && counts.get(s.name.as_str()).copied().unwrap_or(0) > 1)
             .map(|s| {
                 json!({
                     "range": span(s.line, s.start_col, s.end_col),
@@ -218,19 +277,30 @@ impl LanguageIndexer for AsmIndexer {
         if !Self::is_asm(&path) {
             return None;
         }
-        let file = self.ensure_file(&path)?;
-        let line_text = file.lines.get(line)?.clone();
+        let arch = self.arch;
+        let closure = self.include_closure(&path);
+        let line_text = self.files.get(&path)?.lines.get(line)?.clone();
         let (word, word_start) = word_at(&line_text, character as u32)?;
 
-        // 1. A named symbol defined in this file.
-        if let Some(sym) = file.symbols.iter().find(|s| s.name == word) {
-            let value = format!(
-                "**{}** `{}`\n\nDefined at line {}.",
-                sym.kind.noun(),
-                sym.name,
-                sym.line + 1
-            );
-            return Some(markdown(value));
+        // 1. A named symbol defined in this file or any `.include`d file.
+        for p in &closure {
+            let Some(f) = self.files.get(p) else { continue };
+            if let Some(sym) = f.symbols.iter().find(|s| s.name == word) {
+                let origin = if p == &path {
+                    format!("Defined at line {}.", sym.line + 1)
+                } else {
+                    format!(
+                        "Defined in `{}` at line {}.",
+                        p.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+                        sym.line + 1
+                    )
+                };
+                return Some(markdown(format!(
+                    "**{}** `{}`\n\n{origin}",
+                    sym.kind.noun(),
+                    sym.name
+                )));
+            }
         }
 
         // 2. The mnemonic slot (first token after an optional label) — a
@@ -240,13 +310,13 @@ impl LanguageIndexer for AsmIndexer {
             if let Some(desc) = directive_doc(&word).or_else(|| directive_doc(&pct)) {
                 return Some(markdown(format!("**directive** `{word}`\n\n{desc}")));
             }
-            if let Some(desc) = instruction_doc(&word) {
+            if let Some(desc) = instruction_doc(&word, arch) {
                 return Some(markdown(format!("**instruction** `{word}`\n\n{desc}")));
             }
         }
 
         // 3. A CPU register.
-        if let Some(desc) = register_doc(&word) {
+        if let Some(desc) = register_doc(&word, arch) {
             return Some(markdown(format!("**register** `{word}`\n\n{desc}")));
         }
 
@@ -266,7 +336,8 @@ impl LanguageIndexer for AsmIndexer {
         }
         let line = line as u32;
         let character = character as u32;
-        let file = self.ensure_file(&path)?;
+        let closure = self.include_closure(&path);
+        let file = self.files.get(&path)?;
         let uri_str = uri_from_path(&path);
 
         // `.include "file"` → open the included file (relative to this one).
@@ -285,7 +356,7 @@ impl LanguageIndexer for AsmIndexer {
             return None;
         }
 
-        // Directional numeric local label (`1f` / `1b`).
+        // Directional numeric local label (`1f` / `1b`) — always file-local.
         if let Some(nr) = file
             .num_refs
             .iter()
@@ -307,13 +378,20 @@ impl LanguageIndexer for AsmIndexer {
             );
         }
 
-        // A named-symbol reference.
+        // A named-symbol reference — resolve across the `.include` closure
+        // (current file first, then included files).
         let ident = Self::ident_at(file, line, character)?;
-        let def = file.symbols.iter().find(|s| s.name == ident.name)?;
-        Some(json!({
-            "uri": uri_str,
-            "range": span(def.line, def.start_col, def.end_col),
-        }))
+        let name = ident.name.clone();
+        for p in &closure {
+            let Some(f) = self.files.get(p) else { continue };
+            if let Some(def) = f.symbols.iter().find(|s| s.name == name) {
+                return Some(json!({
+                    "uri": uri_from_path(p),
+                    "range": span(def.line, def.start_col, def.end_col),
+                }));
+            }
+        }
+        None
     }
 
     fn references(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
@@ -329,20 +407,30 @@ impl LanguageIndexer for AsmIndexer {
             .and_then(|c| c.get("includeDeclaration"))
             .and_then(Value::as_bool)
             .unwrap_or(true);
-        let file = self.ensure_file(&path)?;
+        let closure = self.include_closure(&path);
+        let file = self.files.get(&path)?;
         let ident = Self::ident_at(file, line as u32, character as u32)?;
-        if !file.symbols.iter().any(|s| s.name == ident.name) {
+        let target = ident.name.clone();
+        // Only resolve names that are actually defined somewhere in the closure.
+        if !closure
+            .iter()
+            .filter_map(|p| self.files.get(p))
+            .any(|f| f.symbols.iter().any(|s| s.name == target))
+        {
             return None;
         }
-        let target = ident.name.clone();
-        let uri_str = uri_from_path(&path);
-        Some(
-            file.idents
-                .iter()
-                .filter(|i| i.name == target && (include_decl || !i.is_def))
-                .map(|i| json!({ "uri": uri_str, "range": span(i.line, i.start_col, i.end_col) }))
-                .collect(),
-        )
+        // Gather every occurrence across the current file and its includes.
+        let mut out = Vec::new();
+        for p in &closure {
+            let Some(f) = self.files.get(p) else { continue };
+            let uri_str = uri_from_path(p);
+            for i in &f.idents {
+                if i.name == target && (include_decl || !i.is_def) {
+                    out.push(json!({ "uri": uri_str, "range": span(i.line, i.start_col, i.end_col) }));
+                }
+            }
+        }
+        Some(out)
     }
 
     fn document_symbols(&mut self, uri: &str) -> Option<Vec<Value>> {
@@ -388,17 +476,31 @@ impl LanguageIndexer for AsmIndexer {
         if !Self::is_asm(&path) {
             return None;
         }
-        let file = self.ensure_file(&path)?;
+        let closure = self.include_closure(&path);
 
         let mut items: Vec<Value> = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for s in &file.symbols {
-            if seen.insert(s.name.as_str()) {
-                items.push(json!({
-                    "label": s.name,
-                    "kind": s.kind.lsp_completion_kind(),
-                    "detail": s.kind.noun(),
-                }));
+        // Symbols from the current file and every `.include`d file.
+        for p in &closure {
+            let Some(f) = self.files.get(p) else { continue };
+            let from_include = p != &path;
+            for s in &f.symbols {
+                if seen.insert(s.name.clone()) {
+                    let detail = if from_include {
+                        format!(
+                            "{} (from {})",
+                            s.kind.noun(),
+                            p.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+                        )
+                    } else {
+                        s.kind.noun().to_string()
+                    };
+                    items.push(json!({
+                        "label": s.name,
+                        "kind": s.kind.lsp_completion_kind(),
+                        "detail": detail,
+                    }));
+                }
             }
         }
         for (name, desc) in DIRECTIVES {
@@ -546,6 +648,11 @@ fn analyze(source: &str) -> AsmFile {
         let chars: Vec<char> = stripped.chars().collect();
         let toks = lex(&chars);
 
+        // Whether this line sits inside a `.macro` body — captured before this
+        // line's own block open/close, so the `.macro foo` definition line (and
+        // its macro-name symbol) is *not* counted as inside the body.
+        let in_macro_body = block_stack.iter().any(|(k, _)| *k == BlockKind::Macro);
+
         // ── folding: block directives ──
         let head = directive_head(&toks);
         if let Some(kind) = BlockKind::opens(&head) {
@@ -561,6 +668,9 @@ fn analyze(source: &str) -> AsmFile {
 
         // ── symbol extraction ──
         let mut idx = 0usize;
+        // A `.macro name p1, p2` / `%macro name N` line: the tokens after the
+        // name are *parameter declarations*, not references to global symbols.
+        let mut is_macro_def_line = false;
         // Leading label (`name:`) or numeric label (`1:`).
         match (toks.first(), toks.get(1)) {
             (
@@ -578,6 +688,7 @@ fn analyze(source: &str) -> AsmFile {
                     line: lineno,
                     start_col: *start,
                     end_col: *end,
+                    in_macro: in_macro_body,
                 });
                 idents.push(Ident {
                     name: text.clone(),
@@ -621,6 +732,7 @@ fn analyze(source: &str) -> AsmFile {
                 _ => None,
             };
             if let Some(kind) = def_kind {
+                is_macro_def_line = kind == SymKind::Macro;
                 if let Some(Tok::Word {
                     text: name,
                     start,
@@ -634,6 +746,7 @@ fn analyze(source: &str) -> AsmFile {
                         line: lineno,
                         start_col: *start,
                         end_col: *end,
+                        in_macro: in_macro_body,
                     });
                     idents.push(Ident {
                         name: name.clone(),
@@ -665,6 +778,7 @@ fn analyze(source: &str) -> AsmFile {
                             line: lineno,
                             start_col: *start,
                             end_col: *end,
+                            in_macro: in_macro_body,
                         });
                         idents.push(Ident {
                             name: name.clone(),
@@ -702,6 +816,17 @@ fn analyze(source: &str) -> AsmFile {
                 } => {
                     if *register {
                         continue; // a register, not a symbol
+                    }
+                    // Parameter declarations on a `.macro name p1, p2` line are
+                    // macro-locals, not global symbol references.
+                    if is_macro_def_line {
+                        continue;
+                    }
+                    // A `\name` macro-parameter reference (GAS) — local to the
+                    // macro body, not a global symbol. The `\` sits just before
+                    // the word in the comment-stripped line.
+                    if *start > 0 && chars.get(*start as usize - 1) == Some(&'\\') {
+                        continue;
                     }
                     let already = idents
                         .iter()
@@ -1000,7 +1125,7 @@ fn directive_doc(name: &str) -> Option<&'static str> {
 }
 
 /// Common x86-64 instruction mnemonics.
-const INSTRUCTIONS: &[(&str, &str)] = &[
+const X86_INSTRUCTIONS: &[(&str, &str)] = &[
     ("mov", "Copy a value between registers/memory/immediate."),
     ("movzx", "Move with zero-extension to a wider register."),
     ("movsx", "Move with sign-extension to a wider register."),
@@ -1054,15 +1179,14 @@ const INSTRUCTIONS: &[(&str, &str)] = &[
     ("setne", "Set byte to 1 if not equal/not zero."),
 ];
 
-fn instruction_doc(name: &str) -> Option<&'static str> {
-    INSTRUCTIONS
+fn instruction_doc(name: &str, arch: Arch) -> Option<&'static str> {
+    arch.instruction_tables()
         .iter()
-        .find(|(m, _)| m.eq_ignore_ascii_case(name))
-        .map(|(_, desc)| *desc)
+        .find_map(|table| lookup_ci(table, name))
 }
 
 /// Common x86-64 registers (names without the AT&T `%` sigil).
-const REGISTERS: &[(&str, &str)] = &[
+const X86_REGISTERS: &[(&str, &str)] = &[
     ("rax", "64-bit accumulator / integer return value (SysV)."),
     ("rbx", "64-bit general-purpose (callee-saved)."),
     (
@@ -1110,12 +1234,208 @@ const REGISTERS: &[(&str, &str)] = &[
     ("cl", "Low 8 bits of RCX (shift count)."),
 ];
 
-fn register_doc(name: &str) -> Option<&'static str> {
-    let lower = name.to_ascii_lowercase();
-    REGISTERS
+/// Common AArch64 (ARM64) instruction mnemonics.
+const AARCH64_INSTRUCTIONS: &[(&str, &str)] = &[
+    ("mov", "Copy a register or immediate into a register."),
+    ("movz", "Move a 16-bit immediate, zeroing the rest."),
+    ("movk", "Move a 16-bit immediate, keeping other bits."),
+    ("movn", "Move the bitwise-NOT of a 16-bit immediate."),
+    ("ldr", "Load a register from memory."),
+    ("ldp", "Load a pair of registers from memory."),
+    ("str", "Store a register to memory."),
+    ("stp", "Store a pair of registers to memory."),
+    ("adr", "Compute a PC-relative address."),
+    ("adrp", "Compute a PC-relative page address."),
+    ("add", "Integer addition."),
+    ("sub", "Integer subtraction."),
+    ("subs", "Subtract and set condition flags."),
+    ("mul", "Integer multiply."),
+    ("madd", "Multiply-add."),
+    ("sdiv", "Signed integer divide."),
+    ("udiv", "Unsigned integer divide."),
+    ("neg", "Negate (two's complement)."),
+    ("and", "Bitwise AND."),
+    ("orr", "Bitwise OR."),
+    ("eor", "Bitwise exclusive-OR."),
+    ("lsl", "Logical shift left."),
+    ("lsr", "Logical shift right."),
+    ("asr", "Arithmetic shift right."),
+    ("cmp", "Compare (subtract and set flags)."),
+    ("cmn", "Compare negative (add and set flags)."),
+    ("tst", "Test bits (AND and set flags)."),
+    ("b", "Unconditional branch."),
+    ("bl", "Branch with link (call)."),
+    ("blr", "Branch with link to register (indirect call)."),
+    ("br", "Branch to register (indirect jump)."),
+    ("ret", "Return from subroutine (branch to LR)."),
+    ("cbz", "Compare and branch if zero."),
+    ("cbnz", "Compare and branch if non-zero."),
+    ("b.eq", "Branch if equal (Z=1)."),
+    ("b.ne", "Branch if not equal (Z=0)."),
+    ("csel", "Conditionally select between two registers."),
+    ("svc", "Supervisor call (system call)."),
+    ("nop", "No operation."),
+];
+
+/// Common AArch64 (ARM64) registers.
+const AARCH64_REGISTERS: &[(&str, &str)] = &[
+    ("x0", "64-bit general-purpose / 1st argument & return value."),
+    ("x1", "64-bit general-purpose / 2nd argument."),
+    ("x2", "64-bit general-purpose / 3rd argument."),
+    ("x3", "64-bit general-purpose / 4th argument."),
+    ("x4", "64-bit general-purpose / 5th argument."),
+    ("x5", "64-bit general-purpose / 6th argument."),
+    ("x6", "64-bit general-purpose / 7th argument."),
+    ("x7", "64-bit general-purpose / 8th argument."),
+    ("x8", "64-bit indirect-result / syscall number register."),
+    ("x9", "64-bit general-purpose (caller-saved)."),
+    ("x16", "64-bit intra-procedure-call scratch (IP0)."),
+    ("x17", "64-bit intra-procedure-call scratch (IP1)."),
+    ("x18", "64-bit platform register (reserved on some ABIs)."),
+    ("x19", "64-bit general-purpose (callee-saved)."),
+    ("x29", "Frame pointer (FP)."),
+    ("x30", "Link register (LR) — return address."),
+    ("w0", "Low 32 bits of X0."),
+    ("w1", "Low 32 bits of X1."),
+    ("sp", "Stack pointer."),
+    ("lr", "Link register (alias of X30)."),
+    ("fp", "Frame pointer (alias of X29)."),
+    ("xzr", "64-bit zero register (reads 0, writes discarded)."),
+    ("wzr", "32-bit zero register."),
+    ("pc", "Program counter."),
+];
+
+/// Common RISC-V instruction mnemonics (RV32/RV64 base + M extension).
+const RISCV_INSTRUCTIONS: &[(&str, &str)] = &[
+    ("li", "Load immediate (pseudo-instruction)."),
+    ("la", "Load address (pseudo-instruction)."),
+    ("mv", "Copy a register (pseudo for `addi rd, rs, 0`)."),
+    ("lw", "Load 32-bit word from memory."),
+    ("ld", "Load 64-bit doubleword (RV64)."),
+    ("sw", "Store 32-bit word to memory."),
+    ("sd", "Store 64-bit doubleword (RV64)."),
+    ("lui", "Load upper immediate."),
+    ("auipc", "Add upper immediate to PC."),
+    ("add", "Integer addition."),
+    ("addi", "Add immediate."),
+    ("sub", "Integer subtraction."),
+    ("mul", "Integer multiply (M extension)."),
+    ("div", "Signed divide (M extension)."),
+    ("rem", "Signed remainder (M extension)."),
+    ("and", "Bitwise AND."),
+    ("or", "Bitwise OR."),
+    ("xor", "Bitwise exclusive-OR."),
+    ("andi", "Bitwise AND with immediate."),
+    ("ori", "Bitwise OR with immediate."),
+    ("sll", "Shift left logical."),
+    ("srl", "Shift right logical."),
+    ("sra", "Shift right arithmetic."),
+    ("slt", "Set if less than (signed)."),
+    ("sltu", "Set if less than (unsigned)."),
+    ("beq", "Branch if equal."),
+    ("bne", "Branch if not equal."),
+    ("blt", "Branch if less than (signed)."),
+    ("bge", "Branch if greater or equal (signed)."),
+    ("j", "Unconditional jump (pseudo)."),
+    ("jal", "Jump and link (call)."),
+    ("jalr", "Jump and link register (indirect call/return)."),
+    ("ret", "Return (pseudo for `jalr x0, ra, 0`)."),
+    ("call", "Call a far subroutine (pseudo)."),
+    ("ecall", "Environment call (system call)."),
+    ("ebreak", "Environment breakpoint."),
+    ("nop", "No operation (pseudo for `addi x0, x0, 0`)."),
+];
+
+/// Common RISC-V registers (ABI names; numeric `x0`–`x31` also map here).
+const RISCV_REGISTERS: &[(&str, &str)] = &[
+    ("zero", "Hard-wired zero (x0)."),
+    ("ra", "Return address (x1, caller-saved)."),
+    ("sp", "Stack pointer (x2, callee-saved)."),
+    ("gp", "Global pointer (x3)."),
+    ("tp", "Thread pointer (x4)."),
+    ("t0", "Temporary (x5, caller-saved)."),
+    ("t1", "Temporary (x6, caller-saved)."),
+    ("t2", "Temporary (x7, caller-saved)."),
+    ("s0", "Saved register / frame pointer (x8, callee-saved)."),
+    ("fp", "Frame pointer (alias of s0/x8)."),
+    ("s1", "Saved register (x9, callee-saved)."),
+    ("a0", "Function argument / return value (x10)."),
+    ("a1", "Function argument / return value (x11)."),
+    ("a2", "Function argument (x12)."),
+    ("a3", "Function argument (x13)."),
+    ("a4", "Function argument (x14)."),
+    ("a5", "Function argument (x15)."),
+    ("a6", "Function argument (x16)."),
+    ("a7", "Function argument / syscall number (x17)."),
+    ("s2", "Saved register (x18, callee-saved)."),
+    ("t3", "Temporary (x28, caller-saved)."),
+    ("pc", "Program counter."),
+];
+
+fn register_doc(name: &str, arch: Arch) -> Option<&'static str> {
+    arch.register_tables()
         .iter()
-        .find(|(r, _)| *r == lower)
+        .find_map(|table| lookup_ci(table, name))
+}
+
+/// Case-insensitive lookup in a `(key, description)` table.
+fn lookup_ci(table: &[(&str, &'static str)], name: &str) -> Option<&'static str> {
+    table
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
         .map(|(_, desc)| *desc)
+}
+
+/// CPU architecture for instruction/register help dispatch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Arch {
+    X86_64,
+    Aarch64,
+    RiscV,
+    /// Arch not recognised — help falls back to trying every table.
+    Unknown,
+}
+
+impl Arch {
+    fn host() -> Arch {
+        Arch::from_target(std::env::consts::ARCH)
+    }
+
+    /// Classify a target arch or triple string (`"aarch64"`, `"arm64"`,
+    /// `"riscv64gc-unknown-linux-gnu"`, `"x86_64"`, …).
+    fn from_target(s: &str) -> Arch {
+        let s = s.to_ascii_lowercase();
+        if s.contains("aarch64") || s.contains("arm64") {
+            Arch::Aarch64
+        } else if s.contains("riscv") {
+            Arch::RiscV
+        } else if s.contains("x86_64") || s.contains("amd64") || s.contains("x86") || s == "i686" {
+            Arch::X86_64
+        } else {
+            Arch::Unknown
+        }
+    }
+
+    /// Instruction tables to consult, the detected arch first. `Unknown` tries
+    /// all so hover still works when the arch can't be determined.
+    fn instruction_tables(self) -> &'static [&'static [(&'static str, &'static str)]] {
+        match self {
+            Arch::X86_64 => &[X86_INSTRUCTIONS],
+            Arch::Aarch64 => &[AARCH64_INSTRUCTIONS],
+            Arch::RiscV => &[RISCV_INSTRUCTIONS],
+            Arch::Unknown => &[X86_INSTRUCTIONS, AARCH64_INSTRUCTIONS, RISCV_INSTRUCTIONS],
+        }
+    }
+
+    /// Register tables to consult, the detected arch first.
+    fn register_tables(self) -> &'static [&'static [(&'static str, &'static str)]] {
+        match self {
+            Arch::X86_64 => &[X86_REGISTERS],
+            Arch::Aarch64 => &[AARCH64_REGISTERS],
+            Arch::RiscV => &[RISCV_REGISTERS],
+            Arch::Unknown => &[X86_REGISTERS, AARCH64_REGISTERS, RISCV_REGISTERS],
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1227,9 +1547,65 @@ foo:           # comment with bar:
     #[test]
     fn help_lookups() {
         assert!(directive_doc(".globl").is_some());
-        assert!(instruction_doc("MOV").is_some()); // case-insensitive
-        assert!(register_doc("RAX").is_some());
-        assert!(register_doc("not_a_reg").is_none());
+        assert!(instruction_doc("MOV", Arch::X86_64).is_some()); // case-insensitive
+        assert!(register_doc("RAX", Arch::X86_64).is_some());
+        assert!(register_doc("not_a_reg", Arch::X86_64).is_none());
+    }
+
+    #[test]
+    fn arch_detection_and_per_arch_help() {
+        assert_eq!(Arch::from_target("aarch64-unknown-linux-gnu"), Arch::Aarch64);
+        assert_eq!(Arch::from_target("arm64"), Arch::Aarch64);
+        assert_eq!(Arch::from_target("riscv64gc-unknown-linux-gnu"), Arch::RiscV);
+        assert_eq!(Arch::from_target("x86_64"), Arch::X86_64);
+        assert_eq!(Arch::from_target("sparc"), Arch::Unknown);
+
+        // Arch-specific registers resolve under their arch.
+        assert!(register_doc("x0", Arch::Aarch64).is_some());
+        assert!(register_doc("a7", Arch::RiscV).is_some());
+        assert!(instruction_doc("bl", Arch::Aarch64).is_some());
+        assert!(instruction_doc("ecall", Arch::RiscV).is_some());
+
+        // Unknown arch falls back to trying every table.
+        assert!(register_doc("x0", Arch::Unknown).is_some());
+        assert!(register_doc("rax", Arch::Unknown).is_some());
+    }
+
+    #[test]
+    fn macro_body_labels_excluded_from_duplicate_diagnostics() {
+        // Two macros each define an internal `.Lloop` label (templated via `\@`
+        // at assembly time). Our model collapses the name, but macro-body symbols
+        // must not be flagged as duplicates.
+        let src = "\
+.macro one
+.Lloop\\@:
+    nop
+.endm
+.macro two
+.Lloop\\@:
+    nop
+.endm
+";
+        let f = analyze(src);
+        let loop_syms: Vec<&Symbol> = f.symbols.iter().filter(|s| s.name == ".Lloop").collect();
+        assert_eq!(loop_syms.len(), 2);
+        assert!(loop_syms.iter().all(|s| s.in_macro));
+        // The macro names themselves are not inside a body.
+        assert!(f
+            .symbols
+            .iter()
+            .any(|s| s.name == "one" && !s.in_macro));
+    }
+
+    #[test]
+    fn macro_parameter_refs_are_not_global_idents() {
+        // `\count` is a macro parameter, not a reference to a global symbol.
+        let src = ".macro fill count\n    .rept \\count\n    nop\n    .endr\n.endm\n";
+        let f = analyze(src);
+        assert!(
+            !f.idents.iter().any(|i| i.name == "count" && !i.is_def),
+            "macro-parameter ref `\\count` must not be recorded as a symbol use"
+        );
     }
 
     #[test]
@@ -1250,6 +1626,64 @@ foo:           # comment with bar:
         // word_at over the immediate yields the bare name.
         let (w, _) = word_at("    mov $WIDTH, %eax", 9).unwrap();
         assert_eq!(w, "WIDTH");
+    }
+
+    #[test]
+    fn cross_file_include_resolution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let inc = tmp.path().join("helper.inc");
+        let main = tmp.path().join("main.s");
+        std::fs::write(
+            &inc,
+            ".equ WIDTH, 80\n.macro prologue\n    push %rbp\n.endm\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &main,
+            ".include \"helper.inc\"\nmain:\n    mov $WIDTH, %eax\n    prologue\n",
+        )
+        .unwrap();
+
+        let main_uri = uri_from_path(&main);
+        let pos = |line: u32, ch: u32| {
+            json!({ "params": { "textDocument": { "uri": main_uri },
+                                "position": { "line": line, "character": ch } } })
+        };
+
+        let mut ix = AsmIndexer::new();
+
+        // goto `WIDTH` (operand on line 2) → its `.equ` in helper.inc.
+        let g = ix.goto_definition(&main_uri, &pos(2, 10)).expect("goto WIDTH");
+        assert_eq!(g["uri"], json!(uri_from_path(&inc)));
+        assert_eq!(g["range"]["start"]["line"], json!(0));
+
+        // hover `prologue` (line 3) → macro defined in the included file.
+        let h = ix.hover(&main_uri, &pos(3, 6)).expect("hover prologue");
+        let text = h["contents"]["value"].as_str().unwrap();
+        assert!(text.contains("macro") && text.contains("helper.inc"), "{text}");
+
+        // completion offers symbols from the included file.
+        let c = ix.completion(&main_uri, &pos(4, 0)).expect("completion");
+        let labels: Vec<&str> = c["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["label"].as_str())
+            .collect();
+        assert!(labels.contains(&"WIDTH"));
+        assert!(labels.contains(&"prologue"));
+
+        // references to WIDTH find the use in main.s.
+        let refs = ix
+            .references(
+                &main_uri,
+                &json!({ "params": { "textDocument": { "uri": main_uri },
+                                     "position": { "line": 2, "character": 10 },
+                                     "context": { "includeDeclaration": true } } }),
+            )
+            .expect("references WIDTH");
+        assert!(refs.iter().any(|r| r["uri"] == json!(main_uri)));
+        assert!(refs.iter().any(|r| r["uri"] == json!(uri_from_path(&inc))));
     }
 
     #[test]

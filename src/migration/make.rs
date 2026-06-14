@@ -1520,7 +1520,7 @@ mod tests {
         let mf = Makefile::read_relaxed(content.as_bytes()).unwrap();
         let vars = ExpandedVars::new(collect_vars(&mf));
         let mut warnings = vec![];
-        let spec = analyze(&mf, &vars, Path::new("/tmp"), content, &mut warnings);
+        let _spec = analyze(&mf, &vars, Path::new("/tmp"), content, &mut warnings);
         // z is in AUTO_LINKED so it will be filtered out, but the warning should fire
         assert!(
             warnings.iter().any(|w| w.contains("ifdef")),

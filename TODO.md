@@ -172,11 +172,11 @@ signature help, references, and a broad diagnostic set (48 tests) — but
 Rust, so "native" here means an in-process indexer — same self-contained goal as
 clang-bridge/fortran-lsp.)
 
-**Status:** implemented — `src/lsp/indexers/Asm.rs`, a single-file model
-(GAS + NASM). `--no-native-asm` falls back to the external `asm-lsp`
-passthrough; otherwise that passthrough is not started and asm requests route to
-`AsmIndexer`. Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils
-handled. 12 unit tests + end-to-end verified through `freight lsp`.
+**Status:** implemented and default-on — `src/lsp/indexers/Asm.rs` (GAS + NASM).
+`--no-native-asm` falls back to the external `asm-lsp` passthrough; otherwise
+that passthrough is not started and asm requests route to `AsmIndexer`.
+Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils handled. 16 unit
+tests + end-to-end verified through `freight lsp`.
 
 Implemented:
 - **Symbols** — labels, constants (`.equ`/`.set`/`.equiv`, GAS `name = …`, NASM
@@ -184,25 +184,26 @@ Implemented:
   documentSymbol (kinded), goto, references (honours `includeDeclaration`),
   hover, completion.
 - **Numeric local labels** — `1:` with directional `1f`/`1b` goto.
-- **Hover** — symbol provenance + curated **instruction** (x86-64), **register**
-  (x86-64), and **directive** help tables, dispatched by cursor context
-  (mnemonic slot vs operand).
-- **`.include "file"`** — goto opens the included file.
+- **Cross-file resolution** — goto / references / hover / completion follow the
+  transitive `.include`/`%include` closure from the queried file (BFS,
+  cycle-safe; the current file ranks before its includes). `.include "file"`
+  navigation also opens the target.
+- **Macro awareness** — `.macro foo a, b` parameters and `\arg` references are
+  treated as macro-locals (not global symbols); labels defined inside a macro
+  body are excluded from duplicate-symbol diagnostics (templated per expansion
+  via `\@`).
+- **Hover** — symbol provenance (with the defining file for cross-file symbols) +
+  curated per-arch **instruction** / **register** tables (x86-64, AArch64,
+  RISC-V) + **directive** help, dispatched by cursor context (mnemonic vs
+  operand). Arch comes from the manifest `[target] arch` (or the host) via
+  `refresh_flags`; an unknown arch tries every table.
 - **Folding** — `.macro`/`.rept`/conditional blocks and per-label regions.
 - **Diagnostics** — duplicate symbol definition.
 
 **Remaining / how to grow it:**
-- [ ] **Cross-file symbol resolution** — merge symbols from `.include`d files so
-      goto/references/hover/completion span files (today only `.include`
-      *navigation* works; resolution is single-file). Needs include-root
-      resolution like `FortranIndexer::refresh_flags` + a multi-file index.
-- [ ] **Macro-parameter awareness** — `.macro foo a, b` parameters as locals;
-      handle `\arg` / `%1` substitutions; suppress duplicate-symbol false
-      positives for labels defined inside macro bodies that use `\@`.
-- [ ] **Broader instruction/register DB** — the curated x86-64 tables cover
-      common cases; ARM/RISC-V and fuller coverage could embed the upstream
-      `asm-lsp` crate's data tables rather than hand-rolling. Arch detection
-      from the manifest/target triple.
+- [ ] **Fuller instruction/register DB** — the curated x86-64/AArch64/RISC-V
+      tables cover common mnemonics/registers; fuller coverage could embed the
+      upstream `asm-lsp` crate's data tables rather than hand-rolling.
 - [ ] **Semantic tokens** — only once freight owns the global legend (see the
       clang-bridge legend note); otherwise leave to TextMate.
 - [ ] Consider extracting the parser into a `crates/asm-lsp`-style crate if it
