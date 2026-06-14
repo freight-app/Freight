@@ -105,7 +105,7 @@ pub enum PipelineOutput {
     Bench(BenchSummary),
 }
 
-struct ProjectContext {
+pub(crate) struct ProjectContext {
     project_dir: PathBuf,
     manifest: Manifest,
     effective_backend: Backend,

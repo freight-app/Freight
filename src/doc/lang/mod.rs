@@ -284,47 +284,6 @@ fn sig_rust(raw: &str) -> String {
     s.to_string()
 }
 
-fn sig_go(raw: &str) -> Option<String> {
-    // Strip body brace.
-    let s = match raw.find('{') {
-        Some(i) => raw[..i].trim_end(),
-        None => raw.trim(),
-    };
-    let s = s.strip_prefix("func ")?.trim_start();
-
-    // Optional receiver: starts with `(`
-    let (receiver, s) = if s.starts_with('(') {
-        let close = find_close(s)?;
-        (Some(&s[..=close]), s[close + 1..].trim_start())
-    } else {
-        (None, s)
-    };
-
-    // Function name
-    let name_end = s
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
-        .unwrap_or(s.len());
-    let name = &s[..name_end];
-    let after = s[name_end..].trim_start();
-
-    if !after.starts_with('(') {
-        return None;
-    }
-    let close = find_close(after)?;
-    let params = after[1..close].trim();
-    let ret = after[close + 1..].trim();
-
-    let display_name = match receiver {
-        Some(r) => format!("{} {}", r, name),
-        None => name.to_string(),
-    };
-    if ret.is_empty() {
-        Some(format!("fn {}({})", display_name, params))
-    } else {
-        Some(format!("fn {}({}) -> {}", display_name, params, ret))
-    }
-}
-
 fn sig_ada(raw: &str) -> String {
     let s = raw.trim().trim_end_matches(';').trim();
     let up = s.to_ascii_uppercase();
@@ -2042,11 +2001,10 @@ void matmul(double *A, int n);"#;
 double clamp(double x, double lo, double hi);
 } // namespace math
 "#;
-        let dir = std::env::temp_dir();
-        let path = dir.join("clang_test_clamp.hpp");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("clamp.hpp");
         std::fs::write(&path, src).unwrap();
         let got = crate::extract_clang::extract_file_clang(&path);
-        std::fs::remove_file(&path).ok();
 
         assert!(
             !got.is_empty(),
@@ -2077,11 +2035,10 @@ public:
 };
 } // namespace stats
 "#;
-        let dir = std::env::temp_dir();
-        let path = dir.join("clang_test_order_stats.hpp");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("order_stats.hpp");
         std::fs::write(&path, src).unwrap();
         let got = crate::extract_clang::extract_file_clang(&path);
-        std::fs::remove_file(&path).ok();
 
         let class = got
             .iter()

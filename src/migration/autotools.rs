@@ -925,8 +925,8 @@ mod tests {
     #[test]
     fn subdirs_recursed_and_emitted_as_path_deps() {
         use std::fs;
-        let root =
-            std::env::temp_dir().join(format!("autotools-subdirs-test-{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
         // Root: configure.ac + Makefile.am with SUBDIRS = mylib
         fs::create_dir_all(root.join("mylib")).unwrap();
         fs::write(root.join("configure.ac"), "AC_INIT([myapp], [1.0])\n").unwrap();
@@ -942,7 +942,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = import_autotools(&root, Some(&root)).unwrap();
+        let result = import_autotools(root, Some(root)).unwrap();
 
         // Both freight.tomls should have been written
         assert!(result
@@ -964,8 +964,6 @@ mod tests {
             root_toml.contains("mylib"),
             "expected 'mylib' in root manifest:\n{root_toml}"
         );
-
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -130,10 +130,9 @@ use crate::manifest::load_manifest_cached;
 /// Where a package's headers came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderOrigin {
-    /// The current project itself (headers in its `include/`, `src/`, or `[compiler].includes`).
+    /// The current project itself, or a workspace member (both are local
+    /// first-party packages: headers in `include/`, `src/`, or `[compiler].includes`).
     Own,
-    /// Workspace member (sibling crate in the same `freight.toml` workspace).
-    Workspace,
     /// Path dependency declared in the current project's `[dependencies]`.
     PathDep,
     /// Installed by `freight fetch` into the project's `.pkgs/` cache.
@@ -149,6 +148,9 @@ pub struct HeaderEntry {
     pub full_path: PathBuf,
     pub origin: HeaderOrigin,
     /// The key used in `[dependencies]` for this entry (e.g. `"mylib"`).
+    /// Reserved for the planned "add the package that provides this header" code
+    /// action (mirrors [`ModuleEntry::dep_key`]); not read yet.
+    #[allow(dead_code)]
     pub dep_key: Option<String>,
     /// The package's root directory (where its `freight.toml` lives), so the
     /// inlay tooltip can show that package's manifest metadata. `None` for the
@@ -203,10 +205,6 @@ impl HeaderIndex {
             }
         }
         None
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_path.is_empty()
     }
 
     /// All indexed package/project headers as `(include_path, entry)`, one per
@@ -321,10 +319,26 @@ fn run_compiler_probe(compiler: &str, extra_flags: &[&str]) -> Option<Vec<PathBu
     )
 }
 
+/// Recursively visit every file under `dir` (depth-first), calling `visit` on
+/// each non-directory entry. Unreadable directories are skipped silently. The
+/// shared traversal behind the header and module index walks.
+fn visit_files(dir: &Path, visit: &mut dyn FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            visit_files(&path, visit);
+        } else {
+            visit(&path);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn walk_headers(
     root: &Path,
-    dir: &Path,
     pkg_name: &str,
     pkg_version: &Option<String>,
     origin: HeaderOrigin,
@@ -332,35 +346,21 @@ fn walk_headers(
     pkg_dir: &Path,
     out: &mut HashMap<String, HeaderEntry>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_headers(
-                root,
-                &path,
-                pkg_name,
-                pkg_version,
-                origin.clone(),
-                dep_key,
-                pkg_dir,
-                out,
-            );
-        } else if is_header(&path) {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let entry = HeaderEntry {
-                package_name: pkg_name.to_string(),
-                package_version: pkg_version.clone(),
-                full_path: path.clone(),
-                origin: origin.clone(),
-                dep_key: dep_key.clone(),
-                pkg_dir: Some(pkg_dir.to_path_buf()),
-            };
-            insert_header(out, &rel.to_string_lossy(), entry);
+    visit_files(root, &mut |path| {
+        if !is_header(path) {
+            return;
         }
-    }
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let entry = HeaderEntry {
+            package_name: pkg_name.to_string(),
+            package_version: pkg_version.clone(),
+            full_path: path.to_path_buf(),
+            origin: origin.clone(),
+            dep_key: dep_key.clone(),
+            pkg_dir: Some(pkg_dir.to_path_buf()),
+        };
+        insert_header(out, &rel.to_string_lossy(), entry);
+    });
 }
 
 fn insert_header(map: &mut HashMap<String, HeaderEntry>, rel_path: &str, entry: HeaderEntry) {
@@ -466,7 +466,6 @@ fn is_cpp_source(path: &Path) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn walk_src_tree(
     root: &Path,
-    dir: &Path,
     pkg_name: &str,
     pkg_version: &Option<String>,
     origin: HeaderOrigin,
@@ -476,48 +475,34 @@ fn walk_src_tree(
     headers: &mut HashMap<String, HeaderEntry>,
     modules: &mut HashMap<String, ModuleEntry>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_src_tree(
-                root,
-                &path,
-                pkg_name,
-                pkg_version,
-                origin.clone(),
-                dep_key,
-                pkg_dir,
-                collect_headers,
+    visit_files(root, &mut |path| {
+        if collect_headers && is_header(path) {
+            let rel = path.strip_prefix(root).unwrap_or(path);
+            insert_header(
                 headers,
-                modules,
+                &rel.to_string_lossy(),
+                HeaderEntry {
+                    package_name: pkg_name.to_string(),
+                    package_version: pkg_version.clone(),
+                    full_path: path.to_path_buf(),
+                    origin: origin.clone(),
+                    dep_key: dep_key.clone(),
+                    pkg_dir: Some(pkg_dir.to_path_buf()),
+                },
             );
-        } else if collect_headers && is_header(&path) {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let entry = HeaderEntry {
-                package_name: pkg_name.to_string(),
-                package_version: pkg_version.clone(),
-                full_path: path.clone(),
-                origin: origin.clone(),
-                dep_key: dep_key.clone(),
-                pkg_dir: Some(pkg_dir.to_path_buf()),
-            };
-            insert_header(headers, &rel.to_string_lossy(), entry);
-        } else if is_cpp_source(&path) {
-            if let Some(name) = module_name_in_file(&path) {
+        } else if is_cpp_source(path) {
+            if let Some(name) = module_name_in_file(path) {
                 modules.entry(name).or_insert_with(|| ModuleEntry {
                     package_name: pkg_name.to_string(),
                     package_version: pkg_version.clone(),
                     origin: origin.clone(),
                     dep_key: dep_key.clone(),
-                    interface_path: path.clone(),
+                    interface_path: path.to_path_buf(),
                     pkg_dir: Some(pkg_dir.to_path_buf()),
                 });
             }
         }
-    }
+    });
 }
 
 /// Both freight-owned source indexes, produced by a single traversal of each
@@ -588,7 +573,6 @@ pub fn build_source_indexes(
             if include_dir.is_dir() {
                 walk_headers(
                     &include_dir,
-                    &include_dir,
                     &pkg_name,
                     &pkg_version,
                     spec.origin.clone(),
@@ -608,7 +592,6 @@ pub fn build_source_indexes(
                     if inc_dir.is_dir() {
                         walk_headers(
                             &inc_dir,
-                            &inc_dir,
                             &pkg_name,
                             &pkg_version,
                             HeaderOrigin::Own,
@@ -624,7 +607,6 @@ pub fn build_source_indexes(
         // Single src/ pass: Own headers + module declarations for every package.
         let src_dir = dir.join("src");
         walk_src_tree(
-            &src_dir,
             &src_dir,
             &pkg_name,
             &pkg_version,
@@ -655,7 +637,6 @@ pub fn build_source_indexes(
             if include_dir.is_dir() {
                 walk_headers(
                     &include_dir,
-                    &include_dir,
                     pkg_name,
                     &version,
                     HeaderOrigin::Fetched,
@@ -665,7 +646,6 @@ pub fn build_source_indexes(
                 );
             }
             walk_src_tree(
-                &pkg_dir.join("src"),
                 &pkg_dir.join("src"),
                 pkg_name,
                 &version,
@@ -1062,7 +1042,7 @@ pub fn include_completion(
                 let detail = match &entry.origin {
                     HeaderOrigin::System => continue, // stdlib handled by name above
                     HeaderOrigin::Own => "this project".to_string(),
-                    HeaderOrigin::Workspace | HeaderOrigin::PathDep | HeaderOrigin::Fetched => {
+                    HeaderOrigin::PathDep | HeaderOrigin::Fetched => {
                         match entry.package_version.as_deref().filter(|v| !v.is_empty()) {
                             Some(ver) => format!("{} {ver}", entry.package_name),
                             None => entry.package_name.clone(),
@@ -1305,7 +1285,8 @@ mod tests {
 
     #[test]
     fn module_index_scans_export_module_declarations() {
-        let tmp = std::env::temp_dir().join(format!("mod_idx_{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tmp.path();
         let src = tmp.join("dep/src/sub");
         std::fs::create_dir_all(&src).unwrap();
         // A primary interface unit (preceded by a global module fragment).
@@ -1340,8 +1321,6 @@ mod tests {
         // Partition and implementation units don't create separate entries.
         assert_eq!(idx.module_names().len(), 1);
         assert!(idx.lookup("mylib.core:detail").is_none());
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

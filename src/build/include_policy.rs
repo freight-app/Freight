@@ -799,7 +799,8 @@ import   spaced.mod  ;
 
     #[test]
     fn check_includes_flags_only_undeclared_present_headers() {
-        let tmp = std::env::temp_dir().join(format!("inc_chk_{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tmp.path();
         let declared = tmp.join("deps/zlib/include");
         let system = tmp.join("usr/include");
         let filedir = tmp.join("proj/src");
@@ -828,21 +829,18 @@ import   spaced.mod  ;
         assert_eq!(found.len(), 1, "got {found:?}");
         assert_eq!(found[0].spelling, "<pthread.h>");
         assert_eq!(found[0].line, 1);
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn header_next_to_source_is_project_local() {
         // A quote include resolving to the source file's own directory must not
         // be flagged even with no declared dirs (the no-compile_commands case).
-        let tmp = std::env::temp_dir().join(format!("inc_proj_{}", std::process::id()));
-        let src = tmp.join("src");
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("util.h"), "").unwrap();
         let found = check_includes("#include \"util.h\"\n", &src, &[], &[], Language::Cxx);
         assert!(found.is_empty(), "header next to source flagged: {found:?}");
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
@@ -872,9 +870,9 @@ trailing junk
 
     #[test]
     fn resolve_include_searches_quote_dir_then_search_path() {
-        let tmp = std::env::temp_dir().join(format!("inc_policy_{}", std::process::id()));
-        let proj = tmp.join("proj");
-        let dep = tmp.join("dep");
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("proj");
+        let dep = tmp.path().join("dep");
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::create_dir_all(&dep).unwrap();
         std::fs::write(proj.join("local.h"), "").unwrap();
@@ -915,7 +913,5 @@ trailing junk
             kind: DirectiveKind::Header,
         };
         assert_eq!(resolve_include(&missing, &proj, &[dep]), None);
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 }

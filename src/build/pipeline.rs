@@ -166,7 +166,7 @@ pub fn stage_fetch(
 }
 
 /// Stages 4 + 5: resolve the dep graph, check slot conflicts, build all deps.
-pub fn stage_build_deps(
+pub(crate) fn stage_build_deps(
     project_dir: &Path,
     root_dir: &Path,
     manifest: &Manifest,
@@ -259,7 +259,7 @@ pub fn stage_codegen(
 }
 
 /// Stage 8: precompile dep headers as BMIs (C++20 builds only; no-op otherwise).
-pub fn stage_header_units(
+pub(crate) fn stage_header_units(
     project_dir: &Path,
     manifest: &Manifest,
     profile: &str,
@@ -293,7 +293,7 @@ pub fn stage_header_units(
 }
 
 /// Stage 9: compile the precompiled header if configured; returns compile + clangd flags.
-pub fn stage_pch(
+pub(crate) fn stage_pch(
     project_dir: &Path,
     target_dir: &Path,
     manifest: &Manifest,

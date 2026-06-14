@@ -109,7 +109,7 @@ fn cmd_publish(dry_run: bool, yes: bool, no_verify: bool, repo: Option<&str>) {
     // ── pre-publish pipeline: build → test → scan ────────────────────────────
 
     if !no_verify {
-        if !run_pre_publish_pipeline(&name, &project_dir) {
+        if !run_pre_publish_pipeline(&name) {
             return;
         }
     } else {
@@ -188,7 +188,7 @@ fn cmd_publish(dry_run: bool, yes: bool, no_verify: bool, repo: Option<&str>) {
 
 /// Runs the full pre-publish pipeline: build → test → security scan.
 /// Returns `true` if all steps pass, `false` if any step failed.
-fn run_pre_publish_pipeline(name: &str, project_dir: &Path) -> bool {
+fn run_pre_publish_pipeline(name: &str) -> bool {
     // Step 1: build (dev profile — fast, includes debug info for scanning)
     print_status("verifying", &format!("[1/3] building `{name}`…"));
     match build_project_with("dev", &[], true, &[], &silent()) {
