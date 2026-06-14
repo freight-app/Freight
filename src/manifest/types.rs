@@ -689,16 +689,20 @@ pub struct DetailedDep {
     /// relative to the dep's source directory. Only used for foreign deps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
-    /// Extra arguments forwarded verbatim to `cmake -S … -B …` during configure.
-    /// Useful for silencing policy warnings on older CMakeLists.txt files, e.g.
-    /// `cmake_args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]`.
+    /// Build-system configure defines for a foreign dep, as `KEY=VALUE` (or a
+    /// bare `KEY`). Each builder applies them in its native form: cmake/meson
+    /// `-DKEY=VALUE`, make/autotools/scons `KEY=VALUE`, bazel `--define KEY=VALUE`.
+    /// A leading `-D` is accepted and stripped, e.g.
+    /// `defines = ["CMAKE_POLICY_VERSION_MINIMUM=3.5", "build_static_lib=ON"]`.
+    /// (`cmake-args` / `cmake_args` are accepted as legacy aliases.)
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        rename = "cmake-args",
+        rename = "defines",
+        alias = "cmake-args",
         alias = "cmake_args"
     )]
-    pub cmake_args: Vec<String>,
+    pub defines: Vec<String>,
     /// URL to a source archive (`.tar.gz`, `.tar.bz2`, `.tar.xz`, `.zip`).
     /// Any scheme that `curl` supports works: `https://`, `http://`, `ftp://`, etc.
     /// The archive is downloaded, optionally verified with `sha256`, extracted to

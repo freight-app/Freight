@@ -6,7 +6,10 @@
 //! does not produce a define of its own.
 //!
 //! `dep:name` entries inside a feature's value list activate an optional dep
-//! instead of producing a define — matching Cargo's syntax.
+//! instead of producing a define — matching Cargo's syntax. A `define:NAME` or
+//! `define:NAME=value` entry injects an explicit preprocessor define (`-DNAME`
+//! or `-DNAME=value`) so a feature can drive a specific macro/value, not just
+//! the auto `-D<FEATURE>`.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
@@ -20,7 +23,13 @@ pub struct FeatureResolution {
     pub active: BTreeSet<String>,
     /// Names of optional deps activated via `dep:name` entries in feature lists.
     pub activated_deps: BTreeSet<String>,
+    /// Explicit defines from `define:NAME` / `define:NAME=value` entries, ready
+    /// for `-D` prefixing (e.g. `"NAME"`, `"NAME=value"`). Sorted, de-duplicated.
+    pub defines: BTreeSet<String>,
 }
+
+/// The prefix marking an explicit-define entry in a feature list.
+const DEFINE_PREFIX: &str = "define:";
 
 // ── Resolution ────────────────────────────────────────────────────────────────
 
@@ -42,6 +51,7 @@ pub fn resolve_features(
         return Ok(FeatureResolution {
             active: BTreeSet::new(),
             activated_deps: BTreeSet::new(),
+            defines: BTreeSet::new(),
         });
     }
 
@@ -52,6 +62,7 @@ pub fn resolve_features(
 
     let mut active: BTreeSet<String> = BTreeSet::new();
     let mut activated_deps: BTreeSet<String> = BTreeSet::new();
+    let mut defines: BTreeSet<String> = BTreeSet::new();
     let mut queue: VecDeque<&str> = VecDeque::new();
 
     if use_defaults {
@@ -74,6 +85,15 @@ pub fn resolve_features(
             continue;
         }
 
+        // define:NAME / define:NAME=value → an explicit preprocessor define.
+        if let Some(def) = feat.strip_prefix(DEFINE_PREFIX) {
+            let def = def.trim();
+            if !def.is_empty() {
+                defines.insert(def.to_string());
+            }
+            continue;
+        }
+
         if active.contains(feat) {
             continue;
         }
@@ -93,6 +113,7 @@ pub fn resolve_features(
     Ok(FeatureResolution {
         active,
         activated_deps,
+        defines,
     })
 }
 
@@ -208,6 +229,24 @@ mod tests {
         assert!(!r.active.contains("spdlog"));
         // but the dep is activated
         assert!(r.activated_deps.contains("spdlog"));
+    }
+
+    #[test]
+    fn define_prefix_injects_explicit_defines() {
+        let f = map(&[
+            ("default", &["tls"]),
+            // `define:` with and without a value; not a feature reference.
+            ("tls", &["define:USE_TLS=1", "define:TLS_BACKEND"]),
+        ]);
+        let r = resolve_features(&f, &[], true).unwrap();
+        // The feature name still produces its auto define.
+        assert!(r.active.contains("tls"));
+        // Explicit defines captured verbatim (ready for `-D` prefixing).
+        assert!(r.defines.contains("USE_TLS=1"));
+        assert!(r.defines.contains("TLS_BACKEND"));
+        // `define:` entries are not treated as feature names or deps.
+        assert!(!r.active.iter().any(|a| a.starts_with("define:")));
+        assert!(r.activated_deps.is_empty());
     }
 
     #[test]

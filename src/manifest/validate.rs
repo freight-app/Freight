@@ -112,6 +112,12 @@ fn validate_features(m: &Manifest, errors: &mut Vec<ValidationError>) {
                 ));
                 continue;
             }
+            // `dep:name` activates an optional dependency and `define:NAME[=value]`
+            // injects a preprocessor define — neither is a reference to another
+            // feature, so skip the known-feature check.
+            if dep.starts_with("dep:") || dep.starts_with("define:") {
+                continue;
+            }
             if !m.features.contains_key(dep.as_str()) {
                 errors.push(ValidationError::new(
                     &format!("[features.{feat}]"),

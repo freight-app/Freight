@@ -127,8 +127,12 @@ pub fn stage_features(
         .collect();
     let resolution =
         features::resolve_features(&manifest.features, &all_requested, config.use_defaults)?;
+    // Auto `-D<FEATURE>` defines from active feature names, plus any explicit
+    // `define:NAME[=value]` entries those features carried.
+    let mut defines = features::to_defines(&resolution.active);
+    defines.extend(resolution.defines.iter().cloned());
     Ok(FeatureResolution {
-        defines: features::to_defines(&resolution.active),
+        defines,
         activated_deps: resolution.activated_deps,
     })
 }

@@ -291,9 +291,9 @@ pub fn completion_result(
                 "Include dirs exposed by a foreign dependency.",
             ),
             (
-                "cmake-args",
-                "CMake configure args",
-                "Extra args passed to cmake configure.",
+                "defines",
+                "Build-system defines",
+                "Configure defines (`KEY=VALUE`) applied per builder: cmake/meson `-D`, make `KEY=VALUE`.",
             ),
             (
                 "patches",
@@ -728,7 +728,6 @@ fn hover_for_key(key: &str) -> Option<&'static str> {
         "type" => "Artifact or foreign build type depending on context: library `static/shared/header`, or dependency `cmake/make/meson/autotools/scons/bazel/none`.",
         "include" => "Include directories exported by a foreign dependency, relative to that dependency's source root.",
         "includes" => "Include directories added to compiler invocations in the current section.",
-        "cmake-args" => "Arguments forwarded to `cmake -S ... -B ...` for this dependency.",
         "patches" => "Patch files applied after fetching a dependency, in order.",
         "channel" => "Registry channel used for this dependency, such as `stable` or `experimental`.",
         "std" => "Language standard checked against the detected compiler template before compilation.",
@@ -740,7 +739,7 @@ fn hover_for_key(key: &str) -> Option<&'static str> {
         "warnings" => "Warning policy: `none`, `default`, `all`, or `error`.",
         "opt-level" => "Optimization level from 0 through 3.",
         "debug" => "Emit debug information when true.",
-        "defines" => "Preprocessor defines injected in the current section.",
+        "defines" => "In `[compiler]`/sections: preprocessor defines for compilation. On a foreign dependency: build-system configure defines (`KEY=VALUE`), applied in each builder's native form (cmake/meson `-D`, make `KEY=VALUE`).",
         "flags" => "Compiler flags injected in the current section.",
         "pch" => "Header path to precompile once and inject into supported language compilations.",
         "unity" => "Enable or disable C-family unity builds.",
@@ -828,7 +827,7 @@ const DEPENDENCY_PARAMS: &[(&str, &str)] = &[
         "include",
         "Foreign dependency include dirs exported to dependents.",
     ),
-    ("cmake-args", "Extra CMake configure arguments."),
+    ("defines", "Build-system configure defines (KEY=VALUE)."),
     ("patches", "Patch files applied after fetching."),
     ("unity", "Override unity builds for this dependency."),
     ("channel", "Registry channel to use."),
@@ -896,7 +895,7 @@ const TOOL_PARAMS: &[(&str, &str)] = &[
 fn signature_spec_for_context(section: &str, line_until_pos: &str) -> Option<SignatureSpec> {
     if section.contains("dependencies") || inline_table_key(line_until_pos).is_some() {
         return Some(SignatureSpec {
-            label: "freight::dependency { semver version, path path, url git, string branch, string tag, string rev, url url, sha256 sha256, resolver repo, string[] features, bool default-features, bool optional, os[] os, arch[] arch, triple[] targets, build type, path[] include, string[] cmake-args, path[] patches, bool unity, string channel }",
+            label: "freight::dependency { semver version, path path, url git, string branch, string tag, string rev, url url, sha256 sha256, resolver repo, string[] features, bool default-features, bool optional, os[] os, arch[] arch, triple[] targets, build type, path[] include, string[] defines, path[] patches, bool unity, string channel }",
             params: DEPENDENCY_PARAMS,
             documentation: "Freight dependency table. Only explicitly listed, active dependencies contribute headers and link flags.",
         });

@@ -99,7 +99,7 @@ struct BuildJob {
     name: String,
     dep_dir: PathBuf,
     backend: String,
-    cmake_args: Vec<String>,
+    defines: Vec<String>,
     include: Vec<String>,
     target: Option<String>,
     /// Tool bin dirs accumulated from build-deps built before this job.
@@ -244,7 +244,7 @@ pub fn build_foreign_deps(
                     name: name.clone(),
                     dep_dir,
                     backend: bs,
-                    cmake_args: vec![],
+                    defines: vec![],
                     include: vec![],
                     target: manifest.compiler.target.clone(),
                     tool_paths: tool_paths.clone(),
@@ -349,7 +349,7 @@ pub fn build_foreign_deps(
             name: name.clone(),
             dep_dir,
             backend: bs,
-            cmake_args: d.cmake_args.clone(),
+            defines: d.defines.clone(),
             include: d.include.clone(),
             target: manifest.compiler.target.clone(),
             tool_paths: tool_paths.clone(),
@@ -368,7 +368,7 @@ pub fn build_foreign_deps(
                 &job.name,
                 &job.backend,
                 profile,
-                &job.cmake_args,
+                &job.defines,
                 job.target.as_deref(),
                 progress,
                 &job.tool_paths,
@@ -954,7 +954,7 @@ fn invoke_build_system(
     name: &str,
     build_system: &str,
     profile: &str,
-    cmake_args: &[String],
+    defines: &[String],
     target: Option<&str>,
     progress: &Progress,
     tool_paths: &[PathBuf],
@@ -968,17 +968,30 @@ fn invoke_build_system(
         backend: resolved.clone(),
     });
 
+    // `KEY=VALUE` bodies, with any leading `-D` stripped — each builder applies
+    // them in its native form below.
+    let bodies: Vec<&str> = defines
+        .iter()
+        .map(|d| d.strip_prefix("-D").unwrap_or(d))
+        .collect();
+
     let search_dir = match resolved.as_str() {
         "cmake" => {
-            cmake::build_cmake(dep_dir, build_dir, profile, cmake_args, target, tool_paths)?;
+            // cmake cache variables: `-DKEY=VALUE`.
+            let args: Vec<String> = bodies.iter().map(|b| format!("-D{b}")).collect();
+            cmake::build_cmake(dep_dir, build_dir, profile, &args, target, tool_paths)?;
             build_dir.to_path_buf()
         }
         "make" => {
-            make::build_make(dep_dir, tool_paths)?;
+            // make variable assignments: `KEY=VALUE`.
+            let vars: Vec<String> = bodies.iter().map(|b| b.to_string()).collect();
+            make::build_make(dep_dir, &vars, tool_paths)?;
             dep_dir.to_path_buf()
         }
         "meson" => {
-            meson::build_meson(dep_dir, build_dir, tool_paths)?;
+            // meson project options: `-DKEY=VALUE`.
+            let args: Vec<String> = bodies.iter().map(|b| format!("-D{b}")).collect();
+            meson::build_meson(dep_dir, build_dir, &args, tool_paths)?;
             build_dir.to_path_buf()
         }
         "autotools" => {
