@@ -51,8 +51,35 @@ pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<Vali
     validate_features(manifest, &mut errors);
     validate_foreign_deps(manifest, &mut errors);
     validate_dep_versions(manifest, &mut errors);
+    validate_no_platform_deps(manifest, &mut errors);
 
     errors
+}
+
+/// Reject dependency keys named after an OS/family (`unix`, `windows`, …). These
+/// used to link versionless system libraries (`unix = { features = [...] }`); that
+/// form is gone — system libraries are now declared with `[os.<name>] features = [...]`.
+fn validate_no_platform_deps(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    let mut flag = |section: &str, name: &str| {
+        if known_platform_keys().contains(&name) || name.eq_ignore_ascii_case("osx") {
+            errors.push(ValidationError::new(
+                &format!("[{section}.{name}]"),
+                format!(
+                    "'{name}' is an OS/family name, not a dependency — declare system \
+                     libraries with `[os.{name}]` + `features = [...]` instead"
+                ),
+            ));
+        }
+    };
+    for name in m.dependencies.keys() {
+        flag("dependencies", name);
+    }
+    for name in m.build_dependencies.keys() {
+        flag("build-dependencies", name);
+    }
+    for name in m.dev_dependencies.keys() {
+        flag("dev-dependencies", name);
+    }
 }
 
 /// A version-resolved dependency must carry a concrete version or range — a bare
@@ -1391,14 +1418,33 @@ version = "0.1.0"
 name = "foo"
 src  = "src/main.cpp"
 [dependencies]
-linux   = { features = ["pthread"], os = "linux" }
-windows = { features = ["ws2_32"], os = "windows" }
-sse_lib = "1"
+alsa    = { version = "1", os = "linux" }
+winhttp = { version = "1", os = "windows" }
+sse_lib = { version = "1", arch = "x86_64" }
 "#;
         assert!(
             field_errors(s, "[dependencies.").is_empty(),
-            "known os/arch should validate clean"
+            "known os/arch dep filters should validate clean"
         );
+    }
+
+    #[test]
+    fn os_family_dep_key_is_rejected() {
+        // The old `unix = { features = [...] }` dep form is gone — it must error
+        // and point at `[os.*] features`.
+        let s = r#"
+[package]
+name    = "foo"
+version = "0.1.0"
+[[bin]]
+name = "foo"
+src  = "src/main.cpp"
+[dependencies]
+unix = { features = ["pthread"] }
+"#;
+        let errs = field_errors(s, "[dependencies.unix]");
+        assert!(!errs.is_empty(), "OS-family dep key must be rejected");
+        assert!(errs.iter().any(|e| e.message.contains("[os.unix]")));
     }
 
     #[test]
@@ -1446,10 +1492,10 @@ version = "0.1.0"
 [[bin]]
 name = "foo"
 src  = "src/main.cpp"
-[os.linux.dependencies]
-linux = { features = ["dl"] }
-[os.windows.dependencies]
-windows = { features = ["ws2_32"] }
+[os.linux]
+features = ["dl"]
+[os.windows]
+features = ["ws2_32"]
 [os.unix]
 defines = ["UNIX_BUILD"]
 [arch.x86_64]

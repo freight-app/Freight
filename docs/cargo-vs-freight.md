@@ -41,9 +41,9 @@ Freight adds `[os.<key>]` and `[arch.<key>]` sections that Cargo handles with `c
 
 ```toml
 [os.linux]
-srcs         = ["src/os/linux/**"]
-defines      = ["PLATFORM_LINUX"]
-dependencies = { linux = { features = ["pthread"] } }
+srcs     = ["src/os/linux/**"]
+defines  = ["PLATFORM_LINUX"]
+features = ["pthread"]
 
 [os.windows]
 srcs = ["src/os/windows/**"]
@@ -95,10 +95,13 @@ SDL2 = { path = "../SDL2", type = "cmake", defines = ["SDL_STATIC=ON"] }
 openssl = "3.0"
 ```
 
-**Versionless system libraries** — linked via platform features, not a dep entry:
+**Versionless system libraries** — linked via `[os.*] features`, not a dep entry:
 ```toml
-unix    = { features = ["pthread"] }   # -lpthread on Unix
-windows = { features = ["ws2_32"] }    # -lws2_32 on Windows
+[os.unix]
+features = ["pthread"]   # -lpthread on Unix
+
+[os.windows]
+features = ["ws2_32"]    # -lws2_32 on Windows
 ```
 
 ---

@@ -26,56 +26,10 @@ use std::process::Command;
 
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
-use crate::manifest::types::{Dependency, DetailedDep, Manifest};
-use crate::supports::eval_supports;
-use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs, SystemLibStub};
+use crate::manifest::types::{Dependency, Manifest};
+use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs};
 
 // ── OS-family pseudo-deps ─────────────────────────────────────────────────────
-
-/// Dep names that are treated as OS-family selectors rather than real packages.
-/// `windows = { features = ["ws2_32", "kernel32"] }` → link those libs on Windows.
-const OS_FAMILIES: &[&str] = &[
-    "windows",
-    "linux",
-    "macos",
-    "osx",
-    "unix",
-    "bsd",
-    "freebsd",
-    "openbsd",
-    "netbsd",
-    "dragonfly",
-    "android",
-    "ios",
-    "solaris",
-    "illumos",
-];
-
-fn expand_os_family_dep(
-    name: &str,
-    d: &DetailedDep,
-    all_stubs: &[SystemLibStub],
-) -> Vec<ForeignBuilt> {
-    if !eval_supports(name) {
-        return vec![];
-    }
-    d.features
-        .iter()
-        .map(|feat| {
-            let link_flag = if let Some(stub) = find_stub(feat, all_stubs) {
-                format!("-l{}", stub.link_name)
-            } else {
-                format!("-l{feat}")
-            };
-            ForeignBuilt {
-                name: feat.clone(),
-                libs: vec![],
-                include_dirs: vec![],
-                raw_link_flags: vec![link_flag],
-            }
-        })
-        .collect()
-}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -118,7 +72,6 @@ pub fn build_foreign_deps(
     let mut results: Vec<ForeignBuilt> = Vec::new();
     let mut pkg_results: Vec<ResolvedPkgConfig> = Vec::new();
     let mut pc_cache = PkgConfigCache::load(project_dir);
-    let all_stubs = load_system_lib_stubs();
     // Cross build? Then host pkg-config must not feed this build (see CrossBuild).
     let cross = cross_build(manifest);
 
@@ -201,33 +154,13 @@ pub fn build_foreign_deps(
     // Slow deps (those that call into cmake/make/ninja) are staged in `jobs`
     // and built concurrently in the parallel pass below.
 
-    // OS-family deps first — deduplicate link flags across families.
-    let mut os_link_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for (name, dep) in &manifest.dependencies {
-        if OS_FAMILIES.contains(&name.as_str()) {
-            if let Dependency::Detailed(d) = dep {
-                for built in expand_os_family_dep(name, d, &all_stubs) {
-                    for flag in built.raw_link_flags {
-                        if os_link_flags.insert(flag.clone()) {
-                            results.push(ForeignBuilt {
-                                name: built.name.clone(),
-                                libs: vec![],
-                                include_dirs: vec![],
-                                raw_link_flags: vec![flag],
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Note: system-library link features from `[os.*]/[arch.*] features = [...]`
+    // are resolved at link time by `collect_system_lib_flags` (which also handles
+    // macOS `-framework` and MSVC `.lib` formatting), not here.
 
     let mut jobs: Vec<BuildJob> = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
-        if OS_FAMILIES.contains(&name.as_str()) {
-            continue;
-        }
 
         if let Some(version) = package_dep_version(dep) {
             // Check for a metadata-only registry dep that was fetched from upstream source.

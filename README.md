@@ -66,7 +66,9 @@ src  = "src/main.cpp"
 zlib    = "1.3"                                            # pkg-config → registry
 myutils = { path = "../myutils" }                          # local freight project
 imgui   = { url = "https://github.com/ocornut/imgui.git" } # git dep (a .git URL)
-unix    = { features = ["pthread"] }                       # -lpthread on Unix
+
+[os.unix]
+features = ["pthread"]   # -lpthread on Unix (system libs go here, not [dependencies])
 
 [build-dependencies]
 cmake = ">=3.20, <4"   # tool needed to build deps — its bin/ is prepended to PATH

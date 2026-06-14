@@ -4,7 +4,7 @@ use std::process::Command;
 
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
-use crate::manifest::types::{Backend, Dependency, LibType, Manifest};
+use crate::manifest::types::{Backend, LibType, Manifest};
 use crate::toolchain::template::BuildSettings;
 use crate::toolchain::{CompilerTemplate, DetectedCompiler};
 use crate::vendor::parse_triple;
@@ -481,27 +481,24 @@ fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), FreightError> {
 /// - macOS: leading-uppercase feature → `-framework <Name>`; otherwise → `-l<name>`
 /// - All others: → toolchain `system_lib_flag(name)` (GCC/Clang: `-l<name>`, MSVC: `<name>.lib`)
 fn collect_system_lib_flags(manifest: &Manifest, linker: &CompilerTemplate) -> Vec<String> {
-    use crate::manifest::types::is_platform_dep;
-    let effective = manifest.effective_dependencies();
+    use crate::toolchain::system_libs::{find_stub, load_system_lib_stubs};
     let is_macos = std::env::consts::OS == "macos";
-    effective
+    let stubs = load_system_lib_stubs();
+    manifest
+        .system_features()
         .iter()
-        .chain(manifest.dev_dependencies.iter())
-        .filter(|(name, dep)| is_platform_dep(name) && matches!(dep, Dependency::Detailed(_)))
-        .flat_map(|(_, dep)| {
-            let Dependency::Detailed(d) = dep else {
-                return vec![];
-            };
-            d.features
-                .iter()
-                .map(|feat| {
-                    if is_macos && feat.chars().next().is_some_and(|c| c.is_uppercase()) {
-                        format!("-framework {feat}")
-                    } else {
-                        linker.system_lib_flag(feat)
-                    }
-                })
-                .collect::<Vec<_>>()
+        .map(|feat| {
+            // macOS frameworks (e.g. `CoreFoundation`) are detected by an
+            // uppercase initial and linked with `-framework`.
+            if is_macos && feat.chars().next().is_some_and(|c| c.is_uppercase()) {
+                return format!("-framework {feat}");
+            }
+            // Resolve the stub's canonical link name (fallback: the feature name),
+            // then format it for the active linker (`-l<x>` / `<x>.lib`).
+            let link = find_stub(feat, &stubs)
+                .map(|s| s.link_name.clone())
+                .unwrap_or_else(|| feat.clone());
+            linker.system_lib_flag(&link)
         })
         .collect()
 }
@@ -656,6 +653,7 @@ backend = "ldc2"
 
     #[test]
     fn system_dep_produces_dash_l_flag() {
+        // `[os.unix] features` matches any unix host (linux/macos/bsd).
         let manifest_src = r#"
 [package]
 name    = "p"
@@ -664,13 +662,15 @@ version = "0.1.0"
 [[bin]]
 name = "p"
 src  = "src/main.cpp"
-[dependencies]
-linux = { features = ["pthread", "dl"] }
+[os.unix]
+features = ["pthread", "dl"]
 "#;
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
         let flags = collect_system_lib_flags(&m, &gcc());
-        assert!(flags.contains(&"-lpthread".to_string()));
-        assert!(flags.contains(&"-ldl".to_string()));
+        if cfg!(unix) {
+            assert!(flags.contains(&"-lpthread".to_string()));
+            assert!(flags.contains(&"-ldl".to_string()));
+        }
     }
 
     #[test]
@@ -689,20 +689,24 @@ version = "0.1.0"
 [[bin]]
 name = "p"
 src  = "src/main.cpp"
-[dependencies]
-windows = { features = ["ws2_32", "crypt32"] }
+[os.unix]
+features = ["ws2_32", "crypt32"]
 "#;
+        // Uses `[os.unix]` so the section is active on the unix test host; the
+        // point is the `.lib` formatting routed through the MSVC linker template.
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
         let flags = collect_system_lib_flags(&m, &msvc());
-        assert!(
-            flags.contains(&"ws2_32.lib".to_string()),
-            "MSVC should use {{name}}.lib, got: {flags:?}"
-        );
-        assert!(flags.contains(&"crypt32.lib".to_string()));
-        assert!(
-            !flags.iter().any(|f| f.starts_with("-l")),
-            "MSVC must not emit -l flags"
-        );
+        if cfg!(unix) {
+            assert!(
+                flags.contains(&"ws2_32.lib".to_string()),
+                "MSVC should use {{name}}.lib, got: {flags:?}"
+            );
+            assert!(flags.contains(&"crypt32.lib".to_string()));
+            assert!(
+                !flags.iter().any(|f| f.starts_with("-l")),
+                "MSVC must not emit -l flags"
+            );
+        }
     }
 
     // ── link_settings ─────────────────────────────────────────────────────────

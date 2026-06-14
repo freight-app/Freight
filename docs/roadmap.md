@@ -57,7 +57,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 
 ### Dependencies ✓ COMPLETE
 - [x] Path dependency resolution — compile dep, archive to `.a`, link into project
-- [x] System dependency linking — bare-version dep or platform features (`unix = { features = ["pthread"] }`) → `-l{name}` (or `{name}.lib` for MSVC)
+- [x] System dependency linking — bare-version dep or platform features (`[os.unix] features = ["pthread"]`) → `-l{name}` (or `{name}.lib` for MSVC)
 - [x] `LibType::System` — no build artifact; injects `-l{link}` flag only
 - [x] 24 system-lib stubs in `toolchains/system-libs/` — pthread, libm, dl, rt, ws2_32, kernel32, d3d11, d3d12, bcrypt, and more; filtered by `supports` expression
 - [x] `repo = "system"` dep key — bypasses pkg-config, resolves via stubs

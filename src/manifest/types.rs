@@ -88,6 +88,8 @@ impl Manifest {
 
         // Apply matching [os.*] overlays — family-first so `[os.unix]` is
         // applied before `[os.linux]` and the specific key wins.
+        // `os_version` tracks the deployment target from the most specific section.
+        let mut os_version: Option<(String, String)> = None;
         for os_key in host_platforms() {
             if let Some(ov) = self
                 .os
@@ -103,6 +105,23 @@ impl Manifest {
                         include_paths.push(buf);
                     }
                 }
+                if let Some(v) = &ov.version {
+                    os_version = Some((os_key.to_string(), v.clone()));
+                }
+            }
+        }
+        // Translate `[os.*] version` into a deployment-target flag (Apple) and a
+        // define usable from source. Family-first iteration means the specific
+        // OS section wins.
+        if let Some((os_key, ver)) = os_version {
+            match os_key.as_str() {
+                "macos" | "osx" => flags.push(format!("-mmacosx-version-min={ver}")),
+                "ios" => flags.push(format!("-miphoneos-version-min={ver}")),
+                _ => {}
+            }
+            let def = format!("FREIGHT_OS_VERSION=\"{ver}\"");
+            if !defines.contains(&def) {
+                defines.push(def);
             }
         }
         // Apply matching [arch.*] overlay.
@@ -166,6 +185,38 @@ impl Manifest {
             },
             ..base
         }
+    }
+
+    /// System-library link features for the current host, collected from matching
+    /// `[os.*]` and `[arch.*]` sections (family-first, de-duplicated). Each entry
+    /// resolves to a `-l<lib>` flag via the system-lib stub table at link time.
+    /// Mirrors the overlay order used by [`build_settings_for`].
+    pub fn system_features(&self) -> Vec<String> {
+        let mut features: Vec<String> = Vec::new();
+        for os_key in host_platforms() {
+            if let Some(ov) = self
+                .os
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(os_key))
+                .map(|(_, v)| v)
+            {
+                merge_string_vec(&mut features, &ov.features);
+            }
+        }
+        let current_arch = self
+            .target
+            .arch
+            .as_deref()
+            .unwrap_or(std::env::consts::ARCH);
+        if let Some(ov) = self
+            .arch
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(current_arch))
+            .map(|(_, v)| v)
+        {
+            merge_string_vec(&mut features, &ov.features);
+        }
+        features
     }
 
     /// Walk the `inherits` chain for `name` and return a merged `Profile`.
@@ -630,8 +681,7 @@ pub fn is_unpinned_version(version: &str) -> bool {
 /// ```toml
 /// libfoo  = "0.3"                           # Simple
 /// myutils = { path = "../myutils" }         # Detailed
-/// windows = { features = ["ws2_32"], os = "windows" }  # Platform dep
-/// linux   = { features = ["m", "pthread"], os = "linux" }
+/// # Versionless system libraries are not deps — see `[os.*] features = [...]`.
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -1072,6 +1122,19 @@ pub struct ConditionalSources {
     /// Extra include paths injected when this platform is active.
     #[serde(default)]
     pub includes: Vec<String>,
+    /// System-library link features active only on this platform. Each name is
+    /// resolved through the system-lib stub table to a `-l<lib>` flag at link
+    /// time (e.g. `["pthread", "m"]` → `-lpthread -lm`). An unknown name falls
+    /// back to `-l<name>`. This is the canonical way to link versionless OS
+    /// libraries — it reads honestly as a platform requirement rather than a dep.
+    #[serde(default)]
+    pub features: Vec<String>,
+    /// Minimum target OS / SDK version for this platform (e.g. `"11.0"` on macOS).
+    /// Translated to the toolchain's deployment-target flag where one exists
+    /// (`-mmacosx-version-min` / `-miphoneos-version-min` on Apple targets) and
+    /// always exposed to source as a `-DFREIGHT_OS_VERSION="<v>"` define.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// Dependencies active only on this platform. Shadow base deps with the
     /// same name — useful for linking a different system library per OS.
     #[serde(default)]
@@ -1130,6 +1193,57 @@ hostlib = {{ version = "1" }}
         let m = load_manifest_str(&host_overlay_block()).unwrap();
         let deps = m.effective_dependencies();
         assert!(deps.contains_key("hostlib"));
+    }
+
+    #[test]
+    fn system_features_collected_for_host() {
+        let host = std::env::consts::OS;
+        let other = if host == "windows" { "linux" } else { "windows" };
+        let s = format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.c]
+[[bin]]
+name = "p"
+src  = "src/main.c"
+
+[os.{host}]
+features = ["pthread", "m"]
+
+[os.{other}]
+features = ["ws2_32"]
+"#
+        );
+        let m = load_manifest_str(&s).unwrap();
+        let feats = m.system_features();
+        assert!(feats.contains(&"pthread".to_string()));
+        assert!(feats.contains(&"m".to_string()));
+        // The non-matching OS section is ignored.
+        assert!(!feats.contains(&"ws2_32".to_string()));
+    }
+
+    #[test]
+    fn os_version_emits_define() {
+        let host = std::env::consts::OS;
+        let s = format!(
+            r#"
+[package]
+name = "p"
+version = "0.1.0"
+[language.c]
+[[bin]]
+name = "p"
+src  = "src/main.c"
+
+[os.{host}]
+version = "12.3"
+"#
+        );
+        let m = load_manifest_str(&s).unwrap();
+        let bs = m.build_settings_for("dev");
+        assert!(bs.defines.iter().any(|d| d == "FREIGHT_OS_VERSION=\"12.3\""));
     }
 
     #[test]

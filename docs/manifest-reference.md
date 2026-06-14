@@ -206,11 +206,15 @@ stubs in `toolchains/system-libs/`. A stub carries the correct `-l` name, header
 Users can add their own stubs to `~/.freight/toolchains/system-libs/`.
 
 **Versionless system libraries** (pthread, m, the OpenCL loader, …) have no meaningful version and
-are linked via *platform features* rather than a dependency entry:
+are linked via *platform features* under the relevant `[os.*]` / `[arch.*]` section, not as a
+dependency entry — see [`[os.*] features`](#osplatform-features) below:
 
 ```toml
-unix    = { features = ["pthread", "m"] }   # -lpthread -lm on Unix
-windows = { features = ["ws2_32"] }         # -lws2_32 on Windows
+[os.unix]
+features = ["pthread", "m"]   # -lpthread -lm on Unix
+
+[os.windows]
+features = ["ws2_32"]         # -lws2_32 on Windows
 ```
 
 To force the stub path and skip the registry, pin the resolver with `repo = "system"`:
@@ -329,10 +333,8 @@ build context are excluded from compilation and linking.
 # Only included when cross-compiling to this target triple
 arm-hal = { path = "../arm-hal", targets = ["aarch64-linux-gnu"] }
 
-# Versionless system libraries are linked via platform features, not a dep entry:
-# Accepted OS values: linux, windows, macos, freebsd, openbsd, netbsd, dragonfly,
-#                     android, ios, solaris, illumos, unix (family), bsd (family)
-unix = { features = ["pthread", "m"] }   # -lpthread -lm on Unix
+# Versionless system libraries are linked via `[os.*] features`, not a dep entry
+# (see the [os.*] / [arch.*] section below).
 
 # Only included when cross-compiling to this target triple / matching CPU arch
 sse-util = { path = "../sse-util", arch = "x86_64" }
@@ -490,21 +492,27 @@ All fields are optional within each section:
 | `defines` | Extra `-D` flags applied only on this platform. |
 | `flags` | Extra compiler flags applied only on this platform. |
 | `includes` | Extra include paths (`-I`) applied only on this platform. |
+| `features` | <a id="osplatform-features"></a>System libraries to link on this platform. Each name resolves through the system-lib stub table to `-l<lib>` (macOS frameworks → `-framework`, MSVC → `<name>.lib`); unknown names fall back to `-l<name>`. The canonical way to link versionless OS libraries. |
+| `version` | Minimum target OS / SDK version. On Apple targets → `-mmacosx-version-min` / `-miphoneos-version-min`; always exposed to source as `-DFREIGHT_OS_VERSION="<v>"`. |
 | `dependencies` | Inline dependency table — same syntax as `[dependencies]`. |
 | `language` | Per-language overrides — same keys as `[language.<key>]`. |
 
 ```toml
 [os.linux]
-srcs         = ["src/os/linux/**"]
-defines      = ["PLATFORM_LINUX", "POSIX_BUILD"]
-flags        = ["-fvisibility=hidden"]
-includes     = ["/usr/local/include"]
-dependencies = { linux = { features = ["m", "pthread"] } }   # -lm -lpthread
+srcs     = ["src/os/linux/**"]
+defines  = ["PLATFORM_LINUX", "POSIX_BUILD"]
+flags    = ["-fvisibility=hidden"]
+includes = ["/usr/local/include"]
+features = ["m", "pthread"]                      # -lm -lpthread
 
 [os.windows]
-srcs         = ["src/os/windows/**"]
-defines      = ["WIN32_LEAN_AND_MEAN", "PLATFORM_WINDOWS"]
-dependencies = { windows = { features = ["ws2_32"] } }       # -lws2_32
+srcs     = ["src/os/windows/**"]
+defines  = ["WIN32_LEAN_AND_MEAN", "PLATFORM_WINDOWS"]
+features = ["ws2_32"]                            # -lws2_32
+
+[os.macos]
+version  = "11.0"                                # -mmacosx-version-min=11.0
+features = ["Foundation"]                        # -framework Foundation
 
 [os.unix]
 defines = ["POSIX_BUILD"]

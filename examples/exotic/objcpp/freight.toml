@@ -10,8 +10,8 @@ std = "c++17"
 name = "objcpp-hello"
 src  = "src/main.mm"
 
-[dependencies]
-macos = { features = ["Foundation"], os = "macos" }
+[os.macos]
+features = ["Foundation"]   # -framework Foundation
 
 [compiler]
 backend  = "clang++"

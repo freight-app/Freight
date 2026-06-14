@@ -17,8 +17,8 @@ warnings = "all"
 # Family aliases: unix (everything except windows), bsd (all BSDs).
 
 [os.linux]
-defines      = ["PLATFORM_LINUX"]
-dependencies = { linux = { features = ["m"] } }   # -lm via platform feature
+defines  = ["PLATFORM_LINUX"]
+features = ["m"]   # -lm via platform feature
 
 [os.macos]
 defines = ["PLATFORM_MACOS"]

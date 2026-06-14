@@ -7,8 +7,8 @@ description = "Objective-C binary using clang and the macOS Foundation framework
 name = "objc-hello"
 src  = "src/main.m"
 
-[dependencies]
-macos = { features = ["Foundation"], os = "macos" }
+[os.macos]
+features = ["Foundation"]   # -framework Foundation
 
 [compiler]
 backend  = "clang"

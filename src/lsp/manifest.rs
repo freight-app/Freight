@@ -437,6 +437,16 @@ pub fn completion_result(
                 "Include paths injected only when this OS/arch is active.",
             ),
             (
+                "features",
+                "System libraries",
+                "System libraries to link when this OS/arch is active (→ -l<lib>, macOS -framework, MSVC <name>.lib).",
+            ),
+            (
+                "version",
+                "Min OS/SDK version",
+                "Minimum target OS/SDK version (Apple deployment target; -DFREIGHT_OS_VERSION).",
+            ),
+            (
                 "dependencies",
                 "Conditional dependencies",
                 "Dependencies included only when this OS/arch is active.",
@@ -882,6 +892,14 @@ const CONDITIONAL_PARAMS: &[(&str, &str)] = &[
     ("defines", "Platform-specific defines."),
     ("flags", "Platform-specific compiler flags."),
     ("includes", "Platform-specific include paths."),
+    (
+        "features",
+        "System libraries to link on this platform (→ -l<lib>, macOS -framework, MSVC <name>.lib).",
+    ),
+    (
+        "version",
+        "Minimum target OS/SDK version (Apple deployment target; -DFREIGHT_OS_VERSION).",
+    ),
     ("dependencies", "Platform-specific dependency table."),
     ("language", "Platform-specific language overrides."),
 ];
