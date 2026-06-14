@@ -311,9 +311,8 @@ fn relative_page(from_page: &str, to_page: &str) -> String {
                 .map(|p| &to_page[p + 1..])
                 .unwrap_or(to_page)
                 .to_string()
-        } else if to_dir.is_empty() {
-            format!("../{to_page}")
         } else {
+            // Different directories: step up one level and use the full path.
             format!("../{to_page}")
         }
     }

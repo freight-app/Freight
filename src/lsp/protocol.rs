@@ -123,9 +123,9 @@ pub fn merge_capability_object(into: &mut Value, from: &Value) {
             || key == "referencesProvider"
             || key == "documentHighlightProvider"
             || key == "semanticTokensProvider"
+            // The sync mode freight advertises must also win over a forwarded one.
+            || key == "textDocumentSync"
         {
-            into_obj.insert(key.clone(), value.clone());
-        } else if key == "textDocumentSync" {
             into_obj.insert(key.clone(), value.clone());
         } else {
             into_obj.entry(key.clone()).or_insert_with(|| value.clone());

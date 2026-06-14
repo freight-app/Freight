@@ -102,9 +102,8 @@ pub(crate) fn build_item(
 
 pub(crate) fn parse_tag_start(line: &str) -> Option<(TagKind, Option<String>, Vec<String>)> {
     let t = line.trim_start();
-    let rest = if t.starts_with('@') {
-        &t[1..]
-    } else if t.starts_with('\\') {
+    // Doxygen tags use either `@tag` or `\tag`.
+    let rest = if t.starts_with('@') || t.starts_with('\\') {
         &t[1..]
     } else {
         return None;
