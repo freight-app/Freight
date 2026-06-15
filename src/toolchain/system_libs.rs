@@ -27,6 +27,34 @@ pub struct SystemLibStub {
     pub link_name: String,
     /// Header filenames this library provides (include-hygiene attribution / TUI).
     pub headers: Vec<String>,
+    /// Platform expression this stub applies on (retained to pick its `[os.*]`
+    /// section for the link-feature hint).
+    pub supports: String,
+}
+
+impl SystemLibStub {
+    /// The `[os.<os>]` section a `features = [...]` entry for this library belongs
+    /// under, derived from its `supports` expression.
+    pub fn section_os(&self) -> &'static str {
+        if self.supports.contains("windows") {
+            "windows"
+        } else if self.supports.contains("macos") || self.supports.contains("ios") {
+            "macos"
+        } else {
+            "unix"
+        }
+    }
+}
+
+/// Find the stub that provides `header` (exact header-name match; system-lib
+/// headers are concrete, not globs).
+pub fn find_stub_by_header<'a>(
+    header: &str,
+    stubs: &'a [SystemLibStub],
+) -> Option<&'a SystemLibStub> {
+    stubs
+        .iter()
+        .find(|s| s.headers.iter().any(|h| h == header))
 }
 
 // ── Data file format ────────────────────────────────────────────────────────────
@@ -86,6 +114,7 @@ pub fn load_system_lib_stubs() -> Vec<SystemLibStub> {
             link_name: s.link.unwrap_or_else(|| name.clone()),
             name,
             headers: s.headers,
+            supports: s.supports,
         })
         .collect()
 }
@@ -130,6 +159,17 @@ mod tests {
             let stubs = load_system_lib_stubs();
             assert!(find_stub("ws2_32", &stubs).is_none());
             assert!(find_stub("kernel32", &stubs).is_none());
+        }
+    }
+
+    #[test]
+    fn find_by_header_and_section() {
+        let stubs = load_system_lib_stubs();
+        if cfg!(unix) {
+            let s = find_stub_by_header("pthread.h", &stubs).expect("pthread by header");
+            assert_eq!(s.name, "pthread");
+            assert_eq!(s.section_os(), "unix");
+            assert!(find_stub_by_header("definitely_not_a_header.h", &stubs).is_none());
         }
     }
 

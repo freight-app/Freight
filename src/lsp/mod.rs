@@ -283,6 +283,17 @@ pub(crate) enum SourceServer {
     AsmLsp,
 }
 
+/// A `link-feature-hint`: an `<…>` system-library header whose `[os.*] features`
+/// entry is missing. Produces a Hint diagnostic + a "add to freight.toml" fix.
+struct LinkFeatureHint {
+    line: u32,
+    start_col: u32,
+    end_col: u32,
+    header: String,
+    feature: String,
+    os: String,
+}
+
 // ---------------------------------------------------------------------------
 // Server impl
 // ---------------------------------------------------------------------------
@@ -1243,7 +1254,8 @@ impl Server {
         // Freight-native quick-fixes for our own `undeclared-include` diagnostics:
         // "Add dependency `<pkg>` to freight.toml" for each package that owns the
         // header. These are merged with clangd's actions when clangd is serving.
-        let freight_actions = self.undeclared_include_quickfixes(&uri, &msg);
+        let mut freight_actions = self.undeclared_include_quickfixes(&uri, &msg);
+        freight_actions.extend(self.link_feature_quickfixes(&uri, &msg));
 
         let goes_to_clangd = matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd));
         if goes_to_clangd && self.state.clangd.is_some() {
@@ -1365,6 +1377,71 @@ impl Server {
                     }
                 }));
             }
+        }
+        actions
+    }
+
+    /// Build "Add `<feature>` to [os.<os>] features" quick-fixes for every
+    /// `link-feature-hint` diagnostic in the request's range. The feature + os
+    /// ride along in the diagnostic's `data` field (preserved by the client).
+    fn link_feature_quickfixes(&self, _uri: &str, msg: &Value) -> Vec<Value> {
+        let diagnostics = msg
+            .get("params")
+            .and_then(|p| p.get("context"))
+            .and_then(|c| c.get("diagnostics"))
+            .and_then(Value::as_array);
+        let Some(diagnostics) = diagnostics else {
+            return Vec::new();
+        };
+        let Some(manifest_dir) = self.active_manifest_dir() else {
+            return Vec::new();
+        };
+        let manifest_path = manifest_dir.join("freight.toml");
+        let manifest_uri = uri_from_path(&manifest_path);
+        let Some(manifest_text) = self
+            .state
+            .docs
+            .get(&manifest_uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&manifest_path).ok())
+        else {
+            return Vec::new();
+        };
+        let end_pos = lsp_end_position(&manifest_text);
+
+        let mut actions = Vec::new();
+        for diag in diagnostics {
+            if diag.get("source").and_then(Value::as_str) != Some("freight")
+                || diag.get("code").and_then(Value::as_str) != Some("link-feature-hint")
+            {
+                continue;
+            }
+            let data = diag.get("data");
+            let (Some(feature), Some(os)) = (
+                data.and_then(|d| d.get("feature")).and_then(Value::as_str),
+                data.and_then(|d| d.get("os")).and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            let Some(new_text) = insert_os_feature_toml(&manifest_text, os, feature) else {
+                continue;
+            };
+            actions.push(json!({
+                "title": format!("Add `{feature}` to [os.{os}] features in freight.toml"),
+                "kind": "quickfix",
+                "diagnostics": [diag],
+                "edit": {
+                    "changes": {
+                        manifest_uri.clone(): [{
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end": end_pos,
+                            },
+                            "newText": new_text,
+                        }]
+                    }
+                }
+            }));
         }
         actions
     }
@@ -1525,6 +1602,35 @@ fn insert_dependency_toml_version(text: &str, pkg: &str, version: &str) -> Optio
         return None; // already declared — nothing to add
     }
     deps[pkg] = tv(version);
+    Some(doc.to_string())
+}
+
+/// Add a system-library `feature` to `[os.<os>] features` (creating the section
+/// and/or array as needed), preserving the rest of the document's formatting.
+/// Returns `None` if the feature is already present.
+fn insert_os_feature_toml(text: &str, os: &str, feature: &str) -> Option<String> {
+    use toml_edit::{Array, DocumentMut, Item, Table, Value as TomlValue};
+    let mut doc: DocumentMut = text.parse().ok()?;
+
+    if doc.get("os").is_none() {
+        let mut t = Table::new();
+        t.set_implicit(true);
+        doc["os"] = Item::Table(t);
+    }
+    let os_tbl = doc.get_mut("os").and_then(Item::as_table_mut)?;
+    if os_tbl.get(os).is_none() {
+        os_tbl[os] = Item::Table(Table::new());
+    }
+    let sec = os_tbl.get_mut(os).and_then(Item::as_table_mut)?;
+
+    if sec.get("features").is_none() {
+        sec["features"] = Item::Value(TomlValue::Array(Array::new()));
+    }
+    let arr = sec.get_mut("features").and_then(Item::as_array_mut)?;
+    if arr.iter().any(|v| v.as_str() == Some(feature)) {
+        return None; // already declared
+    }
+    arr.push(feature);
     Some(doc.to_string())
 }
 
@@ -1759,70 +1865,70 @@ impl Server {
             .filter(|d| d.kind == ip::DirectiveKind::Module)
             .map(|d| (d.line, d.start_col, d.end_col, d.name.clone()))
             .collect();
+        // Header directives, for the link-feature hint below (captured before the
+        // cache move). Only `<…>` system headers can name a system library.
+        let header_dirs: Vec<(u32, u32, u32, String)> = directives
+            .iter()
+            .filter(|d| d.kind == ip::DirectiveKind::Header && d.angled)
+            .map(|d| (d.line, d.start_col, d.end_col, d.name.clone()))
+            .collect();
         self.state.last_includes.insert(uri.to_string(), directives);
 
-        let severity = match self.undeclared_include_level() {
-            crate::manifest::LintLevel::Allow => {
-                self.state.undeclared_includes.remove(uri);
-                self.set_freight_diags(uri, Vec::new());
-                return;
-            }
-            crate::manifest::LintLevel::Warn => 2, // LSP DiagnosticSeverity::Warning
-            crate::manifest::LintLevel::Deny => 1, // LSP DiagnosticSeverity::Error
-        };
+        let mut diags: Vec<Value> = Vec::new();
+        let mut undeclared_lines: Vec<(u32, String)> = Vec::new();
 
-        let file_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let (declared, compiler) = self.cached_declared_dirs(&path);
-        let lang = ip::Language::from_path(&path);
-        let system = self.cached_system_dirs(compiler.as_deref(), lang);
+        // (1) Undeclared include/module diagnostics — only when the lint is active.
+        if let Some(severity) = match self.undeclared_include_level() {
+            crate::manifest::LintLevel::Allow => None,
+            crate::manifest::LintLevel::Warn => Some(2), // DiagnosticSeverity::Warning
+            crate::manifest::LintLevel::Deny => Some(1), // DiagnosticSeverity::Error
+        } {
+            let file_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            let (declared, compiler) = self.cached_declared_dirs(&path);
+            let lang = ip::Language::from_path(&path);
+            let system = self.cached_system_dirs(compiler.as_deref(), lang);
 
-        let findings = ip::check_includes(text, &file_dir, &declared, &system, lang);
+            let findings = ip::check_includes(text, &file_dir, &declared, &system, lang);
 
-        // Phase 3 ownership: a header a declared package/slot owns (e.g. a
-        // declared BLAS provider owns `cblas.h`) is not undeclared. Tier A only
-        // here — pkg-config subdir libs already appear in `declared` via the
-        // compile command, and the LSP hot path must avoid per-keystroke
-        // subprocesses. Suppress owned headers and name candidates for the rest.
-        use crate::build::header_ownership as ho;
-        let declared_names = self.declared_dep_names();
-        let ownership = ho::load();
-        let owned_globs = ownership.owned_globs_for(&declared_names);
-        let describe = |spelling: &str| -> String {
-            let name = spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
-            let candidates: Vec<String> = ownership
-                .candidates_for_header(name)
+            // Phase 3 ownership: a header a declared package/slot owns (e.g. a
+            // declared BLAS provider owns `cblas.h`) is not undeclared. Tier A only
+            // here — pkg-config subdir libs already appear in `declared` via the
+            // compile command, and the LSP hot path must avoid per-keystroke
+            // subprocesses. Suppress owned headers and name candidates for the rest.
+            use crate::build::header_ownership as ho;
+            let declared_names = self.declared_dep_names();
+            let ownership = ho::load();
+            let owned_globs = ownership.owned_globs_for(&declared_names);
+            let describe = |spelling: &str| -> String {
+                let name = spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
+                let candidates: Vec<String> = ownership
+                    .candidates_for_header(name)
+                    .into_iter()
+                    .filter(|c| !declared_names.contains(c))
+                    .collect();
+                if candidates.is_empty() {
+                    format!(
+                        "{spelling} is not provided by any declared dependency; add the \
+                         dependency that provides it to [dependencies] in freight.toml"
+                    )
+                } else {
+                    format!(
+                        "{spelling} is provided by {} — add one to [dependencies] in freight.toml",
+                        candidates.join(", ")
+                    )
+                }
+            };
+            let findings: Vec<_> = findings
                 .into_iter()
-                .filter(|c| !declared_names.contains(c))
+                .filter(|f| {
+                    let name = f.spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
+                    !owned_globs.iter().any(|g| ho::glob_match(g, name))
+                })
                 .collect();
-            if candidates.is_empty() {
-                format!(
-                    "{spelling} is not provided by any declared dependency; add the \
-                     dependency that provides it to [dependencies] in freight.toml"
-                )
-            } else {
-                format!(
-                    "{spelling} is provided by {} — add one to [dependencies] in freight.toml",
-                    candidates.join(", ")
-                )
-            }
-        };
-        let findings: Vec<_> = findings
-            .into_iter()
-            .filter(|f| {
-                let name = f.spelling.trim_matches(|c| matches!(c, '<' | '>' | '"'));
-                !owned_globs.iter().any(|g| ho::glob_match(g, name))
-            })
-            .collect();
 
-        // Remember the undeclared lines so the inlay-hint path can mark them.
-        let mut undeclared_lines: Vec<(u32, String)> = findings
-            .iter()
-            .map(|f| (f.line, f.spelling.clone()))
-            .collect();
-        let mut diags: Vec<Value> = findings
-            .iter()
-            .map(|f| {
-                json!({
+            for f in &findings {
+                undeclared_lines.push((f.line, f.spelling.clone()));
+                diags.push(json!({
                     "range": {
                         "start": { "line": f.line, "character": f.start_col },
                         "end":   { "line": f.line, "character": f.end_col }
@@ -1831,29 +1937,50 @@ impl Server {
                     "source": "freight",
                     "code": "undeclared-include",
                     "message": describe(&f.spelling),
-                })
-            })
-            .collect();
-
-        // Named-module imports that no declared package exports (and that aren't
-        // standard-library modules) are flagged the same way as headers.
-        for (line, start_col, end_col, name) in &module_imports {
-            if is_std_module(name) || self.state.module_index.lookup(name).is_some() {
-                continue;
+                }));
             }
-            undeclared_lines.push((*line, format!("module {name}")));
+
+            // Named-module imports that no declared package exports (and that aren't
+            // standard-library modules) are flagged the same way as headers.
+            for (line, start_col, end_col, name) in &module_imports {
+                if is_std_module(name) || self.state.module_index.lookup(name).is_some() {
+                    continue;
+                }
+                undeclared_lines.push((*line, format!("module {name}")));
+                diags.push(json!({
+                    "range": {
+                        "start": { "line": line, "character": start_col },
+                        "end":   { "line": line, "character": end_col }
+                    },
+                    "severity": severity,
+                    "source": "freight",
+                    "code": "undeclared-module",
+                    "message": format!(
+                        "module {name} is not provided by any declared dependency; add the \
+                         package that exports it to [dependencies] in freight.toml"
+                    ),
+                }));
+            }
+        }
+
+        // (2) Link-feature hints — independent of the lint level. Including a
+        // system-library header (pthread.h, …) whose feature isn't declared in any
+        // `[os.*] features` compiles but won't link; offer a hint + quick-fix.
+        for h in self.link_feature_hints(&header_dirs) {
             diags.push(json!({
                 "range": {
-                    "start": { "line": line, "character": start_col },
-                    "end":   { "line": line, "character": end_col }
+                    "start": { "line": h.line, "character": h.start_col },
+                    "end":   { "line": h.line, "character": h.end_col }
                 },
-                "severity": severity,
+                "severity": 4, // DiagnosticSeverity::Hint
                 "source": "freight",
-                "code": "undeclared-module",
+                "code": "link-feature-hint",
                 "message": format!(
-                    "module {name} is not provided by any declared dependency; add the \
-                     package that exports it to [dependencies] in freight.toml"
+                    "<{}> is the '{}' system library — add `{}` to [os.{}] features in \
+                     freight.toml to link it",
+                    h.header, h.feature, h.feature, h.os
                 ),
+                "data": { "feature": h.feature, "os": h.os },
             }));
         }
 
@@ -1862,6 +1989,54 @@ impl Server {
             .insert(uri.to_string(), undeclared_lines);
 
         self.set_freight_diags(uri, diags);
+    }
+
+    /// A system-library header (`pthread.h`, `winsock2.h`, …) whose feature isn't
+    /// declared in any `[os.*]`/`[arch.*] features`. One hint per feature (first
+    /// occurrence). Drives the `link-feature-hint` diagnostic + quick-fix.
+    fn link_feature_hints(&self, header_dirs: &[(u32, u32, u32, String)]) -> Vec<LinkFeatureHint> {
+        use crate::toolchain::system_libs as sl;
+        if header_dirs.is_empty() {
+            return Vec::new();
+        }
+        let stubs = sl::load_system_lib_stubs();
+        if stubs.is_empty() {
+            return Vec::new();
+        }
+        let declared = self.declared_system_features();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut hints = Vec::new();
+        for (line, start_col, end_col, name) in header_dirs {
+            let Some(stub) = sl::find_stub_by_header(name, &stubs) else {
+                continue;
+            };
+            if declared.contains(&stub.name) || !seen.insert(stub.name.clone()) {
+                continue;
+            }
+            hints.push(LinkFeatureHint {
+                line: *line,
+                start_col: *start_col,
+                end_col: *end_col,
+                header: name.clone(),
+                feature: stub.name.clone(),
+                os: stub.section_os().to_string(),
+            });
+        }
+        hints
+    }
+
+    /// System-library feature names already declared in any `[os.*]`/`[arch.*]`
+    /// `features` of the active manifest.
+    fn declared_system_features(&self) -> std::collections::HashSet<String> {
+        let mut set = std::collections::HashSet::new();
+        if let Some(m) = &self.state.active_manifest {
+            for sec in m.os.values().chain(m.arch.values()) {
+                for f in &sec.features {
+                    set.insert(f.clone());
+                }
+            }
+        }
+        set
     }
 
     /// Store freight-generated diagnostics for `uri` and re-publish the merged set.
@@ -2431,8 +2606,39 @@ fn level_for_method(method: &str) -> tracing::Level {
 mod tests {
     use super::build_workspace_inventory;
     use super::protocol::sanitize_code_action_diagnostics;
-    use super::{insert_dependency_toml_version, lsp_end_position, merge_clangd_codeaction_response};
+    use super::{
+        insert_dependency_toml_version, insert_os_feature_toml, lsp_end_position,
+        merge_clangd_codeaction_response,
+    };
     use serde_json::json;
+
+    #[test]
+    fn insert_os_feature_creates_section() {
+        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
+        let out = insert_os_feature_toml(src, "unix", "pthread").expect("inserts");
+        let m = crate::manifest::load_manifest_str(&out).expect("valid");
+        assert!(m
+            .os
+            .get("unix")
+            .is_some_and(|s| s.features.contains(&"pthread".to_string())));
+    }
+
+    #[test]
+    fn insert_os_feature_appends_to_existing() {
+        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[os.unix]\nfeatures = [\"m\"]\n";
+        let out = insert_os_feature_toml(src, "unix", "pthread").expect("inserts");
+        let feats = crate::manifest::load_manifest_str(&out).unwrap().os["unix"]
+            .features
+            .clone();
+        assert!(feats.contains(&"m".to_string()));
+        assert!(feats.contains(&"pthread".to_string()));
+    }
+
+    #[test]
+    fn insert_os_feature_idempotent() {
+        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[os.unix]\nfeatures = [\"pthread\"]\n";
+        assert!(insert_os_feature_toml(src, "unix", "pthread").is_none());
+    }
 
     #[test]
     fn insert_dependency_adds_to_dependencies_table() {

@@ -294,6 +294,24 @@ the same treatment.
 - **Performance**: the allowlist is cheap (path-prefix checks); compute once per
   project/profile and invalidate on manifest change. Canonicalise roots once.
 
+## Link-feature hints (system libraries)
+
+A system-library header like `<pthread.h>` is *allowed* by hygiene (it's
+compiler/OS-provided), but including it is a silent trap: the code compiles yet
+won't link without `[os.unix] features = ["pthread"]` (`undefined reference to
+pthread_create`). Rather than forbidding it, the LSP emits a **Hint**-severity
+diagnostic (`code: "link-feature-hint"`, `source: "freight"`) on the include when
+the providing feature isn't declared in any `[os.*]`/`[arch.*] features`, with a
+quick-fix **"Add `<feature>` to [os.<os>] features in freight.toml"**.
+
+- Header → feature comes from the system-lib stub table (`system-libs.toml`
+  `headers`); the `[os.*]` section is derived from the stub's `supports`.
+- The hint is independent of `[lints].undeclared-include` (it's a *link* concern,
+  not a hygiene violation) — it shows even under `allow`.
+- The feature+os ride in the diagnostic's `data` field, so the quick-fix needs no
+  server-side state; `insert_os_feature_toml` writes the `[os.*] features` array
+  (formatting preserved).
+
 ## Implementation checklist (Phase 1 first)
 
 1. `src/build/include_policy.rs` — `IncludeAllowlist::from_resolved`, `classify`,
