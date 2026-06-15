@@ -135,8 +135,14 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
             deps.push(d);
         }
     }
-    // Filter well-known auto-linked libs (pkg-config finds them anyway)
-    deps.retain(|d| !AUTO_LINKED.contains(&d.as_str()));
+    // Drop compiler-driver libs and route OS system libraries (pthread, m, …) to
+    // `[os.*] features`; real packages stay in [dependencies].
+    let mut os_features: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    {
+        let mut kept = Vec::new();
+        super::split_link_libs(&deps, &mut kept, &mut os_features);
+        deps = kept;
+    }
 
     // Merge AC_DEFINE symbols into the defines list from Makefile.am
     // (deduplication happens in emit_toml via the combined slice)
@@ -218,6 +224,7 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
         &all_defines,
         &deps,
         &path_deps,
+        &os_features,
         &ac_features,
         &warnings,
     );
@@ -631,6 +638,7 @@ fn emit_toml(
     defines: &[String],
     deps: &[String],
     path_deps: &[PathDep],
+    os_features: &std::collections::BTreeMap<String, Vec<String>>,
     features: &[String],
     warnings: &[String],
 ) -> String {
@@ -685,7 +693,7 @@ fn emit_toml(
     if !deps.is_empty() || !path_deps.is_empty() {
         let mut dep_tbl = Table::new();
         for d in deps {
-            dep_tbl[d.as_str()] = value("*");
+            dep_tbl[d.as_str()] = super::system_dep_item(d);
         }
         for pd in path_deps {
             let mut inline = InlineTable::new();
@@ -693,6 +701,22 @@ fn emit_toml(
             dep_tbl[pd.name.as_str()] = Item::Value(toml_edit::Value::InlineTable(inline));
         }
         doc["dependencies"] = Item::Table(dep_tbl);
+    }
+
+    // [os.*] features — system libraries (pthread, m, …) linked via `-l`.
+    if !os_features.is_empty() {
+        let mut os_tbl = Table::new();
+        os_tbl.set_implicit(true);
+        for (os_key, feats) in os_features {
+            let mut arr = Array::new();
+            for f in feats {
+                arr.push(f.as_str());
+            }
+            let mut sec = Table::new();
+            sec["features"] = value(arr);
+            os_tbl[os_key.as_str()] = Item::Table(sec);
+        }
+        doc["os"] = Item::Table(os_tbl);
     }
 
     for t in targets {
@@ -717,11 +741,6 @@ fn emit_toml(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Libraries that pkg-config / freight finds automatically — don't emit as deps.
-const AUTO_LINKED: &[&str] = &[
-    "m", "c", "gcc", "gcc_s", "stdc++", "dl", "rt", "pthread", "resolv", "nsl", "socket", "util",
-];
 
 fn join_continuations(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
@@ -961,14 +980,17 @@ mod tests {
     }
 
     #[test]
-    fn auto_linked_libs_filtered() {
+    fn system_libs_routed_to_features() {
+        // `m` is a system library → `[os.unix] features`; `ssl` is a real dep.
         let content = "AC_CHECK_LIB(m, sin)\nAC_CHECK_LIB(ssl, SSL_new)\n";
         let mut w = vec![];
         let (_, _, deps, _, _) = parse_configure_ac(content, &mut w);
-        let mut deps_copy = deps.clone();
-        deps_copy.retain(|d| !AUTO_LINKED.contains(&d.as_str()));
-        assert!(!deps_copy.contains(&"m".to_string()));
-        assert!(deps_copy.contains(&"ssl".to_string()));
+        let mut kept = Vec::new();
+        let mut feats: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        super::super::split_link_libs(&deps, &mut kept, &mut feats);
+        assert!(kept.contains(&"ssl".to_string()));
+        assert!(!kept.contains(&"m".to_string()));
+        assert!(feats.get("unix").is_some_and(|v| v.contains(&"m".to_string())));
     }
 
     #[test]
@@ -1001,6 +1023,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &Default::default(),
             &["tls".to_string(), "openssl".to_string()],
             &[],
         );
@@ -1025,6 +1048,7 @@ mod tests {
             &["HAVE_SSL".to_string()],
             &[],
             &[],
+            &Default::default(),
             &[],
             &[],
         );

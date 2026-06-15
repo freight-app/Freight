@@ -1195,21 +1195,7 @@ fn map_c_std(val: &str) -> Option<String> {
     }
 }
 
-/// Libraries the compiler driver links automatically — never emitted.
-const DRIVER_LINKED: &[&str] = &["c", "gcc", "gcc_s", "stdc++", "c++", "supc++"];
-
-/// Known OS system libraries → the `[os.<os>]` section they belong under. These
-/// become `features = [...]` (linked via `-l`), not dependency entries.
-fn system_lib_os(lib: &str) -> Option<&'static str> {
-    match lib {
-        "m" | "pthread" | "dl" | "rt" | "atomic" | "util" | "resolv" | "execinfo" => Some("unix"),
-        "ws2_32" | "kernel32" | "user32" | "gdi32" | "shell32" | "ole32" | "oleaut32"
-        | "advapi32" | "iphlpapi" | "ntdll" | "dbghelp" | "psapi" | "winmm" | "setupapi"
-        | "comctl32" | "comdlg32" | "bcrypt" | "uuid" | "crypt32" | "secur32" | "d3d11"
-        | "d3d12" | "dxgi" => Some("windows"),
-        _ => None,
-    }
-}
+use super::{system_lib_os, DRIVER_LINKED};
 
 fn sanitize_name(s: &str) -> String {
     s.chars()

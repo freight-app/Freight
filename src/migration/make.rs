@@ -153,6 +153,8 @@ struct ProjectSpec {
     lang_cpp: Option<String>,
     system_deps: Vec<String>,
     conditional_deps: ConditionalDeps,
+    /// System-library link features per `[os.<os>]` (pthread, m, ws2_32, …).
+    os_features: std::collections::BTreeMap<String, Vec<String>>,
     defines: Vec<String>,
     warnings: Vec<String>,
 }
@@ -321,6 +323,25 @@ fn analyze(
         }
     }
 
+    // Route system libraries (pthread, m, ws2_32, …) to `[os.*] features`,
+    // leaving real packages in [dependencies] / [os.*.dependencies].
+    let mut os_features: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    {
+        let mut kept = Vec::new();
+        super::split_link_libs(&system_deps, &mut kept, &mut os_features);
+        system_deps = kept;
+    }
+    for libs in [
+        &mut conditional_deps.windows,
+        &mut conditional_deps.linux,
+        &mut conditional_deps.macos,
+        &mut conditional_deps.unix,
+    ] {
+        let mut kept = Vec::new();
+        super::split_link_libs(libs, &mut kept, &mut os_features);
+        *libs = kept;
+    }
+
     ProjectSpec {
         name,
         version: "0.1.0".to_string(),
@@ -329,6 +350,7 @@ fn analyze(
         lang_cpp,
         system_deps,
         conditional_deps,
+        os_features,
         defines,
         warnings: warnings.clone(),
     }
@@ -616,6 +638,12 @@ fn emit_toml(spec: &ProjectSpec) -> String {
         doc["dependencies"] = Item::Table(deps);
     }
 
+    // [os.*] features — system libraries (pthread, m, ws2_32, …). Emitted before
+    // the dependency sub-tables so the `[os.<os>]` header precedes `.dependencies`.
+    for (os_key, feats) in &spec.os_features {
+        add_os_features_section(&mut doc, os_key, feats);
+    }
+
     // [os.*.dependencies] — from ifeq conditional blocks
     add_os_deps_section(&mut doc, "windows", &spec.conditional_deps.windows);
     add_os_deps_section(&mut doc, "linux", &spec.conditional_deps.linux);
@@ -623,6 +651,29 @@ fn emit_toml(spec: &ProjectSpec) -> String {
     add_os_deps_section(&mut doc, "unix", &spec.conditional_deps.unix);
 
     doc.to_string()
+}
+
+fn add_os_features_section(doc: &mut DocumentMut, os_key: &str, features: &[String]) {
+    if features.is_empty() {
+        return;
+    }
+    if !doc.contains_key("os") {
+        let mut t = Table::new();
+        t.set_implicit(true);
+        doc["os"] = Item::Table(t);
+    }
+    let os_tbl = doc["os"].as_table_mut().expect("os is a table");
+    if !os_tbl.contains_key(os_key) {
+        let mut t = Table::new();
+        t.set_implicit(true);
+        os_tbl[os_key] = Item::Table(t);
+    }
+    let platform_tbl = os_tbl[os_key].as_table_mut().expect("platform is a table");
+    let mut arr = toml_edit::Array::new();
+    for f in features {
+        arr.push(f.as_str());
+    }
+    platform_tbl["features"] = Item::Value(arr.into());
 }
 
 fn add_os_deps_section(doc: &mut DocumentMut, os_key: &str, deps: &[String]) {
@@ -1126,13 +1177,12 @@ fn extract_libs(flags: &str) -> Vec<String> {
 }
 
 /// Libraries that freight auto-detects via pkg-config — don't emit them.
+/// Drop only the compiler-driver libs (libc, libgcc, libstdc++ …). OS system
+/// libraries (pthread, m, ws2_32 …) are kept here and later routed to
+/// `[os.<os>] features` by [`super::split_link_libs`].
 fn filter_auto_detected(libs: Vec<String>) -> Vec<String> {
-    const AUTO: &[&str] = &[
-        "m", "dl", "rt", "pthread", "c", "gcc", "gcc_s", "stdc++", "supc++", "atomic", "resolv",
-        "nsl",
-    ];
     libs.into_iter()
-        .filter(|l| !AUTO.contains(&l.as_str()))
+        .filter(|l| !super::DRIVER_LINKED.contains(&l.as_str()))
         .collect()
 }
 
@@ -1295,9 +1345,17 @@ mod tests {
     }
 
     #[test]
-    fn filters_auto_detected_libs() {
-        let raw = vec!["m".into(), "pthread".into(), "ssl".into(), "dl".into()];
-        assert_eq!(filter_auto_detected(raw), vec!["ssl"]);
+    fn filters_driver_libs_keeps_system_libs() {
+        // Only compiler-driver libs are dropped here; OS system libs (pthread, m,
+        // dl) are kept and routed to `[os.*] features` later by analyze().
+        let raw = vec![
+            "c".into(),
+            "gcc".into(),
+            "stdc++".into(),
+            "ssl".into(),
+            "pthread".into(),
+        ];
+        assert_eq!(filter_auto_detected(raw), vec!["ssl", "pthread"]);
     }
 
     #[test]
@@ -1405,11 +1463,12 @@ mod tests {
     }
 
     #[test]
-    fn conditional_auto_linked_filtered() {
+    fn conditional_keeps_system_libs_at_parse() {
+        // Parse keeps system libs (rt); analyze() later routes them to
+        // `[os.*] features`. Driver libs would be dropped; real deps (ssl) stay.
         let content = "ifeq ($(UNAME_S),Linux)\nLDFLAGS += -lrt -lssl\nendif\n";
         let deps = parse_conditional_deps(content);
-        // rt is in AUTO_LINKED — must be filtered
-        assert!(!deps.linux.contains(&"rt".to_string()));
+        assert!(deps.linux.contains(&"rt".to_string()));
         assert!(deps.linux.contains(&"ssl".to_string()));
     }
 
@@ -1427,6 +1486,7 @@ mod tests {
             lang_cpp: None,
             system_deps: vec!["ssl".to_string(), "curl".to_string()],
             conditional_deps: ConditionalDeps::default(),
+            os_features: Default::default(),
             defines: vec![],
             warnings: vec![],
         };
@@ -1435,7 +1495,7 @@ mod tests {
         // the dep key, not the version.
         assert!(toml.contains("ssl ="), "expected individual ssl dep:\n{toml}");
         assert!(toml.contains("curl ="), "expected individual curl dep:\n{toml}");
-        // Must NOT contain the old broken linux-features grouping
+        // Real deps must not be grouped as features.
         assert!(
             !toml.contains("features"),
             "must not group deps as features:\n{toml}"
@@ -1443,7 +1503,9 @@ mod tests {
     }
 
     #[test]
-    fn emit_toml_windows_conditional_in_os_section() {
+    fn emit_toml_windows_syslib_as_feature() {
+        let mut os_features = std::collections::BTreeMap::new();
+        os_features.insert("windows".to_string(), vec!["ws2_32".to_string()]);
         let spec = ProjectSpec {
             name: "myapp".to_string(),
             version: "0.1.0".to_string(),
@@ -1455,19 +1517,21 @@ mod tests {
             lang_c: None,
             lang_cpp: None,
             system_deps: vec![],
-            conditional_deps: ConditionalDeps {
-                windows: vec!["ws2_32".to_string()],
-                ..Default::default()
-            },
+            conditional_deps: ConditionalDeps::default(),
+            os_features,
             defines: vec![],
             warnings: vec![],
         };
         let toml = emit_toml(&spec);
-        assert!(toml.contains("ws2_32"), "expected ws2_32 dep:\n{toml}");
-        // Should appear under an [os.windows.*] section, not [dependencies]
+        // ws2_32 is a system library → `[os.windows] features`, not a dep.
+        assert!(toml.contains("[os.windows]"), "expected os.windows:\n{toml}");
+        assert!(
+            toml.contains("features = [\"ws2_32\"]"),
+            "ws2_32 should be a windows feature:\n{toml}"
+        );
         assert!(
             !toml.contains("[dependencies]"),
-            "ws2_32 should not appear in unconditional deps:\n{toml}"
+            "ws2_32 must not appear in deps:\n{toml}"
         );
     }
 
