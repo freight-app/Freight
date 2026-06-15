@@ -312,15 +312,22 @@ quick-fix **"Add `<feature>` to [os.<os>] features in freight.toml"**.
   server-side state; `insert_os_feature_toml` writes the `[os.*] features` array
   (formatting preserved).
 - System headers are **not** indexed as ordinary headers. The inlay label and
-  include-hover report the header's *standard origin* — `← ISO C` (`stdio.h`,
-  `math.h` — ISO C even though it links `-lm`), `← ISO C++` (`vector`, `cmath`),
-  `← POSIX` (`pthread.h`), `← Windows SDK`, `← Darwin` — kept **separate** from the
-  *link library* (the `pthread`/`m` feature) conveyed in the hover/diagnostic.
-  Labelling by the standard (not "stdlib") is deliberate: the same header is
-  provided by different implementations (glibc, musl, bionic, libstdc++, libc++).
-  Origin is decided by the ISO C / C++ name tables vs the stub's `[os.*]` section
-  (`iso_std_origin` / `system_header_origin`); header → link feature uses the stub
-  `headers` table.
+  include-hover report the **providing implementation** when it can be determined
+  confidently — important for verifying a cross build links the *target's* library,
+  not the host's:
+  - ISO C: libc from the **target triple** — `← musl` / `← glibc` / `← bionic` /
+    `← libSystem` (`*-musl*`, `*-gnu*`, `*-android*`, `*-darwin*`).
+  - ISO C++: stdlib from the **resolved path** — `← libstdc++` (`.../c++/<n>/…`) /
+    `← libc++` (`.../c++/v1/…`).
+  - When the implementation can't be determined (native libc has no triple; cross
+    C++ would need a sysroot-aware index), it falls back to the **standard** label
+    `← ISO C` / `← ISO C++` rather than guessing — never the catch-all "stdlib".
+  - `← POSIX` (`pthread.h`), `← Windows SDK`, `← Darwin` for OS headers.
+  The *link library* (the `pthread`/`m` feature) stays a separate concern conveyed
+  in the hover/diagnostic. Helpers: `iso_std_origin`, `system_header_origin`,
+  `libc_from_triple`, `cxx_stdlib_from_path`, `header_label`. **Follow-up:** make
+  the header index sysroot-aware so cross-build C++ stdlib resolves to the target's
+  libstdc++/libc++ instead of falling back to `ISO C++`.
 
 ## Implementation checklist (Phase 1 first)
 
