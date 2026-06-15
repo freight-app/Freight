@@ -240,9 +240,10 @@ struct ServerState {
     /// Per-language indexers; iterated in order for each LSP request.
     indexers: Vec<Box<dyn LanguageIndexer>>,
 
-    /// Cached compiler built-in include dirs, probed once (used by the
-    /// include-hygiene check to confirm an undeclared header exists).
-    system_include_dirs: Option<Vec<PathBuf>>,
+    /// Cached compiler built-in include dirs (used by the include-hygiene check to
+    /// confirm an undeclared header exists), tagged with the sysroot they were
+    /// probed against so a cross-target change re-probes.
+    system_include_dirs: Option<(Option<String>, Vec<PathBuf>)>,
 
     /// Per-URI undeclared `#include`/`import` findings (0-based line → spelling),
     /// recomputed with the diagnostics and reused for the inlay-hint markers.
@@ -1967,12 +1968,25 @@ impl Server {
         compiler: Option<&str>,
         lang: crate::build::include_policy::Language,
     ) -> Vec<PathBuf> {
-        if let Some(cached) = &self.state.system_include_dirs {
-            return cached.clone();
+        // Cross build: probe the target sysroot from the active manifest so cross
+        // system headers resolve there instead of the host's /usr/include.
+        let sysroot: Option<String> = self
+            .state
+            .active_manifest
+            .as_ref()
+            .and_then(|m| m.compiler.sysroot.clone());
+        if let Some((cached_root, dirs)) = &self.state.system_include_dirs {
+            if *cached_root == sysroot {
+                return dirs.clone();
+            }
         }
         let cc = compiler.unwrap_or("c++");
-        let dirs = crate::build::include_policy::system_include_dirs(Path::new(cc), lang);
-        self.state.system_include_dirs = Some(dirs.clone());
+        let dirs = crate::build::include_policy::system_include_dirs(
+            Path::new(cc),
+            lang,
+            sysroot.as_deref().map(Path::new),
+        );
+        self.state.system_include_dirs = Some((sysroot, dirs.clone()));
         dirs
     }
 

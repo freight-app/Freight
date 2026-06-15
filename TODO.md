@@ -136,9 +136,13 @@ the compiler gets `--sysroot`, pkg-config is scoped into the sysroot.
       pkg-config → libc stub (`-lpthread`, resolved by the cross linker) →
       freight-fetched source (`resolve_fetched_dep`, shared with native) → clear
       error. `fetch_package_deps` status report is sysroot-aware too.
-- [ ] **Hygiene/LSP under cross:** include-hygiene resolves "system" headers from
-      the host `/usr/include`; when a sysroot is set it should resolve against the
-      sysroot instead (else cross headers look undeclared).
+- [x] **Hygiene/LSP under cross:** `include_policy::system_include_dirs` now takes
+      the sysroot and probes the compiler with `--sysroot=<path>`, so cross system
+      headers resolve against the sysroot, not the host `/usr/include`. Wired into
+      the build pass (`manifest.compiler.sysroot`) and the LSP (`cached_system_dirs`,
+      re-probes when the active manifest's sysroot changes). Verified e2e with a
+      fake sysroot: a sysroot-only header is seen (and `deny`-flagged) only when
+      `FREIGHT_SYSROOT` is set.
 - [x] **Wildcard removed:** `validate_dep_versions` rejects a bare `*` (and
       empty/omitted version) for version-resolved deps — C/C++ libraries change
       their API between versions, so an unpinned dep is unsafe. The version is the

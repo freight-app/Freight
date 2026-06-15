@@ -469,13 +469,24 @@ fn strip_comments(line: &str, in_block: &mut bool) -> String {
 /// mode; returns an empty list on any failure (callers degrade gracefully — an
 /// undeclared system header simply won't be confirmed to exist, so it isn't
 /// flagged, which is the safe direction).
-pub fn system_include_dirs(compiler: &Path, language: Language) -> Vec<PathBuf> {
+pub fn system_include_dirs(
+    compiler: &Path,
+    language: Language,
+    sysroot: Option<&Path>,
+) -> Vec<PathBuf> {
     let lang = match language {
         Language::C => "c",
         Language::Cxx => "c++",
     };
-    let output = std::process::Command::new(compiler)
-        .args(["-E", "-x", lang, "-", "-v"])
+    let mut cmd = std::process::Command::new(compiler);
+    cmd.args(["-E", "-x", lang, "-", "-v"]);
+    // Cross build: probe the target sysroot's include dirs, not the host's, so
+    // cross headers (`<stdio.h>` under the sysroot) aren't seen as undeclared.
+    // Both gcc and clang accept `--sysroot=`.
+    if let Some(root) = sysroot {
+        cmd.arg(format!("--sysroot={}", root.display()));
+    }
+    let output = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())

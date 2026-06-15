@@ -1188,6 +1188,8 @@ fn validate_include_hygiene(
     // (compiler, language) and cached.
     let mut sys_cache: std::collections::HashMap<(PathBuf, bool), Vec<PathBuf>> =
         std::collections::HashMap::new();
+    // Cross build: resolve system headers against the target sysroot, not the host.
+    let sysroot: Option<PathBuf> = manifest.compiler.sysroot.as_ref().map(PathBuf::from);
 
     let mut findings: Vec<(PathBuf, ip::UndeclaredInclude)> = Vec::new();
     for src in sources {
@@ -1205,7 +1207,7 @@ fn validate_include_hygiene(
         let system = match compile::select_compiler(&src.lang_key, backend, detected, None) {
             Some(cc) => sys_cache
                 .entry((cc.path.clone(), is_cxx))
-                .or_insert_with(|| ip::system_include_dirs(&cc.path, lang))
+                .or_insert_with(|| ip::system_include_dirs(&cc.path, lang, sysroot.as_deref()))
                 .clone(),
             None => Vec::new(),
         };
