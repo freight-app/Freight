@@ -244,9 +244,29 @@ impl Default for HeaderIndex {
 /// Used by `HeaderIndex` for include-hover; for per-file LSP parsing use
 /// `probe_for_file` instead so the stdlib/sysroot/target are respected.
 pub(crate) fn probe_system_include_dirs() -> Vec<PathBuf> {
-    let compilers = ["c++", "g++", "clang++", "cc", "gcc", "clang"];
-    for compiler in compilers {
-        if let Some(dirs) = run_compiler_probe(compiler, &[]) {
+    probe_system_include_dirs_for(None, None)
+}
+
+/// Like [`probe_system_include_dirs`], but cross-aware so a cross build's header
+/// index resolves the *target's* system headers (its libstdc++/libc++/libc), not
+/// the host's. When a `target` triple is set, the cross toolchain
+/// (`<triple>-g++`/`-gcc`/…) is tried first — its libstdc++/libc++ is the target's,
+/// unlike host `g++ --sysroot` whose C++ dirs are install-relative. `sysroot`, when
+/// set, is passed as `--sysroot=<path>`.
+pub(crate) fn probe_system_include_dirs_for(
+    sysroot: Option<&Path>,
+    target: Option<&str>,
+) -> Vec<PathBuf> {
+    let sysroot_flag = sysroot.map(|p| format!("--sysroot={}", p.display()));
+    let flags: Vec<&str> = sysroot_flag.as_deref().into_iter().collect();
+    const BASE: &[&str] = &["c++", "g++", "clang++", "cc", "gcc", "clang"];
+    let mut compilers: Vec<String> = Vec::new();
+    if let Some(t) = target {
+        compilers.extend(BASE.iter().map(|c| format!("{t}-{c}")));
+    }
+    compilers.extend(BASE.iter().map(|c| c.to_string()));
+    for cc in &compilers {
+        if let Some(dirs) = run_compiler_probe(cc, &flags) {
             if !dirs.is_empty() {
                 return dirs;
             }
@@ -523,6 +543,8 @@ pub struct SourceIndexes {
 pub fn build_source_indexes(
     package_dirs: &[HeaderDirSpec<'_>],
     pkgs_dir: Option<&Path>,
+    sysroot: Option<&Path>,
+    target: Option<&str>,
 ) -> SourceIndexes {
     let mut by_path: HashMap<String, HeaderEntry> = HashMap::new();
     let mut by_name: HashMap<String, ModuleEntry> = HashMap::new();
@@ -662,7 +684,7 @@ pub fn build_source_indexes(
     SourceIndexes {
         headers: HeaderIndex {
             by_path,
-            system_dirs: probe_system_include_dirs(),
+            system_dirs: probe_system_include_dirs_for(sysroot, target),
         },
         modules: ModuleIndex { by_name },
     }
@@ -1318,7 +1340,7 @@ mod tests {
             origin: HeaderOrigin::PathDep,
             dep_key: Some("mylib".into()),
         };
-        let idx = build_source_indexes(&[spec], None).modules;
+        let idx = build_source_indexes(&[spec], None, None, None).modules;
 
         let entry = idx.lookup("mylib.core").expect("primary module indexed");
         // No freight.toml in the fixture, so the package name falls back to the
@@ -1394,7 +1416,7 @@ mod tests {
             origin: HeaderOrigin::PathDep,
             dep_key: Some("mylib".to_string()),
         }];
-        let index = build_source_indexes(&specs, None).headers;
+        let index = build_source_indexes(&specs, None, None, None).headers;
         assert!(index.lookup("api.h").is_some());
         assert!(index.lookup("mylib/api.h").is_some());
         assert_eq!(index.lookup("api.h").unwrap().package_name, "mylib");

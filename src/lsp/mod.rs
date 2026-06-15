@@ -1710,9 +1710,10 @@ fn header_capability(header: &str) -> Option<&'static str> {
 /// The provider *package* that supplies a recognised system header — `glibc`,
 /// `musl`, `bionic`, `libSystem`, `libstdc++`, `libc++`. The libc is chosen from
 /// the target triple (else the host's, probed once); the C++ stdlib from the
-/// resolved header path (native only — a cross C++ path would be the host's, so
-/// we don't assert it). Falls back to a generic label (`libc` / `C++ stdlib`) when
-/// the exact package can't be determined. `None` for non-system headers.
+/// resolved header path (the header index is sysroot-aware, so this is the
+/// target's stdlib on a cross build). Falls back to a generic label (`libc` /
+/// `C++ stdlib`) when the exact package can't be determined. `None` for non-system
+/// headers.
 fn header_provider_label(
     header: &str,
     resolved_path: Option<&Path>,
@@ -1722,16 +1723,15 @@ fn header_provider_label(
     use crate::toolchain::std_providers::{host_triple, resolve_provider};
     let cap = header_capability(header)?;
     let triple = target.map(str::to_string).or_else(host_triple);
-    let path = if cap == "cxx" && target.is_some() {
-        None // cross C++ — the host path would mislead
-    } else {
-        resolved_path
-    };
+    // The header index is sysroot-aware, so a resolved C++ path reflects the
+    // target's libstdc++/libc++ even on a cross build.
     Some(
-        resolve_provider(cap, providers, triple.as_deref(), path).unwrap_or_else(|| match cap {
-            "cxx" => "C++ stdlib".to_string(),
-            _ => "libc".to_string(),
-        }),
+        resolve_provider(cap, providers, triple.as_deref(), resolved_path).unwrap_or_else(
+            || match cap {
+                "cxx" => "C++ stdlib".to_string(),
+                _ => "libc".to_string(),
+            },
+        ),
     )
 }
 
@@ -2358,9 +2358,27 @@ impl Server {
     /// `[package]`) or before any manifest is located.
     fn refresh_project_model(&mut self) {
         let active_dir = self.active_manifest_dir();
-        self.state.active_manifest = active_dir
-            .as_deref()
-            .and_then(|d| load_manifest_cached(d).ok());
+        self.state.active_manifest = active_dir.as_deref().and_then(|d| {
+            let mut m = load_manifest_cached(d).ok()?;
+            // `compiler.target`/`sysroot` are machine-local (#[serde(skip)]), so the
+            // parsed manifest never carries them. Apply the same sources the build
+            // pipeline uses (global + per-project config, FREIGHT_SYSROOT) so the
+            // header index and provider labels reflect the cross target.
+            let mut cfg = crate::toolchain::GlobalConfig::load();
+            if let Some(local) = crate::toolchain::GlobalConfig::load_local(d) {
+                cfg.apply_local(local);
+            }
+            if m.compiler.target.is_none() {
+                m.compiler.target = cfg.target.clone();
+            }
+            if m.compiler.sysroot.is_none() {
+                m.compiler.sysroot = std::env::var_os("FREIGHT_SYSROOT")
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string_lossy().into_owned())
+                    .or_else(|| cfg.sysroot.clone());
+            }
+            Some(m)
+        });
         self.state.package_dirs = active_dir
             .as_deref()
             .map(crate::build::source_package_dirs)
@@ -2417,8 +2435,26 @@ impl Server {
         } else {
             None
         };
+        // Cross build: resolve system headers against the target sysroot + cross
+        // toolchain so the index reflects the target's libstdc++/libc++/libc.
+        let sysroot: Option<PathBuf> = self
+            .state
+            .active_manifest
+            .as_ref()
+            .and_then(|m| m.compiler.sysroot.clone())
+            .map(PathBuf::from);
+        let target: Option<String> = self
+            .state
+            .active_manifest
+            .as_ref()
+            .and_then(|m| m.compiler.target.clone());
         // One traversal of each package's src/ fills both indexes.
-        let indexes = crate::lsp::index::build_source_indexes(&specs, pkgs_opt);
+        let indexes = crate::lsp::index::build_source_indexes(
+            &specs,
+            pkgs_opt,
+            sysroot.as_deref(),
+            target.as_deref(),
+        );
         self.state.header_index = indexes.headers;
         self.state.module_index = indexes.modules;
     }

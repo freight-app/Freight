@@ -324,9 +324,15 @@ quick-fix **"Add `<feature>` to [os.<os>] features in freight.toml"**.
   `cc -dumpmachine`), `path` substrings for the C++ stdlib. A header maps to a
   capability (`header_capability`) and is labelled with the active provider
   (`header_provider_label` → `std_providers::resolve_provider`). Falls back to a
-  generic `libc` / `C++ stdlib` when the package can't be determined (e.g. cross C++
-  needs a sysroot-aware index — left as a follow-up). The *link library*
-  (`pthread`/`m` feature) stays a separate concern in the hover/diagnostic.
+  generic `libc` / `C++ stdlib` only when the package truly can't be determined.
+  The *link library* (`pthread`/`m` feature) stays a separate concern in the
+  hover/diagnostic.
+- The **header index is sysroot- and cross-toolchain-aware**: when the active
+  manifest has a `[compiler] target`/`sysroot` (applied in `refresh_project_model`
+  from the same global/local config + `FREIGHT_SYSROOT` the build uses), the system
+  include dirs are probed via the cross toolchain (`<triple>-g++`, …) with
+  `--sysroot`, so a cross build's C++ stdlib path resolves to the *target's*
+  libstdc++/libc++ — and the inlay/hover label it accordingly.
 
 ## Implementation checklist (Phase 1 first)
 
