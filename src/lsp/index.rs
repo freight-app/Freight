@@ -57,6 +57,8 @@ pub trait LanguageIndexer: Send {
     }
 
     /// Return compile flags for `path`, used by external tools (e.g. clang-tidy).
+    /// Only consumed on the clang-bridge path.
+    #[cfg_attr(not(feature = "clang-bridge"), allow(dead_code))]
     fn flags_for(&self, _path: &Path) -> Vec<String> {
         vec![]
     }
@@ -281,6 +283,7 @@ pub(crate) fn probe_system_include_dirs_for(
 /// Used to pass an explicit `-resource-dir` to libclang (via clang-bridge)
 /// so that built-in headers like `stddef.h` are found regardless of where the
 /// freight binary lives on disk.
+#[cfg(feature = "clang-bridge")]
 pub(crate) fn probe_clang_resource_dir() -> Option<PathBuf> {
     for compiler in ["clang++", "clang"] {
         if let Ok(out) = std::process::Command::new(compiler)
@@ -306,6 +309,7 @@ pub(crate) fn probe_clang_resource_dir() -> Option<PathBuf> {
 ///
 /// Falls back to `probe_system_include_dirs()` if the compiler is not found or
 /// returns an empty list (e.g. a bare compiler name that isn't on PATH).
+#[cfg(feature = "clang-bridge")]
 pub(crate) fn probe_for_file(compiler: &str, env_flags: &[&str]) -> Vec<PathBuf> {
     if let Some(dirs) = run_compiler_probe(compiler, env_flags) {
         if !dirs.is_empty() {

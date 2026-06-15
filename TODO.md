@@ -36,10 +36,15 @@ backend. No clangd install required; freight controls flags, modules, and the
 include policy directly.
 
 **Status:** the bridge implements every LSP method `freight lsp` needs and has
-144 passing tests, but it is opt-in (`freight lsp --use-clang-bridge`) because
-it has not yet been differentially verified against clangd on every method.
-(This section supersedes the old libclang/`clang-sys` prototype plan — that
-path was abandoned in favour of the dedicated `clang-bridge` crate.)
+144 passing tests, but it is **off by default** — opt-in at *both* build and run
+time: the `clang-bridge` cargo feature (off by default, so a normal `freight`
+build doesn't compile the C++ FFI or link libclang) plus the runtime
+`freight lsp --use-clang-bridge` flag (ignored with a warning if the feature
+wasn't compiled in). clangd is the default C/C++ backend. Not yet differentially
+verified against clangd on every method. (This section supersedes the old
+libclang/`clang-sys` prototype plan — abandoned in favour of `clang-bridge`.)
+To make it default-on later: finish the audit below, then add `clang-bridge` to
+the crate's `default` features and flip the runtime gate.
 
 **How to solve:**
 - [ ] Finish the clangd-oracle differential audit (driver pattern:

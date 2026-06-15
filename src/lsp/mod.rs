@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use index::LanguageIndexer;
-use indexers::{AsmIndexer, ClangIndexer, FortranIndexer};
+#[cfg(feature = "clang-bridge")]
+use indexers::ClangIndexer;
+use indexers::{AsmIndexer, FortranIndexer};
 
 use crate::build::generate_lsp_compile_commands_at;
 use crate::manifest::{find_manifest_dir, load_manifest_cached, load_workspace_manifest};
@@ -67,7 +69,9 @@ pub struct Args {
     /// goto, completion, document symbols, folding, references, highlight,
     /// semantic tokens, inlay hints, diagnostics) instead of forwarding to
     /// clangd. Off by default while the bridge matures — clangd is the reliable
-    /// path; enable this to test or use the bridge.
+    /// path. Requires a build with the `clang-bridge` cargo feature
+    /// (`cargo install --features clang-bridge`); otherwise it's ignored with a
+    /// warning and clangd is used.
     #[arg(long)]
     pub use_clang_bridge: bool,
     /// Extra flags forwarded verbatim to clangd (repeatable).
@@ -299,6 +303,12 @@ struct LinkFeatureHint {
 // ---------------------------------------------------------------------------
 
 impl Server {
+    /// Whether the clang-bridge C/C++ backend is actually active: requested via
+    /// `--use-clang-bridge` *and* compiled in (the `clang-bridge` feature).
+    fn clang_bridge_active(&self) -> bool {
+        cfg!(feature = "clang-bridge") && self.args.use_clang_bridge
+    }
+
     fn with_out(args: Args, out: Arc<Mutex<io::Stdout>>) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let manifest_dir = find_manifest_dir(&cwd);
@@ -311,8 +321,16 @@ impl Server {
         if native_asm_enabled(&args) {
             indexers.push(Box::new(AsmIndexer::new()));
         }
+        #[cfg(feature = "clang-bridge")]
         if args.use_clang_bridge {
             indexers.push(Box::new(ClangIndexer::new()));
+        }
+        #[cfg(not(feature = "clang-bridge"))]
+        if args.use_clang_bridge {
+            eprintln!(
+                "warning: --use-clang-bridge ignored: this freight was built without the \
+                 `clang-bridge` feature; C/C++ is served by clangd"
+            );
         }
         Self {
             args,
@@ -421,7 +439,7 @@ impl Server {
                 source_caps.push(caps);
             }
         }
-        let capabilities = merged_capabilities(source_caps, self.args.use_clang_bridge, true);
+        let capabilities = merged_capabilities(source_caps, self.clang_bridge_active(), true);
         self.respond(
             msg.get("id").cloned(),
             json!({
@@ -1052,7 +1070,7 @@ impl Server {
     /// is what scrambles highlighting colours.
     fn handle_semantic_tokens(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let result = if self.args.use_clang_bridge {
+        let result = if self.clang_bridge_active() {
             let uri = text_document_uri(&msg);
             uri.as_deref().and_then(|u| {
                 self.state
@@ -1926,6 +1944,11 @@ impl Server {
     /// merged (clangd + tidy) diagnostics once the run completes.
     /// No-op for non-C/C++ files or files without a source-server mapping.
     fn spawn_tidy(&self, uri: &str) {
+        // clang-tidy runs through clang-bridge; without that feature this is a no-op.
+        #[cfg(not(feature = "clang-bridge"))]
+        let _ = uri;
+        #[cfg(feature = "clang-bridge")]
+        {
         if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
             return;
         }
@@ -1967,6 +1990,7 @@ impl Server {
             });
             let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
         });
+        }
     }
 
     /// Compute undeclared-include diagnostics for a C/C++ source file and merge

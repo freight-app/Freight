@@ -16,6 +16,9 @@ path = "src/cli/main.rs"
 [features]
 default   = []
 rich-math = ["dep:ratatui-image", "dep:image", "dep:mathjax-svg-rs", "dep:resvg"]
+# In-process C/C++ LSP backend (compiles a C++ FFI bridge + links libclang).
+# Off by default — clangd serves C/C++; enable to use `freight lsp --use-clang-bridge`.
+clang-bridge = ["dep:clang-bridge"]
 
 [dependencies]
 # Core library
@@ -62,7 +65,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Git deps so the freight repo builds standalone (CI checks it out alone). In the
 # monorepo workspace these are redirected to the local submodules via [patch] in
 # the workspace Cargo.toml.
-clang-bridge       = { git = "https://github.com/freight-app/clang-bridge.git" }
+clang-bridge       = { git = "https://github.com/freight-app/clang-bridge.git", optional = true }
 fortran-lsp        = { git = "https://github.com/freight-app/fortran-lsp.git" }
 
 [dev-dependencies]
