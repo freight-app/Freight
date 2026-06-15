@@ -17,7 +17,8 @@ Freight is deliberately modelled after Cargo. If you know Cargo, most concepts m
 | Dev dependencies | `[dev-dependencies]` | `[dev-dependencies]` — debug builds + tests only |
 | Build-time tools | `[build-dependencies]` (for build.rs) | `[build-dependencies]` — executables needed during compilation; `bin/` prepended to PATH |
 | Build script | `build.rs` | Not supported |
-| Workspaces | `[workspace]` in root `Cargo.toml` | Same |
+| Workspaces | `[workspace]` in root `Cargo.toml` | Same — `[workspace.dependencies]` / `[workspace.package]` inheritance via `{ workspace = true }` |
+| Dependency source override | `[patch]` / `[replace]` | `[patch]` — path overrides (across the whole graph, incl. transitive) |
 
 ### Differences in `[lib]`
 
@@ -69,13 +70,12 @@ srcs = ["src/os/windows/**"]
 Cargo resolves Rust crates from crates.io. Freight resolves C/C++ libraries through a chain:
 
 1. **pkg-config** — `pkg-config --modversion <name>`
-2. **Conan** — `conan install <name>/<version>`
-3. **vcpkg** — `vcpkg install <name>`
-4. **System-lib stub** — bundled stubs for common OS libraries (pthread, zlib, OpenSSL, …)
+2. **System-lib stub** — bundled stubs for common OS libraries (pthread, zlib, OpenSSL, …)
+3. **Registry** — `.deps/` cache populated by `freight fetch`
 
-Pin a specific resolver with `repo`:
+Pin a specific resolver with `repo` (`"system"` for stubs only, or a named registry):
 ```toml
-zlib = { version = "1.3", repo = "vcpkg" }
+zlib = { version = "1.3", repo = "system" }
 ```
 
 ### What Freight adds
@@ -136,6 +136,7 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 | — | `freight toolchain list` | Shows detected compilers and debuggers |
 | — | `freight toolchain use` | Sets the default compiler backend |
 | `cargo outdated` (plugin) | `freight outdated` | Built-in |
+| — | `freight workspace graph` | Visualises inter-member path-dep edges (text / mermaid / dot) |
 
 ---
 
@@ -171,7 +172,7 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 - **`build.rs`** — pre-build Rust scripts. Freight has no equivalent; platform-conditional logic belongs in `[os.*]`/`[arch.*]` sections.
 - **Procedural macros** — not applicable to C/C++.
 - **`cargo fix`** — Freight's `freight lint --fix` is the closest equivalent.
-- **Workspaces with virtual manifests** — Freight workspaces require each member to have its own `freight.toml`; virtual root manifests are not supported yet.
+- **Workspaces with virtual manifests** — Freight workspaces require each member to have its own `freight.toml`; virtual root manifests are not supported yet. (Dependency and package-field inheritance via `{ workspace = true }` *is* supported.)
 - **Edition system** — no concept of language editions; standards are set explicitly.
 
 ## What Freight has that Cargo does not

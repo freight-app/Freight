@@ -15,6 +15,14 @@ use crate::toolchain::template::BuildSettings;
 pub struct WorkspaceSection {
     /// Relative paths to member directories (e.g. `["app/", "libfoo/"]`).
     pub members: Vec<String>,
+    /// Shared dependency definitions members inherit with `foo = { workspace = true }`.
+    /// (`[workspace.dependencies]`.)
+    #[serde(default)]
+    pub dependencies: HashMap<String, Dependency>,
+    /// Shared `[package]` field defaults members inherit with `field.workspace = true`
+    /// (e.g. `version`, `license`, `authors`). (`[workspace.package]`.)
+    #[serde(default)]
+    pub package: HashMap<String, toml::Value>,
 }
 
 /// Thin deserialisation target for workspace-root manifests.

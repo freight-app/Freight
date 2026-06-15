@@ -379,6 +379,56 @@ skipped by `freight fetch` (the source is already local).
 
 ---
 
+## `[workspace]`
+
+A workspace-root `freight.toml` contains **only** a `[workspace]` section (no
+`[package]`). Members are ordinary freight projects listed by relative path.
+
+```toml
+[workspace]
+members = ["app", "libfoo", "libbar"]
+
+# Shared dependency definitions. Members opt in per-dep with `{ workspace = true }`.
+[workspace.dependencies]
+fmt  = ">=10.0"
+spdlog = { version = "1.13", features = ["std-format"] }
+
+# Shared [package] field defaults. Members opt in per-field with `field.workspace = true`.
+[workspace.package]
+version = "1.4.0"
+license = "Apache-2.0"
+authors = ["ACME <dev@acme.example>"]
+```
+
+### Inheritance from a member
+
+A member pulls shared values in with the `workspace = true` marker:
+
+```toml
+[package]
+name             = "app"
+version.workspace = true      # ← from [workspace.package].version
+license.workspace = true
+
+[dependencies]
+fmt    = { workspace = true }                       # inherit verbatim
+spdlog = { workspace = true, features = ["async"] } # inherit + add a feature
+```
+
+Rules:
+- **Package fields** — any `[package]` field can be `field.workspace = true`; the
+  value is taken from `[workspace.package].<field>`. Missing there → error.
+- **Dependencies** — `name = { workspace = true }` in `[dependencies]`,
+  `[build-dependencies]`, or `[dev-dependencies]` inherits from
+  `[workspace.dependencies].<name>`. The member may add `features` (unioned with
+  the workspace entry's) and override `optional` / `default-features`. Missing in
+  `[workspace.dependencies]` → error.
+- Inheritance is resolved against the nearest ancestor directory whose
+  `freight.toml` has a `[workspace]` section. A marker with no such ancestor is an
+  error.
+
+---
+
 ## `[features]`
 
 Cargo-style conditional compilation. Active features produce `-D<NAME_UPPER>` flags for all
