@@ -26,6 +26,7 @@ through to a stub/registry doesn't re-run `pkg-config` every build. Wiped by
 
 ### S15 — Workspace improvements (remaining)
 Per-member `freight build -p` / `freight run -p` is done.
+`freight workspace graph` is done — visualises inter-member path-dep relationships
+(text / mermaid / dot via `--format`; walks up to the workspace root).
 Remaining:
 - Workspace-level `[patch]` table to override transitive deps
-- `freight workspace graph` — visualise inter-member dep relationships

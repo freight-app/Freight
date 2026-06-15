@@ -54,6 +54,8 @@ enum Commands {
     Fetch(commands::fetch::Args),
     /// Print the dependency tree, or the source/header include tree with --sources
     Tree(commands::tree::Args),
+    /// Workspace-level inspection (e.g. `freight workspace graph`)
+    Workspace(commands::workspace::Args),
     /// Show outdated registry dependencies
     Outdated(commands::outdated::Args),
     /// Show package metadata (from registry when a name is given, or the current project)
@@ -125,6 +127,7 @@ fn main() {
         Commands::Update(args) => args.run(),
         Commands::Fetch(args) => args.run(),
         Commands::Tree(args) => args.run(),
+        Commands::Workspace(args) => args.run(),
         Commands::Outdated(args) => args.run(),
         Commands::Info(args) => args.run(),
         Commands::Search(args) => args.run(),

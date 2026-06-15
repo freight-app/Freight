@@ -32,6 +32,7 @@ pub mod toolchain;
 pub mod tree;
 pub mod update;
 pub mod watch;
+pub mod workspace;
 pub mod yank;
 
 // Keep deps.rs around until it is empty — it is referenced nowhere now.
