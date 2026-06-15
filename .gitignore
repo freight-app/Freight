@@ -10,3 +10,6 @@ examples/**/.deps/
 examples/**/freight.lock
 examples/**/compile_commands.json
 examples/**/.freight/
+# …but the aliases example ships a checked-in .freight/config.toml on purpose.
+!examples/misc/aliases/.freight
+!examples/misc/aliases/.freight/config.toml

@@ -30,6 +30,11 @@ freight run
 | `cpp/features` | `[features]` → `-D<NAME>` conditional compilation; `--features` / `--no-default-features` |
 | `deps/dep-defines` | Forwarding a `-D` into a dependency's build via `<dep>/define:NAME`; defines are per-package |
 | `c/simd` | `[arch.*] features` enable CPU/ISA extensions (`avx2` → `-mavx2`) with a scalar fallback |
+| `c/required-features` | `[[bin]] required-features` gating + `[package] default-run` |
+| `misc/examples-target` | `[[example]]` targets + `examples/` auto-discovery; `freight run --example` |
+| `deps/patch` | `[patch]` overrides a dependency's source with a local checkout |
+| `misc/workspace-inherit` | `[workspace.dependencies]` / `[workspace.package]` inheritance via `{ workspace = true }` |
+| `misc/aliases` | `[alias]` command shortcuts in `.freight/config.toml` (`freight b` → `build`) |
 
 ## Broken examples
 

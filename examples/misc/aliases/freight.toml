@@ -1,0 +1,11 @@
+[package]
+name        = "aliases-demo"
+version     = "0.1.0"
+description = "Command aliases defined in .freight/config.toml"
+
+[language.c]
+std = "c11"
+
+[[bin]]
+name = "aliases-demo"
+src  = "src/main.c"

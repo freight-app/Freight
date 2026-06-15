@@ -1,0 +1,18 @@
+[package]
+name        = "mathx"
+version     = "0.1.0"
+description = "A library with runnable example programs (examples/ + [[example]])"
+
+[language.c]
+std = "c11"
+
+[lib]
+type = "static"
+srcs = ["src/mathx.c"]
+hdrs = ["inc/mathx.h"]
+
+# `examples/basic.c` is auto-discovered (example name = file stem "basic").
+# This section adds a custom-named example pointing at a differently-named file.
+[[example]]
+name = "fancy"
+src  = "examples/fancy_demo.c"

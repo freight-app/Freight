@@ -1,0 +1,25 @@
+[package]
+name        = "toolkit"
+version     = "0.1.0"
+description = "Multiple binaries, one gated behind a feature; default-run picks the primary"
+# `freight run` (no --bin) runs this binary even though two are declared.
+default-run = "toolkit"
+
+[language.c]
+std = "c11"
+
+[features]
+# Build the extra diagnostic tool only when this feature is active:
+#   freight build --features extras
+extras = []
+
+[[bin]]
+name = "toolkit"
+src  = "src/main.c"
+
+[[bin]]
+name = "diag"
+src  = "src/diag.c"
+# `diag` is only linked when `extras` is active. A plain `freight build`
+# produces just `toolkit`; `freight build --features extras` produces both.
+required-features = ["extras"]

@@ -1,0 +1,7 @@
+# Project-local developer config. The [alias] table defines command shortcuts,
+# mirroring Cargo's `[alias]`. A string is split on whitespace; an array is
+# taken verbatim. An alias may not shadow a built-in subcommand.
+[alias]
+b  = "build"
+br = ["build", "--release"]
+r  = "run"

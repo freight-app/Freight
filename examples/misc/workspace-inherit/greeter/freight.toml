@@ -1,0 +1,13 @@
+[package]
+name = "greeter"
+# Inherited from [workspace.package].version → 1.2.0
+version.workspace = true
+license.workspace = true
+
+[language.c]
+std = "c11"
+
+[lib]
+type = "static"
+srcs = ["src/greeter.c"]
+hdrs = ["inc/greeter.h"]

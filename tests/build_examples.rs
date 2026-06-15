@@ -135,3 +135,70 @@ fn misc_platform_deps_builds() {
     let run = run_binary(&dir, "platform-deps", &[]);
     assert_success(&run, "misc/platform-deps run");
 }
+
+// ── Cargo-parity: targets, patch, workspace inheritance, aliases ───────────────
+
+#[test]
+fn required_features_and_default_run() {
+    let dir = example(&["c", "required-features"]);
+    let _ = freight(&dir, &["clean"]); // pristine state for the gate assertions
+
+    // Plain build: only `toolkit` links; `diag` is gated out.
+    let out = freight(&dir, &["build"]);
+    assert_success(&out, "required-features default build");
+    assert!(dir.join("target/dev/toolkit").exists(), "toolkit should build");
+    assert!(
+        !dir.join("target/dev/diag").exists(),
+        "diag must be gated out without --features extras"
+    );
+
+    // With the feature, both binaries link.
+    let out = freight(&dir, &["build", "--features", "extras"]);
+    assert_success(&out, "required-features extras build");
+    assert!(
+        dir.join("target/dev/diag").exists(),
+        "diag should build with --features extras"
+    );
+
+    // default-run selects `toolkit` without --bin.
+    let run = freight(&dir, &["run"]);
+    assert_success(&run, "default-run");
+    assert_output_contains(&run, &["toolkit: primary tool"]);
+}
+
+#[test]
+fn example_targets_build_and_run() {
+    let dir = example(&["misc", "examples-target"]);
+    let out = freight(&dir, &["build", "--examples"]);
+    assert_success(&out, "build --examples");
+    assert!(dir.join("target/dev/examples/basic").exists(), "basic example");
+    assert!(dir.join("target/dev/examples/fancy").exists(), "fancy example");
+
+    let run = freight(&dir, &["run", "--example", "fancy"]);
+    assert_success(&run, "run --example fancy");
+    assert_output_contains(&run, &["(2 + 3) * 4 = 20"]);
+}
+
+#[test]
+fn patch_overrides_dependency_source() {
+    let dir = example(&["deps", "patch"]);
+    let out = freight(&dir, &["run"]);
+    assert_success(&out, "deps/patch run");
+    assert_output_contains(&out, &["PATCHED greeter"]);
+    assert_output_missing(&out, "UPSTREAM greeter");
+}
+
+#[test]
+fn workspace_inheritance_resolves() {
+    let dir = example(&["misc", "workspace-inherit", "app"]);
+    let out = freight(&dir, &["run"]);
+    assert_success(&out, "workspace-inherit app run");
+    assert_output_contains(&out, &["workspace greeter library"]);
+}
+
+#[test]
+fn command_alias_expands_to_build() {
+    let dir = example(&["misc", "aliases"]);
+    let out = freight(&dir, &["b"]); // [alias] b = "build"
+    assert_success(&out, "alias `b` should expand to build");
+}

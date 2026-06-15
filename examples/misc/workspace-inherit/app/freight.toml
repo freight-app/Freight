@@ -1,0 +1,17 @@
+[package]
+name = "app"
+# Inherited package fields.
+version.workspace = true
+license.workspace = true
+
+[language.c]
+std = "c11"
+
+[[bin]]
+name = "app"
+src  = "src/main.c"
+
+[dependencies]
+# Inherit the shared definition; the root's `path = "greeter"` is rewritten to
+# the correct location relative to this member automatically.
+greeter = { workspace = true }

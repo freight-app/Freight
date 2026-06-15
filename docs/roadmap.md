@@ -95,6 +95,19 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] `default-features = false` to opt out of dep defaults
 - [x] `build/features.rs` — `resolve_features()` + `to_defines()` (pure, unit-tested)
 
+### Cargo Parity ✓ COMPLETE
+- [x] `[patch]` — override a dependency's source with a local path, across the whole graph (incl. transitive); root-manifest only; skipped by `freight fetch`
+- [x] Workspace inheritance — `[workspace.dependencies]` + `dep = { workspace = true }` (features unioned, `optional`/`default-features` overridable) and `[workspace.package]` + `field.workspace = true`; resolved at the TOML-document level before parse; inherited path deps rewritten relative to each member
+- [x] `freight metadata` — machine-readable JSON of the resolved package + dep graph (`--no-deps`, `--compact`)
+- [x] `[[bin]] required-features` — gate a binary on active features (silently skipped when unmet)
+- [x] `[package] default-run` — default `[[bin]]` for `freight run`
+- [x] `[[example]]` targets + `examples/` auto-discovery — `freight build --examples`/`--example`, `freight run --example`
+- [x] `--offline` / `--locked` / `--frozen` build flags
+- [x] `[alias]` command aliases in `.freight/config.toml` (string or array; can't shadow built-ins; local overrides global)
+- [x] `freight tree` shows all dep kinds (normal/build/dev) and supports `--depth N`
+- [x] `freight lint --fix` covers `cargo fix`
+- Deliberately *not* adopted (redundant/contrary to a single-version-per-name model): `cargo vendor` (≈ `.pkgs/` + `--offline`), `cargo tree --duplicates` (a flat name-keyed pool can't hold two versions), multi-version resolution, virtual workspace manifests
+
 ### Assembly & Target Config ✓ COMPLETE
 - [x] NASM template — `.asm`/`.nasm`, arch-specific output format via `[arch_flags]`
 - [x] YASM template — drop-in NASM-compatible x86/x86_64 assembler

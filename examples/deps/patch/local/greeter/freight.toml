@@ -1,0 +1,11 @@
+[package]
+name    = "greeter"
+version = "1.0.0"
+
+[language.c]
+std = "c11"
+
+[lib]
+type = "static"
+srcs = ["src/greeter.c"]
+hdrs = ["inc/greeter.h"]

@@ -97,9 +97,10 @@ freight update       # bump all deps to latest
 
 ```
 freight new <name>               scaffold a new project
-freight build [--release]        compile
-freight run   [--release]        build and run
+freight build [--release]        compile (--example/--examples, --bin via run)
+freight run   [--release]        build and run (--bin <n>, --example <n>)
 freight test  [<filter>]         build and run tests
+freight bench [<filter>]         build and run benches/
 freight watch                    rebuild on file changes
 freight clean                    wipe target/
 freight check                    validate freight.toml
@@ -107,14 +108,29 @@ freight add [<name|URL>]         add a dependency (no args → TUI browser)
 freight remove <package>
 freight update [<package>]
 freight fetch                    download all git/url deps
-freight tree                     print dependency tree
+freight tree [--depth N]         print dependency tree (all dep kinds)
+freight metadata [--no-deps]     machine-readable JSON of the resolved graph
+freight workspace graph          visualise inter-member dependencies
+freight outdated                 show outdated registry deps
+freight info [<name>]            show package metadata
 freight search <query>           search the registry
+freight install / package        install to a prefix / build a redistributable archive
+freight fmt / lint [--fix]       format / lint sources (wraps clang-format / clang-tidy)
+freight debug                    launch GDB/LLDB; generate launch.json
 freight lsp                      serve freight.toml diagnostics + source LSP passthroughs
+freight compile-commands         generate compile_commands.json
 freight publish                  upload this package to a registry
 freight doc                      browse dependency docs in a TUI
 freight doc --format md|json     generate extracted API docs
+freight toolchain list|use       inspect / select compiler backends
 freight migrate cmake|make|autotools <path>
                                  migrate a foreign build system to freight.toml
+
+# Build/resolution flags (build, run, test, …):
+#   --offline   no network; use deps already in .pkgs/
+#   --locked    require freight.lock to be up to date; never rewrite it
+#   --frozen    --offline + --locked
+# Command aliases: define [alias] in ~/.freight/config.toml or .freight/config.toml
 ```
 
 See [docs/architecture.md](docs/architecture.md) for internals and [docs/roadmap.md](docs/roadmap.md) for planned features.
@@ -132,6 +148,10 @@ The `examples/` directory has fully buildable projects. See [`examples/README.md
 | `mixed/tri-lang/` | Fortran + C + C++ in one project |
 | `deps/cmake/` | Foreign CMake dependency |
 | `deps/git/` | Git dependency cloned and built |
+| `deps/patch/` | `[patch]` override with a local checkout |
+| `misc/workspace-inherit/` | `[workspace.dependencies]` / `[workspace.package]` inheritance |
+| `misc/examples-target/` | `[[example]]` targets + `examples/` auto-discovery |
+| `c/required-features/` | `required-features` gating + `default-run` |
 | `misc/doc/` | C, C++, Fortran libs — run `freight doc` to demo the TUI |
 
 ## Documentation

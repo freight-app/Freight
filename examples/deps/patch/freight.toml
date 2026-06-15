@@ -1,0 +1,21 @@
+[package]
+name        = "patch-demo"
+version     = "0.1.0"
+description = "Override a dependency's source with a local checkout via [patch]"
+
+[language.c]
+std = "c11"
+
+[[bin]]
+name = "patch-demo"
+src  = "src/main.c"
+
+[dependencies]
+# The app depends on the "upstream" greeter…
+greeter = { path = "upstream/greeter" }
+
+[patch]
+# …but [patch] redirects every reference to "greeter" (here and in any
+# transitive dep) to this local checkout instead. Build and run: the program
+# prints the PATCHED greeting, proving the override took effect.
+greeter = { path = "local/greeter" }

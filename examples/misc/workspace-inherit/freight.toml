@@ -1,0 +1,13 @@
+# Workspace root: only a [workspace] section, no [package].
+[workspace]
+members = ["greeter", "app"]
+
+# Shared [package] field defaults — members opt in with `field.workspace = true`.
+[workspace.package]
+version = "1.2.0"
+license = "MIT"
+
+# Shared dependency definitions — members opt in with `{ workspace = true }`.
+# A `path` here is relative to this root; freight rewrites it per member.
+[workspace.dependencies]
+greeter = { path = "greeter" }
