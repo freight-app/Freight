@@ -59,7 +59,7 @@ pub fn resolve_inheritance(src: &str, dir: &Path) -> Result<String, FreightError
 
     resolve_package(&mut doc, workspace)?;
     for table in DEP_TABLES {
-        resolve_deps(&mut doc, table, workspace)?;
+        resolve_deps(&mut doc, table, workspace, dir, &root_dir)?;
     }
 
     Ok(doc.to_string())
@@ -136,6 +136,8 @@ fn resolve_deps(
     doc: &mut DocumentMut,
     table: &str,
     workspace: &dyn toml_edit::TableLike,
+    member_dir: &Path,
+    root_dir: &Path,
 ) -> Result<(), FreightError> {
     let ws_deps = workspace.get("dependencies").and_then(Item::as_table_like);
 
@@ -156,10 +158,31 @@ fn resolve_deps(
             ))
         })?;
         let member = deps.get(&key).expect("key came from this table");
-        let merged = merge_dep(ws_entry, member)?;
+        let mut merged = merge_dep(ws_entry, member)?;
+        // A path in [workspace.dependencies] is relative to the workspace root;
+        // once inherited it must point at the same place from the *member* dir.
+        rewrite_inherited_path(&mut merged, member_dir, root_dir);
         deps.insert(&key, merged);
     }
     Ok(())
+}
+
+/// If `item` is a path dependency, rewrite its `path` (which was written
+/// relative to the workspace root) to be relative to `member_dir` instead.
+fn rewrite_inherited_path(item: &mut Item, member_dir: &Path, root_dir: &Path) {
+    let Some(path) = item
+        .as_table_like()
+        .and_then(|t| t.get("path"))
+        .and_then(Item::as_str)
+    else {
+        return;
+    };
+    let abs = root_dir.join(path);
+    let rel = crate::lock::relative_path(member_dir, &abs);
+    let rel_str = rel.to_string_lossy().into_owned();
+    if let Some(t) = item.as_table_like_mut() {
+        t.insert("path", toml_edit::value(rel_str));
+    }
 }
 
 /// Combine a workspace dependency definition with a member's `{ workspace = true,
@@ -285,6 +308,29 @@ mod tests {
                 assert!(d.optional);
             }
             other => panic!("expected detailed dep, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inherited_path_dep_is_rewritten_relative_to_member() {
+        let tmp = tempfile::tempdir().unwrap();
+        // [workspace.dependencies].greeter path is relative to the root; the
+        // member lives in app/, so the inherited path must become ../greeter.
+        write(
+            tmp.path(),
+            "freight.toml",
+            "[workspace]\nmembers=[\"app\",\"greeter\"]\n\
+             [workspace.dependencies]\ngreeter = { path = \"greeter\" }\n",
+        );
+        let member = "[package]\nname=\"app\"\nversion=\"0.1.0\"\n\
+                      [dependencies]\ngreeter = { workspace = true }\n";
+        let out = resolve_inheritance(member, &tmp.path().join("app")).unwrap();
+        let m = crate::manifest::load_manifest_str(&out).unwrap();
+        match m.dependencies.get("greeter").unwrap() {
+            crate::manifest::types::Dependency::Detailed(d) => {
+                assert_eq!(d.path.as_deref(), Some("../greeter"));
+            }
+            other => panic!("expected detailed path dep, got {other:?}"),
         }
     }
 
