@@ -311,6 +311,11 @@ quick-fix **"Add `<feature>` to [os.<os>] features in freight.toml"**.
 - The feature+os ride in the diagnostic's `data` field, so the quick-fix needs no
   server-side state; `insert_os_feature_toml` writes the `[os.*] features` array
   (formatting preserved).
+- System-library headers are **not** indexed as ordinary/stdlib headers: the inlay
+  label and include-hover report the *feature* they come from (`← pthread`, hover
+  "`pthread` system library — linked via `[os.unix] features`") instead of
+  mislabelling `<pthread.h>` as `← stdlib`. Header → feature uses the same stub
+  `headers` table.
 
 ## Implementation checklist (Phase 1 first)
 

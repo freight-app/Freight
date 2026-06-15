@@ -782,6 +782,25 @@ impl Server {
                 Some(entry.full_path.clone()),
             )
         } else if is_system {
+            // System-library header (pthread.h, …): report the feature it belongs
+            // to, not a stdlib/file label.
+            let stubs = crate::toolchain::system_libs::load_system_lib_stubs();
+            if let Some(stub) = crate::toolchain::system_libs::find_stub_by_header(&header, &stubs) {
+                let os = stub.section_os();
+                let status = if self.declared_system_features().contains(&stub.name) {
+                    format!("Linked via `[os.{os}] features = [\"{}\"]`.", stub.name)
+                } else {
+                    format!(
+                        "Not linked — add `{}` to `[os.{os}] features` in `freight.toml`.",
+                        stub.name
+                    )
+                };
+                let md = format!(
+                    "**`{}` system library** · `{header}`\n\n{status}",
+                    stub.name
+                );
+                return Some(json!({ "contents": { "kind": "markdown", "value": md } }));
+            }
             // File-based system lookup (e.g. <vector> → the libstdc++ path), or a
             // synthetic stdlib entry so a recognised header still reads as stdlib.
             let entry = self
@@ -1117,6 +1136,10 @@ impl Server {
             self.undeclared_include_level(),
             crate::manifest::LintLevel::Allow
         );
+        // System-library stubs + already-declared features, loaded once: a
+        // system-lib header (pthread.h) is labelled by its feature, not indexed.
+        let sys_stubs = crate::toolchain::system_libs::load_system_lib_stubs();
+        let declared_feats = self.declared_system_features();
 
         let mut hints = Vec::new();
         for (idx, line_text) in text.lines().enumerate() {
@@ -1176,6 +1199,32 @@ impl Server {
                     ),
                 ));
                 continue;
+            }
+
+            // System-library header (pthread.h, …): label it by the feature it
+            // belongs to rather than indexing it (it's OS-provided, not a package
+            // header — without this it would mislabel as "← stdlib").
+            if is_system {
+                if let Some(stub) =
+                    crate::toolchain::system_libs::find_stub_by_header(&header, &sys_stubs)
+                {
+                    let os = stub.section_os();
+                    let tip = if declared_feats.contains(&stub.name) {
+                        format!(
+                            "`{header}` is provided by the `{}` system library, \
+                             linked via `[os.{os}] features`.",
+                            stub.name
+                        )
+                    } else {
+                        format!(
+                            "`{header}` is provided by the `{}` system library, but it isn't \
+                             linked.\n\nAdd `{}` to `[os.{os}] features` in `freight.toml`.",
+                            stub.name, stub.name
+                        )
+                    };
+                    hints.push(inlay_hint_json(idx, col, &format!("← {}", stub.name), &tip));
+                    continue;
+                }
             }
 
             let owned;
