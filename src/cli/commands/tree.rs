@@ -19,6 +19,9 @@ pub struct Args {
     /// Output format: text (default), mermaid, dot
     #[arg(long, short = 'f', default_value = "text", value_name = "FORMAT")]
     pub format: String,
+    /// Maximum dependency depth to display (omit for unlimited)
+    #[arg(long, value_name = "N")]
+    pub depth: Option<usize>,
 }
 
 impl Args {
@@ -26,14 +29,14 @@ impl Args {
         if self.sources {
             cmd_includes(self.all, &self.format);
         } else {
-            cmd_tree();
+            cmd_tree(self.depth);
         }
     }
 }
 
 // ── freight tree ───────────────────────────────────────────────────────────────
 
-pub fn cmd_tree() {
+pub fn cmd_tree(depth: Option<usize>) {
     let cwd = match std::env::current_dir() {
         Ok(d) => d,
         Err(e) => {
@@ -56,7 +59,7 @@ pub fn cmd_tree() {
                         manifest.package.version.bright_black(),
                         format!("({})", member).bright_black()
                     );
-                    print_dep_groups(&manifest, &member_dir);
+                    print_dep_groups(&manifest, &member_dir, depth);
                 }
                 Err(e) => print_error(&format!("{member}: {e}")),
             }
@@ -77,39 +80,58 @@ pub fn cmd_tree() {
         manifest.package.name.bold().bright_blue(),
         manifest.package.version.bright_black()
     );
-    print_dep_groups(&manifest, &project_dir);
+    print_dep_groups(&manifest, &project_dir, depth);
 }
 
 /// Print a project's full dependency tree: `[dependencies]` (recursed into path
 /// deps), then flat `[build-dependencies]` and `[dev-dependencies]` groups —
 /// matching `cargo tree`, which surfaces every dependency kind.
-fn print_dep_groups(manifest: &Manifest, project_dir: &Path) {
-    print_dep_tree(manifest, project_dir, "");
-    print_dep_group("build-dependencies", &manifest.build_dependencies, project_dir);
-    print_dep_group("dev-dependencies", &manifest.dev_dependencies, project_dir);
+fn print_dep_groups(manifest: &Manifest, project_dir: &Path, depth: Option<usize>) {
+    print_dep_tree(manifest, project_dir, "", depth);
+    print_dep_group(
+        "build-dependencies",
+        &manifest.build_dependencies,
+        project_dir,
+        depth,
+    );
+    print_dep_group(
+        "dev-dependencies",
+        &manifest.dev_dependencies,
+        project_dir,
+        depth,
+    );
 }
 
 fn print_dep_group(
     label: &str,
     deps: &std::collections::HashMap<String, Dependency>,
     project_dir: &Path,
+    depth: Option<usize>,
 ) {
-    if deps.is_empty() {
+    if deps.is_empty() || depth == Some(0) {
         return;
     }
     println!("{}", format!("[{label}]").bright_black());
     let mut v: Vec<(&String, &Dependency)> = deps.iter().collect();
     v.sort_by_key(|(k, _)| k.as_str());
-    print_named_deps(&v, project_dir, "");
+    print_named_deps(&v, project_dir, "", depth);
 }
 
-fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str) {
+fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str, depth: Option<usize>) {
+    if depth == Some(0) {
+        return;
+    }
     let mut deps: Vec<(&String, &Dependency)> = manifest.dependencies.iter().collect();
     deps.sort_by_key(|(k, _)| k.as_str());
-    print_named_deps(&deps, project_dir, prefix);
+    print_named_deps(&deps, project_dir, prefix, depth);
 }
 
-fn print_named_deps(deps: &[(&String, &Dependency)], project_dir: &Path, prefix: &str) {
+fn print_named_deps(
+    deps: &[(&String, &Dependency)],
+    project_dir: &Path,
+    prefix: &str,
+    depth: Option<usize>,
+) {
     for (i, (name, dep)) in deps.iter().enumerate() {
         let is_last = i == deps.len() - 1;
         let connector = if is_last { "└── " } else { "├── " };
@@ -134,7 +156,7 @@ fn print_named_deps(deps: &[(&String, &Dependency)], project_dir: &Path, prefix:
                         m.package.version.bright_black(),
                         format!("(path+{rel})").yellow()
                     );
-                    print_dep_tree(&m, &dep_dir, &child_prefix);
+                    print_dep_tree(&m, &dep_dir, &child_prefix, depth.map(|d| d - 1));
                 } else {
                     println!(
                         "{}{} {} {}",
