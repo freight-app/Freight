@@ -789,8 +789,7 @@ impl Server {
             let stubs = crate::toolchain::system_libs::load_system_lib_stubs();
             if let Some(stub) = crate::toolchain::system_libs::find_stub_by_header(&header, &stubs) {
                 let os = stub.section_os();
-                let lang = crate::build::include_policy::Language::from_path(&path);
-                let origin = system_header_origin(&header, lang, os);
+                let origin = system_header_origin(&header, os);
                 let status = if self.declared_system_features().contains(&stub.name) {
                     format!("Linked via `[os.{os}] features = [\"{}\"]`.", stub.name)
                 } else {
@@ -802,22 +801,19 @@ impl Server {
                 let md = format!("**{origin} header** · `{header}`\n\n{status}");
                 return Some(json!({ "contents": { "kind": "markdown", "value": md } }));
             }
-            // File-based system lookup (e.g. <vector> → the libstdc++ path), or a
-            // synthetic stdlib entry so a recognised header still reads as stdlib.
-            let entry = self
-                .state
-                .header_index
-                .lookup_system(&header)
-                .unwrap_or(HeaderEntry {
-                    package_name: "stdlib".to_string(),
-                    package_version: None,
-                    full_path: std::path::PathBuf::new(),
-                    origin: HeaderOrigin::System,
-                    dep_key: None,
-                    pkg_dir: None,
-                });
-            let path = (!entry.full_path.as_os_str().is_empty()).then(|| entry.full_path.clone());
-            (include_hint_line(&header, &entry), path)
+            // File-based system lookup (e.g. <vector> → the libstdc++ path). Label
+            // by the standard (ISO C / ISO C++) when recognised, else "system".
+            let resolved = self.state.header_index.lookup_system(&header);
+            let path = resolved
+                .as_ref()
+                .map(|e| e.full_path.clone())
+                .filter(|p| !p.as_os_str().is_empty());
+            let origin = iso_std_origin(&header).unwrap_or("system");
+            let title = match &path {
+                Some(p) => format!("**{origin} header** · `{header}` · `{}`", p.display()),
+                None => format!("**{origin} header** · `{header}`"),
+            };
+            (title, path)
         } else {
             // An unknown quoted header — let clangd answer (it may resolve it).
             return None;
@@ -1124,7 +1120,6 @@ impl Server {
         let uri = text_document_uri(msg)?;
         let path = path_from_uri(&uri)?;
         let text = self.doc_text(&uri, &path)?;
-        let lang = crate::build::include_policy::Language::from_path(&path);
 
         let range = msg.get("params")?.get("range")?;
         let start_line = range.get("start")?.get("line")?.as_u64()? as usize;
@@ -1211,7 +1206,7 @@ impl Server {
                     crate::toolchain::system_libs::find_stub_by_header(&header, &sys_stubs)
                 {
                     let os = stub.section_os();
-                    let origin = system_header_origin(&header, lang, os);
+                    let origin = system_header_origin(&header, os);
                     let tip = if declared_feats.contains(&stub.name) {
                         format!(
                             "{origin} header `{header}` — linked via `[os.{os}] features = \
@@ -1226,6 +1221,18 @@ impl Server {
                         )
                     };
                     hints.push(inlay_hint_json(idx, col, &format!("← {origin}"), &tip));
+                    continue;
+                }
+                // ISO C / ISO C++ standard header (stdio.h, vector, …): label by
+                // the standard, not "stdlib" (the implementation — glibc/musl/
+                // libstdc++/… — is irrelevant to the name).
+                if let Some(origin) = iso_std_origin(&header) {
+                    hints.push(inlay_hint_json(
+                        idx,
+                        col,
+                        &format!("← {origin}"),
+                        &format!("`{header}` — {origin} standard library header."),
+                    ));
                     continue;
                 }
             }
@@ -1657,24 +1664,30 @@ fn insert_dependency_toml_version(text: &str, pkg: &str, version: &str) -> Optio
     Some(doc.to_string())
 }
 
-/// Standard origin of a recognised system header, for inlay/hover/diagnostic
-/// labelling: ISO `stdlib` (e.g. `math.h` — even though it links `-lm`), `POSIX`
-/// (`pthread.h`), `Windows SDK`, or `Darwin`. `section_os` is the providing stub's
-/// `[os.*]` section, used only when the header isn't ISO standard.
-fn system_header_origin(
-    header: &str,
-    lang: crate::build::include_policy::Language,
-    section_os: &str,
-) -> &'static str {
-    if crate::build::include_policy::std_header_set(lang).contains(header) {
-        "stdlib"
+/// The language standard that defines `header`, if any: `ISO C` (`stdio.h`,
+/// `math.h` — even though it links `-lm`) or `ISO C++` (`vector`, `cmath`). These
+/// headers are *standard* — the implementation (glibc, musl, bionic, libstdc++,
+/// libc++) is irrelevant to the name, so we label by the standard, not "stdlib".
+fn iso_std_origin(header: &str) -> Option<&'static str> {
+    use crate::build::include_policy::{std_header_set, Language};
+    if std_header_set(Language::C).contains(header) {
+        Some("ISO C")
+    } else if std_header_set(Language::Cxx).contains(header) {
+        Some("ISO C++")
     } else {
-        match section_os {
-            "windows" => "Windows SDK",
-            "macos" => "Darwin",
-            _ => "POSIX",
-        }
+        None
     }
+}
+
+/// Standard origin of a recognised system header, for inlay/hover/diagnostic
+/// labelling: `ISO C` / `ISO C++`, else `POSIX` (`pthread.h`), `Windows SDK`, or
+/// `Darwin`. `section_os` is the providing stub's `[os.*]` section.
+fn system_header_origin(header: &str, section_os: &str) -> &'static str {
+    iso_std_origin(header).unwrap_or(match section_os {
+        "windows" => "Windows SDK",
+        "macos" => "Darwin",
+        _ => "POSIX",
+    })
 }
 
 /// Add a system-library `feature` to `[os.<os>] features` (creating the section
@@ -2039,8 +2052,7 @@ impl Server {
         // header whose link library isn't declared (pthread.h → -lpthread, math.h
         // → -lm) compiles but won't link; offer a hint + quick-fix. The header's
         // standard origin (POSIX / stdlib / …) is reported separately from the lib.
-        let hint_lang = ip::Language::from_path(&path);
-        for h in self.link_feature_hints(&header_dirs, hint_lang) {
+        for h in self.link_feature_hints(&header_dirs) {
             diags.push(json!({
                 "range": {
                     "start": { "line": h.line, "character": h.start_col },
@@ -2067,11 +2079,7 @@ impl Server {
     /// A system-library header (`pthread.h`, `winsock2.h`, …) whose feature isn't
     /// declared in any `[os.*]`/`[arch.*] features`. One hint per feature (first
     /// occurrence). Drives the `link-feature-hint` diagnostic + quick-fix.
-    fn link_feature_hints(
-        &self,
-        header_dirs: &[(u32, u32, u32, String)],
-        lang: crate::build::include_policy::Language,
-    ) -> Vec<LinkFeatureHint> {
+    fn link_feature_hints(&self, header_dirs: &[(u32, u32, u32, String)]) -> Vec<LinkFeatureHint> {
         use crate::toolchain::system_libs as sl;
         if header_dirs.is_empty() {
             return Vec::new();
@@ -2098,7 +2106,7 @@ impl Server {
                 header: name.clone(),
                 feature: stub.name.clone(),
                 os: os.to_string(),
-                origin: system_header_origin(name, lang, os),
+                origin: system_header_origin(name, os),
             });
         }
         hints

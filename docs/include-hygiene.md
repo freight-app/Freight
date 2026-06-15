@@ -311,13 +311,16 @@ quick-fix **"Add `<feature>` to [os.<os>] features in freight.toml"**.
 - The feature+os ride in the diagnostic's `data` field, so the quick-fix needs no
   server-side state; `insert_os_feature_toml` writes the `[os.*] features` array
   (formatting preserved).
-- System-library headers are **not** indexed as ordinary headers. The inlay label
-  and include-hover report the header's *standard origin* — `← POSIX` (`pthread.h`),
-  `← stdlib` (`math.h` — ISO C even though it links `-lm`), `← Windows SDK`,
-  `← Darwin` — kept **separate** from the *link library* (the `pthread`/`m`
-  feature), which is conveyed in the hover/diagnostic. Origin is decided by the
-  ISO stdlib name tables vs the stub's `[os.*]` section; header → link feature uses
-  the stub `headers` table.
+- System headers are **not** indexed as ordinary headers. The inlay label and
+  include-hover report the header's *standard origin* — `← ISO C` (`stdio.h`,
+  `math.h` — ISO C even though it links `-lm`), `← ISO C++` (`vector`, `cmath`),
+  `← POSIX` (`pthread.h`), `← Windows SDK`, `← Darwin` — kept **separate** from the
+  *link library* (the `pthread`/`m` feature) conveyed in the hover/diagnostic.
+  Labelling by the standard (not "stdlib") is deliberate: the same header is
+  provided by different implementations (glibc, musl, bionic, libstdc++, libc++).
+  Origin is decided by the ISO C / C++ name tables vs the stub's `[os.*]` section
+  (`iso_std_origin` / `system_header_origin`); header → link feature uses the stub
+  `headers` table.
 
 ## Implementation checklist (Phase 1 first)
 
