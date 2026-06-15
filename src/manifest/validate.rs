@@ -53,8 +53,26 @@ pub fn validate(manifest: &Manifest, templates: &[CompilerTemplate]) -> Vec<Vali
     validate_dep_versions(manifest, &mut errors);
     validate_no_platform_deps(manifest, &mut errors);
     validate_cpu_features(manifest, &mut errors);
+    validate_patch(manifest, &mut errors);
 
     errors
+}
+
+/// `[patch]` entries override a dependency's source with a local checkout, so
+/// each entry must be a `path` dep. Version/git/archive overrides are not (yet)
+/// supported — reject them rather than silently ignoring the override.
+fn validate_patch(m: &Manifest, errors: &mut Vec<ValidationError>) {
+    for (name, dep) in &m.patch {
+        let is_path = matches!(dep, Dependency::Detailed(d) if d.path.is_some());
+        if !is_path {
+            errors.push(ValidationError::new(
+                &format!("[patch.{name}]"),
+                "a `[patch]` entry must be a path override (e.g. \
+                 `{name} = {{ path = \"../{name}\" }}`); version, git, and archive \
+                 overrides are not supported",
+            ));
+        }
+    }
 }
 
 /// Reject a known CPU feature declared under an `[arch.*]` section it does not
@@ -768,6 +786,26 @@ debug     = false
             .into_iter()
             .filter(|e| e.context.contains(ctx))
             .collect()
+    }
+
+    #[test]
+    fn patch_path_override_is_accepted() {
+        let errs = field_errors(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.cpp]\n\
+             [patch]\nfoo = { path = \"../foo\" }\n",
+            "[patch.foo]",
+        );
+        assert!(errs.is_empty(), "path patch should be valid: {errs:?}");
+    }
+
+    #[test]
+    fn patch_version_override_is_rejected() {
+        let errs = field_errors(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.cpp]\n\
+             [patch]\nfoo = \"1.2\"\n",
+            "[patch.foo]",
+        );
+        assert!(!errs.is_empty(), "version patch should be rejected");
     }
 
     #[test]

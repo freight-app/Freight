@@ -24,9 +24,10 @@ hits store flags+version, and **misses are cached negatively** so a dep that fal
 through to a stub/registry doesn't re-run `pkg-config` every build. Wiped by
 `freight clean`.
 
-### S15 — Workspace improvements (remaining)
-Per-member `freight build -p` / `freight run -p` is done.
-`freight workspace graph` is done — visualises inter-member path-dep relationships
-(text / mermaid / dot via `--format`; walks up to the workspace root).
-Remaining:
-- Workspace-level `[patch]` table to override transitive deps
+### ~~S15 — Workspace improvements~~ (done)
+- Per-member `freight build -p` / `freight run -p`.
+- `freight workspace graph` — visualises inter-member path-dep relationships
+  (text / mermaid / dot via `--format`; walks up to the workspace root).
+- `[patch]` table — overrides a dependency's source (path override) anywhere in
+  the graph, including transitive deps. Read from the root manifest only; patched
+  deps are skipped by `freight fetch`. Version/git/archive overrides are rejected.

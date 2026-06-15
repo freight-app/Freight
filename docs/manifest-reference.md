@@ -355,6 +355,30 @@ avx-opt = { path = "../avx-opt", os = "linux", arch = ["x86_64", "aarch64"] }
 
 ---
 
+## `[patch]`
+
+Override where a dependency's source comes from — anywhere in the dependency graph,
+including **transitive** deps. Useful for testing a local fix to an upstream library
+without editing the dep that pulls it in.
+
+```toml
+[dependencies]
+app-core = { path = "../app-core" }   # app-core itself depends on "json"
+
+[patch]
+# Build against a local checkout of "json" instead of the version app-core
+# (or any dep) declares. Paths are relative to *this* manifest's directory.
+json = { path = "../json-fork" }
+```
+
+A matching dep name resolves to the patched source instead of its original
+location. Patches are read from the **root** project's manifest only — a `[patch]`
+in a dependency's own manifest is ignored. Each entry must be a **path** override;
+version, git, and archive overrides are rejected at validation. Patched deps are
+skipped by `freight fetch` (the source is already local).
+
+---
+
 ## `[features]`
 
 Cargo-style conditional compilation. Active features produce `-D<NAME_UPPER>` flags for all

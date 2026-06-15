@@ -40,12 +40,17 @@ pub fn resolve_dep_graph(
     let mut deps_of: HashMap<String, Vec<String>> = HashMap::new();
     let mut depths: HashMap<String, usize> = HashMap::new();
 
+    // `[patch]` overrides apply across the whole graph, so they always come from
+    // the *root* manifest and resolve relative to the root directory.
+    let patches = &root_manifest.patch;
+
     let initial = direct_compilable_deps(
         root_dir,
         root_dir,
         root_manifest,
         include_dev,
         activated_deps,
+        patches,
     );
     // Queue carries (name, dir, depth): direct deps of root start at depth 1.
     let mut queue: VecDeque<(String, PathBuf, usize)> =
@@ -72,7 +77,8 @@ pub fn resolve_dep_graph(
         // transitive manifest are relative to that dep's own directory, but
         // version/git deps always resolve against root_dir.
         let empty = BTreeSet::new();
-        let sub_deps = direct_compilable_deps(root_dir, &dir, &manifest, false, &empty);
+        let sub_deps =
+            direct_compilable_deps(root_dir, &dir, &manifest, false, &empty, patches);
         for (sub_name, sub_dir) in &sub_deps {
             if !sub_dir.exists() {
                 return Err(FreightError::ManifestParse(format!(
@@ -228,6 +234,7 @@ fn direct_compilable_deps(
     manifest: &Manifest,
     include_dev: bool,
     activated_deps: &BTreeSet<String>,
+    patches: &HashMap<String, Dependency>,
 ) -> Vec<(String, PathBuf)> {
     let mut result: Vec<(String, PathBuf)> = Vec::new();
     for (name, dep) in manifest.effective_dependencies() {
@@ -237,7 +244,14 @@ fn direct_compilable_deps(
                 continue;
             }
         }
-        if let Some(dir) = compilable_dep_dir(root_dir, declaring_dir, &name, &dep) {
+        // A root-level `[patch]` entry overrides where this dep's source comes
+        // from — anywhere in the graph. The override resolves relative to the
+        // root manifest, not the manifest that declared the original dep.
+        let (effective, base_dir) = match patches.get(&name) {
+            Some(patched) => (patched, root_dir),
+            None => (&dep, declaring_dir),
+        };
+        if let Some(dir) = compilable_dep_dir(root_dir, base_dir, &name, effective) {
             result.push((name, dir));
         }
     }
@@ -246,7 +260,11 @@ fn direct_compilable_deps(
             if result.iter().any(|(n, _)| n == name) {
                 continue;
             }
-            if let Some(dir) = compilable_dep_dir(root_dir, declaring_dir, name, dep) {
+            let (effective, base_dir) = match patches.get(name) {
+                Some(patched) => (patched, root_dir),
+                None => (dep, declaring_dir),
+            };
+            if let Some(dir) = compilable_dep_dir(root_dir, base_dir, name, effective) {
                 result.push((name.clone(), dir));
             }
         }
@@ -420,6 +438,37 @@ mod tests {
         ).unwrap();
         let dirs = dep_include_dirs(dir.path(), &manifest);
         assert!(dirs.iter().any(|d| d.ends_with("inc")));
+    }
+
+    #[test]
+    fn patch_redirects_dep_to_local_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let lib_toml =
+            "[package]\nname=\"foo\"\nversion=\"0.1.0\"\n[language.cpp]\n[lib]\nname=\"foo\"\nsrcs=[]\n";
+
+        // The path the manifest points at, plus the patched-in local checkout.
+        for sub in ["vendor/foo", "local/foo"] {
+            let d = root.path().join(sub);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("freight.toml"), lib_toml).unwrap();
+        }
+
+        let root_manifest = crate::manifest::load_manifest_str(
+            "[package]\nname=\"app\"\nversion=\"0.1.0\"\n[language.cpp]\n\
+             [[bin]]\nname=\"app\"\nsrc=\"src/main.cpp\"\n\
+             [dependencies]\nfoo = { path = \"vendor/foo\" }\n\
+             [patch]\nfoo = { path = \"local/foo\" }\n",
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_dep_graph(root.path(), &root_manifest, false, &BTreeSet::new()).unwrap();
+        let foo = resolved.iter().find(|r| r.name == "foo").expect("foo resolved");
+        assert!(
+            foo.dir.ends_with("local/foo"),
+            "patch should redirect to local/foo, got {}",
+            foo.dir.display()
+        );
     }
 
     #[test]

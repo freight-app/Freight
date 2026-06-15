@@ -74,6 +74,13 @@ pub struct Manifest {
     /// Same exclusion semantics as `[os.*]` but matched against the target CPU arch.
     #[serde(default)]
     pub arch: HashMap<String, ConditionalSources>,
+    /// Dependency source overrides (`[patch]`). A dep with a matching name —
+    /// anywhere in this project's dependency graph, including transitive deps —
+    /// resolves to the patched source instead. Currently `path` patches are
+    /// honoured (override a (transitive) dep with a local checkout); paths are
+    /// relative to this manifest's directory.
+    #[serde(default)]
+    pub patch: HashMap<String, Dependency>,
 }
 
 impl Manifest {

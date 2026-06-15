@@ -151,6 +151,10 @@ pub fn fetch_git_deps(project_dir: &Path) -> Result<Vec<GitDepOutcome>, FreightE
     let mut outcomes = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
+        // A `[patch]` override replaces this dep with a local source — nothing to clone.
+        if manifest.patch.contains_key(name) {
+            continue;
+        }
         let Dependency::Detailed(d) = dep else {
             continue;
         };
@@ -253,6 +257,10 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
     let mut outcomes = Vec::new();
 
     for (name, dep) in &manifest.dependencies {
+        // A `[patch]` override replaces this dep with a local source — nothing to fetch.
+        if manifest.patch.contains_key(name) {
+            continue;
+        }
         let Dependency::Detailed(d) = dep else {
             continue;
         };
