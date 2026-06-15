@@ -292,6 +292,8 @@ struct LinkFeatureHint {
     header: String,
     feature: String,
     os: String,
+    /// Standard origin of the header (`stdlib` / `POSIX` / `Windows SDK` / `Darwin`).
+    origin: &'static str,
 }
 
 // ---------------------------------------------------------------------------
@@ -787,18 +789,17 @@ impl Server {
             let stubs = crate::toolchain::system_libs::load_system_lib_stubs();
             if let Some(stub) = crate::toolchain::system_libs::find_stub_by_header(&header, &stubs) {
                 let os = stub.section_os();
+                let lang = crate::build::include_policy::Language::from_path(&path);
+                let origin = system_header_origin(&header, lang, os);
                 let status = if self.declared_system_features().contains(&stub.name) {
                     format!("Linked via `[os.{os}] features = [\"{}\"]`.", stub.name)
                 } else {
                     format!(
-                        "Not linked — add `{}` to `[os.{os}] features` in `freight.toml`.",
+                        "Link `{}` by adding it to `[os.{os}] features` in `freight.toml`.",
                         stub.name
                     )
                 };
-                let md = format!(
-                    "**`{}` system library** · `{header}`\n\n{status}",
-                    stub.name
-                );
+                let md = format!("**{origin} header** · `{header}`\n\n{status}");
                 return Some(json!({ "contents": { "kind": "markdown", "value": md } }));
             }
             // File-based system lookup (e.g. <vector> → the libstdc++ path), or a
@@ -1123,6 +1124,7 @@ impl Server {
         let uri = text_document_uri(msg)?;
         let path = path_from_uri(&uri)?;
         let text = self.doc_text(&uri, &path)?;
+        let lang = crate::build::include_policy::Language::from_path(&path);
 
         let range = msg.get("params")?.get("range")?;
         let start_line = range.get("start")?.get("line")?.as_u64()? as usize;
@@ -1209,20 +1211,21 @@ impl Server {
                     crate::toolchain::system_libs::find_stub_by_header(&header, &sys_stubs)
                 {
                     let os = stub.section_os();
+                    let origin = system_header_origin(&header, lang, os);
                     let tip = if declared_feats.contains(&stub.name) {
                         format!(
-                            "`{header}` is provided by the `{}` system library, \
-                             linked via `[os.{os}] features`.",
+                            "{origin} header `{header}` — linked via `[os.{os}] features = \
+                             [\"{}\"]`.",
                             stub.name
                         )
                     } else {
                         format!(
-                            "`{header}` is provided by the `{}` system library, but it isn't \
-                             linked.\n\nAdd `{}` to `[os.{os}] features` in `freight.toml`.",
-                            stub.name, stub.name
+                            "{origin} header `{header}` — link `{}` by adding it to \
+                             `[os.{os}] features` in `freight.toml`.",
+                            stub.name
                         )
                     };
-                    hints.push(inlay_hint_json(idx, col, &format!("← {}", stub.name), &tip));
+                    hints.push(inlay_hint_json(idx, col, &format!("← {origin}"), &tip));
                     continue;
                 }
             }
@@ -1654,6 +1657,26 @@ fn insert_dependency_toml_version(text: &str, pkg: &str, version: &str) -> Optio
     Some(doc.to_string())
 }
 
+/// Standard origin of a recognised system header, for inlay/hover/diagnostic
+/// labelling: ISO `stdlib` (e.g. `math.h` — even though it links `-lm`), `POSIX`
+/// (`pthread.h`), `Windows SDK`, or `Darwin`. `section_os` is the providing stub's
+/// `[os.*]` section, used only when the header isn't ISO standard.
+fn system_header_origin(
+    header: &str,
+    lang: crate::build::include_policy::Language,
+    section_os: &str,
+) -> &'static str {
+    if crate::build::include_policy::std_header_set(lang).contains(header) {
+        "stdlib"
+    } else {
+        match section_os {
+            "windows" => "Windows SDK",
+            "macos" => "Darwin",
+            _ => "POSIX",
+        }
+    }
+}
+
 /// Add a system-library `feature` to `[os.<os>] features` (creating the section
 /// and/or array as needed), preserving the rest of the document's formatting.
 /// Returns `None` if the feature is already present.
@@ -2013,9 +2036,11 @@ impl Server {
         }
 
         // (2) Link-feature hints — independent of the lint level. Including a
-        // system-library header (pthread.h, …) whose feature isn't declared in any
-        // `[os.*] features` compiles but won't link; offer a hint + quick-fix.
-        for h in self.link_feature_hints(&header_dirs) {
+        // header whose link library isn't declared (pthread.h → -lpthread, math.h
+        // → -lm) compiles but won't link; offer a hint + quick-fix. The header's
+        // standard origin (POSIX / stdlib / …) is reported separately from the lib.
+        let hint_lang = ip::Language::from_path(&path);
+        for h in self.link_feature_hints(&header_dirs, hint_lang) {
             diags.push(json!({
                 "range": {
                     "start": { "line": h.line, "character": h.start_col },
@@ -2025,9 +2050,8 @@ impl Server {
                 "source": "freight",
                 "code": "link-feature-hint",
                 "message": format!(
-                    "<{}> is the '{}' system library — add `{}` to [os.{}] features in \
-                     freight.toml to link it",
-                    h.header, h.feature, h.feature, h.os
+                    "<{}> is a {} header; link `{}` by adding it to [os.{}] features in freight.toml",
+                    h.header, h.origin, h.feature, h.os
                 ),
                 "data": { "feature": h.feature, "os": h.os },
             }));
@@ -2043,7 +2067,11 @@ impl Server {
     /// A system-library header (`pthread.h`, `winsock2.h`, …) whose feature isn't
     /// declared in any `[os.*]`/`[arch.*] features`. One hint per feature (first
     /// occurrence). Drives the `link-feature-hint` diagnostic + quick-fix.
-    fn link_feature_hints(&self, header_dirs: &[(u32, u32, u32, String)]) -> Vec<LinkFeatureHint> {
+    fn link_feature_hints(
+        &self,
+        header_dirs: &[(u32, u32, u32, String)],
+        lang: crate::build::include_policy::Language,
+    ) -> Vec<LinkFeatureHint> {
         use crate::toolchain::system_libs as sl;
         if header_dirs.is_empty() {
             return Vec::new();
@@ -2062,13 +2090,15 @@ impl Server {
             if declared.contains(&stub.name) || !seen.insert(stub.name.clone()) {
                 continue;
             }
+            let os = stub.section_os();
             hints.push(LinkFeatureHint {
                 line: *line,
                 start_col: *start_col,
                 end_col: *end_col,
                 header: name.clone(),
                 feature: stub.name.clone(),
-                os: stub.section_os().to_string(),
+                os: os.to_string(),
+                origin: system_header_origin(name, lang, os),
             });
         }
         hints
