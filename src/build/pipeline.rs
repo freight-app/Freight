@@ -52,6 +52,11 @@ pub enum PipelineGoal {
     Bench {
         filter: Option<String>,
     },
+    /// Build example programs from `examples/` and `[[example]]` into
+    /// `target/<profile>/examples/`. `filter` selects a single example by name.
+    Examples {
+        filter: Option<String>,
+    },
 }
 
 impl PipelineGoal {
@@ -666,6 +671,139 @@ fn run_bench_goal(
     Ok(BenchSummary { results })
 }
 
+/// Collect example targets: every compilable file under `examples/` (name = file
+/// stem) plus any declared `[[example]]` (declared name + src, overriding an
+/// auto-discovered file with the same source). Optionally filtered by name and
+/// gated by `required-features`.
+fn collect_examples(
+    project_dir: &Path,
+    manifest: &Manifest,
+    templates: &[crate::toolchain::CompilerTemplate],
+    active_features: &std::collections::BTreeSet<String>,
+    filter: Option<&str>,
+) -> Vec<(String, SourceFile)> {
+    let mut by_src: std::collections::BTreeMap<PathBuf, (String, SourceFile)> =
+        std::collections::BTreeMap::new();
+
+    // Auto-discovered files under examples/.
+    for sf in discover_goal_sources(
+        &project_dir.join("examples"),
+        project_dir,
+        manifest,
+        templates,
+        None,
+        "example",
+    ) {
+        let name = sf
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("example")
+            .to_string();
+        by_src.insert(sf.path.clone(), (name, sf));
+    }
+
+    // Declared [[example]] sections override (custom name / required-features).
+    let ext_map = discover::build_ext_map(manifest, templates);
+    for ex in &manifest.examples {
+        if !ex
+            .required_features
+            .iter()
+            .all(|f| active_features.contains(f))
+        {
+            by_src.remove(Path::new(&ex.src));
+            continue;
+        }
+        let rel = PathBuf::from(&ex.src);
+        let ext = rel
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{e}"));
+        let Some(lang_key) = ext.and_then(|e| ext_map.get(e.as_str()).cloned()) else {
+            continue;
+        };
+        by_src.insert(
+            rel.clone(),
+            (
+                ex.name.clone(),
+                SourceFile {
+                    path: rel,
+                    lang_key,
+                },
+            ),
+        );
+    }
+
+    by_src
+        .into_values()
+        .filter(|(name, _)| filter.is_none_or(|f| f == name))
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_examples_goal(
+    filter: Option<&str>,
+    project_dir: &Path,
+    target_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    ctx: &ProjectContext,
+    compile_result: &CompileResult,
+    deps: &BuiltDepsOutput,
+    include_dirs: &[PathBuf],
+    feature_defines: &[String],
+    active_features: &std::collections::BTreeSet<String>,
+    progress: &Progress,
+) -> Result<Vec<PathBuf>, FreightError> {
+    let lib_objs =
+        lib_objects_excluding_bins(manifest, target_dir, profile, &compile_result.objects);
+    let examples = collect_examples(project_dir, manifest, &ctx.templates, active_features, filter);
+    if examples.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let srcs: Vec<SourceFile> = examples.iter().map(|(_, sf)| sf.clone()).collect();
+    let compiled = crate::build::compile_sources(
+        project_dir,
+        target_dir,
+        manifest,
+        &ctx.effective_backend,
+        profile,
+        &srcs,
+        include_dirs,
+        &ctx.detected,
+        feature_defines,
+        &[],
+        progress,
+    )?;
+
+    let out_dir = target_dir.join(profile).join("examples");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let mut outputs = Vec::new();
+    for ((name, _), obj) in examples.iter().zip(compiled.objects.iter()) {
+        let bin = out_dir.join(name);
+        progress(BuildEvent::Linking { name: name.clone() });
+        let all_objs: Vec<PathBuf> = std::iter::once(obj.clone())
+            .chain(lib_objs.iter().cloned())
+            .collect();
+        link_test_binary(
+            &all_objs,
+            &bin,
+            manifest,
+            &ctx.effective_backend,
+            profile,
+            &ctx.detected,
+            &ctx.templates,
+            &deps.libs,
+            &deps.system_features,
+            &deps.raw_link_flags,
+        )?;
+        outputs.push(bin);
+    }
+    Ok(outputs)
+}
+
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
 /// Run all pipeline stages for the project at `project_dir`.
@@ -920,6 +1058,29 @@ pub fn run_pipeline_at(
             )?;
             Ok(PipelineOutput::Bench(summary))
         }
+
+        PipelineGoal::Examples { filter } => {
+            let binaries = run_examples_goal(
+                filter.as_deref(),
+                project_dir,
+                &target_dir,
+                manifest,
+                profile,
+                &ctx,
+                &compile_result,
+                &deps,
+                &include_dirs,
+                &feat.defines,
+                &feat.active,
+                progress,
+            )?;
+            Ok(PipelineOutput::Examples(BuildOutput {
+                package_name: manifest.package.name.clone(),
+                binaries,
+                compiled: compile_result.compiled,
+                skipped: compile_result.skipped,
+            }))
+        }
     }
 }
 
@@ -943,4 +1104,65 @@ fn merge_dep_compile_commands(
         }
     }
     merged
+}
+
+#[cfg(test)]
+mod example_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::fs;
+
+    #[test]
+    fn collect_examples_auto_and_declared() {
+        let dir = tempfile::tempdir().unwrap();
+        let ex = dir.path().join("examples");
+        fs::create_dir_all(&ex).unwrap();
+        fs::write(ex.join("a.c"), "int main(){return 0;}").unwrap();
+        fs::write(ex.join("b.c"), "int main(){return 0;}").unwrap();
+
+        // Declared [[example]] renames a.c to "custom"; b.c stays auto-discovered.
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.c]\n\
+             [lib]\ntype=\"static\"\nsrcs=[\"src/lib.c\"]\n\
+             [[example]]\nname=\"custom\"\nsrc=\"examples/a.c\"\n",
+        )
+        .unwrap();
+        let templates = crate::toolchain::load_all_templates();
+        let active = BTreeSet::new();
+
+        let all = collect_examples(dir.path(), &manifest, &templates, &active, None);
+        let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"custom"), "declared name present: {names:?}");
+        assert!(names.contains(&"b"), "auto name present: {names:?}");
+        assert!(!names.contains(&"a"), "a.c renamed to custom: {names:?}");
+
+        // Filter selects a single example by name.
+        let only = collect_examples(dir.path(), &manifest, &templates, &active, Some("b"));
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].0, "b");
+    }
+
+    #[test]
+    fn collect_examples_gates_on_required_features() {
+        let dir = tempfile::tempdir().unwrap();
+        let ex = dir.path().join("examples");
+        fs::create_dir_all(&ex).unwrap();
+        fs::write(ex.join("gated.c"), "int main(){return 0;}").unwrap();
+
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.c]\n[features]\nextra=[]\n\
+             [lib]\ntype=\"static\"\nsrcs=[\"src/lib.c\"]\n\
+             [[example]]\nname=\"gated\"\nsrc=\"examples/gated.c\"\nrequired-features=[\"extra\"]\n",
+        )
+        .unwrap();
+        let templates = crate::toolchain::load_all_templates();
+
+        let off = collect_examples(dir.path(), &manifest, &templates, &BTreeSet::new(), None);
+        assert!(off.is_empty(), "gated example excluded without feature: {off:?}");
+
+        let mut active = BTreeSet::new();
+        active.insert("extra".to_string());
+        let on = collect_examples(dir.path(), &manifest, &templates, &active, None);
+        assert_eq!(on.len(), 1, "gated example included with feature");
+    }
 }

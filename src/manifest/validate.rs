@@ -502,6 +502,24 @@ fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
         }
     }
 
+    for (i, ex) in m.examples.iter().enumerate() {
+        let ctx = format!("[[example]][{i}]");
+        if ex.name.is_empty() {
+            errors.push(ValidationError::new(&ctx, "name must not be empty"));
+        }
+        if ex.src.is_empty() {
+            errors.push(ValidationError::new(&ctx, "src must not be empty"));
+        }
+        for feat in &ex.required_features {
+            if !m.features.contains_key(feat) {
+                errors.push(ValidationError::new(
+                    &ctx,
+                    format!("required-features references unknown feature '{feat}'"),
+                ));
+            }
+        }
+    }
+
     // `default-run` must name a declared [[bin]].
     if let Some(name) = &m.package.default_run {
         if !m.bins.iter().any(|b| &b.name == name) {
@@ -827,6 +845,20 @@ debug     = false
             "[[bin]][0]",
         );
         assert!(errs.is_empty(), "declared feature should be valid: {errs:?}");
+    }
+
+    #[test]
+    fn example_required_features_must_be_known() {
+        let errs = field_errors(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.c]\n\
+             [lib]\ntype=\"static\"\nsrcs=[\"src/lib.c\"]\n\
+             [[example]]\nname=\"e\"\nsrc=\"examples/e.c\"\nrequired-features=[\"ghost\"]\n",
+            "[[example]][0]",
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("ghost")),
+            "expected unknown-feature error, got {errs:?}"
+        );
     }
 
     #[test]

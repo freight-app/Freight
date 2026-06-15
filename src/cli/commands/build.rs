@@ -17,6 +17,12 @@ pub struct Args {
     /// Select a specific workspace member to build
     #[arg(long, short = 'p', value_name = "PACKAGE")]
     pub package: Option<String>,
+    /// Build a single example (from examples/ or [[example]]) instead of the project
+    #[arg(long, value_name = "NAME", conflicts_with = "examples")]
+    pub example: Option<String>,
+    /// Build all examples instead of the project
+    #[arg(long)]
+    pub examples: bool,
     /// Extra outputs to emit alongside object files. Accepted value: `asm`
     /// (writes `.s` files to `target/{profile}/asm/`).
     #[arg(long, value_name = "FORMAT", value_delimiter = ',')]
@@ -42,7 +48,15 @@ pub struct Args {
 impl Args {
     pub fn run(self) {
         self.build.apply();
-        if self.graph {
+        if self.examples || self.example.is_some() {
+            cmd_build_examples(
+                self.release,
+                self.example.as_deref(),
+                &self.features,
+                !self.no_default_features,
+                &self.sanitize,
+            );
+        } else if self.graph {
             cmd_build_graph(
                 self.release,
                 self.package.as_deref(),
@@ -65,8 +79,8 @@ impl Args {
 }
 
 use freight::build::{
-    build_project_with, build_workspace_with, resolve_dep_graph, EmitTarget, PipelineConfig,
-    PipelineGoal, Project, ResolvedDep,
+    build_examples_with, build_project_with, build_workspace_with, resolve_dep_graph, EmitTarget,
+    PipelineConfig, PipelineGoal, Project, ResolvedDep,
 };
 use freight::event::{BuildEvent, Progress};
 use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
@@ -340,6 +354,48 @@ pub fn cmd_build(
     if build_ok {
         let progress = make_progress();
         run_emit_targets(emit, profile, &progress);
+    }
+}
+
+// ── freight build --examples / --example ──────────────────────────────────────
+
+pub fn cmd_build_examples(
+    release: bool,
+    example: Option<&str>,
+    features: &[String],
+    use_defaults: bool,
+    sanitize: &[String],
+) {
+    let profile = if release { "release" } else { "dev" };
+    if at_workspace_root() {
+        print_error("`--example(s)` is not supported at a workspace root — run it from a member");
+        return;
+    }
+    let progress = make_progress();
+    match build_examples_with(profile, example, features, use_defaults, sanitize, &progress) {
+        Ok(output) => {
+            println!();
+            if output.binaries.is_empty() {
+                match example {
+                    Some(name) => print_error(&format!("no example named {name:?}")),
+                    None => print_warning("no examples found (examples/ or [[example]])"),
+                }
+                return;
+            }
+            print_success(&format!(
+                "{} examples ({} compiled, {} up to date)",
+                output.binaries.len(),
+                output.compiled,
+                output.skipped,
+            ));
+            for bin in &output.binaries {
+                println!("    {}", bin.display());
+            }
+        }
+        Err(e) => {
+            println!();
+            print_error(&e.to_string());
+        }
     }
 }
 

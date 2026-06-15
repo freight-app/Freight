@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use freight::build::{build_project_at, build_project_with};
+use freight::build::{build_examples_with, build_project_at, build_project_with};
 use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 
 use crate::output::print_error;
@@ -14,6 +14,9 @@ pub struct Args {
     /// Binary to run when the project has multiple [[bin]] targets
     #[arg(long, value_name = "NAME")]
     pub bin: Option<String>,
+    /// Run an example (from examples/ or [[example]]) instead of a binary
+    #[arg(long, value_name = "NAME", conflicts_with = "bin")]
+    pub example: Option<String>,
     /// Activate specific features (comma-separated or repeated)
     #[arg(long, value_name = "FEATURES", value_delimiter = ',')]
     pub features: Vec<String>,
@@ -36,6 +39,17 @@ pub struct Args {
 impl Args {
     pub fn run(self) {
         self.build.apply();
+        if let Some(example) = self.example.as_deref() {
+            cmd_run_example(
+                self.release,
+                example,
+                &self.features,
+                !self.no_default_features,
+                &self.sanitize,
+                &self.args,
+            );
+            return;
+        }
         cmd_run(
             self.release,
             self.package.as_deref(),
@@ -45,6 +59,56 @@ impl Args {
             &self.args,
             &self.sanitize,
         );
+    }
+}
+
+fn cmd_run_example(
+    release: bool,
+    example: &str,
+    features: &[String],
+    use_defaults: bool,
+    sanitize: &[String],
+    run_args: &[String],
+) {
+    let profile = if release { "release" } else { "dev" };
+    if at_workspace_root() {
+        print_error("`--example` is not supported at a workspace root — run it from a member");
+        return;
+    }
+    let output = match build_examples_with(
+        profile,
+        Some(example),
+        features,
+        use_defaults,
+        sanitize,
+        &super::build::make_progress(),
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            println!();
+            print_error(&e.to_string());
+            return;
+        }
+    };
+    match output.binaries.as_slice() {
+        [] => print_error(&format!("no example named {example:?}")),
+        [bin] => {
+            println!();
+            use owo_colors::OwoColorize;
+            println!("    {} {}", "Running".bold().green(), bin.display());
+            println!();
+            let status = Command::new(bin).args(run_args).status();
+            match status {
+                Ok(s) if !s.success() => {
+                    if let Some(code) = s.code() {
+                        print_error(&format!("process exited with code {code}"));
+                    }
+                }
+                Err(e) => print_error(&format!("failed to run example: {e}")),
+                Ok(_) => {}
+            }
+        }
+        _ => print_error("multiple examples matched — this is a bug"),
     }
 }
 

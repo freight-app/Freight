@@ -44,6 +44,9 @@ pub struct Manifest {
     pub lib: Option<LibTarget>,
     #[serde(rename = "bin", default)]
     pub bins: Vec<BinTarget>,
+    /// Example programs (`[[example]]`). Auto-discovered from `examples/` too.
+    #[serde(rename = "example", default)]
+    pub examples: Vec<ExampleTarget>,
     #[serde(default)]
     pub dependencies: HashMap<String, Dependency>,
     /// Build-time tool dependencies — fetched and built before regular deps.
@@ -735,6 +738,20 @@ pub struct BinTarget {
     /// Features that must all be active for this binary to be built/linked.
     /// When any is inactive the target is silently skipped (mirrors Cargo's
     /// `required-features`). Empty (the default) means always built.
+    #[serde(default, rename = "required-features", skip_serializing_if = "Vec::is_empty")]
+    pub required_features: Vec<String>,
+}
+
+/// An example program (`[[example]]`). Like a binary but built into
+/// `target/<profile>/examples/` and only when explicitly requested
+/// (`freight build --examples` / `freight run --example <name>`). Files under
+/// `examples/` are auto-discovered; declare a section only to set a custom name
+/// or `required-features`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExampleTarget {
+    pub name: String,
+    pub src: String,
+    /// Features that must all be active for this example to build (mirrors `[[bin]]`).
     #[serde(default, rename = "required-features", skip_serializing_if = "Vec::is_empty")]
     pub required_features: Vec<String>,
 }

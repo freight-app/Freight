@@ -103,6 +103,7 @@ pub enum PipelineOutput {
     Build(BuildOutput),
     Test(TestSummary),
     Bench(BenchSummary),
+    Examples(BuildOutput),
 }
 
 pub(crate) struct ProjectContext {
@@ -363,6 +364,36 @@ pub fn build_project_at(
     };
     match run_pipeline_at(project_dir, &config, parent_root, progress)? {
         PipelineOutput::Build(out) => Ok(out),
+        _ => unreachable!(),
+    }
+}
+
+/// Build example programs (from `examples/` and `[[example]]`). `filter` selects
+/// a single example by name; `None` builds them all. Returns the linked
+/// executables in `target/<profile>/examples/`.
+pub fn build_examples_with(
+    profile: &str,
+    filter: Option<&str>,
+    features: &[String],
+    use_defaults: bool,
+    sanitize_override: &[String],
+    progress: &Progress,
+) -> Result<BuildOutput, FreightError> {
+    let cwd = std::env::current_dir()?;
+    let project_dir = find_manifest_dir(&cwd)
+        .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
+    let config = PipelineConfig {
+        profile: profile.to_string(),
+        features: features.to_vec(),
+        use_defaults,
+        target_override: None,
+        sanitize_override: sanitize_override.to_vec(),
+        goal: PipelineGoal::Examples {
+            filter: filter.map(str::to_string),
+        },
+    };
+    match run_pipeline_at(&project_dir, &config, None, progress)? {
+        PipelineOutput::Examples(out) => Ok(out),
         _ => unreachable!(),
     }
 }

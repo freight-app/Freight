@@ -146,6 +146,35 @@ be a declared `[features]` key. Pair it with `[package] default-run` to keep
 
 ---
 
+## `[[example]]`
+
+Example programs. Files under `examples/` are **auto-discovered** (the example
+name is the file stem), so most projects need no `[[example]]` section at all.
+Declare one only to set a custom name or `required-features`:
+
+```toml
+[[example]]
+name = "demo"
+src  = "examples/demo_main.cpp"
+required-features = ["gui"]
+```
+
+Examples are not built by a normal `freight build`. Build them explicitly:
+
+```sh
+freight build --examples          # build all
+freight build --example demo      # build one
+freight run   --example demo      # build + run one
+```
+
+Each example is compiled and linked against the project's library/non-entry
+objects (like a test or benchmark) into `target/<profile>/examples/`. A declared
+`[[example]]` whose `src` is under `examples/` overrides the auto-discovered
+entry for that file. `required-features` gates an example the same way as
+`[[bin]]`.
+
+---
+
 ## `[dependencies]`, `[build-dependencies]`, and `[dev-dependencies]`
 
 | Section | When it applies | What freight does with it |
