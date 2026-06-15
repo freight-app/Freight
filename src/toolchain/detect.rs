@@ -503,13 +503,20 @@ fn which_all(binary: &str) -> Vec<PathBuf> {
     let Some(path_var) = std::env::var_os("PATH") else {
         return vec![];
     };
+    which_all_in(binary, &path_var)
+}
+
+/// Core of [`which_all`] over an explicit `PATH` value. Split out so tests can
+/// pass a constructed search path instead of mutating the process-global `PATH`
+/// (which races other tests that read it, e.g. compiler/debugger detection).
+fn which_all_in(binary: &str, path_var: &std::ffi::OsStr) -> Vec<PathBuf> {
     let base_name = executable_name(binary);
     let versioned_prefix = format!("{binary}-");
 
     let mut result: Vec<PathBuf> = Vec::new();
     let mut canonical_seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-    for dir in std::env::split_paths(&path_var) {
+    for dir in std::env::split_paths(path_var) {
         // Check the unversioned binary first.
         let base = dir.join(&base_name);
         try_add_executable(&base, &mut result, &mut canonical_seen);
@@ -973,15 +980,9 @@ mod tests {
         // Should not be picked up (not a plain integer suffix).
         let _skip = make_exec("mycc-old");
 
-        let orig_path = std::env::var_os("PATH").unwrap_or_default();
-        let new_path = std::env::join_paths(
-            std::iter::once(dir.path().to_path_buf()).chain(std::env::split_paths(&orig_path)),
-        )
-        .unwrap();
-        std::env::set_var("PATH", &new_path);
-
-        let found = which_all("mycc");
-        std::env::set_var("PATH", &orig_path);
+        // Explicit search path — no global $PATH mutation (avoids racing other
+        // tests that read PATH).
+        let found = which_all_in("mycc", dir.path().as_os_str());
 
         let names: Vec<String> = found
             .iter()
@@ -1020,15 +1021,9 @@ mod tests {
         // Create a symlink: mycc → mycc-14
         std::os::unix::fs::symlink(&real, dir.path().join("mycc")).unwrap();
 
-        let orig_path = std::env::var_os("PATH").unwrap_or_default();
-        let new_path = std::env::join_paths(
-            std::iter::once(dir.path().to_path_buf()).chain(std::env::split_paths(&orig_path)),
-        )
-        .unwrap();
-        std::env::set_var("PATH", &new_path);
-
-        let found = which_all("mycc");
-        std::env::set_var("PATH", &orig_path);
+        // Pass the search path explicitly — no global $PATH mutation, so this
+        // can't race other tests that read PATH (compiler/debugger detection).
+        let found = which_all_in("mycc", dir.path().as_os_str());
 
         // The symlink and real binary resolve to the same canonical path,
         // so we should get exactly one entry.
