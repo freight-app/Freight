@@ -448,6 +448,15 @@ cpu-extensions = ["avx2", "fma"]    # → -mavx2 -mfma  (template: cpu_extension
 `arch` defaults to `std::env::consts::ARCH`. It is used by assembler templates to select the
 correct output format (e.g. NASM `-f elf64` vs `-f macho64` vs `-f win64`).
 
+**`cpu-extensions` vs `[arch.*] features`** — both enable CPU/ISA extensions, but:
+
+- **`[arch.<arch>] features`** (preferred) is *arch-gated*, *data-driven* (resolved through
+  `cpu-features.toml`: e.g. `sve` → `-march=armv8-a+sve`, same-base `-march` flags merged), and
+  *header-aware* (unlocks the feature's intrinsic headers for include hygiene). Use this for SIMD.
+- **`[target] cpu-extensions`** is the *unconditional* (all-arch) form, applied through the active
+  **compiler template's** `cpu_extension` pattern — so it is per-compiler (`-m{name}`, empty for
+  assemblers, etc.). Kept for the global case; reach for `[arch.*] features` otherwise.
+
 ---
 
 ## `[profile.<name>]`
