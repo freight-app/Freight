@@ -147,6 +147,19 @@ pub fn stage_features(
     })
 }
 
+/// True when `--offline`/`--frozen` was requested (set by the CLI as an env var):
+/// freight must not touch the network and instead use whatever is already in
+/// `.pkgs/`. A missing dep then surfaces as a normal "run `freight fetch`" error.
+pub fn is_offline() -> bool {
+    std::env::var_os("FREIGHT_OFFLINE").is_some()
+}
+
+/// True when `--locked`/`--frozen` was requested: freight.lock must already be
+/// up to date and is never rewritten by the build.
+pub fn is_locked() -> bool {
+    std::env::var_os("FREIGHT_LOCKED").is_some()
+}
+
 /// Stage 3: fetch missing git + registry deps and verify the lock file.
 pub fn stage_fetch(
     project_dir: &Path,
@@ -154,8 +167,8 @@ pub fn stage_fetch(
     manifest: &Manifest,
     progress: &Progress,
 ) -> Result<Option<LockFile>, FreightError> {
-    ensure_git_deps_fetched(project_dir, manifest, progress)?;
-    {
+    if !is_offline() {
+        ensure_git_deps_fetched(project_dir, manifest, progress)?;
         let mut cfg = GlobalConfig::load();
         if let Some(local) = GlobalConfig::load_local(project_dir) {
             cfg.apply_local(local);
@@ -795,9 +808,27 @@ pub fn run_pipeline_at(
                 progress,
             )?;
 
-            // Write freight.lock.
+            // Write freight.lock — or, under --locked, verify it without writing.
             let lock = LockFile::generate(project_dir, manifest, &resolved);
-            if let Err(e) = lock.save(project_dir) {
+            if is_locked() {
+                match LockFile::load(project_dir) {
+                    Some(existing) if existing == lock => {}
+                    Some(_) => {
+                        return Err(FreightError::OptionError(
+                            "freight.lock is out of date but --locked/--frozen was given; \
+                             run `freight fetch` (or build without --locked) to update it"
+                                .to_string(),
+                        ));
+                    }
+                    None => {
+                        return Err(FreightError::OptionError(
+                            "freight.lock is missing but --locked/--frozen was given; \
+                             run `freight fetch` (or build without --locked) to create it"
+                                .to_string(),
+                        ));
+                    }
+                }
+            } else if let Err(e) = lock.save(project_dir) {
                 progress(BuildEvent::Warning(format!(
                     "could not write freight.lock: {e}"
                 )));

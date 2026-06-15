@@ -17,16 +17,31 @@ pub struct BuildFlags {
     /// Number of parallel compile jobs (default: min(logical CPUs, 6))
     #[arg(long, short = 'j', value_name = "N")]
     pub jobs: Option<usize>,
+    /// Do not access the network; use only dependencies already in `.pkgs/`
+    #[arg(long)]
+    pub offline: bool,
+    /// Require freight.lock to be up to date; never rewrite it
+    #[arg(long)]
+    pub locked: bool,
+    /// Equivalent to `--offline --locked`
+    #[arg(long)]
+    pub frozen: bool,
 }
 
 impl BuildFlags {
-    /// Set `FREIGHT_VERBOSE` and configure the rayon thread pool.
-    /// Call once, before any build engine use.
+    /// Set `FREIGHT_VERBOSE` / `FREIGHT_OFFLINE` / `FREIGHT_LOCKED` and configure
+    /// the rayon thread pool. Call once, before any build engine use.
     pub fn apply(&self) {
-        if self.verbose {
-            // Safety: single-threaded here; rayon workers not yet started.
-            unsafe {
+        // Safety: single-threaded here; rayon workers not yet started.
+        unsafe {
+            if self.verbose {
                 std::env::set_var("FREIGHT_VERBOSE", "1");
+            }
+            if self.offline || self.frozen {
+                std::env::set_var("FREIGHT_OFFLINE", "1");
+            }
+            if self.locked || self.frozen {
+                std::env::set_var("FREIGHT_LOCKED", "1");
             }
         }
         apply_jobs(self.jobs);

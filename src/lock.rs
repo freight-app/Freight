@@ -13,14 +13,14 @@ const HEADER: &str =
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
 pub struct LockFile {
     pub version: u32,
     #[serde(rename = "package", default)]
     pub packages: Vec<LockPackage>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LockPackage {
     pub name: String,
     pub version: String,
@@ -209,5 +209,26 @@ pub fn relative_path(from: &Path, to: &Path) -> PathBuf {
         PathBuf::from(".")
     } else {
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `--locked` check compares a freshly generated lock to the one on disk,
+    /// so generate → save → load must round-trip to an equal value.
+    #[test]
+    fn lock_roundtrips_equal() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname=\"app\"\nversion=\"0.1.0\"\n[language.c]\n\
+             [[bin]]\nname=\"app\"\nsrc=\"src/main.c\"\n",
+        )
+        .unwrap();
+        let lock = LockFile::generate(dir.path(), &manifest, &[]);
+        lock.save(dir.path()).unwrap();
+        let loaded = LockFile::load(dir.path()).expect("lock loads");
+        assert_eq!(lock, loaded, "generated lock must round-trip equal");
     }
 }

@@ -140,6 +140,16 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 | `cargo metadata` | `freight metadata` | JSON of the resolved package + dep graph (`--no-deps`, `--compact`) |
 | — | `freight workspace graph` | Visualises inter-member path-dep edges (text / mermaid / dot) |
 
+### Build flags
+
+| Cargo | Freight | Notes |
+|---|---|---|
+| `--offline` | `--offline` | No network access; use only deps already in `.pkgs/` |
+| `--locked` | `--locked` | Require `freight.lock` to be up to date; never rewrite it |
+| `--frozen` | `--frozen` | `--offline` + `--locked` |
+
+Available on `freight build` / `run` / `test` and other build-engine commands.
+
 ---
 
 ## Build output
