@@ -827,4 +827,14 @@ quiet = true
 
 [debugger.lldb]
 no_use_colors = true
+
+# Command aliases (mirrors Cargo's [alias]). A string is split on whitespace;
+# an array is taken verbatim. An alias may not shadow a built-in subcommand.
+[alias]
+b  = "build"
+br = ["build", "--release"]
+t  = "test"
 ```
+
+Run an alias like any subcommand: `freight br` expands to `freight build --release`.
+Local `[alias]` entries override global ones of the same name.

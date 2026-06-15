@@ -151,6 +151,20 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 
 Available on `freight build` / `run` / `test` and other build-engine commands.
 
+### Command aliases
+
+| Cargo | Freight |
+|---|---|
+| `[alias]` in `.cargo/config.toml` | `[alias]` in `~/.freight/config.toml` or `<project>/.freight/config.toml` |
+
+```toml
+[alias]
+b  = "build"
+br = ["build", "--release"]
+```
+
+An alias may not shadow a built-in subcommand; local entries override global.
+
 ---
 
 ## Build output

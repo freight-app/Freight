@@ -105,8 +105,55 @@ enum Commands {
     Complete { context: CompletionContext },
 }
 
+/// Names of every built-in subcommand (including visible aliases), used so a
+/// user `[alias]` can never shadow a real command.
+fn builtin_subcommands() -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for sub in cli_command().get_subcommands() {
+        names.insert(sub.get_name().to_string());
+        for a in sub.get_all_aliases() {
+            names.insert(a.to_string());
+        }
+    }
+    names.insert("help".to_string());
+    names
+}
+
+/// Expand a leading `[alias]` from `.freight/config.toml` into its underlying
+/// command + args. Built-in subcommands are never expanded. Single-pass (an
+/// alias expanding to another alias is not re-expanded).
+fn expand_aliases(mut args: Vec<String>) -> Vec<String> {
+    // Find the first non-flag token after the binary name — the subcommand slot.
+    let Some(offset) = args.iter().skip(1).position(|a| !a.starts_with('-')) else {
+        return args;
+    };
+    let idx = offset + 1;
+    let sub = args[idx].clone();
+
+    if builtin_subcommands().contains(&sub) {
+        return args;
+    }
+
+    let mut cfg = freight::toolchain::cache::GlobalConfig::load();
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(dir) = freight::manifest::find_manifest_dir(&cwd) {
+            if let Some(local) = freight::toolchain::cache::GlobalConfig::load_local(&dir) {
+                cfg.apply_local(local);
+            }
+        }
+    }
+
+    if let Some(value) = cfg.alias.remove(&sub) {
+        let expansion = value.into_args();
+        if !expansion.is_empty() {
+            args.splice(idx..=idx, expansion);
+        }
+    }
+    args
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(expand_aliases(std::env::args().collect()));
 
     // For non-LSP commands, initialise a stderr logger when FREIGHT_LOG is set.
     // (The lsp command sets up its own subscriber that forwards to VS Code.)
@@ -182,5 +229,29 @@ mod tests {
             Commands::Info(args) => assert_eq!(args.package.as_deref(), Some("zlib")),
             _ => panic!("expected info command"),
         }
+    }
+
+    #[test]
+    fn builtins_include_real_commands_not_aliases() {
+        let b = builtin_subcommands();
+        assert!(b.contains("build"));
+        assert!(b.contains("run"));
+        assert!(b.contains("help"));
+        // A short user alias like `b` must not collide with a real command.
+        assert!(!b.contains("b"));
+    }
+
+    #[test]
+    fn expand_aliases_never_touches_builtins() {
+        // `build` is a real command, so the arg vector is returned unchanged even
+        // if a (hypothetical) alias existed — proven by the slot staying put.
+        let args = vec!["freight".to_string(), "build".to_string(), "--release".to_string()];
+        assert_eq!(expand_aliases(args.clone()), args);
+    }
+
+    #[test]
+    fn expand_aliases_ignores_flag_only_invocation() {
+        let args = vec!["freight".to_string(), "--help".to_string()];
+        assert_eq!(expand_aliases(args.clone()), args);
     }
 }

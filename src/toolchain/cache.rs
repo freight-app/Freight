@@ -157,6 +157,59 @@ pub struct GlobalConfig {
     /// Developer debugger preferences, keyed by debugger name under `[debugger.<name>]`.
     #[serde(default)]
     pub debugger: DebuggerConfig,
+    /// Command aliases under `[alias]` (e.g. `b = "build"`, `br = ["build", "--release"]`).
+    /// An alias may not shadow a built-in subcommand. Mirrors Cargo's `[alias]`.
+    #[serde(default)]
+    pub alias: std::collections::HashMap<String, AliasValue>,
+}
+
+/// The value of an `[alias]` entry: a single string (split on whitespace) or an
+/// explicit argument list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AliasValue {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl AliasValue {
+    /// Expand to the argument tokens this alias contributes.
+    pub fn into_args(self) -> Vec<String> {
+        match self {
+            AliasValue::One(s) => s.split_whitespace().map(str::to_string).collect(),
+            AliasValue::Many(v) => v,
+        }
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    #[test]
+    fn alias_string_splits_on_whitespace() {
+        let v = AliasValue::One("build --release".to_string());
+        assert_eq!(v.into_args(), vec!["build", "--release"]);
+    }
+
+    #[test]
+    fn alias_array_is_verbatim() {
+        let v = AliasValue::Many(vec!["build".to_string(), "--release".to_string()]);
+        assert_eq!(v.into_args(), vec!["build", "--release"]);
+    }
+
+    #[test]
+    fn local_alias_overrides_global() {
+        let mut base = GlobalConfig::default();
+        base.alias
+            .insert("b".to_string(), AliasValue::One("build".to_string()));
+        let mut local = GlobalConfig::default();
+        local
+            .alias
+            .insert("b".to_string(), AliasValue::One("bench".to_string()));
+        base.apply_local(local);
+        assert_eq!(base.alias.get("b").cloned().unwrap().into_args(), vec!["bench"]);
+    }
 }
 
 impl GlobalConfig {
@@ -238,6 +291,10 @@ impl GlobalConfig {
             let inst = self.debugger.debuggers.entry(name).or_default();
             inst.args.extend(local_inst.args);
             inst.settings.extend(local_inst.settings);
+        }
+        // Local aliases override global ones of the same name.
+        for (name, value) in local.alias {
+            self.alias.insert(name, value);
         }
     }
 
