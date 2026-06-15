@@ -311,23 +311,22 @@ quick-fix **"Add `<feature>` to [os.<os>] features in freight.toml"**.
 - The feature+os ride in the diagnostic's `data` field, so the quick-fix needs no
   server-side state; `insert_os_feature_toml` writes the `[os.*] features` array
   (formatting preserved).
-- System headers are **not** indexed as ordinary headers. The inlay label and
-  include-hover report the **providing implementation** when it can be determined
-  confidently — important for verifying a cross build links the *target's* library,
-  not the host's:
-  - ISO C: libc from the **target triple** — `← musl` / `← glibc` / `← bionic` /
-    `← libSystem` (`*-musl*`, `*-gnu*`, `*-android*`, `*-darwin*`).
-  - ISO C++: stdlib from the **resolved path** — `← libstdc++` (`.../c++/<n>/…`) /
-    `← libc++` (`.../c++/v1/…`).
-  - When the implementation can't be determined (native libc has no triple; cross
-    C++ would need a sysroot-aware index), it falls back to the **standard** label
-    `← ISO C` / `← ISO C++` rather than guessing — never the catch-all "stdlib".
-  - `← POSIX` (`pthread.h`), `← Windows SDK`, `← Darwin` for OS headers.
-  The *link library* (the `pthread`/`m` feature) stays a separate concern conveyed
-  in the hover/diagnostic. Helpers: `iso_std_origin`, `system_header_origin`,
-  `libc_from_triple`, `cxx_stdlib_from_path`, `header_label`. **Follow-up:** make
-  the header index sysroot-aware so cross-build C++ stdlib resolves to the target's
-  libstdc++/libc++ instead of falling back to `ISO C++`.
+- System headers are **package-based**, not standard-based. The inlay label and
+  include-hover report the **package that provides** the header — so a cross build
+  shows the target's library, not the host's:
+  - `← glibc` / `← musl` / `← bionic` / `← libSystem` for libc headers (ISO C
+    *and* POSIX — both come from the C library).
+  - `← libstdc++` / `← libc++` for C++ standard headers.
+  Providers are data-driven (`src/toolchain/std-providers.toml`, user-extensible
+  via `$FREIGHT_HOME/toolchains/std-providers/`): each declares the capabilities it
+  `provides` (`stdlib`, `posix`, `cxx`) and how it's detected — `triple` substrings
+  for the libc (the active triple is the cross target, else the host probed via
+  `cc -dumpmachine`), `path` substrings for the C++ stdlib. A header maps to a
+  capability (`header_capability`) and is labelled with the active provider
+  (`header_provider_label` → `std_providers::resolve_provider`). Falls back to a
+  generic `libc` / `C++ stdlib` when the package can't be determined (e.g. cross C++
+  needs a sysroot-aware index — left as a follow-up). The *link library*
+  (`pthread`/`m` feature) stays a separate concern in the hover/diagnostic.
 
 ## Implementation checklist (Phase 1 first)
 

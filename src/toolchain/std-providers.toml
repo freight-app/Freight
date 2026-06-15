@@ -1,0 +1,43 @@
+# Standard-library / libc provider packages.
+#
+# A system header (`<stdio.h>`, `<pthread.h>`, `<vector>`) is labelled by the
+# *package* that provides it, not by the standard it belongs to — so a cross build
+# shows you the target's library (musl) instead of the host's (glibc).
+#
+# Each provider declares the capabilities it `provides` and how freight detects it
+# as the active provider for the current build:
+#   provides = [...]   capability tags a header maps to:
+#                        "stdlib" — ISO C library headers (stdio.h, math.h, …)
+#                        "posix"  — POSIX / Unix headers (pthread.h, unistd.h, …)
+#                        "cxx"    — C++ standard library headers (vector, cmath, …)
+#   triple   = [...]   substrings matched against the (target, else host) compiler
+#                        triple — used for the libc providers.
+#   path     = [...]   substrings matched against a resolved header path — used for
+#                        the C++ stdlib providers (most-specific match wins).
+#
+# Add or override providers with `.toml` files (same format) in
+# `$FREIGHT_HOME/toolchains/std-providers/`.
+
+[glibc]
+provides = ["stdlib", "posix"]
+triple   = ["gnu"]
+
+[musl]
+provides = ["stdlib", "posix"]
+triple   = ["musl"]
+
+[bionic]
+provides = ["stdlib", "posix"]
+triple   = ["android"]
+
+[libSystem]
+provides = ["stdlib", "posix"]
+triple   = ["darwin", "apple"]
+
+["libstdc++"]
+provides = ["cxx"]
+path     = ["/c++/"]
+
+["libc++"]
+provides = ["cxx"]
+path     = ["/c++/v1/"]

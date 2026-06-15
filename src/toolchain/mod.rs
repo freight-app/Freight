@@ -3,6 +3,7 @@ pub mod cache;
 pub mod cpu_features;
 pub mod debugger;
 pub mod detect;
+pub mod std_providers;
 pub mod system_libs;
 pub mod template;
 pub mod tool;

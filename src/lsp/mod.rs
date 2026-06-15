@@ -292,8 +292,6 @@ struct LinkFeatureHint {
     header: String,
     feature: String,
     os: String,
-    /// Standard origin of the header (`stdlib` / `POSIX` / `Windows SDK` / `Darwin`).
-    origin: &'static str,
 }
 
 // ---------------------------------------------------------------------------
@@ -784,8 +782,8 @@ impl Server {
                 Some(entry.full_path.clone()),
             )
         } else if is_system {
-            // System headers: report the standard + providing implementation, not
-            // a "stdlib"/file label.
+            // System headers: report the package that provides the header, not a
+            // "stdlib"/file label.
             let target: Option<String> = self
                 .state
                 .active_manifest
@@ -796,16 +794,17 @@ impl Server {
                 .as_ref()
                 .map(|e| e.full_path.clone())
                 .filter(|p| !p.as_os_str().is_empty());
+            let providers = crate::toolchain::std_providers::load_std_providers();
+            let label = header_provider_label(
+                &header,
+                resolved_path.as_deref(),
+                target.as_deref(),
+                &providers,
+            )
+            .unwrap_or_else(|| "system".to_string());
             let stubs = crate::toolchain::system_libs::load_system_lib_stubs();
             if let Some(stub) = crate::toolchain::system_libs::find_stub_by_header(&header, &stubs) {
                 let os = stub.section_os();
-                let origin = system_header_origin(&header, os);
-                let label = header_label(origin, resolved_path.as_deref(), target.as_deref());
-                let provenance = if label == origin {
-                    format!("**{origin} header** · `{header}`")
-                } else {
-                    format!("**{origin} header** · `{header}` · provided by {label}")
-                };
                 let status = if self.declared_system_features().contains(&stub.name) {
                     format!("Linked via `[os.{os}] features = [\"{}\"]`.", stub.name)
                 } else {
@@ -814,18 +813,10 @@ impl Server {
                         stub.name
                     )
                 };
-                let md = format!("{provenance}\n\n{status}");
+                let md = format!("**`{header}`** · provided by {label}\n\n{status}");
                 return Some(json!({ "contents": { "kind": "markdown", "value": md } }));
             }
-            // ISO C / ISO C++ header: label by the providing implementation when
-            // known (libstdc++/libc++/glibc/musl/…), else the standard.
-            let origin = iso_std_origin(&header).unwrap_or("system");
-            let label = header_label(origin, resolved_path.as_deref(), target.as_deref());
-            let head = if label == origin {
-                format!("**{origin} header** · `{header}`")
-            } else {
-                format!("**{origin} header** · `{header}` · provided by {label}")
-            };
+            let head = format!("**`{header}`** · provided by {label}");
             let title = match &resolved_path {
                 Some(p) => format!("{head} · `{}`", p.display()),
                 None => head,
@@ -1153,8 +1144,9 @@ impl Server {
         // System-library stubs + already-declared features, loaded once: a
         // system-lib header (pthread.h) is labelled by its feature, not indexed.
         let sys_stubs = crate::toolchain::system_libs::load_system_lib_stubs();
+        let providers = crate::toolchain::std_providers::load_std_providers();
         let declared_feats = self.declared_system_features();
-        // Cross-build target triple (for libc implementation labelling).
+        // Cross-build target triple (for libc provider selection).
         let target: Option<String> = self
             .state
             .active_manifest
@@ -1229,46 +1221,45 @@ impl Server {
                     crate::toolchain::system_libs::find_stub_by_header(&header, &sys_stubs)
                 {
                     let os = stub.section_os();
-                    let origin = system_header_origin(&header, os);
                     let resolved = self.state.header_index.lookup_system(&header);
-                    let label = header_label(
-                        origin,
+                    let label = header_provider_label(
+                        &header,
                         resolved.as_ref().map(|e| e.full_path.as_path()),
                         target.as_deref(),
-                    );
-                    let provenance = if label == origin {
-                        format!("{origin} header `{header}`")
-                    } else {
-                        format!("{origin} header `{header}`, provided by {label}")
-                    };
+                        &providers,
+                    )
+                    .unwrap_or_else(|| "system".to_string());
                     let tip = if declared_feats.contains(&stub.name) {
-                        format!("{provenance} — linked via `[os.{os}] features = [\"{}\"]`.", stub.name)
+                        format!(
+                            "`{header}` — provided by {label}; linked via `[os.{os}] features = \
+                             [\"{}\"]`.",
+                            stub.name
+                        )
                     } else {
                         format!(
-                            "{provenance} — link `{}` by adding it to `[os.{os}] features` in \
-                             `freight.toml`.",
+                            "`{header}` — provided by {label}; link `{}` by adding it to \
+                             `[os.{os}] features` in `freight.toml`.",
                             stub.name
                         )
                     };
                     hints.push(inlay_hint_json(idx, col, &format!("← {label}"), &tip));
                     continue;
                 }
-                // ISO C / ISO C++ standard header (stdio.h, vector, …): label by the
-                // providing implementation when known (libstdc++/libc++/glibc/musl/…),
-                // else the standard — never the catch-all "stdlib".
-                if let Some(origin) = iso_std_origin(&header) {
-                    let resolved = self.state.header_index.lookup_system(&header);
-                    let label = header_label(
-                        origin,
-                        resolved.as_ref().map(|e| e.full_path.as_path()),
-                        target.as_deref(),
-                    );
-                    let tip = if label == origin {
-                        format!("`{header}` — {origin} standard library header.")
-                    } else {
-                        format!("`{header}` — {origin} header, provided by {label}.")
-                    };
-                    hints.push(inlay_hint_json(idx, col, &format!("← {label}"), &tip));
+                // Other recognised system header (stdio.h, vector, unistd.h, …):
+                // label by the package that provides it (glibc/musl/libstdc++/…).
+                let resolved = self.state.header_index.lookup_system(&header);
+                if let Some(label) = header_provider_label(
+                    &header,
+                    resolved.as_ref().map(|e| e.full_path.as_path()),
+                    target.as_deref(),
+                    &providers,
+                ) {
+                    hints.push(inlay_hint_json(
+                        idx,
+                        col,
+                        &format!("← {label}"),
+                        &format!("`{header}` — provided by {label}."),
+                    ));
                     continue;
                 }
             }
@@ -1700,81 +1691,48 @@ fn insert_dependency_toml_version(text: &str, pkg: &str, version: &str) -> Optio
     Some(doc.to_string())
 }
 
-/// The language standard that defines `header`, if any: `ISO C` (`stdio.h`,
-/// `math.h` — even though it links `-lm`) or `ISO C++` (`vector`, `cmath`). These
-/// headers are *standard* — the implementation (glibc, musl, bionic, libstdc++,
-/// libc++) is irrelevant to the name, so we label by the standard, not "stdlib".
-fn iso_std_origin(header: &str) -> Option<&'static str> {
-    use crate::build::include_policy::{std_header_set, Language};
+/// The capability a recognised system header belongs to: `stdlib` (ISO C library
+/// header — stdio.h, math.h), `cxx` (C++ standard library — vector, cmath), or
+/// `posix` (POSIX/Unix — pthread.h, unistd.h). `None` for non-system headers.
+fn header_capability(header: &str) -> Option<&'static str> {
+    use crate::build::include_policy::{is_os_system_header, std_header_set, Language};
     if std_header_set(Language::C).contains(header) {
-        Some("ISO C")
+        Some("stdlib")
     } else if std_header_set(Language::Cxx).contains(header) {
-        Some("ISO C++")
+        Some("cxx")
+    } else if is_os_system_header(header) {
+        Some("posix")
     } else {
         None
     }
 }
 
-/// The C library implementation named by a target triple: `musl`, `bionic`,
-/// `libSystem` (Apple), or `glibc` (`*-gnu*`). `None` when the triple doesn't say
-/// (so the caller keeps the standard label rather than guessing the host libc).
-fn libc_from_triple(triple: &str) -> Option<&'static str> {
-    let t = triple.to_ascii_lowercase();
-    if t.contains("musl") {
-        Some("musl")
-    } else if t.contains("android") {
-        Some("bionic")
-    } else if t.contains("apple") || t.contains("darwin") {
-        Some("libSystem")
-    } else if t.contains("gnu") {
-        Some("glibc")
+/// The provider *package* that supplies a recognised system header — `glibc`,
+/// `musl`, `bionic`, `libSystem`, `libstdc++`, `libc++`. The libc is chosen from
+/// the target triple (else the host's, probed once); the C++ stdlib from the
+/// resolved header path (native only — a cross C++ path would be the host's, so
+/// we don't assert it). Falls back to a generic label (`libc` / `C++ stdlib`) when
+/// the exact package can't be determined. `None` for non-system headers.
+fn header_provider_label(
+    header: &str,
+    resolved_path: Option<&Path>,
+    target: Option<&str>,
+    providers: &[crate::toolchain::std_providers::StdProvider],
+) -> Option<String> {
+    use crate::toolchain::std_providers::{host_triple, resolve_provider};
+    let cap = header_capability(header)?;
+    let triple = target.map(str::to_string).or_else(host_triple);
+    let path = if cap == "cxx" && target.is_some() {
+        None // cross C++ — the host path would mislead
     } else {
-        None
-    }
-}
-
-/// The C++ standard library named by a resolved header path: `libc++`
-/// (`.../c++/v1/…`) or `libstdc++` (GCC's `.../c++/<version>/…`).
-fn cxx_stdlib_from_path(path: &Path) -> Option<&'static str> {
-    let s = path.to_string_lossy();
-    if s.contains("/c++/v1/") || s.ends_with("/c++/v1") {
-        Some("libc++")
-    } else if s.contains("/c++/") {
-        Some("libstdc++")
-    } else {
-        None
-    }
-}
-
-/// The label for a recognised system header: the *providing implementation* when
-/// it can be determined confidently — `glibc`/`musl`/`bionic`/`libSystem` from
-/// the target triple for ISO C, `libstdc++`/`libc++` from the resolved path for
-/// native ISO C++ — otherwise the `origin` standard/family label. (Cross-build
-/// C++ stdlib detection needs a sysroot-aware header index; left as the standard
-/// label for now rather than reporting the host's.)
-fn header_label(origin: &str, resolved: Option<&Path>, target: Option<&str>) -> String {
-    match origin {
-        "ISO C" => target
-            .and_then(libc_from_triple)
-            .unwrap_or(origin)
-            .to_string(),
-        "ISO C++" if target.is_none() => resolved
-            .and_then(cxx_stdlib_from_path)
-            .unwrap_or(origin)
-            .to_string(),
-        _ => origin.to_string(),
-    }
-}
-
-/// Standard origin of a recognised system header, for inlay/hover/diagnostic
-/// labelling: `ISO C` / `ISO C++`, else `POSIX` (`pthread.h`), `Windows SDK`, or
-/// `Darwin`. `section_os` is the providing stub's `[os.*]` section.
-fn system_header_origin(header: &str, section_os: &str) -> &'static str {
-    iso_std_origin(header).unwrap_or(match section_os {
-        "windows" => "Windows SDK",
-        "macos" => "Darwin",
-        _ => "POSIX",
-    })
+        resolved_path
+    };
+    Some(
+        resolve_provider(cap, providers, triple.as_deref(), path).unwrap_or_else(|| match cap {
+            "cxx" => "C++ stdlib".to_string(),
+            _ => "libc".to_string(),
+        }),
+    )
 }
 
 /// Add a system-library `feature` to `[os.<os>] features` (creating the section
@@ -2149,8 +2107,8 @@ impl Server {
                 "source": "freight",
                 "code": "link-feature-hint",
                 "message": format!(
-                    "<{}> is a {} header; link `{}` by adding it to [os.{}] features in freight.toml",
-                    h.header, h.origin, h.feature, h.os
+                    "<{}> needs `{}` linked — add `{}` to [os.{}] features in freight.toml",
+                    h.header, h.feature, h.feature, h.os
                 ),
                 "data": { "feature": h.feature, "os": h.os },
             }));
@@ -2185,15 +2143,13 @@ impl Server {
             if declared.contains(&stub.name) || !seen.insert(stub.name.clone()) {
                 continue;
             }
-            let os = stub.section_os();
             hints.push(LinkFeatureHint {
                 line: *line,
                 start_col: *start_col,
                 end_col: *end_col,
                 header: name.clone(),
                 feature: stub.name.clone(),
-                os: os.to_string(),
-                origin: system_header_origin(name, os),
+                os: stub.section_os().to_string(),
             });
         }
         hints
@@ -2786,48 +2742,42 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{cxx_stdlib_from_path, header_label, libc_from_triple};
-    use std::path::Path;
+    use super::{header_capability, header_provider_label};
 
     #[test]
-    fn libc_from_triple_cases() {
-        assert_eq!(libc_from_triple("aarch64-linux-musl"), Some("musl"));
-        assert_eq!(libc_from_triple("x86_64-linux-gnu"), Some("glibc"));
-        assert_eq!(libc_from_triple("aarch64-linux-android"), Some("bionic"));
-        assert_eq!(libc_from_triple("x86_64-apple-darwin"), Some("libSystem"));
-        assert_eq!(libc_from_triple("riscv64-unknown-elf"), None);
+    fn header_capability_cases() {
+        assert_eq!(header_capability("stdio.h"), Some("stdlib"));
+        assert_eq!(header_capability("vector"), Some("cxx"));
+        assert_eq!(header_capability("pthread.h"), Some("posix"));
+        assert_eq!(header_capability("unistd.h"), Some("posix"));
+        assert_eq!(header_capability("myproject_header.h"), None);
     }
 
     #[test]
-    fn cxx_stdlib_from_path_cases() {
+    fn header_provider_label_uses_target_triple() {
+        let providers = crate::toolchain::std_providers::load_std_providers();
+        // libc from the cross triple.
         assert_eq!(
-            cxx_stdlib_from_path(Path::new("/usr/include/c++/13/vector")),
+            header_provider_label("stdio.h", None, Some("aarch64-linux-musl"), &providers).as_deref(),
+            Some("musl")
+        );
+        assert_eq!(
+            header_provider_label("pthread.h", None, Some("x86_64-linux-gnu"), &providers).as_deref(),
+            Some("glibc")
+        );
+        // Native C++ from the resolved path.
+        assert_eq!(
+            header_provider_label(
+                "vector",
+                Some(std::path::Path::new("/usr/include/c++/13/vector")),
+                None,
+                &providers
+            )
+            .as_deref(),
             Some("libstdc++")
         );
-        assert_eq!(
-            cxx_stdlib_from_path(Path::new("/usr/lib/llvm/include/c++/v1/vector")),
-            Some("libc++")
-        );
-        assert_eq!(cxx_stdlib_from_path(Path::new("/usr/include/stdio.h")), None);
-    }
-
-    #[test]
-    fn header_label_picks_impl_when_confident() {
-        // ISO C: libc from the cross target triple; native (no triple) stays ISO C.
-        assert_eq!(
-            header_label("ISO C", None, Some("aarch64-linux-musl")),
-            "musl"
-        );
-        assert_eq!(header_label("ISO C", None, None), "ISO C");
-        // ISO C++: native path-based; cross stays ISO C++ (host path would mislead).
-        let p = Path::new("/usr/include/c++/13/vector");
-        assert_eq!(header_label("ISO C++", Some(p), None), "libstdc++");
-        assert_eq!(
-            header_label("ISO C++", Some(p), Some("aarch64-linux-gnu")),
-            "ISO C++"
-        );
-        // Non-ISO origins pass through unchanged.
-        assert_eq!(header_label("POSIX", None, Some("x86_64-linux-gnu")), "POSIX");
+        // Not a system header.
+        assert_eq!(header_provider_label("myproj.h", None, None, &providers), None);
     }
 
     #[test]

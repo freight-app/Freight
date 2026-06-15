@@ -133,6 +133,9 @@ mod tests {
         assert!(avx2.headers.iter().any(|h| h == "immintrin.h"));
         let sve = table.get("sve").expect("sve present");
         assert_eq!(sve.flag.as_deref(), Some("-march=armv8-a+sve"));
+        // A dotted name must be a quoted table key, not nested tables.
+        let sse = table.get("sse4.2").expect("sse4.2 present (quoted key)");
+        assert_eq!(sse.flag.as_deref(), Some("-msse4.2"));
     }
 
     #[test]

@@ -21,7 +21,7 @@
 # in `$FREIGHT_HOME/toolchains/cpu-features/` (default `~/.freight/toolchains/cpu-features/`).
 
 # ── x86 / x86-64 ────────────────────────────────────────────────────────────────
-[sse4.2]
+["sse4.2"]
 arch    = "x86_64 | x86"
 flag    = "-msse4.2"
 headers = ["nmmintrin.h", "x86intrin.h"]
