@@ -19,10 +19,12 @@ use crate::error::FreightError;
 /// Clone `url` into `dest`. The directory must not already exist.
 ///
 /// Ref resolution order:
-/// 1. `rev` — full clone then `git checkout <sha>` (shallow can't guarantee
-///    the SHA is reachable).
-/// 2. `branch` or `tag` — clone the named branch/tag.
-/// 3. Neither — clone the remote's default branch.
+/// 1. `rev` — full clone then detach to `<sha>` (shallow can't guarantee the
+///    SHA is reachable).
+/// 2. `tag` — clone the default branch, then detach to the tag (libgit2's
+///    branch-clone path doesn't resolve tags).
+/// 3. `branch` — clone that branch directly.
+/// 4. None — clone the remote's default branch.
 pub fn clone_dep(
     dest: &Path,
     url: &str,
@@ -46,13 +48,33 @@ pub fn clone_dep(
             .map_err(|e| FreightError::GitError(format!("checkout `{sha}`: {e}")))?;
         repo.set_head_detached(obj.id())
             .map_err(|e| FreightError::GitError(e.to_string()))?;
+    } else if let Some(tag) = tag {
+        // libgit2's `RepoBuilder::branch()` only resolves remote-tracking
+        // branches (`refs/remotes/origin/<name>`), not tags — so clone the
+        // default branch, then check out the tag in detached HEAD ourselves.
+        let repo = with_auth_progress(|mut fo| {
+            attach_progress(&mut fo, Arc::clone(&last_pct));
+            RepoBuilder::new().fetch_options(fo).clone(url, dest)
+        })?;
+        eprint!("\r");
+        let obj = repo
+            .revparse_single(&format!("refs/tags/{tag}"))
+            .or_else(|_| repo.revparse_single(tag))
+            .map_err(|e| FreightError::GitError(format!("tag `{tag}` not found: {e}")))?;
+        // Peel handles both annotated and lightweight tags.
+        let commit = obj
+            .peel_to_commit()
+            .map_err(|e| FreightError::GitError(format!("tag `{tag}`: {e}")))?;
+        repo.checkout_tree(commit.as_object(), None)
+            .map_err(|e| FreightError::GitError(format!("checkout tag `{tag}`: {e}")))?;
+        repo.set_head_detached(commit.id())
+            .map_err(|e| FreightError::GitError(e.to_string()))?;
     } else {
-        // --branch works for both branch and tag names in git2.
-        let ref_name = branch.or(tag);
+        // Branch (or the remote's default branch when None).
         with_auth_progress(|mut fo| {
             attach_progress(&mut fo, Arc::clone(&last_pct));
             let mut builder = RepoBuilder::new();
-            if let Some(r) = ref_name {
+            if let Some(r) = branch {
                 builder.branch(r);
             }
             builder.fetch_options(fo).clone(url, dest)
@@ -220,4 +242,54 @@ fn attach_progress(fo: &mut FetchOptions<'_>, last_pct: Arc<AtomicUsize>) {
         true
     });
     fo.remote_callbacks(callbacks);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    /// Set up a tiny local git repo with one commit tagged `v1.0`. Returns the
+    /// repo path, or `None` when the `git` CLI isn't available (test skips).
+    fn local_repo_with_tag() -> Option<tempfile::TempDir> {
+        let dir = tempfile::tempdir().ok()?;
+        let p = dir.path();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(p)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+        };
+        if !git(&["init", "-q"]).ok()?.status.success() {
+            return None;
+        }
+        std::fs::write(p.join("marker.txt"), "hi").ok()?;
+        git(&["add", "."]).ok()?;
+        git(&["commit", "-qm", "init"]).ok()?;
+        git(&["tag", "v1.0"]).ok()?;
+        Some(dir)
+    }
+
+    #[test]
+    fn clone_dep_checks_out_a_tag() {
+        // Regression: a `tag` used to be passed to RepoBuilder::branch(), which
+        // resolves only remote-tracking branches → "refs/remotes/origin/<tag>
+        // not found". A tag must be checked out in detached HEAD instead.
+        let Some(origin) = local_repo_with_tag() else {
+            eprintln!("skipping: git CLI unavailable");
+            return;
+        };
+        let work = tempfile::tempdir().unwrap();
+        let dest = work.path().join("clone");
+        let url = format!("file://{}", origin.path().display());
+        clone_dep(&dest, &url, None, Some("v1.0"), None).expect("clone by tag");
+        assert!(
+            dest.join("marker.txt").exists(),
+            "tagged content should be checked out"
+        );
+    }
 }

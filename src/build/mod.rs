@@ -1051,10 +1051,19 @@ fn ensure_git_deps_fetched(
     let deps_dir = project_dir.join(".pkgs");
 
     for (name, dep) in &manifest.dependencies {
+        // A `[patch]` override replaces this dep with a local source — nothing to clone.
+        if manifest.patch.contains_key(name) {
+            continue;
+        }
         let Dependency::Detailed(d) = dep else {
             continue;
         };
         let Some(url) = &d.url else { continue };
+        // Only git deps are cloned here; url-archive deps (`.tar.gz`, …) are
+        // fetched on demand at build time, not git-cloned.
+        if !d.is_git() {
+            continue;
+        }
 
         let dest = deps_dir.join(name);
         if dest.exists() {
@@ -1839,11 +1848,32 @@ fn inject_option_handler_flags(ctx: &mut ProjectContext) -> Result<(), FreightEr
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_dep_include_dirs_and_roots, is_standard_c_family_include_dir,
-        lsp_compile_commands_dir, lsp_visible_include_dirs, safe_lsp_profile_dir,
+        collect_dep_include_dirs_and_roots, ensure_git_deps_fetched,
+        is_standard_c_family_include_dir, lsp_compile_commands_dir, lsp_visible_include_dirs,
+        safe_lsp_profile_dir, silent,
     };
     use crate::manifest::load_manifest;
     use std::path::PathBuf;
+
+    #[test]
+    fn url_archive_dep_is_not_git_cloned() {
+        // Regression: the build fetch stage used to git-clone every dep with a
+        // `url`, so a `.tar.gz` archive dep 404'd. It must be skipped here
+        // (url-archive deps are fetched on demand at build time instead).
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.c]\n\
+             [[bin]]\nname=\"p\"\nsrc=\"src/main.c\"\n\
+             [dependencies]\nfoo = { url = \"https://example.com/foo-1.0.tar.gz\", type = \"cmake\" }\n",
+        )
+        .unwrap();
+        // Must return Ok without any network git clone, and create no .pkgs/foo.
+        ensure_git_deps_fetched(dir.path(), &manifest, &silent()).unwrap();
+        assert!(
+            !dir.path().join(".pkgs/foo").exists(),
+            "url-archive dep must not be git-cloned"
+        );
+    }
 
     #[test]
     fn lsp_include_filter_keeps_project_paths() {
