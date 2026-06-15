@@ -454,8 +454,9 @@ system_lib = "-L-l{name}";   // D compilers that forward linker args with -L
 ```
 
 This is separate from the bundled `toolchains/system-libs/*.toml` stubs. Stubs participate in
-dependency resolution for version-style manifest entries (after pkg-config, Conan, and vcpkg) and
-provide a package name, supported platform expression, headers for display, and a logical link name.
+dependency resolution for version-style manifest entries (the chain is `pkg-config → system stubs →
+registry`) and provide a package name, supported platform expression, headers for display, and a
+logical link name.
 The selected compiler template then renders that logical link name through `system_lib`.
 
 A minimal stub looks like this:

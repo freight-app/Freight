@@ -17,17 +17,24 @@ and `freight.toml` write notifications. Remaining work:
 - Optional Telescope/picker integration for package names and targets
 - Keymap recommendations
 
-### ~~B5 — System lib cache~~ (done)
+## Done
+
+### ~~B5 — System lib cache~~
 Resolution chain is `pkg-config → system stubs → registry`. Conan and vcpkg dropped.
 `PkgConfigCache` persists probe results to `target/.pkg-config-cache.msgpack` —
 hits store flags+version, and **misses are cached negatively** so a dep that falls
 through to a stub/registry doesn't re-run `pkg-config` every build. Wiped by
 `freight clean`.
 
-### ~~S15 — Workspace improvements~~ (done)
+### ~~S15 — Workspace improvements~~
 - Per-member `freight build -p` / `freight run -p`.
-- `freight workspace graph` — visualises inter-member path-dep relationships
-  (text / mermaid / dot via `--format`; walks up to the workspace root).
-- `[patch]` table — overrides a dependency's source (path override) anywhere in
-  the graph, including transitive deps. Read from the root manifest only; patched
-  deps are skipped by `freight fetch`. Version/git/archive overrides are rejected.
+- `freight workspace graph` — visualises inter-member path-dep relationships.
+- `[patch]` table — path override anywhere in the graph (incl. transitive).
+
+### ~~Cargo parity~~
+Workspace inheritance (`[workspace.dependencies]` / `[workspace.package]`),
+`freight metadata`, `[[bin]] required-features`, `[package] default-run`,
+`[[example]]` targets + `examples/`, `--offline`/`--locked`/`--frozen`,
+`[alias]`, and `freight tree` all-kinds/`--depth`. See the
+"Cargo Parity" section of [`roadmap.md`](roadmap.md) and
+[`cargo-vs-freight.md`](cargo-vs-freight.md).

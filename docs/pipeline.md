@@ -1,9 +1,10 @@
 # Build Pipeline
 
-All freight workflows — `build`, `test`, `bench` — run through the same
-ten-stage pipeline implemented in `src/build/mod.rs::run_pipeline_at`.  The
-public functions `build_project_at`, `test_project_at`, and `bench_project_at`
-are thin wrappers that construct a `PipelineConfig` and delegate to it.
+All freight workflows — `build`, `test`, `bench`, and `--examples` — run through
+the same ten-stage pipeline implemented in `src/build/mod.rs::run_pipeline_at`.
+The public functions `build_project_at`, `test_project_at`, `bench_project_at`,
+and `build_examples_with` are thin wrappers that construct a `PipelineConfig`
+and delegate to it.
 
 ## Stages
 
@@ -18,7 +19,7 @@ are thin wrappers that construct a `PipelineConfig` and delegate to it.
 | 7 | **Header units** | `header_units::precompile_dep_headers` — precompile dep headers as BMIs (C++20 builds only, `Build` goal only) |
 | 8 | **PCH** | `pch::compile_pch` — compile precompiled header if `[compiler] pch` is set |
 | 9 | **Compile** | `build_sources` — compile all project sources in parallel via rayon |
-| 10 | **Goal** | Goal-specific phase — link, run tests, or run benchmarks |
+| 10 | **Goal** | Goal-specific phase — link, run tests, run benchmarks, or build examples |
 
 ## Goal phase details
 
@@ -42,6 +43,14 @@ are thin wrappers that construct a `PipelineConfig` and delegate to it.
 - Runs each binary `BENCH_RUNS` (5) times and records wall-clock min/mean/max.
 - Reports results via `BuildEvent::BenchResult`.
 
+### `Examples`
+
+- Builds files in `examples/` (auto-discovered, name = file stem) plus declared
+  `[[example]]` targets (`collect_examples`); `filter` selects one by name.
+- Links each against the project's library/non-entry objects (like `Test`),
+  emitting executables into `target/<profile>/examples/`.
+- Gated by each example's `required-features`.
+
 ## Configuration
 
 `PipelineConfig` (defined in `src/build/pipeline.rs`):
@@ -53,7 +62,7 @@ pub struct PipelineConfig {
     pub use_defaults: bool,         // activate [features] default list
     pub target_override: Option<String>,    // cross-compilation triple
     pub sanitize_override: Vec<String>,     // override profile sanitizers
-    pub goal: PipelineGoal,         // Build | Test { filter } | Bench { filter }
+    pub goal: PipelineGoal,         // Build | Test{filter} | Bench{filter} | Examples{filter}
 }
 ```
 
