@@ -136,6 +136,7 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 | — | `freight toolchain list` | Shows detected compilers and debuggers |
 | — | `freight toolchain use` | Sets the default compiler backend |
 | `cargo outdated` (plugin) | `freight outdated` | Built-in |
+| `cargo metadata` | `freight metadata` | JSON of the resolved package + dep graph (`--no-deps`, `--compact`) |
 | — | `freight workspace graph` | Visualises inter-member path-dep edges (text / mermaid / dot) |
 
 ---

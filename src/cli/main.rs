@@ -56,6 +56,8 @@ enum Commands {
     Tree(commands::tree::Args),
     /// Workspace-level inspection (e.g. `freight workspace graph`)
     Workspace(commands::workspace::Args),
+    /// Emit machine-readable JSON metadata for the package and dependency graph
+    Metadata(commands::metadata::Args),
     /// Show outdated registry dependencies
     Outdated(commands::outdated::Args),
     /// Show package metadata (from registry when a name is given, or the current project)
@@ -128,6 +130,7 @@ fn main() {
         Commands::Fetch(args) => args.run(),
         Commands::Tree(args) => args.run(),
         Commands::Workspace(args) => args.run(),
+        Commands::Metadata(args) => args.run(),
         Commands::Outdated(args) => args.run(),
         Commands::Info(args) => args.run(),
         Commands::Search(args) => args.run(),
