@@ -17,10 +17,12 @@ and `freight.toml` write notifications. Remaining work:
 - Optional Telescope/picker integration for package names and targets
 - Keymap recommendations
 
-### B5 — System lib cache (remaining)
+### ~~B5 — System lib cache~~ (done)
 Resolution chain is `pkg-config → system stubs → registry`. Conan and vcpkg dropped.
-Remaining: cache discovered lib flags on first probe so subsequent rebuilds skip
-re-running `pkg-config` on every invocation.
+`PkgConfigCache` persists probe results to `target/.pkg-config-cache.msgpack` —
+hits store flags+version, and **misses are cached negatively** so a dep that falls
+through to a stub/registry doesn't re-run `pkg-config` every build. Wiped by
+`freight clean`.
 
 ### S15 — Workspace improvements (remaining)
 Per-member `freight build -p` / `freight run -p` is done.
