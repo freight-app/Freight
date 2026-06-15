@@ -46,6 +46,7 @@ clap_mangen   = "0.2"
 pulldown-cmark = "0.12"
 flate2        = "1"
 tar           = "0.4"
+zip           = { version = "2", default-features = false, features = ["deflate"] }
 notify        = { version = "6", features = ["macos_fsevent"] }
 ratatui       = "0.30"
 crossterm     = "0.29"
