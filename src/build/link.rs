@@ -66,12 +66,21 @@ pub fn link_targets(
     dep_libs: &[PathBuf],
     dep_system_features: &[String],
     extra_link_flags: &[String],
+    active_features: &std::collections::BTreeSet<String>,
     progress: &Progress,
 ) -> Result<LinkResult, FreightError> {
     let mut outputs: Vec<PathBuf> = Vec::new();
     let target_os = link_target_os(manifest);
 
     for bin in &manifest.bins {
+        // Skip targets whose `required-features` aren't all active.
+        if !bin
+            .required_features
+            .iter()
+            .all(|f| active_features.contains(f))
+        {
+            continue;
+        }
         let out = target_dir
             .join(profile)
             .join(executable_name(&bin.name, &target_os));

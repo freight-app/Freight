@@ -9,7 +9,8 @@ Freight is deliberately modelled after Cargo. If you know Cargo, most concepts m
 | Concept | Cargo (`Cargo.toml`) | Freight (`freight.toml`) |
 |---|---|---|
 | Package metadata | `[package]` | `[package]` — same fields |
-| Binary target | `[[bin]]` | `[[bin]]` — same shape |
+| Binary target | `[[bin]]` | `[[bin]]` — same shape; supports `required-features` |
+| Default binary | `[package] default-run` | `[package] default-run` — same |
 | Library target | `[lib]` | `[lib]` — adds `type = "static \| shared \| header-only"` |
 | Features | `[features]` | `[features]` — same syntax; active features emit `-D<NAME>` |
 | Build profiles | `[profile.dev]`, `[profile.release]` | `[profile.dev]`, `[profile.release]` — same keys |

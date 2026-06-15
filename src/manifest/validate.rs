@@ -492,6 +492,24 @@ fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
         if bin.src.is_empty() {
             errors.push(ValidationError::new(&ctx, "src must not be empty"));
         }
+        for feat in &bin.required_features {
+            if !m.features.contains_key(feat) {
+                errors.push(ValidationError::new(
+                    &ctx,
+                    format!("required-features references unknown feature '{feat}'"),
+                ));
+            }
+        }
+    }
+
+    // `default-run` must name a declared [[bin]].
+    if let Some(name) = &m.package.default_run {
+        if !m.bins.iter().any(|b| &b.name == name) {
+            errors.push(ValidationError::new(
+                "[package].default-run",
+                format!("'{name}' does not match any [[bin]] target"),
+            ));
+        }
     }
 
     if let Some(lib) = &m.lib {
@@ -786,6 +804,39 @@ debug     = false
             .into_iter()
             .filter(|e| e.context.contains(ctx))
             .collect()
+    }
+
+    #[test]
+    fn required_features_must_be_known() {
+        let errs = field_errors(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.c]\n\
+             [[bin]]\nname=\"x\"\nsrc=\"src/x.c\"\nrequired-features=[\"ghost\"]\n",
+            "[[bin]][0]",
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("ghost")),
+            "expected unknown-feature error, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn required_features_resolve_when_declared() {
+        let errs = field_errors(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[language.c]\n[features]\nextras=[]\n\
+             [[bin]]\nname=\"x\"\nsrc=\"src/x.c\"\nrequired-features=[\"extras\"]\n",
+            "[[bin]][0]",
+        );
+        assert!(errs.is_empty(), "declared feature should be valid: {errs:?}");
+    }
+
+    #[test]
+    fn default_run_must_match_a_bin() {
+        let errs = field_errors(
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\ndefault-run=\"nope\"\n[language.c]\n\
+             [[bin]]\nname=\"main\"\nsrc=\"src/main.c\"\n",
+            "[package].default-run",
+        );
+        assert!(!errs.is_empty(), "bad default-run should be rejected");
     }
 
     #[test]

@@ -16,8 +16,13 @@ version     = "0.1.0"             # required — semver string
 authors     = ["Alice <a@b.com>"]  # optional — shown in freight info
 description = "Short description"  # optional
 license     = "MIT"                # optional — SPDX identifier
+default-run = "myproject"          # optional — default [[bin]] for `freight run`
 supports    = "(windows & !uwp & (x86 | x64)) | (!windows & !osx)"
 ```
+
+`default-run` names the `[[bin]]` that `freight run` builds and runs when the
+project has more than one binary and `--bin` is not given. It must match a
+declared `[[bin]]` name.
 
 `supports` is optional. When present, it is a boolean platform expression that
 controls whether the package is buildable on the current host/target. Freight supports
@@ -126,11 +131,18 @@ Declares a binary target. Repeat the section for multiple binaries.
 [[bin]]
 name = "mytool"       # required — output binary name
 src  = "src/main.cpp" # entry-point source file (default: "src/main.cpp")
+required-features = ["cli"]  # optional — only built when all listed features are active
 ```
 
 When multiple `[[bin]]` sections are present, each binary is compiled from its own entry-point
 source plus any shared sources discovered in the project's source tree. Linker deduplication
 ensures that `main()` from one binary is not linked into another.
+
+`required-features` gates the target: the binary is only linked when **all** the
+listed features are active for the build (mirrors Cargo). A target whose
+requirements aren't met is silently skipped rather than erroring. Each name must
+be a declared `[features]` key. Pair it with `[package] default-run` to keep
+`freight run` unambiguous when optional binaries come and go.
 
 ---
 

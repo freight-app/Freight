@@ -664,6 +664,10 @@ pub struct Package {
     /// If two active deps declare the same slot, freight errors before compilation.
     #[serde(default)]
     pub provides: Vec<String>,
+    /// Default `[[bin]]` to run with `freight run` when the project has more than
+    /// one binary target and `--bin` is not given. Mirrors Cargo's `default-run`.
+    #[serde(default, rename = "default-run", skip_serializing_if = "Option::is_none")]
+    pub default_run: Option<String>,
 }
 
 // ── Language ──────────────────────────────────────────────────────────────────
@@ -728,6 +732,11 @@ pub enum LibType {
 pub struct BinTarget {
     pub name: String,
     pub src: String,
+    /// Features that must all be active for this binary to be built/linked.
+    /// When any is inactive the target is silently skipped (mirrors Cargo's
+    /// `required-features`). Empty (the default) means always built.
+    #[serde(default, rename = "required-features", skip_serializing_if = "Vec::is_empty")]
+    pub required_features: Vec<String>,
 }
 
 // ── Dependencies ──────────────────────────────────────────────────────────────

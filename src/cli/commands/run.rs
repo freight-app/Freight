@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use freight::build::{build_project_at, build_project_with};
-use freight::manifest::{find_manifest_dir, load_workspace_manifest};
+use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 
 use crate::output::print_error;
 
@@ -88,7 +88,10 @@ pub fn cmd_run(
                 return;
             }
         };
-        run_binary(output, bin, run_args);
+        let default_run = load_manifest(&member_dir)
+            .ok()
+            .and_then(|m| m.package.default_run);
+        run_binary(output, bin, default_run.as_deref(), run_args);
         return;
     }
 
@@ -112,10 +115,20 @@ pub fn cmd_run(
         }
     };
 
-    run_binary(output, bin, run_args);
+    let default_run = env::current_dir()
+        .ok()
+        .and_then(|cwd| find_manifest_dir(&cwd))
+        .and_then(|dir| load_manifest(&dir).ok())
+        .and_then(|m| m.package.default_run);
+    run_binary(output, bin, default_run.as_deref(), run_args);
 }
 
-fn run_binary(output: freight::build::BuildOutput, bin: Option<&str>, run_args: &[String]) {
+fn run_binary(
+    output: freight::build::BuildOutput,
+    bin: Option<&str>,
+    default_run: Option<&str>,
+    run_args: &[String],
+) {
     let candidate: Option<std::path::PathBuf> = match bin {
         Some(name) => {
             let matched: Vec<_> = output
@@ -147,17 +160,35 @@ fn run_binary(output: freight::build::BuildOutput, bin: Option<&str>, run_args: 
                 return;
             }
             [b] => Some(b.clone()),
-            _ => {
-                print_error(&format!(
-                    "multiple [[bin]] targets — use --bin <name> to select one: {}",
-                    output
-                        .binaries
+            multiple => {
+                // Fall back to the manifest's `default-run` when set.
+                let chosen = default_run.and_then(|name| {
+                    multiple
                         .iter()
-                        .filter_map(|p| p.file_name()?.to_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                return;
+                        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                        .cloned()
+                });
+                match chosen {
+                    Some(b) => Some(b),
+                    None => {
+                        let avail = multiple
+                            .iter()
+                            .filter_map(|p| p.file_name()?.to_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        if let Some(name) = default_run {
+                            print_error(&format!(
+                                "default-run = {name:?} does not match any built binary: {avail}"
+                            ));
+                        } else {
+                            print_error(&format!(
+                                "multiple [[bin]] targets — use --bin <name> to select one \
+                                 (or set package.default-run): {avail}"
+                            ));
+                        }
+                        return;
+                    }
+                }
             }
         },
     };

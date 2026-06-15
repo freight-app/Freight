@@ -75,6 +75,8 @@ pub struct PipelineConfig {
 
 /// Output of the feature-resolution stage.
 pub struct FeatureResolution {
+    /// Active feature names — used to gate `[[bin]]` `required-features`.
+    pub active: std::collections::BTreeSet<String>,
     pub defines: Vec<String>,
     pub activated_deps: std::collections::BTreeSet<String>,
     /// Defines forwarded into specific deps via `<dep>/define:NAME`, keyed by dep.
@@ -138,6 +140,7 @@ pub fn stage_features(
     let mut defines = features::to_defines(&resolution.active);
     defines.extend(resolution.defines.iter().cloned());
     Ok(FeatureResolution {
+        active: resolution.active,
         defines,
         activated_deps: resolution.activated_deps,
         dep_defines: resolution.dep_defines,
@@ -788,6 +791,7 @@ pub fn run_pipeline_at(
                 &deps.libs,
                 &deps.system_features,
                 &deps.raw_link_flags,
+                &feat.active,
                 progress,
             )?;
 
