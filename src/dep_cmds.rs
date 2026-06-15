@@ -519,9 +519,14 @@ fn looks_like_constraint(v: &str) -> bool {
 
 /// Pick the best version from `available` that satisfies `constraint`.
 ///
-/// Tries semver `VersionReq` first, then falls back to a simple lexicographic
-/// search so date-versions and non-semver packages still get a match.
-/// Returns the oldest satisfying version (so upgrades are conservative).
+/// `constraint` is parsed as a semver `VersionReq`: a bare `"1.2"` is caret
+/// (`>=1.2.0, <2.0.0`), so it floats to the newest release within the major —
+/// this keeps single-version diamonds solvable (two deps asking `"1.2"` and
+/// `"1.4"` still converge). Partial `available` versions (`"1"`, `"1.2"`) are
+/// zero-extended before matching. Returns the **highest** satisfying version,
+/// or `None` when `constraint` isn't valid semver or nothing matches. The
+/// chosen version is pinned in `freight.lock`, so it doesn't drift between
+/// builds once resolved.
 fn resolve_constraint(
     available: &[crate::registry::PackageVersion],
     constraint: &str,
