@@ -56,7 +56,7 @@ pub fn cmd_tree() {
                         manifest.package.version.bright_black(),
                         format!("({})", member).bright_black()
                     );
-                    print_dep_tree(&manifest, &member_dir, "");
+                    print_dep_groups(&manifest, &member_dir);
                 }
                 Err(e) => print_error(&format!("{member}: {e}")),
             }
@@ -77,16 +77,39 @@ pub fn cmd_tree() {
         manifest.package.name.bold().bright_blue(),
         manifest.package.version.bright_black()
     );
-    print_dep_tree(&manifest, &project_dir, "");
+    print_dep_groups(&manifest, &project_dir);
+}
+
+/// Print a project's full dependency tree: `[dependencies]` (recursed into path
+/// deps), then flat `[build-dependencies]` and `[dev-dependencies]` groups —
+/// matching `cargo tree`, which surfaces every dependency kind.
+fn print_dep_groups(manifest: &Manifest, project_dir: &Path) {
+    print_dep_tree(manifest, project_dir, "");
+    print_dep_group("build-dependencies", &manifest.build_dependencies, project_dir);
+    print_dep_group("dev-dependencies", &manifest.dev_dependencies, project_dir);
+}
+
+fn print_dep_group(
+    label: &str,
+    deps: &std::collections::HashMap<String, Dependency>,
+    project_dir: &Path,
+) {
+    if deps.is_empty() {
+        return;
+    }
+    println!("{}", format!("[{label}]").bright_black());
+    let mut v: Vec<(&String, &Dependency)> = deps.iter().collect();
+    v.sort_by_key(|(k, _)| k.as_str());
+    print_named_deps(&v, project_dir, "");
 }
 
 fn print_dep_tree(manifest: &Manifest, project_dir: &Path, prefix: &str) {
-    let deps: Vec<(&String, &Dependency)> = {
-        let mut v: Vec<_> = manifest.dependencies.iter().collect();
-        v.sort_by_key(|(k, _)| k.as_str());
-        v
-    };
+    let mut deps: Vec<(&String, &Dependency)> = manifest.dependencies.iter().collect();
+    deps.sort_by_key(|(k, _)| k.as_str());
+    print_named_deps(&deps, project_dir, prefix);
+}
 
+fn print_named_deps(deps: &[(&String, &Dependency)], project_dir: &Path, prefix: &str) {
     for (i, (name, dep)) in deps.iter().enumerate() {
         let is_last = i == deps.len() - 1;
         let connector = if is_last { "└── " } else { "├── " };

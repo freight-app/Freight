@@ -124,7 +124,7 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 | `cargo remove` | `freight remove` | Same |
 | `cargo update` | `freight update` | Same |
 | `cargo fetch` | `freight fetch` | Same |
-| `cargo tree` | `freight tree` | Adds `--sources` for the `#include` graph |
+| `cargo tree` | `freight tree` | Shows all dep kinds (normal/build/dev); adds `--sources` for the `#include` graph |
 | `cargo doc` | `freight doc` | Generates Markdown API docs via `docify`; no HTML |
 | `cargo fmt` | `freight fmt` | Wraps clang-format (or astyle, uncrustify, fprettify) |
 | `cargo clippy` | `freight lint` | Wraps clang-tidy (or cppcheck, cpplint, flawfinder) |
