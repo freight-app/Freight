@@ -17,7 +17,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install language toolchains
-      run: sudo apt-get update && sudo apt-get install -y gfortran nasm
+      run: sudo apt-get update && sudo apt-get install -y gfortran nasm clang
     - name: Build
       run: cargo build --locked --verbose
     - name: Run tests
