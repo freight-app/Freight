@@ -1809,7 +1809,7 @@ source = "git+https://github.com/freight-app/fortran-lsp.git#9dfff28afbe71af676e
 
 [[package]]
 name = "freight"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clang-bridge",

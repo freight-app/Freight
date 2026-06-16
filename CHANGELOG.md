@@ -7,9 +7,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-06-16
+## [0.1.1] — 2026-06-16
 
-First public release: a Cargo-inspired build tool and package manager for
+First public release. (The `0.1.0` tag was reserved by a failed CI run under
+GitHub's immutable-releases feature, so the initial release ships as `0.1.1`.)
+
+A Cargo-inspired build tool and package manager for
 compiled languages that target GCC or Clang. A single `freight.toml` replaces
 Makefiles and CMake for C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, D, Ada,
 Objective-C, and assembly projects.
@@ -56,5 +59,5 @@ Objective-C, and assembly projects.
 - `freight doc` — Markdown/JSON API docs via docify, plus a TUI browser.
 - `freight migrate cmake|make|autotools` — convert foreign build systems.
 
-[Unreleased]: https://github.com/freight-app/Freight/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/freight-app/Freight/releases/tag/v0.1.0
+[Unreleased]: https://github.com/freight-app/Freight/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/freight-app/Freight/releases/tag/v0.1.1
