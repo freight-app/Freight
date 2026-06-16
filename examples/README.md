@@ -19,7 +19,7 @@ freight run
 | `mixed/` | Multiple languages in one project |
 | `gpu/` | CUDA, HIP, OpenCL, ISPC — require compatible hardware |
 | `exotic/` | Ada, D, Objective-C, Zig (as host or as compiler frontend) |
-| `deps/` | Dependency management: git, CMake, Make, registry, external, per-dep defines |
+| `deps/` | Dependency management: git, CMake, Meson, Make, registry, external, per-dep defines, `[patch]` |
 | `misc/` | Features, build scripts, docs, workspace, migration |
 | `broken/` | **Intentionally broken** — shows freight's error output |
 

@@ -1,0 +1,17 @@
+[package]
+name        = "with-meson-dep"
+version     = "0.1.0"
+description = "Linking a local Meson library as a path dependency"
+
+[language.cpp]
+std = "c++17"
+
+[[bin]]
+name = "with-meson-dep"
+src  = "src/main.cpp"
+
+# freight auto-detects meson.build in vendor/mathlib, runs `meson setup` + ninja,
+# and links the .a it finds in the build directory. The include/ dir is
+# auto-detected (no explicit include = [...] needed). Requires meson + ninja.
+[dependencies]
+mathlib = { path = "vendor/mathlib", type = "meson" }
