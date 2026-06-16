@@ -1,7 +1,10 @@
 name: Release
 
-# Build the `freight` binary for each platform and attach it to the GitHub
-# release when a version tag is pushed (e.g. `git tag v0.1.0 && git push --tags`).
+# On a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`): build the
+# `freight` binary for each platform, then collect them into a single GitHub
+# release. The release is created as a *draft* — review the attached binaries,
+# then publish it. (Publishing makes a release immutable, so all assets must be
+# attached in one shot beforehand; that's why building and releasing are split.)
 on:
   push:
     tags: ["v*"]
@@ -13,8 +16,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: ${{ matrix.name }}
+  build:
+    name: build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -54,9 +57,28 @@ jobs:
             echo "ASSET=$staging.tar.gz" >> "$GITHUB_ENV"
           fi
 
-      - name: Attach to release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: create draft release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create draft release with all binaries
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET }}
+          draft: true
+          files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
