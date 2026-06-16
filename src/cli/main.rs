@@ -17,6 +17,7 @@ pub(crate) fn cli_command() -> clap::Command {
 #[derive(Parser)]
 #[command(
     name = "freight",
+    version,
     about = "Build tool and package manager for C, C++, Fortran, and more"
 )]
 struct Cli {

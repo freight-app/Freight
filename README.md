@@ -29,12 +29,29 @@ Freight handles C, C++, Fortran, CUDA, HIP, OpenCL, ISPC, and assembly — with 
 
 ## Installation
 
-**Prerequisites:** Rust toolchain (stable), and at least one of gcc/clang/gfortran/nasm on `$PATH`.
+**Prerequisites:** at least one C/C++/Fortran compiler (gcc/clang/gfortran/nasm/…)
+on `$PATH`. Foreign-dependency builds also need the relevant tool
+(cmake/meson/ninja/make). Building from source additionally needs a stable Rust
+toolchain.
+
+### Prebuilt binary
+
+Download the archive for your platform from the
+[latest release](https://github.com/freight-app/Freight/releases/latest), extract
+it, and put `freight` on your `$PATH`.
+
+### From source
+
+```sh
+cargo install --git https://github.com/freight-app/Freight.git freight
+```
+
+or from a clone:
 
 ```sh
 git clone https://github.com/freight-app/Freight.git
-cd freight
-cargo install --path crates/freight
+cd Freight
+cargo install --path .
 ```
 
 ## Quick start
@@ -162,7 +179,31 @@ The `examples/` directory has fully buildable projects. See [`examples/README.md
 | [docs/compiler-templates.md](docs/compiler-templates.md) | Writing Rhai compiler scripts |
 | [docs/platform-sources.md](docs/platform-sources.md) | `[os.*]` / `[arch.*]` platform-conditional sources |
 | [docs/architecture.md](docs/architecture.md) | Repository layout, build pipeline, architecture rules |
+| [docs/cargo-vs-freight.md](docs/cargo-vs-freight.md) | Mapping from Cargo concepts to freight |
 | [docs/roadmap.md](docs/roadmap.md) | Development roadmap |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+## Known limitations
+
+freight `0.1.0` is an early release. The build tool is feature-complete for the
+common C/C++/Fortran workflows, but some areas are still preview or unproven:
+
+- **Manifest format is not yet stable.** While `0.x`, `freight.toml` fields may
+  change between releases.
+- **Editor integration is preview.** `freight lsp` works (it passes through to
+  clangd / fortls); the bundled VS Code and Neovim plugins, the in-process
+  `clang-bridge`, and the native Fortran indexer are still in progress.
+- **Platform coverage.** Development and CI focus on Linux and macOS. Windows
+  builds via MSVC but is less exercised — please report issues.
+- **Foreign build systems need their tools on `PATH`.** CMake/Meson/Autotools/
+  Make dependencies require the respective tool (and `ninja` where applicable).
+- **Debugger backends.** GDB and LLDB are supported; `rr`, `cdb`, and `windbg`
+  are not yet wired up.
+- **Include-hygiene lint warns but does not block** the build yet.
+- **Self-hosted registry** (`freight-registry`) is usable but early; some admin
+  features (SMTP, TOTP recovery, org roles, server-side prebuilt builds) are WIP.
+
+See [docs/roadmap.md](docs/roadmap.md) for the full status.
 
 ## Contributing
 
