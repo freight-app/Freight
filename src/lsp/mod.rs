@@ -18,7 +18,9 @@ use std::thread;
 use index::LanguageIndexer;
 #[cfg(feature = "clang-bridge")]
 use indexers::ClangIndexer;
-use indexers::{AsmIndexer, FortranIndexer};
+#[cfg(feature = "fortran-lsp")]
+use indexers::FortranIndexer;
+use indexers::AsmIndexer;
 
 use crate::build::generate_lsp_compile_commands_at;
 use crate::manifest::{find_manifest_dir, load_manifest_cached, load_workspace_manifest};
@@ -132,7 +134,9 @@ fn clangd_supports_flag(clangd_bin: &str, flag: &str) -> bool {
 }
 
 fn native_fortran_enabled() -> bool {
-    true
+    // The native Fortran indexer is opt-in (the `fortran-lsp` cargo feature).
+    // When it's not compiled in, `freight lsp` passes Fortran through to fortls.
+    cfg!(feature = "fortran-lsp")
 }
 
 /// Whether the native assembly indexer serves `.s`/`.asm`/`.nasm` files. When
@@ -317,7 +321,11 @@ impl Server {
         // registered when explicitly opted in, so every indexer-backed handler
         // (hover/goto/completion/documentSymbol/folding/references/highlight/
         // semanticTokens/inlay/diagnostics) falls through to the clangd forward.
-        let mut indexers: Vec<Box<dyn LanguageIndexer>> = vec![Box::new(FortranIndexer::new())];
+        let mut indexers: Vec<Box<dyn LanguageIndexer>> = Vec::new();
+        // The native Fortran indexer is opt-in (`fortran-lsp` feature); otherwise
+        // Fortran falls through to the fortls passthrough.
+        #[cfg(feature = "fortran-lsp")]
+        indexers.push(Box::new(FortranIndexer::new()));
         if native_asm_enabled(&args) {
             indexers.push(Box::new(AsmIndexer::new()));
         }
