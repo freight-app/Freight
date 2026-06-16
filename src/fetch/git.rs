@@ -274,6 +274,22 @@ mod tests {
         Some(dir)
     }
 
+    fn git_in(p: &Path, args: &[&str]) -> Option<std::process::Output> {
+        Command::new("git")
+            .args(args)
+            .current_dir(p)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .ok()
+    }
+
+    fn file_url(p: &Path) -> String {
+        format!("file://{}", p.display())
+    }
+
     #[test]
     fn clone_dep_checks_out_a_tag() {
         // Regression: a `tag` used to be passed to RepoBuilder::branch(), which
@@ -285,11 +301,69 @@ mod tests {
         };
         let work = tempfile::tempdir().unwrap();
         let dest = work.path().join("clone");
-        let url = format!("file://{}", origin.path().display());
-        clone_dep(&dest, &url, None, Some("v1.0"), None).expect("clone by tag");
+        clone_dep(&dest, &file_url(origin.path()), None, Some("v1.0"), None).expect("clone by tag");
         assert!(
             dest.join("marker.txt").exists(),
             "tagged content should be checked out"
+        );
+    }
+
+    #[test]
+    fn clone_dep_checks_out_a_branch() {
+        let origin = tempfile::tempdir().unwrap();
+        let p = origin.path();
+        if git_in(p, &["init", "-q"]).map(|o| o.status.success()) != Some(true) {
+            eprintln!("skipping: git CLI unavailable");
+            return;
+        }
+        std::fs::write(p.join("base.txt"), "base").unwrap();
+        git_in(p, &["add", "."]);
+        git_in(p, &["commit", "-qm", "base"]);
+        let default = String::from_utf8(git_in(p, &["branch", "--show-current"]).unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        git_in(p, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(p.join("feature.txt"), "feat").unwrap();
+        git_in(p, &["add", "."]);
+        git_in(p, &["commit", "-qm", "feature"]);
+        git_in(p, &["checkout", "-q", &default]); // default branch lacks feature.txt
+
+        let work = tempfile::tempdir().unwrap();
+        let dest = work.path().join("clone");
+        clone_dep(&dest, &file_url(p), Some("feature"), None, None).expect("clone by branch");
+        assert!(
+            dest.join("feature.txt").exists(),
+            "the feature branch should be checked out"
+        );
+    }
+
+    #[test]
+    fn clone_dep_checks_out_a_rev() {
+        let origin = tempfile::tempdir().unwrap();
+        let p = origin.path();
+        if git_in(p, &["init", "-q"]).map(|o| o.status.success()) != Some(true) {
+            eprintln!("skipping: git CLI unavailable");
+            return;
+        }
+        std::fs::write(p.join("first.txt"), "1").unwrap();
+        git_in(p, &["add", "."]);
+        git_in(p, &["commit", "-qm", "first"]);
+        let rev = String::from_utf8(git_in(p, &["rev-parse", "HEAD"]).unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        std::fs::write(p.join("second.txt"), "2").unwrap();
+        git_in(p, &["add", "."]);
+        git_in(p, &["commit", "-qm", "second"]);
+
+        let work = tempfile::tempdir().unwrap();
+        let dest = work.path().join("clone");
+        clone_dep(&dest, &file_url(p), None, None, Some(&rev)).expect("clone by rev");
+        assert!(dest.join("first.txt").exists(), "rev content present");
+        assert!(
+            !dest.join("second.txt").exists(),
+            "later commit must not be present at the pinned rev"
         );
     }
 }
