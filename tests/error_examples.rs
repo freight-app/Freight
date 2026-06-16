@@ -123,19 +123,13 @@ fn declared_owner_suppresses_system_header() {
 // ── Runtime crash ─────────────────────────────────────────────────────────────
 
 #[test]
-fn runtime_crash_builds_successfully() {
+fn runtime_crash_builds_but_crashes_at_runtime() {
+    // One test owns this example dir — two tests building it concurrently raced
+    // (a relink briefly removes the binary, failing the other's run check).
     let dir = example(&["broken", "runtime-crash"]);
-    let out = freight(&dir, &["build"]);
     // The project has deliberate runtime errors but no compile/link errors.
-    assert_success(&out, "broken/runtime-crash must build cleanly");
-}
-
-#[test]
-fn runtime_crash_exits_nonzero() {
-    let dir = example(&["broken", "runtime-crash"]);
-    // Build unconditionally so this test doesn't race with the build test.
     let build = freight(&dir, &["build"]);
-    assert_success(&build, "broken/runtime-crash build for run test");
+    assert_success(&build, "broken/runtime-crash must build cleanly");
     // Running without args triggers the null-dereference path.
     let run = run_binary(&dir, "runtime-crash", &[]);
     assert_failure(&run, "broken/runtime-crash should crash at runtime");

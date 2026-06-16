@@ -19,6 +19,37 @@ pub fn example(groups: &[&str]) -> PathBuf {
     p
 }
 
+/// Copy an example project's sources into a fresh temp dir, so a test that
+/// mutates `target/` (build, then `clean`) can't race another test using the
+/// same example. Build/output dirs are skipped. Hold the returned `TempDir` for
+/// the test's lifetime; call `.path()` for the project dir.
+pub fn example_copy(groups: &[&str]) -> tempfile::TempDir {
+    let src = example(groups);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    copy_sources(&src, tmp.path());
+    tmp
+}
+
+fn copy_sources(src: &Path, dst: &Path) {
+    for entry in std::fs::read_dir(src).expect("read example dir").flatten() {
+        let name = entry.file_name();
+        if matches!(
+            name.to_str(),
+            Some("target" | ".pkgs" | ".deps" | ".freight" | ".freight-build")
+        ) {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        if from.is_dir() {
+            std::fs::create_dir_all(&to).expect("mkdir");
+            copy_sources(&from, &to);
+        } else {
+            std::fs::copy(&from, &to).expect("copy file");
+        }
+    }
+}
+
 // ── Invocation ────────────────────────────────────────────────────────────────
 
 /// Run `freight <args>` inside `dir`.
