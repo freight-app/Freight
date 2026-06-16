@@ -64,6 +64,10 @@ fn cpp_multi_bin_builds() {
 fn fortran_hello_builds() {
     let dir = example(&["fortran", "hello"]);
     let out = freight(&dir, &["build"]);
+    if missing_toolchain(&out) {
+        eprintln!("skipping fortran/hello: no Fortran compiler installed");
+        return;
+    }
     assert_success(&out, "fortran/hello build");
 
     let run = run_binary(&dir, "fortran-hello", &[]);
@@ -76,6 +80,10 @@ fn fortran_hello_builds() {
 fn assembly_hello_builds() {
     let dir = example(&["assembly", "hello"]);
     let out = freight(&dir, &["build"]);
+    if missing_toolchain(&out) {
+        eprintln!("skipping assembly/hello: no assembler installed");
+        return;
+    }
     assert_success(&out, "assembly/hello build");
 
     let run = run_binary(&dir, "asm-hello", &[]);
@@ -95,6 +103,10 @@ fn mixed_c_cpp_builds() {
 fn mixed_tri_lang_builds() {
     let dir = example(&["mixed", "tri-lang"]);
     let out = freight(&dir, &["build"]);
+    if missing_toolchain(&out) {
+        eprintln!("skipping mixed/tri-lang: a required compiler is not installed");
+        return;
+    }
     assert_success(&out, "mixed/tri-lang build");
 
     let run = run_binary(&dir, "tri-lang", &[]);

@@ -200,6 +200,8 @@ common C/C++/Fortran workflows, but some areas are still preview or unproven:
 - **Debugger backends.** GDB and LLDB are supported; `rr`, `cdb`, and `windbg`
   are not yet wired up.
 - **Include-hygiene lint warns but does not block** the build yet.
+- **C++20/23 named-module units are recompiled on every build** — incremental
+  reuse works for ordinary C/C++ translation units but not yet for module units.
 - **Self-hosted registry** (`freight-registry`) is usable but early; some admin
   features (SMTP, TOTP recovery, org roles, server-side prebuilt builds) are WIP.
 

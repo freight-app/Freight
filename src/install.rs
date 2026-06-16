@@ -1244,7 +1244,7 @@ SectionEnd
 /// Store, either:
 /// - Enable **Developer Mode** in Windows Settings → System → For developers, or
 /// - Sign with `signtool.exe` using a trusted certificate:
-///   ```
+///   ```text
 ///   signtool sign /fd SHA256 /a myapp-1.0.msix
 ///   ```
 ///

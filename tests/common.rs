@@ -32,23 +32,9 @@ pub fn freight(dir: &Path, args: &[&str]) -> Output {
 }
 
 fn freight_bin() -> PathBuf {
-    // Prefer the binary freshly built for this workspace; fall back to PATH.
-    // CARGO_MANIFEST_DIR = .../crates/freight  →  nth(2) = workspace root
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .unwrap()
-        .to_path_buf();
-    let dev = workspace.join("target/debug/freight");
-    if dev.exists() {
-        return dev;
-    }
-    let rel = workspace.join("target/release/freight");
-    if rel.exists() {
-        return rel;
-    }
-    // Fall back to whatever is on PATH.
-    PathBuf::from("freight")
+    // Cargo sets this to the freshly built `freight` binary for integration
+    // tests, regardless of repo layout (monorepo member or standalone repo).
+    PathBuf::from(env!("CARGO_BIN_EXE_freight"))
 }
 
 // ── Assertions ────────────────────────────────────────────────────────────────
@@ -100,6 +86,21 @@ pub fn assert_output_missing(out: &Output, needle: &str) {
         "output should NOT contain {:?}\nfull output:\n{combined}",
         needle,
     );
+}
+
+/// True when a build failed only because the language toolchain isn't installed
+/// (e.g. no gfortran / no assembler). Lets toolchain-specific example tests skip
+/// gracefully on machines that don't have every compiler, rather than fail.
+pub fn missing_toolchain(out: &Output) -> bool {
+    if out.status.success() {
+        return false;
+    }
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    combined.contains("no compiler found for language")
 }
 
 /// Run the built binary for `example_dir` and return its output.
