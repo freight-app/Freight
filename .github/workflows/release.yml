@@ -32,7 +32,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --bin freight --target ${{ matrix.target }}
+        run: cargo build --locked --release --bin freight --target ${{ matrix.target }}
 
       - name: Package
         shell: bash
