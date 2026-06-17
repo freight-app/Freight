@@ -17,6 +17,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install language toolchains
-      run: sudo apt-get update && sudo apt-get install -y gfortran nasm clang gcc
+      run: sudo apt-get update && sudo apt-get install -y gfortran nasm clang gcc g++ clang++
     - name: Build
       run: cargo build --locked --verbose
+    - name: Diagnose toolchain detection
+      run: |
+        echo "PATH=$PATH"
+        echo "--- which ---"; command -v gcc g++ clang clang++ gcc-13 clang-18 gfortran nasm || true
+        echo "--- /usr/bin compilers ---"; ls -la /usr/bin/gcc* /usr/bin/g++* /usr/bin/clang* 2>&1 | head -30 || true
+        echo "--- freight toolchain list ---"; ./target/debug/freight toolchain list || true
+    - name: Run tests
+      run: cargo test --locked --verbose
