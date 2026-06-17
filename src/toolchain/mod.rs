@@ -13,7 +13,7 @@ pub use debugger::{detect_debuggers, load_debugger_templates, DebuggerTemplate, 
 pub use detect::{
     backend_matches, check_manifest_version_bounds, detect_all, detect_all_cached,
     group_into_toolchains, load_all_templates, parse_versioned_name, toolchain_use,
-    DetectedCompiler, DetectedToolchain, ToolchainGroups,
+    validate_toolchain_name, DetectedCompiler, DetectedToolchain, ToolchainGroups,
 };
 pub use system_libs::{find_stub, load_system_lib_stubs, SystemLibStub};
 pub use template::{BuildSettings, CompilerTemplate, ModuleStyle};

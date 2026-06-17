@@ -901,7 +901,7 @@ mod tests {
         // toolchain_use returns Ok only if name is valid, then tries to save — the save
         // may fail without a home dir, but validation alone is what we're testing here.
         // Just confirm no TemplateError is returned for a known family.
-        let err = super::super::super::toolchain::toolchain_use("gnu", &templates);
+        let err = super::super::super::toolchain::validate_toolchain_name("gnu", &templates);
         // Either Ok or a non-TemplateError (e.g. Io error saving config) is acceptable.
         if let Err(e) = err {
             assert!(
@@ -915,7 +915,7 @@ mod tests {
     fn toolchain_use_rejects_individual_compiler_with_family() {
         let templates = load_all_templates();
         // "g++" has family "gnu", so it should be rejected — use "gnu" instead.
-        let result = super::super::super::toolchain::toolchain_use("g++", &templates);
+        let result = super::super::super::toolchain::validate_toolchain_name("g++", &templates);
         assert!(
             result.is_err(),
             "'g++' (has family 'gnu') should not be a valid toolchain name"
@@ -926,7 +926,7 @@ mod tests {
     fn toolchain_use_accepts_standalone_primary() {
         let templates = load_all_templates();
         // "tcc" has family = "", requires_toolchain = [], role = Toolchain → valid.
-        let err = super::super::super::toolchain::toolchain_use("tcc", &templates);
+        let err = super::super::super::toolchain::validate_toolchain_name("tcc", &templates);
         if let Err(e) = err {
             assert!(
                 !format!("{e}").contains("unknown toolchain"),
@@ -939,12 +939,12 @@ mod tests {
     fn toolchain_use_rejects_assembler() {
         let templates = load_all_templates();
         // Assemblers are auto-selected, not user-selectable.
-        let result = super::super::super::toolchain::toolchain_use("nasm", &templates);
+        let result = super::super::super::toolchain::validate_toolchain_name("nasm", &templates);
         assert!(
             result.is_err(),
             "'nasm' (assembler) should not be a valid toolchain use target"
         );
-        let result2 = super::super::super::toolchain::toolchain_use("yasm", &templates);
+        let result2 = super::super::super::toolchain::validate_toolchain_name("yasm", &templates);
         assert!(
             result2.is_err(),
             "'yasm' (assembler) should not be a valid toolchain use target"
@@ -954,7 +954,7 @@ mod tests {
     #[test]
     fn toolchain_use_rejects_unknown_name() {
         let templates = load_all_templates();
-        let result = super::super::super::toolchain::toolchain_use("badname", &templates);
+        let result = super::super::super::toolchain::validate_toolchain_name("badname", &templates);
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("unknown toolchain"));
     }
@@ -1071,7 +1071,7 @@ mod tests {
     fn toolchain_use_accepts_versioned_family_names() {
         let templates = load_all_templates();
         // "gnu-14" means family "gnu" with major version 14 — valid because "gnu" is a known family.
-        let result = super::super::super::toolchain::toolchain_use("gnu-14", &templates);
+        let result = super::super::super::toolchain::validate_toolchain_name("gnu-14", &templates);
         if let Err(e) = result {
             assert!(
                 !format!("{e}").contains("unknown toolchain"),
@@ -1083,7 +1083,7 @@ mod tests {
     #[test]
     fn toolchain_use_rejects_versioned_unknown_family() {
         let templates = load_all_templates();
-        let result = super::super::super::toolchain::toolchain_use("nofamily-14", &templates);
+        let result = super::super::super::toolchain::validate_toolchain_name("nofamily-14", &templates);
         assert!(
             result.is_err(),
             "'nofamily-14' (unknown family) should be rejected"
@@ -1107,6 +1107,21 @@ pub fn load_all_templates() -> Vec<CompilerTemplate> {
 /// Prints a warning when the requested toolchain is not currently on PATH, but
 /// still saves the preference so it applies once the compiler is installed.
 pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), FreightError> {
+    validate_toolchain_name(name, templates)?;
+    let mut config = super::cache::GlobalConfig::load();
+    config.default_backend = Some(name.to_string());
+    config.save()?;
+    Ok(())
+}
+
+/// Validate that `name` is a selectable toolchain: a known family, a standalone
+/// primary compiler, or a version-pinned family like `"gnu-14"`. Returns the
+/// error `toolchain_use` would emit for an unknown name. Pure — touches no
+/// config (so tests can assert validity without writing global state).
+pub fn validate_toolchain_name(
+    name: &str,
+    templates: &[CompilerTemplate],
+) -> Result<(), FreightError> {
     // Build the set of valid toolchain names: distinct non-empty family names +
     // individual names for templates that have no family.
     // Only primary compilers (requires_toolchain empty) are selectable.
@@ -1141,10 +1156,6 @@ pub fn toolchain_use(name: &str, templates: &[CompilerTemplate]) -> Result<(), F
             known.join(", "),
         )));
     }
-
-    let mut config = super::cache::GlobalConfig::load();
-    config.default_backend = Some(name.to_string());
-    config.save()?;
     Ok(())
 }
 

@@ -12,7 +12,7 @@ use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
 use crate::manifest::types::{Backend, Manifest};
 use crate::toolchain::template::BuildSettings;
-use crate::toolchain::DetectedCompiler;
+use crate::toolchain::{backend_matches, DetectedCompiler};
 
 // ── Compiler cache wrapper (ccache / sccache) ─────────────────────────────────
 
@@ -100,21 +100,8 @@ pub fn compile_sources(
                 return Ok((obj, false));
             }
 
-            let compiler = select_compiler(&src.lang_key, backend, detected, pf).ok_or_else(|| {
-                // TEMP DIAGNOSTIC (remove): why does detection come up empty in CI?
-                eprintln!(
-                    "DIAG no-compiler lang={} backend={} detected=[{}] PATH={:?}",
-                    src.lang_key,
-                    backend.name(),
-                    detected
-                        .iter()
-                        .map(|d| format!("{}({})", d.template.name, d.template.family))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    std::env::var("PATH").ok(),
-                );
-                FreightError::NoCompilerForLang(src.lang_key.clone())
-            })?;
+            let compiler = select_compiler(&src.lang_key, backend, detected, pf)
+                .ok_or_else(|| FreightError::NoCompilerForLang(src.lang_key.clone()))?;
 
             let mut settings = settings_for_lang(
                 manifest,
@@ -395,20 +382,26 @@ pub fn select_compiler<'a>(
             .find(|d| d.template.linking.contains_key(lang_key))
     } else {
         let name = backend.name();
-        // 1. Family member that directly handles this lang_key.
-        if let Some(c) = detected.iter().find(|d| {
-            !d.template.family.is_empty()
-                && d.template.family == name
-                && d.template.linking.contains_key(lang_key)
-        }) {
+        // A compiler "matches" the backend by template name, family, or a
+        // version-pinned family name like "gnu-14" — the same rule used by
+        // `backend_matches`, `toolchain_use`, and the build's effective-backend
+        // resolution. Using it here keeps all four consistent (otherwise a
+        // `freight toolchain use gnu-14` makes every build fail to find a
+        // compiler, since the template family is "gnu", not "gnu-14").
+
+        // 1. A matching compiler that directly handles this lang_key.
+        if let Some(c) = detected
+            .iter()
+            .find(|d| backend_matches(d, name) && d.template.linking.contains_key(lang_key))
+        {
             return Some(c);
         }
 
         // 2. Guest compiler (requires_toolchain non-empty) that handles lang_key
-        //    and whose host requirements are all provided by the named family.
+        //    and whose host requirements are all provided by the matched family.
         let family_langs: std::collections::HashSet<&str> = detected
             .iter()
-            .filter(|d| !d.template.family.is_empty() && d.template.family == name)
+            .filter(|d| backend_matches(d, name))
             .flat_map(|d| d.template.linking.keys().map(String::as_str))
             .collect();
 
@@ -425,23 +418,11 @@ pub fn select_compiler<'a>(
             }
         }
 
-        // 3. Exact template-name match (standalone compilers with no family)
-        //    that also handles this lang_key.
-        if let Some(c) = detected
-            .iter()
-            .find(|d| d.template.name == name && d.template.linking.contains_key(lang_key))
-        {
-            return Some(c);
-        }
-
-        // 4. Fallback: backend is recognised but doesn't compile this language.
-        //    (e.g. backend="zig" for .cpp files → fall through to g++/clang++).
-        //    Unknown backends (no detected compiler at all) return None so the
-        //    caller can emit a proper "backend not found" error.
-        let backend_exists = detected
-            .iter()
-            .any(|d| d.template.family == name || d.template.name == name);
-        if backend_exists {
+        // 3. Fallback: backend is recognised but doesn't compile this language
+        //    (e.g. backend="zig" for .cpp → fall through to g++/clang++).
+        //    Unknown backends (nothing matches) return None so the caller can
+        //    emit a proper "backend not found" error.
+        if detected.iter().any(|d| backend_matches(d, name)) {
             return detected
                 .iter()
                 .find(|d| d.template.linking.contains_key(lang_key));
@@ -1062,6 +1043,30 @@ mod tests {
         let found = select_compiler("cpp", &backend, &detected, None);
         assert!(found.is_some());
         assert_eq!(found.unwrap().template.name, "g++");
+    }
+
+    #[test]
+    fn named_backend_versioned_picks_matching_version() {
+        // Regression: a version-pinned backend like "gnu-14" (as written by
+        // `freight toolchain use gnu-14`) must select a compiler — previously
+        // select_compiler only matched `family == name`, so "gnu" != "gnu-14"
+        // gave "no compiler found for language 'c'".
+        let ts = templates();
+        let gcc = ts.iter().find(|t| t.name == "gcc").unwrap().clone();
+        let mk = |ver: &str| DetectedCompiler {
+            template: gcc.clone(),
+            version: ver.into(),
+            path: PathBuf::from("/usr/bin/gcc"),
+            cpu_extensions: vec![],
+        };
+        let detected = vec![mk("13.3.0"), mk("14.2.0")];
+
+        let found = select_compiler("c", &Backend("gnu-14".into()), &detected, None);
+        assert!(found.is_some(), "versioned backend gnu-14 must select a compiler");
+        assert_eq!(found.unwrap().version, "14.2.0", "should pick the v14 compiler");
+
+        // A plain family name still resolves too.
+        assert!(select_compiler("c", &Backend("gnu".into()), &detected, None).is_some());
     }
 
     #[test]
