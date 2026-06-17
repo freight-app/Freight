@@ -17,7 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install language toolchains
-      run: sudo apt-get update && sudo apt-get install -y gfortran nasm clang gcc g++ clang++
+      # gcc/g++/clang are already on the runner; only these may be missing.
+      run: sudo apt-get update && sudo apt-get install -y gfortran nasm
     - name: Build
       run: cargo build --locked --verbose
     - name: Diagnose toolchain detection
