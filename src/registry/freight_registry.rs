@@ -636,6 +636,156 @@ impl FreightRegistry {
         http_put(&url, Some(token), "application/gzip", tarball.to_vec())?;
         Ok(())
     }
+
+    // ── Admin / moderation API ──────────────────────────────────────────────────
+
+    /// Require a configured token; admin endpoints are never anonymous.
+    fn require_token(&self) -> Result<&str, FreightError> {
+        self.token.as_deref().ok_or_else(|| {
+            FreightError::RegistryError(
+                "no token configured for this registry — run `freight login`".into(),
+            )
+        })
+    }
+
+    /// `GET /api/v1/me` — the authenticated account, including its role tier.
+    pub fn me(&self) -> Result<MeInfo, FreightError> {
+        let token = self.require_token()?;
+        let url = format!("{}/api/v1/me", self.base_url);
+        http_get_json::<MeInfo>(&url, Some(token))
+    }
+
+    /// `GET /api/v1/admin/overview` — registry-wide counts (moderator+).
+    pub fn admin_overview(&self) -> Result<AdminOverview, FreightError> {
+        let token = self.require_token()?;
+        let url = format!("{}/api/v1/admin/overview", self.base_url);
+        http_get_json::<AdminOverview>(&url, Some(token))
+    }
+
+    /// `GET /api/v1/admin/reports[?status=…]` — reports awaiting triage (moderator+).
+    pub fn list_reports(&self, status: Option<&str>) -> Result<Vec<ReportEntry>, FreightError> {
+        let token = self.require_token()?;
+        let url = match status {
+            Some(s) => format!(
+                "{}/api/v1/admin/reports?status={}",
+                self.base_url,
+                url_encode(s)
+            ),
+            None => format!("{}/api/v1/admin/reports", self.base_url),
+        };
+        #[derive(Deserialize)]
+        struct Resp {
+            reports: Vec<ReportEntry>,
+        }
+        Ok(http_get_json::<Resp>(&url, Some(token))?.reports)
+    }
+
+    /// `PATCH /api/v1/admin/reports/:id` — resolve or dismiss a report (moderator+).
+    pub fn resolve_report(
+        &self,
+        id: i64,
+        status: &str,
+        note: &str,
+    ) -> Result<(), FreightError> {
+        let token = self.require_token()?;
+        let url = format!("{}/api/v1/admin/reports/{}", self.base_url, id);
+        let body = serde_json::json!({ "status": status, "note": note });
+        let json_bytes = serde_json::to_vec(&body)
+            .map_err(|e| FreightError::RegistryError(format!("serialize: {e}")))?;
+        http_patch(&url, Some(token), "application/json", json_bytes)?;
+        Ok(())
+    }
+
+    /// `GET /api/v1/admin/users` — all accounts with their role tier (admin only).
+    pub fn list_users(&self) -> Result<Vec<AdminUser>, FreightError> {
+        let token = self.require_token()?;
+        let url = format!("{}/api/v1/admin/users", self.base_url);
+        #[derive(Deserialize)]
+        struct Resp {
+            users: Vec<AdminUser>,
+        }
+        Ok(http_get_json::<Resp>(&url, Some(token))?.users)
+    }
+
+    /// `POST /api/v1/admin/users/:name/role` — set a user's role tier (admin only).
+    pub fn set_role(&self, username: &str, role: &str) -> Result<(), FreightError> {
+        let token = self.require_token()?;
+        let url = format!(
+            "{}/api/v1/admin/users/{}/role",
+            self.base_url,
+            url_encode(username)
+        );
+        let body = serde_json::json!({ "role": role });
+        let json_bytes = serde_json::to_vec(&body)
+            .map_err(|e| FreightError::RegistryError(format!("serialize: {e}")))?;
+        http_post(&url, Some(token), "application/json", json_bytes)?;
+        Ok(())
+    }
+}
+
+// ── Admin API response shapes ─────────────────────────────────────────────────
+
+/// `GET /api/v1/me`.
+#[derive(Debug, Deserialize)]
+pub struct MeInfo {
+    pub login: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub is_admin: bool,
+}
+
+/// `GET /api/v1/admin/overview`.
+#[derive(Debug, Deserialize)]
+pub struct AdminOverview {
+    #[serde(default)]
+    pub packages: i64,
+    #[serde(default)]
+    pub versions: i64,
+    #[serde(default)]
+    pub users: i64,
+    #[serde(default)]
+    pub admins: i64,
+    #[serde(default)]
+    pub active_tokens: i64,
+    #[serde(default)]
+    pub downloads_total: i64,
+    #[serde(default)]
+    pub open_reports: i64,
+}
+
+/// One entry from `GET /api/v1/admin/reports`.
+#[derive(Debug, Deserialize)]
+pub struct ReportEntry {
+    pub id: i64,
+    pub package: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub reporter_id: Option<i64>,
+    pub reason: String,
+    #[serde(default)]
+    pub details: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub created_at: Option<i64>,
+    #[serde(default)]
+    pub resolution: Option<String>,
+}
+
+/// One entry from `GET /api/v1/admin/users`.
+#[derive(Debug, Deserialize)]
+pub struct AdminUser {
+    pub id: i64,
+    pub username: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 // ── API response shapes ───────────────────────────────────────────────────────
@@ -1086,6 +1236,76 @@ fn http_post(
             "authentication required — check your token".into(),
         )),
         403 => Err(FreightError::RegistryError("permission denied".into())),
+        409 => Err(FreightError::RegistryError(format!("conflict: {body_str}"))),
+        _ => Err(FreightError::RegistryError(format!(
+            "HTTP {code}: {body_str}"
+        ))),
+    }
+}
+
+fn http_patch(
+    url: &str,
+    token: Option<&str>,
+    content_type: &str,
+    body: Vec<u8>,
+) -> Result<String, FreightError> {
+    let mut resp = Vec::new();
+    let mut easy = Easy::new();
+
+    easy.url(url)
+        .map_err(|e| FreightError::RegistryError(format!("curl url: {e}")))?;
+    easy.custom_request("PATCH")
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.upload(true)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.in_filesize(body.len() as u64)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.fail_on_error(false)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.useragent(&format!("freight/{}", env!("CARGO_PKG_VERSION")))
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+
+    let mut hdrs = List::new();
+    hdrs.append(&format!("Content-Type: {content_type}"))
+        .map_err(|e| FreightError::RegistryError(format!("curl header: {e}")))?;
+    if let Some(tok) = token {
+        hdrs.append(&format!("Authorization: Bearer {tok}"))
+            .map_err(|e| FreightError::RegistryError(format!("curl header: {e}")))?;
+    }
+    easy.http_headers(hdrs)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+
+    let mut body_cursor = std::io::Cursor::new(body);
+    {
+        let mut transfer = easy.transfer();
+        transfer
+            .read_function(|buf| {
+                use std::io::Read;
+                Ok(body_cursor.read(buf).unwrap_or(0))
+            })
+            .map_err(|e| FreightError::RegistryError(format!("curl read: {e}")))?;
+        transfer
+            .write_function(|data| {
+                resp.extend_from_slice(data);
+                Ok(data.len())
+            })
+            .map_err(|e| FreightError::RegistryError(format!("curl write: {e}")))?;
+        transfer
+            .perform()
+            .map_err(|e| FreightError::RegistryError(format!("request: {e}")))?;
+    }
+
+    let code = easy
+        .response_code()
+        .map_err(|e| FreightError::RegistryError(format!("curl code: {e}")))?;
+    let body_str = String::from_utf8_lossy(&resp).into_owned();
+    match code {
+        200 | 201 | 204 => Ok(body_str),
+        401 => Err(FreightError::RegistryError(
+            "authentication required — check your token".into(),
+        )),
+        403 => Err(FreightError::RegistryError("permission denied".into())),
+        404 => Err(FreightError::RegistryNotFound(url.to_string())),
         409 => Err(FreightError::RegistryError(format!("conflict: {body_str}"))),
         _ => Err(FreightError::RegistryError(format!(
             "HTTP {code}: {body_str}"

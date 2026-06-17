@@ -101,6 +101,8 @@ enum Commands {
     Lsp(lsp::Args),
     /// Manage compiler toolchains
     Toolchain(commands::toolchain::Args),
+    /// Registry moderation & administration (requires a moderator/admin token)
+    Admin(commands::admin::Args),
     /// Internal helper used by generated shell completion scripts
     #[command(name = "__complete", hide = true)]
     Complete { context: CompletionContext },
@@ -202,6 +204,7 @@ fn main() {
         Commands::Migrate(args) => args.run(),
         Commands::Lsp(args) => args.run(),
         Commands::Toolchain(args) => args.run(),
+        Commands::Admin(args) => args.run(),
         Commands::Complete { context } => print_completion_candidates(context),
     }
 

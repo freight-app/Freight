@@ -3,6 +3,7 @@
 //! `main.rs` dispatches to `args.run()` and nothing else.
 
 pub mod add;
+pub mod admin;
 pub mod bench;
 pub mod build;
 pub mod check;
