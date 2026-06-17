@@ -5,7 +5,13 @@
 #include <pthread.h>
 #include <stdio.h>
 
-import std;
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <map>
+#include <optional>
+#include <utility>
+#include <vector>
 
 int main() {
     std::vector<double> data = {2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0};

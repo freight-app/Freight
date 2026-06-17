@@ -1,6 +1,6 @@
 #include "stats.hpp"
 
-import std;
+#include <numeric>
 
 double mean(std::span<const double> values) {
     return std::reduce(values.begin(), values.end()) / values.size();
