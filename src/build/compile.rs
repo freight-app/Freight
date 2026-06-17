@@ -100,8 +100,21 @@ pub fn compile_sources(
                 return Ok((obj, false));
             }
 
-            let compiler = select_compiler(&src.lang_key, backend, detected, pf)
-                .ok_or_else(|| FreightError::NoCompilerForLang(src.lang_key.clone()))?;
+            let compiler = select_compiler(&src.lang_key, backend, detected, pf).ok_or_else(|| {
+                // TEMP DIAGNOSTIC (remove): why does detection come up empty in CI?
+                eprintln!(
+                    "DIAG no-compiler lang={} backend={} detected=[{}] PATH={:?}",
+                    src.lang_key,
+                    backend.name(),
+                    detected
+                        .iter()
+                        .map(|d| format!("{}({})", d.template.name, d.template.family))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    std::env::var("PATH").ok(),
+                );
+                FreightError::NoCompilerForLang(src.lang_key.clone())
+            })?;
 
             let mut settings = settings_for_lang(
                 manifest,
