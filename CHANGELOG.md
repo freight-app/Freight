@@ -8,6 +8,18 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- **Foreign packages** — a package whose `[package]` declares `url` + `build`
+  (no local `[lib]`/sources) is itself fetched from `url` and built with the
+  named foreign build system (`cmake`/`make`/…), then exposed to dependents. This
+  is the shape `vcpkg-scraper` emits, so a vendored upstream can be a workspace
+  member or a `[patch]` target and build offline. `[package].patches` are applied
+  to the fetched source.
+- `build_foreign_deps` now honors `[patch]`: a dependency patched to a local path
+  resolves to (and links) that member instead of falling through to
+  pkg-config/the registry (previously it built the member but then failed
+  resolution with "dep not found").
+
+### Added (earlier)
 - Source discovery now also compiles the files listed in `[lib].srcs` /
   `[[bin]].src` (in addition to the `src/**` walk, de-duplicated), and adds the
   parent dirs of `[lib].hdrs` to the include path. This lets projects whose

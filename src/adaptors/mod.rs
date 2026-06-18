@@ -85,6 +85,53 @@ fn effective_patches(
         .unwrap_or_default()
 }
 
+/// If `dir`'s manifest is a *foreign* package (`[package].build` set, the shape
+/// `vcpkg-scraper` produces), return `(url, build_system, patches)`. `None` when
+/// it's an ordinary native freight package (built by the dep-graph builder).
+fn foreign_package_spec(
+    dir: &std::path::Path,
+) -> Option<(Option<String>, String, Vec<String>)> {
+    let m = crate::manifest::load_manifest(dir).ok()?;
+    let build = m.package.build.clone()?;
+    // A package that also declares local sources/a library is native, not foreign.
+    if m.lib.is_some() {
+        return None;
+    }
+    Some((m.package.url.clone(), build, m.package.patches.clone()))
+}
+
+/// Apply a foreign member's `[package].patches` to its (fetched) source, if the
+/// patch files are present in the member directory. Best-effort: a missing patch
+/// file is warned about, not fatal.
+fn apply_member_patches(
+    member_dir: &std::path::Path,
+    source_dir: &std::path::Path,
+    patches: &[String],
+    progress: &Progress,
+) {
+    for p in patches {
+        let patch_file = member_dir.join(p);
+        if !patch_file.is_file() {
+            progress(BuildEvent::Warning(format!(
+                "patch '{p}' not found in {} — skipping",
+                member_dir.display()
+            )));
+            continue;
+        }
+        let applied = std::process::Command::new("patch")
+            .arg("-p1")
+            .arg("-i")
+            .arg(&patch_file)
+            .current_dir(source_dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !applied {
+            progress(BuildEvent::Warning(format!("failed to apply patch '{p}'")));
+        }
+    }
+}
+
 pub fn build_foreign_deps(
     project_dir: &std::path::Path,
     root_dir: &std::path::Path,
@@ -293,6 +340,32 @@ pub fn build_foreign_deps(
             }
             None => {
                 if d.path.is_some() && dep_dir.join("freight.toml").exists() {
+                    // The member may itself be a *foreign* package (`[package]` with
+                    // `url`/`build`, the vcpkg-scraper shape). Fetch its source (if
+                    // any) and foreign-build it. Otherwise it's a native freight
+                    // package handled by the dep-graph builder.
+                    if let Some((url_opt, build_sys, mpatches)) = foreign_package_spec(&dep_dir) {
+                        let source_dir = match &url_opt {
+                            Some(url) => crate::fetch::http::fetch_url_dep(
+                                name,
+                                url,
+                                d.sha256.as_deref(),
+                                &dep_dir,
+                                progress,
+                            )?,
+                            None => dep_dir.clone(),
+                        };
+                        apply_member_patches(&dep_dir, &source_dir, &mpatches, progress);
+                        jobs.push(BuildJob {
+                            name: name.clone(),
+                            dep_dir: source_dir,
+                            backend: build_sys,
+                            defines: dep_defines.get(name).map(|s| s.iter().cloned().collect()).unwrap_or_default(),
+                            include: vec![],
+                            target: manifest.compiler.target.clone(),
+                            tool_paths: tool_paths.clone(),
+                        });
+                    }
                     continue;
                 }
                 match detect_build_system(&dep_dir) {
@@ -1168,6 +1241,41 @@ fn find_libs(search_dir: &Path) -> Result<Vec<PathBuf>, FreightError> {
     }
     libs.sort();
     Ok(libs)
+}
+
+#[cfg(test)]
+mod foreign_pkg_tests {
+    use super::foreign_package_spec;
+
+    fn write(name: &str, body: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fpkg-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("freight.toml"), body).unwrap();
+        dir
+    }
+
+    #[test]
+    fn detects_foreign_url_build_package() {
+        let dir = write("foreign",
+            "[package]\nname=\"curl\"\nversion=\"8.0\"\nurl=\"https://x/c.tar.gz\"\nbuild=\"cmake\"\n");
+        let spec = foreign_package_spec(&dir).expect("foreign");
+        assert_eq!(spec.0.as_deref(), Some("https://x/c.tar.gz"));
+        assert_eq!(spec.1, "cmake");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_package_is_not_foreign() {
+        // build set but a local [lib] present → native, not foreign.
+        let dir = write("native",
+            "[package]\nname=\"x\"\nversion=\"1.0\"\nbuild=\"make\"\n[lib]\nsrcs=[\"x.c\"]\n");
+        assert!(foreign_package_spec(&dir).is_none());
+        // no build at all → native.
+        let dir2 = write("plain", "[package]\nname=\"x\"\nversion=\"1.0\"\n");
+        assert!(foreign_package_spec(&dir2).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&dir2).ok();
+    }
 }
 
 #[cfg(test)]

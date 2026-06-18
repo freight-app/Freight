@@ -671,6 +671,22 @@ pub struct Package {
     /// one binary target and `--bin` is not given. Mirrors Cargo's `default-run`.
     #[serde(default, rename = "default-run", skip_serializing_if = "Option::is_none")]
     pub default_run: Option<String>,
+    /// Foreign-built package: when `url` + `build` are set (no local `[lib]`/sources),
+    /// this package is itself fetched from `url` and built with the named foreign
+    /// build system (`cmake`/`make`/…) — the shape produced by `vcpkg-scraper`.
+    /// Lets a workspace member or `[patch]` target be a vendored upstream package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Foreign build system for a `url` package (`cmake`, `make`, `meson`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
+    /// SHA-256 of the `url` archive (optional; auto-detected on first fetch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// Patch files applied to the fetched source (`patch -p1`), relative to the
+    /// package directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<String>,
 }
 
 // ── Language ──────────────────────────────────────────────────────────────────
