@@ -532,7 +532,15 @@ fn build_foreign_member_closure(
             tool_paths,
             &prefixes,
         )?;
-        let include_dirs = collect_include_dirs(&source_dir, &[], Some(&build_dir));
+        let mut include_dirs = collect_include_dirs(&source_dir, &[], Some(&build_dir));
+        // Header-only / copy-only ports often keep their header(s) at the archive
+        // root (e.g. plf_colony.h, stb_image.h) rather than in include/. Expose the
+        // source root so dependents can find them — no build tool is involved.
+        if matches!(node.build.as_str(), "none" | "header")
+            && !include_dirs.contains(&source_dir)
+        {
+            include_dirs.push(source_dir.clone());
+        }
         if let Some(p) = install_prefix(&source_dir, &node.build) {
             if p.is_dir() {
                 prefixes.push(p);
@@ -1300,10 +1308,14 @@ fn invoke_build_system(
             bazel::build_bazel(dep_dir, tool_paths)?;
             dep_dir.to_path_buf()
         }
+        // Header-only / no build system: nothing to compile — the source was
+        // fetched and its headers are exposed via collect_include_dirs by the
+        // caller. No cmake (or any build tool) is invoked.
+        "none" | "header" => dep_dir.to_path_buf(),
         other => {
             return Err(FreightError::ManifestParse(format!(
                 "unknown backend '{other}' for dep '{name}'; \
-                 expected: cmake, make, meson, autotools, scons, bazel"
+                 expected: cmake, make, meson, autotools, scons, bazel, none"
             )));
         }
     };
