@@ -4,6 +4,11 @@
 //! yank), `owner` (full control, incl. managing members). Only members with the
 //! `owner` role (or a registry admin) may change membership — enforced
 //! server-side, so a 403 surfaces here as "permission denied".
+//!
+//! A member can also be a **team/group** (crates.io-style), referenced as
+//! `github:ORG:TEAM` or `gitlab:GROUP[/SUBGROUP…]`. A team owner is a flat full
+//! owner: every current member of that team gets ownership, verified live
+//! against the provider. You may only add a team you yourself belong to.
 
 use freight::manifest::load_manifest;
 use freight::registry::freight_registry::FreightRegistry;
@@ -31,17 +36,17 @@ pub enum OwnerCmd {
     Add {
         /// Package name
         package: String,
-        /// Username to add
+        /// Username, or a team: github:ORG:TEAM / gitlab:GROUP
         user: String,
-        /// Role to grant: publisher, maintainer, or owner
+        /// Role to grant (users only; teams are always full owners)
         #[arg(long, default_value = "owner")]
         role: String,
     },
-    /// Remove a member from a package
+    /// Remove a member (user or team) from a package
     Remove {
         /// Package name
         package: String,
-        /// Username to remove
+        /// Username, or a team: github:ORG:TEAM / gitlab:GROUP
         user: String,
     },
     /// Change an existing member's role
@@ -113,7 +118,8 @@ fn cmd_list(registry: &FreightRegistry, package: &str) {
         Ok(members) => {
             for m in members {
                 let role = if m.role.is_empty() { "owner" } else { &m.role };
-                println!("{:<24} {}", m.login, role);
+                let tag = if m.kind == "team" { "  (team)" } else { "" };
+                println!("{:<24} {}{}", m.login, role, tag);
             }
         }
         Err(e) => print_error(&e.to_string()),

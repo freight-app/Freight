@@ -854,6 +854,9 @@ pub struct PackageMember {
     pub login: String,
     #[serde(default)]
     pub role: String,
+    /// `"user"` or `"team"`. Defaults to `"user"` for older servers.
+    #[serde(default)]
+    pub kind: String,
 }
 
 /// One entry from `GET /api/v1/admin/users`.
