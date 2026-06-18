@@ -8,6 +8,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- **Transitive foreign dependencies** — a foreign package's own foreign deps are
+  now discovered and built (the foreign-member sub-graph), in topological order,
+  and each build receives its already-built dependencies' install prefixes via
+  `CMAKE_PREFIX_PATH` (so a member's `find_package` finds them). Built libraries
+  are returned dependent-first for correct static link order. A full
+  `app → mid → base` cmake chain now builds + links + runs offline.
 - **Foreign packages** — a package whose `[package]` declares `url` + `build`
   (no local `[lib]`/sources) is itself fetched from `url` and built with the
   named foreign build system (`cmake`/`make`/…), then exposed to dependents. This

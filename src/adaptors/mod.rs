@@ -88,9 +88,7 @@ fn effective_patches(
 /// If `dir`'s manifest is a *foreign* package (`[package].build` set, the shape
 /// `vcpkg-scraper` produces), return `(url, build_system, patches)`. `None` when
 /// it's an ordinary native freight package (built by the dep-graph builder).
-fn foreign_package_spec(
-    dir: &std::path::Path,
-) -> Option<(Option<String>, String, Vec<String>)> {
+fn foreign_package_spec(dir: &std::path::Path) -> Option<(Option<String>, String, Vec<String>)> {
     let m = crate::manifest::load_manifest(dir).ok()?;
     let build = m.package.build.clone()?;
     // A package that also declares local sources/a library is native, not foreign.
@@ -197,6 +195,7 @@ pub fn build_foreign_deps(
                 None,
                 progress,
                 &tool_paths,
+                &[],
             )?;
         }
 
@@ -231,6 +230,10 @@ pub fn build_foreign_deps(
     // macOS `-framework` and MSVC `.lib` formatting), not here.
 
     let mut jobs: Vec<BuildJob> = Vec::new();
+    // Vendored foreign packages (path / [patch] members with `[package]` url+build).
+    // Collected here, then built with their transitive foreign deps after the
+    // parallel pass (see build_foreign_member_closure).
+    let mut foreign_roots: Vec<(String, PathBuf)> = Vec::new();
 
     // `[patch]` overrides apply graph-wide and come from the workspace root.
     // Honour them here too (the dep-graph builder already does), so a dep that is
@@ -243,7 +246,11 @@ pub fn build_foreign_deps(
         // relative to the root manifest, not the dep-declaring manifest.
         let patched = patches.get(name);
         let dep = patched.unwrap_or(dep);
-        let dep_base: &std::path::Path = if patched.is_some() { root_dir } else { project_dir };
+        let dep_base: &std::path::Path = if patched.is_some() {
+            root_dir
+        } else {
+            project_dir
+        };
 
         if let Some(version) = package_dep_version(dep) {
             // Check for a metadata-only registry dep that was fetched from upstream source.
@@ -341,30 +348,13 @@ pub fn build_foreign_deps(
             None => {
                 if d.path.is_some() && dep_dir.join("freight.toml").exists() {
                     // The member may itself be a *foreign* package (`[package]` with
-                    // `url`/`build`, the vcpkg-scraper shape). Fetch its source (if
-                    // any) and foreign-build it. Otherwise it's a native freight
-                    // package handled by the dep-graph builder.
-                    if let Some((url_opt, build_sys, mpatches)) = foreign_package_spec(&dep_dir) {
-                        let source_dir = match &url_opt {
-                            Some(url) => crate::fetch::http::fetch_url_dep(
-                                name,
-                                url,
-                                d.sha256.as_deref(),
-                                &dep_dir,
-                                progress,
-                            )?,
-                            None => dep_dir.clone(),
-                        };
-                        apply_member_patches(&dep_dir, &source_dir, &mpatches, progress);
-                        jobs.push(BuildJob {
-                            name: name.clone(),
-                            dep_dir: source_dir,
-                            backend: build_sys,
-                            defines: dep_defines.get(name).map(|s| s.iter().cloned().collect()).unwrap_or_default(),
-                            include: vec![],
-                            target: manifest.compiler.target.clone(),
-                            tool_paths: tool_paths.clone(),
-                        });
+                    // `url`/`build`, the vcpkg-scraper shape). Collect it as a root of
+                    // the foreign-member sub-graph, built — with its transitive
+                    // foreign deps, in topological order — after the parallel pass.
+                    // Otherwise it's a native freight package handled by the
+                    // dep-graph builder.
+                    if foreign_package_spec(&dep_dir).is_some() {
+                        foreign_roots.push((name.clone(), dep_dir.clone()));
                     }
                     continue;
                 }
@@ -421,6 +411,7 @@ pub fn build_foreign_deps(
                 job.target.as_deref(),
                 progress,
                 &job.tool_paths,
+                &[], // leaf foreign deps: no transitive prefixes
             )?;
             let include_dirs = collect_include_dirs(&job.dep_dir, &job.include, Some(&build_dir));
             Ok(ForeignBuilt {
@@ -434,8 +425,168 @@ pub fn build_foreign_deps(
 
     results.extend(built?);
 
+    // Foreign-member sub-graph (vendored vcpkg-style packages reached via path /
+    // [patch]) is built in topological order so each member sees its already-built
+    // dependencies' install prefixes (CMAKE_PREFIX_PATH).
+    results.extend(build_foreign_member_closure(
+        &foreign_roots,
+        &patches,
+        root_dir,
+        profile,
+        progress,
+        &tool_paths,
+    )?);
+
     pc_cache.save(project_dir);
     Ok((results, pkg_results, tool_paths))
+}
+
+/// Build the closure of vendored foreign packages (path / `[patch]` members whose
+/// `[package]` declares `url`/`build`) in **topological order**, so each member's
+/// build sees the install prefixes of its already-built foreign dependencies
+/// (via `CMAKE_PREFIX_PATH`). `roots` are the directly-depended foreign members;
+/// their transitive foreign deps are discovered here.
+fn build_foreign_member_closure(
+    roots: &[(String, PathBuf)],
+    patches: &std::collections::HashMap<String, Dependency>,
+    root_dir: &Path,
+    profile: &str,
+    progress: &Progress,
+    tool_paths: &[PathBuf],
+) -> Result<Vec<ForeignBuilt>, FreightError> {
+    use std::collections::{BTreeMap, VecDeque};
+    if roots.is_empty() {
+        return Ok(vec![]);
+    }
+
+    struct Node {
+        dir: PathBuf,
+        url: Option<String>,
+        build: String,
+        patches: Vec<String>,
+        deps: Vec<String>,
+    }
+
+    // 1. Discover the closure.
+    let mut nodes: BTreeMap<String, Node> = BTreeMap::new();
+    let mut queue: VecDeque<(String, PathBuf)> = roots.iter().cloned().collect();
+    while let Some((name, dir)) = queue.pop_front() {
+        if nodes.contains_key(&name) {
+            continue;
+        }
+        let Some((url, build, mpatches)) = foreign_package_spec(&dir) else {
+            continue;
+        };
+        let mut fdeps = Vec::new();
+        if let Ok(m) = crate::manifest::load_manifest(&dir) {
+            for (dep_name, dep) in &m.dependencies {
+                if let Some(td) = foreign_dep_dir(patches, root_dir, &dir, dep_name, dep) {
+                    fdeps.push(dep_name.clone());
+                    if !nodes.contains_key(dep_name) {
+                        queue.push_back((dep_name.clone(), td));
+                    }
+                }
+            }
+        }
+        nodes.insert(name, Node { dir, url, build, patches: mpatches, deps: fdeps });
+    }
+
+    // 2. Topological order (deps first).
+    let graph: BTreeMap<String, Vec<String>> =
+        nodes.iter().map(|(n, node)| (n.clone(), node.deps.clone())).collect();
+    let order = topo_order(&graph);
+
+    // 3. Build each, accumulating install prefixes for downstream members.
+    let mut prefixes: Vec<PathBuf> = Vec::new();
+    let mut built = Vec::new();
+    for name in order {
+        let Some(node) = nodes.get(&name) else { continue };
+        let source_dir = match &node.url {
+            Some(url) => crate::fetch::http::fetch_url_dep(&name, url, None, &node.dir, progress)?,
+            None => node.dir.clone(),
+        };
+        apply_member_patches(&node.dir, &source_dir, &node.patches, progress);
+        let build_dir = source_dir.join(".freight-build");
+        let libs = invoke_build_system(
+            &source_dir, &build_dir, &name, &node.build, profile,
+            &[], None, progress, tool_paths, &prefixes,
+        )?;
+        let include_dirs = collect_include_dirs(&source_dir, &[], Some(&build_dir));
+        if let Some(p) = install_prefix(&source_dir, &node.build) {
+            if p.is_dir() {
+                prefixes.push(p);
+            }
+        }
+        built.push(ForeignBuilt { name, libs, include_dirs, raw_link_flags: vec![] });
+    }
+    // Built deps-first (topological); the linker needs dependents before their
+    // dependencies for static archives, so return in reverse order.
+    built.reverse();
+    Ok(built)
+}
+
+/// The directory a member's dependency resolves to *if* it's itself a foreign
+/// member — via a `[patch]` path (relative to the workspace root) or the dep's
+/// own `path` (relative to the member). `None` when it isn't a foreign package.
+fn foreign_dep_dir(
+    patches: &std::collections::HashMap<String, Dependency>,
+    root_dir: &Path,
+    member_dir: &Path,
+    dep_name: &str,
+    dep: &Dependency,
+) -> Option<PathBuf> {
+    let dir = if let Some(Dependency::Detailed(pd)) = patches.get(dep_name) {
+        root_dir.join(pd.path.as_ref()?)
+    } else if let Dependency::Detailed(d) = dep {
+        member_dir.join(d.path.as_ref()?)
+    } else {
+        return None;
+    };
+    (dir.join("freight.toml").exists() && foreign_package_spec(&dir).is_some()).then_some(dir)
+}
+
+/// The install prefix a foreign build produces (contains `include/` + `lib/`),
+/// fed to dependents' `CMAKE_PREFIX_PATH`.
+fn install_prefix(source_dir: &Path, build: &str) -> Option<PathBuf> {
+    match build {
+        "cmake" | "meson" | "autotools" => {
+            Some(source_dir.join(".freight-build").join("install"))
+        }
+        _ => Some(source_dir.to_path_buf()),
+    }
+}
+
+/// Topologically order `graph` (name → dep names), dependencies first. Cycle
+/// back-edges are ignored; every node appears exactly once.
+fn topo_order(graph: &std::collections::BTreeMap<String, Vec<String>>) -> Vec<String> {
+    use std::collections::HashSet;
+    fn visit(
+        n: &str,
+        graph: &std::collections::BTreeMap<String, Vec<String>>,
+        visited: &mut HashSet<String>,
+        on_stack: &mut HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        if visited.contains(n) || !on_stack.insert(n.to_string()) {
+            return;
+        }
+        if let Some(deps) = graph.get(n) {
+            for d in deps {
+                visit(d, graph, visited, on_stack, out);
+            }
+        }
+        on_stack.remove(n);
+        if visited.insert(n.to_string()) {
+            out.push(n.to_string());
+        }
+    }
+    let mut visited = HashSet::new();
+    let mut on_stack = HashSet::new();
+    let mut out = Vec::new();
+    for n in graph.keys() {
+        visit(n, graph, &mut visited, &mut on_stack, &mut out);
+    }
+    out
 }
 
 /// Extract the cmake version constraint from `[build-dependencies]`, if any.
@@ -702,9 +853,7 @@ fn resolve_version_dep(
             // (handled by the shared `.pkgs/` path below).
             let cb = cross.expect("cross.is_some()");
             if let Some(sysroot) = &cb.sysroot {
-                if let Ok(pc) =
-                    pkg_config_query_cross(query, cb.target.as_deref(), sysroot)
-                {
+                if let Ok(pc) = pkg_config_query_cross(query, cb.target.as_deref(), sysroot) {
                     return Ok(Some((
                         ForeignBuilt {
                             name: name.to_string(),
@@ -734,7 +883,9 @@ fn resolve_version_dep(
                 )));
             }
             // Fall through to the shared `.pkgs/` source-package resolution.
-            resolve_fetched_dep(name, query, version, optional, profile, pkgs_root, progress, pc_cache)
+            resolve_fetched_dep(
+                name, query, version, optional, profile, pkgs_root, progress, pc_cache,
+            )
         }
         None => {
             // Default chain: pkg-config (cached) → system-lib stubs → target/deps/ cache.
@@ -997,6 +1148,7 @@ pub fn detect_build_system(dep_dir: &Path) -> Option<String> {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn invoke_build_system(
     dep_dir: &Path,
     build_dir: &Path,
@@ -1007,6 +1159,9 @@ fn invoke_build_system(
     target: Option<&str>,
     progress: &Progress,
     tool_paths: &[PathBuf],
+    // Install prefixes of already-built dependencies (for transitive foreign
+    // deps). Passed to cmake as CMAKE_PREFIX_PATH so `find_package` finds them.
+    prefix_paths: &[PathBuf],
 ) -> Result<Vec<PathBuf>, FreightError> {
     let resolved = build_system.to_string();
 
@@ -1027,7 +1182,15 @@ fn invoke_build_system(
     let search_dir = match resolved.as_str() {
         "cmake" => {
             // cmake cache variables: `-DKEY=VALUE`.
-            let args: Vec<String> = bodies.iter().map(|b| format!("-D{b}")).collect();
+            let mut args: Vec<String> = bodies.iter().map(|b| format!("-D{b}")).collect();
+            if !prefix_paths.is_empty() {
+                let joined = prefix_paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(";");
+                args.push(format!("-DCMAKE_PREFIX_PATH={joined}"));
+            }
             cmake::build_cmake(dep_dir, build_dir, profile, &args, target, tool_paths)?;
             build_dir.to_path_buf()
         }
@@ -1265,10 +1428,38 @@ mod foreign_pkg_tests {
     }
 
     #[test]
+    fn topo_order_puts_deps_before_dependents() {
+        use super::topo_order;
+        use std::collections::BTreeMap;
+        let mut g: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        g.insert("app".into(), vec!["mid".into()]);
+        g.insert("mid".into(), vec!["base".into()]);
+        g.insert("base".into(), vec![]);
+        let order = topo_order(&g);
+        let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
+        assert!(pos("base") < pos("mid"));
+        assert!(pos("mid") < pos("app"));
+        assert_eq!(order.len(), 3);
+    }
+
+    #[test]
+    fn topo_order_tolerates_cycles() {
+        use super::topo_order;
+        use std::collections::BTreeMap;
+        let mut g: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        g.insert("a".into(), vec!["b".into()]);
+        g.insert("b".into(), vec!["a".into()]); // cycle
+        let order = topo_order(&g);
+        assert_eq!(order.len(), 2); // both present, no infinite loop
+    }
+
+    #[test]
     fn native_package_is_not_foreign() {
         // build set but a local [lib] present → native, not foreign.
-        let dir = write("native",
-            "[package]\nname=\"x\"\nversion=\"1.0\"\nbuild=\"make\"\n[lib]\nsrcs=[\"x.c\"]\n");
+        let dir = write(
+            "native",
+            "[package]\nname=\"x\"\nversion=\"1.0\"\nbuild=\"make\"\n[lib]\nsrcs=[\"x.c\"]\n",
+        );
         assert!(foreign_package_spec(&dir).is_none());
         // no build at all → native.
         let dir2 = write("plain", "[package]\nname=\"x\"\nversion=\"1.0\"\n");
@@ -1315,7 +1506,8 @@ mod cross_tests {
     #[test]
     fn cross_build_from_sysroot_or_foreign_target() {
         let mut m =
-            crate::manifest::load_manifest_str("[package]\nname=\"a\"\nversion=\"0.1.0\"\n").unwrap();
+            crate::manifest::load_manifest_str("[package]\nname=\"a\"\nversion=\"0.1.0\"\n")
+                .unwrap();
         // Native: no target, no sysroot.
         assert!(cross_build(&m).is_none());
 
