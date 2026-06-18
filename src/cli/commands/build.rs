@@ -372,7 +372,14 @@ pub fn cmd_build_examples(
         return;
     }
     let progress = make_progress();
-    match build_examples_with(profile, example, features, use_defaults, sanitize, &progress) {
+    match build_examples_with(
+        profile,
+        example,
+        features,
+        use_defaults,
+        sanitize,
+        &progress,
+    ) {
         Ok(output) => {
             println!();
             if output.binaries.is_empty() {
@@ -400,6 +407,9 @@ pub fn cmd_build_examples(
 }
 
 fn run_emit_targets(emit: &[String], profile: &str, progress: &Progress) {
+    if emit.is_empty() {
+        return; // nothing to emit — don't try to open the (possibly workspace-root) project
+    }
     let config = PipelineConfig {
         profile: profile.to_string(),
         use_defaults: true,

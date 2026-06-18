@@ -757,7 +757,13 @@ fn run_examples_goal(
 ) -> Result<Vec<PathBuf>, FreightError> {
     let lib_objs =
         lib_objects_excluding_bins(manifest, target_dir, profile, &compile_result.objects);
-    let examples = collect_examples(project_dir, manifest, &ctx.templates, active_features, filter);
+    let examples = collect_examples(
+        project_dir,
+        manifest,
+        &ctx.templates,
+        active_features,
+        filter,
+    );
     if examples.is_empty() {
         return Ok(vec![]);
     }
@@ -870,6 +876,33 @@ pub fn run_pipeline_at(
         progress,
     )?;
     let deps = native_deps;
+
+    // ── Foreign self-build ───────────────────────────────────────────────────
+    // A foreign package (`[package].build` set, no native targets — the
+    // vcpkg-scraper port shape) is fetched + built with its own build system,
+    // its deps' install prefixes fed in via CMAKE_PREFIX_PATH.
+    if manifest.package.build.is_some() && manifest.bins.is_empty() && manifest.lib.is_none() {
+        let prefixes: Vec<PathBuf> = deps
+            .include_dirs
+            .iter()
+            .filter_map(|d| d.parent().map(|p| p.to_path_buf()))
+            .collect();
+        let libs = crate::adaptors::build_foreign_self(
+            project_dir,
+            &target_dir,
+            manifest,
+            profile,
+            &prefixes,
+            &deps.tool_paths,
+            progress,
+        )?;
+        return Ok(PipelineOutput::Build(BuildOutput {
+            package_name: manifest.package.name.clone(),
+            binaries: vec![],
+            compiled: libs.len(),
+            skipped: 0,
+        }));
+    }
 
     // ── Stage 6: Assemble include dirs ───────────────────────────────────────
     let mut include_dirs = stage_assemble_includes(
@@ -1132,7 +1165,10 @@ mod example_tests {
 
         let all = collect_examples(dir.path(), &manifest, &templates, &active, None);
         let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(names.contains(&"custom"), "declared name present: {names:?}");
+        assert!(
+            names.contains(&"custom"),
+            "declared name present: {names:?}"
+        );
         assert!(names.contains(&"b"), "auto name present: {names:?}");
         assert!(!names.contains(&"a"), "a.c renamed to custom: {names:?}");
 
@@ -1158,7 +1194,10 @@ mod example_tests {
         let templates = crate::toolchain::load_all_templates();
 
         let off = collect_examples(dir.path(), &manifest, &templates, &BTreeSet::new(), None);
-        assert!(off.is_empty(), "gated example excluded without feature: {off:?}");
+        assert!(
+            off.is_empty(),
+            "gated example excluded without feature: {off:?}"
+        );
 
         let mut active = BTreeSet::new();
         active.insert("extra".to_string());

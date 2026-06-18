@@ -8,6 +8,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- **Foreign packages build standalone** — `freight build` on a package whose
+  `[package]` declares `url`/`build` and has no native targets (a vcpkg-scraper
+  port) now fetches + foreign-builds it and places the produced library in
+  `target/<profile>/`. Validation and source discovery allow such target-less
+  foreign packages. With workspace `[patch]` wiring, `freight build -p <port>`
+  builds a port and its (transitive, foreign) dependencies — e.g. `libpng` pulls
+  and builds `zlib` and links against it.
 - **Transitive foreign dependencies** — a foreign package's own foreign deps are
   now discovered and built (the foreign-member sub-graph), in topological order,
   and each build receives its already-built dependencies' install prefixes via

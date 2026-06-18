@@ -477,7 +477,10 @@ fn validate_language(
 }
 
 fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
-    if m.bins.is_empty() && m.lib.is_none() {
+    // A foreign package (`[package].build` set, e.g. a vcpkg-scraper port) has no
+    // native targets — it's fetched and built with its own build system.
+    let is_foreign = m.package.build.is_some();
+    if m.bins.is_empty() && m.lib.is_none() && !is_foreign {
         errors.push(ValidationError::new(
             "targets",
             "at least one [[bin]] or [lib] target must be defined",
@@ -844,7 +847,10 @@ debug     = false
              [[bin]]\nname=\"x\"\nsrc=\"src/x.c\"\nrequired-features=[\"extras\"]\n",
             "[[bin]][0]",
         );
-        assert!(errs.is_empty(), "declared feature should be valid: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "declared feature should be valid: {errs:?}"
+        );
     }
 
     #[test]

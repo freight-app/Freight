@@ -1683,7 +1683,10 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
     let proto_only = found.sources.is_empty()
         && manifest.language.contains_key("proto")
         && proto::has_proto_files(project_dir);
-    if found.sources.is_empty() && !proto_only {
+    // A foreign package (`[package].build` set, e.g. a vcpkg-scraper port) has no
+    // local sources — it's fetched and built with its own build system.
+    let foreign = manifest.package.build.is_some();
+    if found.sources.is_empty() && !proto_only && !foreign {
         return Err(FreightError::CompilerNotFound(
             "no source files found under src/".into(),
         ));

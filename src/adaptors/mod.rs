@@ -488,19 +488,32 @@ fn build_foreign_member_closure(
                 }
             }
         }
-        nodes.insert(name, Node { dir, url, build, patches: mpatches, deps: fdeps });
+        nodes.insert(
+            name,
+            Node {
+                dir,
+                url,
+                build,
+                patches: mpatches,
+                deps: fdeps,
+            },
+        );
     }
 
     // 2. Topological order (deps first).
-    let graph: BTreeMap<String, Vec<String>> =
-        nodes.iter().map(|(n, node)| (n.clone(), node.deps.clone())).collect();
+    let graph: BTreeMap<String, Vec<String>> = nodes
+        .iter()
+        .map(|(n, node)| (n.clone(), node.deps.clone()))
+        .collect();
     let order = topo_order(&graph);
 
     // 3. Build each, accumulating install prefixes for downstream members.
     let mut prefixes: Vec<PathBuf> = Vec::new();
     let mut built = Vec::new();
     for name in order {
-        let Some(node) = nodes.get(&name) else { continue };
+        let Some(node) = nodes.get(&name) else {
+            continue;
+        };
         let source_dir = match &node.url {
             Some(url) => crate::fetch::http::fetch_url_dep(&name, url, None, &node.dir, progress)?,
             None => node.dir.clone(),
@@ -508,8 +521,16 @@ fn build_foreign_member_closure(
         apply_member_patches(&node.dir, &source_dir, &node.patches, progress);
         let build_dir = source_dir.join(".freight-build");
         let libs = invoke_build_system(
-            &source_dir, &build_dir, &name, &node.build, profile,
-            &[], None, progress, tool_paths, &prefixes,
+            &source_dir,
+            &build_dir,
+            &name,
+            &node.build,
+            profile,
+            &[],
+            None,
+            progress,
+            tool_paths,
+            &prefixes,
         )?;
         let include_dirs = collect_include_dirs(&source_dir, &[], Some(&build_dir));
         if let Some(p) = install_prefix(&source_dir, &node.build) {
@@ -517,12 +538,75 @@ fn build_foreign_member_closure(
                 prefixes.push(p);
             }
         }
-        built.push(ForeignBuilt { name, libs, include_dirs, raw_link_flags: vec![] });
+        built.push(ForeignBuilt {
+            name,
+            libs,
+            include_dirs,
+            raw_link_flags: vec![],
+        });
     }
     // Built deps-first (topological); the linker needs dependents before their
     // dependencies for static archives, so return in reverse order.
     built.reverse();
     Ok(built)
+}
+
+/// Build a *foreign package itself* (`[package]` with `url`/`build`, no native
+/// targets — the vcpkg-scraper shape) as a standalone `freight build`. Fetches
+/// the source (if `url`), applies `[package].patches`, runs the foreign build
+/// with `prefix_paths` on `CMAKE_PREFIX_PATH`, and copies the produced libraries
+/// into `target_dir/<profile>/`. Returns the placed library paths.
+pub fn build_foreign_self(
+    project_dir: &Path,
+    target_dir: &Path,
+    manifest: &Manifest,
+    profile: &str,
+    prefix_paths: &[PathBuf],
+    tool_paths: &[PathBuf],
+    progress: &Progress,
+) -> Result<Vec<PathBuf>, FreightError> {
+    let pkg = &manifest.package;
+    let build = pkg.build.clone().ok_or_else(|| {
+        FreightError::ManifestParse("foreign self-build requires [package].build".into())
+    })?;
+    let source_dir = match &pkg.url {
+        Some(url) => crate::fetch::http::fetch_url_dep(
+            &pkg.name,
+            url,
+            pkg.sha256.as_deref(),
+            project_dir,
+            progress,
+        )?,
+        None => project_dir.to_path_buf(),
+    };
+    apply_member_patches(project_dir, &source_dir, &pkg.patches, progress);
+    let build_dir = source_dir.join(".freight-build");
+    let libs = invoke_build_system(
+        &source_dir,
+        &build_dir,
+        &pkg.name,
+        &build,
+        profile,
+        &[],
+        manifest.compiler.target.as_deref(),
+        progress,
+        tool_paths,
+        prefix_paths,
+    )?;
+
+    // Place the built libraries in the package's own target/<profile>/.
+    let out_dir = target_dir.join(profile);
+    std::fs::create_dir_all(&out_dir).ok();
+    let mut placed = Vec::new();
+    for lib in &libs {
+        if let Some(fname) = lib.file_name() {
+            let dest = out_dir.join(fname);
+            if std::fs::copy(lib, &dest).is_ok() {
+                placed.push(dest);
+            }
+        }
+    }
+    Ok(placed)
 }
 
 /// The directory a member's dependency resolves to *if* it's itself a foreign
@@ -549,9 +633,7 @@ fn foreign_dep_dir(
 /// fed to dependents' `CMAKE_PREFIX_PATH`.
 fn install_prefix(source_dir: &Path, build: &str) -> Option<PathBuf> {
     match build {
-        "cmake" | "meson" | "autotools" => {
-            Some(source_dir.join(".freight-build").join("install"))
-        }
+        "cmake" | "meson" | "autotools" => Some(source_dir.join(".freight-build").join("install")),
         _ => Some(source_dir.to_path_buf()),
     }
 }
