@@ -40,11 +40,29 @@ enum Dep {
 struct DetailedDep {
     name: String,
     #[serde(default)]
-    features: Vec<String>,
+    features: Vec<FeatureRef>,
     #[serde(rename = "default-features", default = "default_true")]
     default_features: bool,
     #[serde(default)]
     platform: Option<String>,
+}
+
+/// A feature reference in a dependency's `features` list: a bare name, or an
+/// object `{ name, platform }` (vcpkg allows both).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FeatureRef {
+    Simple(String),
+    Detailed { name: String },
+}
+
+impl FeatureRef {
+    fn name(&self) -> &str {
+        match self {
+            FeatureRef::Simple(s) => s,
+            FeatureRef::Detailed { name } => name,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -99,7 +117,7 @@ pub(crate) fn apply_vcpkg_manifest(
             Dep::Simple(n) => (n.clone(), Vec::new(), true, None),
             Dep::Detailed(d) => (
                 d.name.clone(),
-                d.features.clone(),
+                d.features.iter().map(|f| f.name().to_string()).collect(),
                 d.default_features,
                 d.platform.clone(),
             ),
@@ -340,6 +358,19 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(out, "[package]\nname=\"p\"\n");
         assert!(w.is_empty());
+    }
+
+    #[test]
+    fn dep_with_object_form_features_parses_and_merges() {
+        // A dependency's `features` may mix strings and {name, platform} objects.
+        let vcpkg = r#"{ "name": "p", "dependencies": [
+            { "name": "sdl2", "features": ["x11", { "name": "wayland", "platform": "linux" }] } ] }"#;
+        let (out, _) = merge("[package]\nname = \"p\"\n", vcpkg);
+        let doc: DocumentMut = out.parse().unwrap();
+        let feats = doc["dependencies"]["sdl2"].as_inline_table().unwrap()
+            .get("features").unwrap().as_array().unwrap();
+        let names: Vec<&str> = feats.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(names, vec!["x11", "wayland"]);
     }
 
     #[test]
