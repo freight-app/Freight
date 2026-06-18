@@ -523,16 +523,34 @@ pub fn settings_for_lang(
 /// `target_dir` is the root of the target tree (e.g. `project/target` or
 /// `root/target/deps/name` for pool deps).
 pub fn object_path(target_dir: &Path, profile: &str, source_rel: &Path) -> PathBuf {
-    let mut p = target_dir.join(profile).join("objs").join(source_rel);
+    let mut p = target_dir.join(profile).join("objs").join(safe_obj_rel(source_rel));
     p.set_extension("o");
     p
 }
 
 /// Same as `object_path` but with `.d` extension for the Makefile dependency file.
 pub fn dep_file_path(target_dir: &Path, profile: &str, source_rel: &Path) -> PathBuf {
-    let mut p = target_dir.join(profile).join("objs").join(source_rel);
+    let mut p = target_dir.join(profile).join("objs").join(safe_obj_rel(source_rel));
     p.set_extension("d");
     p
+}
+
+/// Map a source path (which may reach outside the project via `..`, e.g. a
+/// workspace member referencing `../shared.c`) to a collision-free relative path
+/// that always stays under `objs/`. `..` components become `__up__`; normal
+/// paths are unchanged.
+fn safe_obj_rel(source_rel: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in source_rel.components() {
+        match comp {
+            Component::ParentDir => out.push("__up__"),
+            Component::Normal(c) => out.push(c),
+            // Relative inputs only: drop CurDir, root/prefix can't occur.
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Return `true` if the object is newer than the source and all its included headers.
@@ -1005,6 +1023,18 @@ pub fn emit_sources(
 mod tests {
     use super::*;
     use crate::toolchain::CompilerTemplate;
+
+    #[test]
+    fn object_path_keeps_parent_refs_inside_objs() {
+        let td = Path::new("/proj/target");
+        // A normal src/ path is unchanged.
+        let normal = object_path(td, "dev", Path::new("src/a.c"));
+        assert!(normal.ends_with("dev/objs/src/a.o"));
+        // A `../shared.c` (workspace member) must not escape objs/.
+        let up = object_path(td, "dev", Path::new("../shared.c"));
+        assert!(up.ends_with("dev/objs/__up__/shared.o"), "got {up:?}");
+        assert!(!up.to_string_lossy().contains("/objs/.."));
+    }
 
     fn templates() -> Vec<CompilerTemplate> {
         crate::toolchain::load_all_templates()

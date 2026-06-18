@@ -106,6 +106,13 @@ pub fn import_cmake(input: &Path, out_dir: Option<&Path>) -> Result<ImportResult
         ensure_three_part(&parsed.version)
     };
 
+    // Multiple libraries in one CMakeLists can't live in one freight package
+    // (a package has at most one [lib]). Emit a workspace: one member package
+    // per library (and per executable), each referencing the shared sources.
+    if parsed.libs.len() > 1 {
+        return import_multi_lib_workspace(&project_dir, out_root, &parsed, &pkg_version, &mut warnings);
+    }
+
     let toml = emit_toml(&pkg_name, &pkg_version, &parsed, &warnings);
     // Fold in a sibling vcpkg.json's declared dependencies, if present.
     let toml = super::vcpkg::apply_vcpkg_manifest(toml, &project_dir, &mut warnings);
@@ -171,6 +178,132 @@ fn import_workspace(
     })
 }
 
+// ── Multi-library workspace ─────────────────────────────────────────────────
+
+/// Emit a workspace for a project whose single CMakeLists defines several
+/// libraries: one member package per library, plus one per executable. Each
+/// member is a sub-package that references the shared sources by relative path
+/// (`[lib].srcs` / `[[bin]].src` are honoured by the build's source discovery).
+fn import_multi_lib_workspace(
+    project_dir: &Path,
+    out_root: &Path,
+    parsed: &Extracted,
+    version: &str,
+    warnings: &mut Vec<String>,
+) -> Result<ImportResult> {
+    std::fs::create_dir_all(out_root)
+        .with_context(|| format!("creating {}", out_root.display()))?;
+    let project_abs = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    let out_abs = std::fs::canonicalize(out_root).unwrap_or_else(|_| out_root.to_path_buf());
+
+    let mut written: Vec<PathBuf> = Vec::new();
+    let mut members: Vec<String> = Vec::new();
+    let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Rewrite a project-relative source path to be relative to a member dir.
+    let member_src = |member_abs: &Path, src: &str| -> String {
+        crate::lock::relative_path(member_abs, &project_abs.join(src))
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+
+    // One member per library.
+    for (lib_name, kind, srcs) in &parsed.libs {
+        let member = unique_member_name(lib_name, &mut used_names);
+        let member_abs = out_abs.join(&member);
+        let rewritten: Vec<String> = srcs.iter().map(|s| member_src(&member_abs, s)).collect();
+
+        let mut ex = member_base(parsed);
+        ex.libs = vec![(lib_name.clone(), *kind, rewritten)];
+        write_member(out_root, &member, version, &ex, &mut written)?;
+        members.push(member);
+    }
+
+    // One member per executable.
+    for (bin_name, srcs) in &parsed.bins {
+        if srcs.len() > 1 {
+            warnings.push(format!(
+                "executable `{bin_name}` has {} source files; only the entry point is wired \
+                 into its member (add the rest under its src/)", srcs.len()
+            ));
+        }
+        let member = unique_member_name(bin_name, &mut used_names);
+        let member_abs = out_abs.join(&member);
+        let rewritten: Vec<String> = srcs.iter().map(|s| member_src(&member_abs, s)).collect();
+
+        let mut ex = member_base(parsed);
+        ex.bins = vec![(bin_name.clone(), rewritten)];
+        write_member(out_root, &member, version, &ex, &mut written)?;
+        members.push(member);
+    }
+
+    // Root workspace manifest.
+    let mut doc = DocumentMut::new();
+    let mut ws_tbl = Table::new();
+    let mut arr = Array::new();
+    for m in &members {
+        arr.push(m.as_str());
+    }
+    ws_tbl.insert("members", Item::Value(arr.into()));
+    doc.insert("workspace", Item::Table(ws_tbl));
+    let root = out_root.join("freight.toml");
+    std::fs::write(&root, doc.to_string())
+        .with_context(|| format!("writing {}", root.display()))?;
+    written.insert(0, root);
+
+    warnings.push(format!(
+        "multiple libraries → emitted a workspace with {} members; dependencies were copied to \
+         each member and inter-library links (target_link_libraries between these targets) must \
+         be added manually as path deps", members.len()
+    ));
+
+    Ok(ImportResult {
+        written,
+        warnings: warnings.clone(),
+    })
+}
+
+/// A per-member [`Extracted`]: shares the parent's deps / standards / platform
+/// data but carries no targets, subdirs, or option()-derived features (the
+/// latter would be noise duplicated across every member).
+fn member_base(parsed: &Extracted) -> Extracted {
+    let mut ex = parsed.clone();
+    ex.bins = Vec::new();
+    ex.libs = Vec::new();
+    ex.subdirs = Vec::new();
+    ex.features = Vec::new();
+    ex
+}
+
+fn write_member(
+    out_root: &Path,
+    member: &str,
+    version: &str,
+    ex: &Extracted,
+    written: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let dir = out_root.join(member);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    let toml = emit_toml(member, version, ex, &[]);
+    let dest = dir.join("freight.toml");
+    std::fs::write(&dest, toml).with_context(|| format!("writing {}", dest.display()))?;
+    written.push(dest);
+    Ok(())
+}
+
+/// Sanitise a target name into a member dir name, disambiguating collisions.
+fn unique_member_name(raw: &str, used: &mut std::collections::HashSet<String>) -> String {
+    let base = sanitize_name(raw);
+    let mut name = base.clone();
+    let mut n = 2;
+    while !used.insert(name.clone()) {
+        name = format!("{base}-{n}");
+        n += 1;
+    }
+    name
+}
+
 // ── Input resolution ──────────────────────────────────────────────────────────
 
 fn resolve_input(input: &Path) -> Result<(PathBuf, PathBuf)> {
@@ -187,6 +320,7 @@ fn resolve_input(input: &Path) -> Result<(PathBuf, PathBuf)> {
 // ── Extracted data ────────────────────────────────────────────────────────────
 
 /// A dep fetched at configure-time by FetchContent, ExternalProject, or CPM.
+#[derive(Clone)]
 struct FetchedDep {
     name: String,
     tag: Option<String>,
@@ -196,6 +330,7 @@ struct FetchedDep {
     sha256: Option<String>,
 }
 
+#[derive(Clone)]
 struct Extracted {
     name: String,
     version: String,
@@ -677,6 +812,10 @@ fn handle_add_definitions(args: &[&str], ex: &mut Extracted, has_target: bool) {
         }
         let def = if let Some(rest) = arg.strip_prefix("-D") {
             rest.to_string()
+        } else if arg.starts_with('-') {
+            // `-U<name>` undefines and other compiler flags have no freight
+            // define equivalent — skip rather than emit an invalid `-D-U…`.
+            continue;
         } else if arg.starts_with('$') {
             continue;
         } else {
@@ -1329,7 +1468,9 @@ fn emit_toml(name: &str, version: &str, ex: &Extracted, warnings: &[String]) -> 
         }
     }
 
-    for (tgt_name, kind, srcs) in &ex.libs {
+    // `lib` is a single table in the manifest (a package has at most one
+    // library — projects with several are split into a workspace upstream).
+    if let Some((tgt_name, kind, srcs)) = ex.libs.first() {
         let mut lib_tbl = Table::new();
         lib_tbl.insert("name", value(tgt_name.as_str()));
         match kind {
@@ -1348,12 +1489,7 @@ fn emit_toml(name: &str, version: &str, ex: &Extracted, warnings: &[String]) -> 
             }
             lib_tbl.insert("srcs", Item::Value(arr.into()));
         }
-        let entry = doc
-            .entry("lib")
-            .or_insert(Item::ArrayOfTables(Default::default()));
-        if let Item::ArrayOfTables(aot) = entry {
-            aot.push(lib_tbl);
-        }
+        doc.insert("lib", Item::Table(lib_tbl));
     }
 
     // Language standards and platform deps appended as raw TOML to avoid empty headers.
@@ -1880,8 +2016,11 @@ mod tests {
     fn emits_lib_target_with_srcs() {
         let (ex, w) = extract_src("project(mylib)\nadd_library(mylib STATIC a.c b.c)");
         let toml = emit_toml("mylib", "0.1.0", &ex, &w);
-        assert!(toml.contains("[[lib]]"));
+        assert!(toml.contains("[lib]"));
+        assert!(!toml.contains("[[lib]]")); // single table, not array-of-tables
         assert!(toml.contains("srcs = [\"a.c\", \"b.c\"]"));
+        // The emitted manifest must round-trip through the real loader.
+        crate::manifest::load_manifest_str(&toml).expect("emitted toml parses");
     }
 
     #[test]
@@ -2194,5 +2333,52 @@ CPMAddPackage(
             "expected logging feature:\n{toml}"
         );
         assert!(toml.contains("default"), "expected default array:\n{toml}");
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static C: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "freight-cmake-{tag}-{}-{}",
+            std::process::id(),
+            C.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn multiple_libraries_emit_a_workspace() {
+        let dir = scratch_dir("ws");
+        std::fs::write(
+            dir.join("CMakeLists.txt"),
+            "project(multi)\n\
+             add_library(alpha STATIC alpha.c)\n\
+             add_library(beta STATIC beta.c)\n",
+        ).unwrap();
+
+        let result = import_cmake(&dir, None).expect("import ok");
+        let root = std::fs::read_to_string(dir.join("freight.toml")).unwrap();
+        assert!(root.contains("[workspace]"), "root should be a workspace:\n{root}");
+        assert!(root.contains("alpha") && root.contains("beta"));
+
+        // Each member is a valid single-[lib] package that round-trips.
+        for member in ["alpha", "beta"] {
+            let m = std::fs::read_to_string(dir.join(member).join("freight.toml")).unwrap();
+            assert!(m.contains("[lib]") && !m.contains("[[lib]]"), "member {member}:\n{m}");
+            crate::manifest::load_manifest_str(&m).expect("member parses");
+        }
+        assert!(result.written.len() >= 3); // root + 2 members
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn undefine_flags_are_not_emitted_as_defines() {
+        // `-U` undefines must not become an invalid `-D-U…`.
+        let (ex, w) = extract_src("add_definitions(-DFOO -UBAR)");
+        let toml = emit_toml("app", "0.1.0", &ex, &w);
+        assert!(toml.contains("FOO"));
+        assert!(!toml.contains("-U"), "undefine leaked into defines:\n{toml}");
+        crate::manifest::load_manifest_str(&toml).expect("parses");
     }
 }

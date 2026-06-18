@@ -722,20 +722,22 @@ fn emit_toml(
     }
 
     for t in targets {
-        let section = match t.kind {
-            TargetKind::Bin => "bin",
-            TargetKind::StaticLib | TargetKind::SharedLib => "lib",
-        };
         let mut tbl = Table::new();
         tbl["name"] = value(t.name.as_str());
-        if t.kind == TargetKind::SharedLib {
-            tbl["type"] = value("shared");
-        } else if t.kind == TargetKind::StaticLib {
-            tbl["type"] = value("static");
-        }
-        let arr = doc[section].or_insert(Item::ArrayOfTables(Default::default()));
-        if let Item::ArrayOfTables(aot) = arr {
-            aot.push(tbl);
+        match t.kind {
+            TargetKind::Bin => {
+                let arr = doc["bin"].or_insert(Item::ArrayOfTables(Default::default()));
+                if let Item::ArrayOfTables(aot) = arr {
+                    aot.push(tbl);
+                }
+            }
+            // `lib` is a single table; only the first library target is kept
+            // (a freight package has at most one library).
+            TargetKind::StaticLib | TargetKind::SharedLib if !doc.contains_key("lib") => {
+                tbl["type"] = value(if t.kind == TargetKind::SharedLib { "shared" } else { "static" });
+                doc["lib"] = Item::Table(tbl);
+            }
+            _ => {}
         }
     }
 

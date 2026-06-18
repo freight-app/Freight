@@ -8,6 +8,26 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- Source discovery now also compiles the files listed in `[lib].srcs` /
+  `[[bin]].src` (in addition to the `src/**` walk, de-duplicated), and adds the
+  parent dirs of `[lib].hdrs` to the include path. This lets projects whose
+  sources live at the repo root (or in a shared tree referenced via `../`) build
+  without relocating files — including migrated and workspace-member packages.
+- `freight migrate cmake` now emits a **workspace** when a project defines more
+  than one library (a freight package has at most one `[lib]`): one member
+  package per library plus one per executable, each referencing the shared
+  sources by relative path.
+
+### Fixed
+- `freight migrate` emitted `[[lib]]` (array of tables) which does not match the
+  manifest's single `lib` field — the output failed to parse. Now emits a single
+  `[lib]` table (cmake/make/autotools); make/autotools warn and keep the first
+  library when several are present.
+- `freight migrate cmake` no longer emits CMake `-U<name>` undefines (or other
+  non-`-D` flags) as defines, which produced an invalid `-D-U…` and broke the
+  build.
+
+### Changed
 - `freight migrate cmake|make|autotools` now folds in a sibling `vcpkg.json`'s
   declared dependencies — with override versions, features, `default-features`,
   and platform conditions (→ `[os.*.dependencies]`) — on top of the targets and

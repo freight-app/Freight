@@ -102,6 +102,31 @@ pub fn discover(
         }
     }
 
+    // Explicit target sources: compile files listed in `[lib].srcs` and
+    // `[[bin]].src` even when they live outside `src/` (e.g. a migrated project
+    // whose sources sit at the repo root, or a workspace member referencing a
+    // shared `../file.c`). The `src/` walk stays the zero-config default; these
+    // are additive and de-duplicated below.
+    let mut explicit: Vec<String> = Vec::new();
+    if let Some(lib) = &manifest.lib {
+        explicit.extend(lib.srcs.iter().cloned());
+    }
+    explicit.extend(manifest.bins.iter().map(|b| b.src.clone()));
+    for rel_str in explicit {
+        let rel = PathBuf::from(&rel_str);
+        let abs = project_dir.join(&rel);
+        if !abs.is_file() {
+            continue; // missing file → leave it to the build error / user
+        }
+        let ext = match abs.extension().and_then(|e| e.to_str()) {
+            Some(e) => format!(".{e}"),
+            None => continue,
+        };
+        if let Some(lang_key) = ext_map.get(ext.as_str()) {
+            sources.push(SourceFile { path: rel, lang_key: lang_key.clone() });
+        }
+    }
+
     // Stable sort + dedup in case globs from different sections overlap.
     sources.sort_by(|a, b| a.path.cmp(&b.path));
     sources.dedup_by(|a, b| a.path == b.path);
@@ -110,6 +135,20 @@ pub fn discover(
     let inc_dir = project_dir.join("inc");
     if inc_dir.is_dir() {
         include_dirs.push(PathBuf::from("inc"));
+    }
+    // Include the parent directory of each declared public header so a target
+    // whose `hdrs` live outside `inc/` still resolves its own includes.
+    if let Some(lib) = &manifest.lib {
+        for hdr in &lib.hdrs {
+            if let Some(parent) = PathBuf::from(hdr).parent() {
+                if !parent.as_os_str().is_empty()
+                    && project_dir.join(parent).is_dir()
+                    && !include_dirs.contains(&parent.to_path_buf())
+                {
+                    include_dirs.push(parent.to_path_buf());
+                }
+            }
+        }
     }
 
     DiscoveredSources {

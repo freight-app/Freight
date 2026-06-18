@@ -68,6 +68,17 @@ pub fn import_make(input: &Path, out_dir: Option<&Path>) -> Result<ImportResult>
 
     // ── Single project ────────────────────────────────────────────────────────
     let spec = analyze(&mf, &expanded, &project_dir, &content, &mut warnings);
+    let lib_count = spec
+        .targets
+        .iter()
+        .filter(|t| matches!(t.kind, TargetKind::StaticLib | TargetKind::DynamicLib))
+        .count();
+    if lib_count > 1 {
+        warnings.push(format!(
+            "{lib_count} library targets found — a freight package has one [lib], so only the \
+             first was kept; split the others into workspace members manually"
+        ));
+    }
     let toml = emit_toml(&spec);
     // Fold in a sibling vcpkg.json's declared dependencies, if present.
     let toml = super::vcpkg::apply_vcpkg_manifest(toml, &project_dir, &mut warnings);
@@ -593,7 +604,8 @@ fn emit_toml(spec: &ProjectSpec) -> String {
         doc["build"] = Item::Table(build);
     }
 
-    // [[bin]] / [[lib]]
+    // [[bin]] (array) + [lib] (single table — a package has at most one library;
+    // only the first library target is emitted, see import_make's warning).
     for target in &spec.targets {
         match target.kind {
             TargetKind::Bin => {
@@ -608,26 +620,13 @@ fn emit_toml(spec: &ProjectSpec) -> String {
                     .unwrap()
                     .push(tbl);
             }
-            TargetKind::StaticLib => {
+            TargetKind::StaticLib | TargetKind::DynamicLib if !doc.contains_key("lib") => {
                 let mut tbl = Table::new();
                 tbl["name"] = value(target.name.as_str());
-                tbl["type"] = value("static");
-                doc["lib"]
-                    .or_insert(Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
-                    .as_array_of_tables_mut()
-                    .unwrap()
-                    .push(tbl);
+                tbl["type"] = value(if target.kind == TargetKind::StaticLib { "static" } else { "shared" });
+                doc["lib"] = Item::Table(tbl);
             }
-            TargetKind::DynamicLib => {
-                let mut tbl = Table::new();
-                tbl["name"] = value(target.name.as_str());
-                tbl["type"] = value("shared");
-                doc["lib"]
-                    .or_insert(Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
-                    .as_array_of_tables_mut()
-                    .unwrap()
-                    .push(tbl);
-            }
+            _ => {} // additional libraries dropped (warned about in import_make)
         }
     }
 
