@@ -7,6 +7,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 
 ## [Unreleased]
 
+### Added
+- `freight migrate cmake|make|autotools` now folds in a sibling `vcpkg.json`'s
+  declared dependencies — with override versions, features, `default-features`,
+  and platform conditions (→ `[os.*.dependencies]`) — on top of the targets and
+  standards reconstructed from the build system. Versions resolve from
+  `vcpkg.json` overrides, then `pkg-config`, then the `"*"` draft placeholder.
+  This turns a CMake/Make project that declares its deps in `vcpkg.json` into a
+  complete, buildable `freight.toml` in one step.
+
 ## [0.1.1] — 2026-06-16
 
 First public release. (The `0.1.0` tag was reserved by a failed CI run under

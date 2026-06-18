@@ -1,6 +1,7 @@
 pub mod autotools;
 pub mod cmake;
 pub mod make;
+pub mod vcpkg;
 
 use std::collections::BTreeMap;
 

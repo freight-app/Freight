@@ -69,6 +69,8 @@ pub fn import_make(input: &Path, out_dir: Option<&Path>) -> Result<ImportResult>
     // ── Single project ────────────────────────────────────────────────────────
     let spec = analyze(&mf, &expanded, &project_dir, &content, &mut warnings);
     let toml = emit_toml(&spec);
+    // Fold in a sibling vcpkg.json's declared dependencies, if present.
+    let toml = super::vcpkg::apply_vcpkg_manifest(toml, &project_dir, &mut warnings);
 
     std::fs::create_dir_all(out_root)
         .with_context(|| format!("creating {}", out_root.display()))?;

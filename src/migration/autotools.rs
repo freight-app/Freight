@@ -228,6 +228,8 @@ pub fn import_autotools(input: &Path, out_dir: Option<&Path>) -> Result<ImportRe
         &ac_features,
         &warnings,
     );
+    // Fold in a sibling vcpkg.json's declared dependencies, if present.
+    let toml = super::vcpkg::apply_vcpkg_manifest(toml, &project_dir, &mut warnings);
 
     std::fs::create_dir_all(out_root)
         .with_context(|| format!("creating {}", out_root.display()))?;

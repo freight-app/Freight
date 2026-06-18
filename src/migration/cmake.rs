@@ -107,6 +107,8 @@ pub fn import_cmake(input: &Path, out_dir: Option<&Path>) -> Result<ImportResult
     };
 
     let toml = emit_toml(&pkg_name, &pkg_version, &parsed, &warnings);
+    // Fold in a sibling vcpkg.json's declared dependencies, if present.
+    let toml = super::vcpkg::apply_vcpkg_manifest(toml, &project_dir, &mut warnings);
     std::fs::create_dir_all(out_root)
         .with_context(|| format!("creating {}", out_root.display()))?;
     let dest = out_root.join("freight.toml");
