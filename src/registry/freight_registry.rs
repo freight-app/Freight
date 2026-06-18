@@ -721,6 +721,79 @@ impl FreightRegistry {
         http_post(&url, Some(token), "application/json", json_bytes)?;
         Ok(())
     }
+
+    // ── Package membership / per-package roles ──────────────────────────────────
+
+    /// `GET /api/v1/packages/:name/owners` — members with their package roles.
+    pub fn list_package_members(&self, name: &str) -> Result<Vec<PackageMember>, FreightError> {
+        let url = format!("{}/api/v1/packages/{}/owners", self.base_url, name);
+        #[derive(Deserialize)]
+        struct Resp {
+            users: Vec<PackageMember>,
+        }
+        Ok(http_get_json::<Resp>(&url, self.token.as_deref())?.users)
+    }
+
+    /// `PUT /api/v1/packages/:name/owners` — add a member with `role`.
+    pub fn add_package_member(
+        &self,
+        name: &str,
+        username: &str,
+        role: &str,
+    ) -> Result<String, FreightError> {
+        let token = self.require_token()?;
+        let url = format!("{}/api/v1/packages/{}/owners", self.base_url, name);
+        let body = serde_json::json!({ "users": [username], "role": role });
+        let json_bytes = serde_json::to_vec(&body)
+            .map_err(|e| FreightError::RegistryError(format!("serialize: {e}")))?;
+        let resp = http_put(&url, Some(token), "application/json", json_bytes)?;
+        Ok(parse_msg(&resp))
+    }
+
+    /// `DELETE /api/v1/packages/:name/owners` — remove a member.
+    pub fn remove_package_member(
+        &self,
+        name: &str,
+        username: &str,
+    ) -> Result<String, FreightError> {
+        let token = self.require_token()?;
+        let url = format!("{}/api/v1/packages/{}/owners", self.base_url, name);
+        let body = serde_json::json!({ "users": [username] });
+        let json_bytes = serde_json::to_vec(&body)
+            .map_err(|e| FreightError::RegistryError(format!("serialize: {e}")))?;
+        let resp = http_delete_body(&url, token, "application/json", json_bytes)?;
+        Ok(parse_msg(&resp))
+    }
+
+    /// `POST /api/v1/packages/:name/owners/:user/role` — set a member's role.
+    pub fn set_package_member_role(
+        &self,
+        name: &str,
+        username: &str,
+        role: &str,
+    ) -> Result<(), FreightError> {
+        let token = self.require_token()?;
+        let url = format!(
+            "{}/api/v1/packages/{}/owners/{}/role",
+            self.base_url,
+            name,
+            url_encode(username)
+        );
+        let body = serde_json::json!({ "role": role });
+        let json_bytes = serde_json::to_vec(&body)
+            .map_err(|e| FreightError::RegistryError(format!("serialize: {e}")))?;
+        http_post(&url, Some(token), "application/json", json_bytes)?;
+        Ok(())
+    }
+}
+
+/// Extract a human-readable `"msg"` field from an API JSON response, falling
+/// back to the raw body.
+fn parse_msg(resp: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(resp)
+        .ok()
+        .and_then(|v| v["msg"].as_str().map(str::to_string))
+        .unwrap_or_else(|| resp.trim().to_string())
 }
 
 // ── Admin API response shapes ─────────────────────────────────────────────────
@@ -773,6 +846,14 @@ pub struct ReportEntry {
     pub created_at: Option<i64>,
     #[serde(default)]
     pub resolution: Option<String>,
+}
+
+/// One member from `GET /api/v1/packages/:name/owners`.
+#[derive(Debug, Deserialize)]
+pub struct PackageMember {
+    pub login: String,
+    #[serde(default)]
+    pub role: String,
 }
 
 /// One entry from `GET /api/v1/admin/users`.
@@ -1356,6 +1437,76 @@ fn http_delete(url: &str, token: &str) -> Result<String, FreightError> {
         )),
         403 => Err(FreightError::RegistryError("permission denied".into())),
         404 => Err(FreightError::RegistryNotFound(url.to_string())),
+        _ => Err(FreightError::RegistryError(format!(
+            "HTTP {code}: {body_str}"
+        ))),
+    }
+}
+
+/// DELETE with a request body (curl: custom DELETE + upload). Used by endpoints
+/// that take a JSON payload on DELETE (e.g. removing package members).
+fn http_delete_body(
+    url: &str,
+    token: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> Result<String, FreightError> {
+    let mut resp = Vec::new();
+    let mut easy = Easy::new();
+
+    easy.url(url)
+        .map_err(|e| FreightError::RegistryError(format!("curl url: {e}")))?;
+    easy.custom_request("DELETE")
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.upload(true)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.in_filesize(body.len() as u64)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.fail_on_error(false)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+    easy.useragent(&format!("freight/{}", env!("CARGO_PKG_VERSION")))
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+
+    let mut hdrs = List::new();
+    hdrs.append(&format!("Content-Type: {content_type}"))
+        .map_err(|e| FreightError::RegistryError(format!("curl header: {e}")))?;
+    hdrs.append(&format!("Authorization: Bearer {token}"))
+        .map_err(|e| FreightError::RegistryError(format!("curl header: {e}")))?;
+    easy.http_headers(hdrs)
+        .map_err(|e| FreightError::RegistryError(format!("curl opt: {e}")))?;
+
+    let mut body_cursor = std::io::Cursor::new(body);
+    {
+        let mut transfer = easy.transfer();
+        transfer
+            .read_function(|buf| {
+                use std::io::Read;
+                Ok(body_cursor.read(buf).unwrap_or(0))
+            })
+            .map_err(|e| FreightError::RegistryError(format!("curl read: {e}")))?;
+        transfer
+            .write_function(|data| {
+                resp.extend_from_slice(data);
+                Ok(data.len())
+            })
+            .map_err(|e| FreightError::RegistryError(format!("curl write: {e}")))?;
+        transfer
+            .perform()
+            .map_err(|e| FreightError::RegistryError(format!("request: {e}")))?;
+    }
+
+    let code = easy
+        .response_code()
+        .map_err(|e| FreightError::RegistryError(format!("curl code: {e}")))?;
+    let body_str = String::from_utf8_lossy(&resp).into_owned();
+    match code {
+        200 | 201 | 204 => Ok(body_str),
+        401 => Err(FreightError::RegistryError(
+            "authentication required — check your token".into(),
+        )),
+        403 => Err(FreightError::RegistryError("permission denied".into())),
+        404 => Err(FreightError::RegistryNotFound(url.to_string())),
+        409 => Err(FreightError::RegistryError(format!("conflict: {body_str}"))),
         _ => Err(FreightError::RegistryError(format!(
             "HTTP {code}: {body_str}"
         ))),

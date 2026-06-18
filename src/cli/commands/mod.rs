@@ -24,6 +24,7 @@ pub mod metadata;
 pub mod migrate;
 pub mod new;
 pub mod outdated;
+pub mod owner;
 pub mod publish;
 pub mod register;
 pub mod remove;

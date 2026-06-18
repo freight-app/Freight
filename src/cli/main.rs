@@ -91,6 +91,8 @@ enum Commands {
     Register(commands::register::Args),
     /// Yank a published version (prevents new installs)
     Yank(commands::yank::Args),
+    /// Manage a package's members and their per-package roles
+    Owner(commands::owner::Args),
     /// Format source files
     Fmt(commands::fmt::Args),
     /// Lint source files
@@ -199,6 +201,7 @@ fn main() {
         Commands::Publish(args) => args.run(),
         Commands::Register(args) => args.run(),
         Commands::Yank(args) => args.run(),
+        Commands::Owner(args) => args.run(),
         Commands::Fmt(args) => args.run(),
         Commands::Lint(args) => args.run(),
         Commands::Migrate(args) => args.run(),
