@@ -60,6 +60,31 @@ struct BuildJob {
     tool_paths: Vec<PathBuf>,
 }
 
+/// The effective `[patch]` table for a build. Patches are graph-wide and come
+/// from the workspace root. When building the root itself, that's the passed
+/// manifest; when building a member, the root manifest is parsed for its
+/// `[patch]` table (the root may be `[workspace]`-only, so we read just `[patch]`
+/// rather than going through the full manifest loader, which requires `[package]`).
+fn effective_patches(
+    root_dir: &std::path::Path,
+    project_dir: &std::path::Path,
+    manifest: &Manifest,
+) -> std::collections::HashMap<String, Dependency> {
+    if root_dir == project_dir {
+        return manifest.patch.clone();
+    }
+    #[derive(serde::Deserialize)]
+    struct PatchOnly {
+        #[serde(default)]
+        patch: std::collections::HashMap<String, Dependency>,
+    }
+    std::fs::read_to_string(root_dir.join("freight.toml"))
+        .ok()
+        .and_then(|t| toml::from_str::<PatchOnly>(&t).ok())
+        .map(|p| p.patch)
+        .unwrap_or_default()
+}
+
 pub fn build_foreign_deps(
     project_dir: &std::path::Path,
     root_dir: &std::path::Path,
@@ -160,7 +185,18 @@ pub fn build_foreign_deps(
 
     let mut jobs: Vec<BuildJob> = Vec::new();
 
+    // `[patch]` overrides apply graph-wide and come from the workspace root.
+    // Honour them here too (the dep-graph builder already does), so a dep that is
+    // patched to a local path resolves to that member instead of falling through
+    // to pkg-config / the registry.
+    let patches = effective_patches(root_dir, project_dir, manifest);
+
     for (name, dep) in &manifest.dependencies {
+        // Apply a `[patch]` redirect, if any. A patched dep's path resolves
+        // relative to the root manifest, not the dep-declaring manifest.
+        let patched = patches.get(name);
+        let dep = patched.unwrap_or(dep);
+        let dep_base: &std::path::Path = if patched.is_some() { root_dir } else { project_dir };
 
         if let Some(version) = package_dep_version(dep) {
             // Check for a metadata-only registry dep that was fetched from upstream source.
@@ -218,7 +254,7 @@ pub fn build_foreign_deps(
         }
 
         let dep_dir = if let Some(rel) = &d.path {
-            project_dir.join(rel)
+            dep_base.join(rel)
         } else if d.is_git() {
             pkgs_root.join(".pkgs").join(name)
         } else if let Some(url) = &d.url {
