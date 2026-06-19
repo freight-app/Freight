@@ -208,7 +208,10 @@ mod alias_tests {
             .alias
             .insert("b".to_string(), AliasValue::One("bench".to_string()));
         base.apply_local(local);
-        assert_eq!(base.alias.get("b").cloned().unwrap().into_args(), vec!["bench"]);
+        assert_eq!(
+            base.alias.get("b").cloned().unwrap().into_args(),
+            vec!["bench"]
+        );
     }
 }
 

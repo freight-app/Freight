@@ -815,7 +815,7 @@ src  = "src/main.cpp"
 warnings = "all"
 "#;
         let m = crate::manifest::load_manifest_str(manifest_src).unwrap();
-        let s = link_settings(&m, "dev");
+        let s = link_settings(&m, "debug");
         assert!(s.standard.is_none(), "no -std= at link time");
         assert_eq!(s.warnings, "none", "no warnings at link time");
         assert!(s.defines.is_empty());

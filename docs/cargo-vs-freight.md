@@ -14,7 +14,7 @@ Freight is deliberately modelled after Cargo. If you know Cargo, most concepts m
 | Default binary | `[package] default-run` | `[package] default-run` — same |
 | Library target | `[lib]` | `[lib]` — adds `type = "static \| shared \| header-only"` |
 | Features | `[features]` | `[features]` — same syntax; active features emit `-D<NAME>` |
-| Build profiles | `[profile.dev]`, `[profile.release]` | `[profile.dev]`, `[profile.release]` — same keys |
+| Build profiles | `[profile.debug]`, `[profile.release]` | `[profile.debug]`, `[profile.release]` — same keys |
 | Dependencies | `[dependencies]` | `[dependencies]` — extended (see below) |
 | Dev dependencies | `[dev-dependencies]` | `[dev-dependencies]` — debug builds + tests only |
 | Build-time tools | `[build-dependencies]` (for build.rs) | `[build-dependencies]` — executables needed during compilation; `bin/` prepended to PATH |
@@ -171,7 +171,7 @@ An alias may not shadow a built-in subcommand; local entries override global.
 
 | | Cargo | Freight |
 |---|---|---|
-| Output directory | `target/debug/` or `target/release/` | `target/dev/` or `target/release/` |
+| Output directory | `target/debug/` or `target/release/` | `target/debug/` or `target/release/` |
 | Incremental builds | Rustc-native | mtime + `.d` dep files |
 | Parallel compilation | Always on | `rayon`-parallel; C++20 modules use a DAG-ordered Kahn batch |
 | LTO | `lto = true` in profile | `lto = true` in profile |

@@ -330,17 +330,13 @@ mod tests {
         assert!(r.dep_defines.get("openssl").is_none());
 
         // Weak entry + a strong activation elsewhere → define is forwarded.
-        let f = map(&[(
-            "tls",
-            &["dep:openssl", "openssl?/define:WITH_TLS"],
-        )]);
+        let f = map(&[("tls", &["dep:openssl", "openssl?/define:WITH_TLS"])]);
         let r = resolve_features(&f, &["tls".to_string()], false).unwrap();
         assert!(r.activated_deps.contains("openssl"));
-        assert!(
-            r.dep_defines
-                .get("openssl")
-                .is_some_and(|d| d.contains("WITH_TLS"))
-        );
+        assert!(r
+            .dep_defines
+            .get("openssl")
+            .is_some_and(|d| d.contains("WITH_TLS")));
     }
 
     #[test]

@@ -68,11 +68,18 @@ impl FeatureRef {
 #[derive(Deserialize)]
 struct Override {
     name: String,
-    #[serde(rename = "version", alias = "version-semver", alias = "version-date", alias = "version-string")]
+    #[serde(
+        rename = "version",
+        alias = "version-semver",
+        alias = "version-date",
+        alias = "version-string"
+    )]
     version: String,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 struct ResolvedDep {
     name: String,
@@ -99,7 +106,9 @@ pub(crate) fn apply_vcpkg_manifest(
     let manifest: Manifest = match serde_json::from_str(&raw) {
         Ok(m) => m,
         Err(e) => {
-            warnings.push(format!("vcpkg.json present but could not be parsed ({e}); skipping its dependencies"));
+            warnings.push(format!(
+                "vcpkg.json present but could not be parsed ({e}); skipping its dependencies"
+            ));
             return toml;
         }
     };
@@ -138,7 +147,12 @@ pub(crate) fn apply_vcpkg_manifest(
                 }
             },
         };
-        resolved.push(ResolvedDep { name, features, default_features, os });
+        resolved.push(ResolvedDep {
+            name,
+            features,
+            default_features,
+            os,
+        });
     }
 
     if resolved.is_empty() {
@@ -148,7 +162,9 @@ pub(crate) fn apply_vcpkg_manifest(
     let mut doc: DocumentMut = match toml.parse() {
         Ok(d) => d,
         Err(e) => {
-            warnings.push(format!("internal: migrated toml did not round-trip ({e}); vcpkg deps not merged"));
+            warnings.push(format!(
+                "internal: migrated toml did not round-trip ({e}); vcpkg deps not merged"
+            ));
             return toml;
         }
     };
@@ -183,7 +199,12 @@ fn insert_dep(doc: &mut DocumentMut, dep: &ResolvedDep, version: &str) -> bool {
         let existing_is_placeholder = existing
             .as_str()
             .map(|s| s == "*")
-            .or_else(|| existing.as_value().and_then(|v| v.as_str()).map(|s| s == "*"))
+            .or_else(|| {
+                existing
+                    .as_value()
+                    .and_then(|v| v.as_str())
+                    .map(|s| s == "*")
+            })
             .unwrap_or(false);
         if !(existing_is_placeholder && version != "*") {
             return false;
@@ -330,7 +351,10 @@ mod tests {
         let (out, _) = merge("[package]\nname = \"p\"\n", vcpkg);
         assert!(out.contains("[os.windows.dependencies]"), "got:\n{out}");
         let doc: DocumentMut = out.parse().unwrap();
-        assert!(doc["os"]["windows"]["dependencies"].as_table().unwrap().contains_key("dirent"));
+        assert!(doc["os"]["windows"]["dependencies"]
+            .as_table()
+            .unwrap()
+            .contains_key("dirent"));
     }
 
     #[test]
@@ -341,12 +365,15 @@ mod tests {
             "overrides": [{ "name": "zlib", "version": "1.3.1" },
                           { "name": "curl", "version": "9.9" }] }"#;
         // overrides alone don't add deps; declare them as dependencies too.
-        let vcpkg = vcpkg.replace("\"dependencies\": []", "\"dependencies\": [\"zlib\", \"curl\"]");
+        let vcpkg = vcpkg.replace(
+            "\"dependencies\": []",
+            "\"dependencies\": [\"zlib\", \"curl\"]",
+        );
         let (out, _) = merge(toml, &vcpkg);
         let doc: DocumentMut = out.parse().unwrap();
         let deps = doc["dependencies"].as_table().unwrap();
         assert_eq!(deps["zlib"].as_str(), Some("1.3.1")); // upgraded from "*"
-        assert_eq!(deps["curl"].as_str(), Some("8.0"));   // real value kept
+        assert_eq!(deps["curl"].as_str(), Some("8.0")); // real value kept
     }
 
     #[test]
@@ -367,8 +394,13 @@ mod tests {
             { "name": "sdl2", "features": ["x11", { "name": "wayland", "platform": "linux" }] } ] }"#;
         let (out, _) = merge("[package]\nname = \"p\"\n", vcpkg);
         let doc: DocumentMut = out.parse().unwrap();
-        let feats = doc["dependencies"]["sdl2"].as_inline_table().unwrap()
-            .get("features").unwrap().as_array().unwrap();
+        let feats = doc["dependencies"]["sdl2"]
+            .as_inline_table()
+            .unwrap()
+            .get("features")
+            .unwrap()
+            .as_array()
+            .unwrap();
         let names: Vec<&str> = feats.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(names, vec!["x11", "wayland"]);
     }

@@ -13,5 +13,5 @@ src  = "src/main.c"
 [dependencies]
 libdoesnotexist = "1.0"
 
-[profile.dev]
+[profile.debug]
 debug = true

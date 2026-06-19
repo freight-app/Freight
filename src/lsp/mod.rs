@@ -1,5 +1,5 @@
 //! `freight lsp` — Language Server Protocol multiplexer for freight.toml and
-//! source files (clangd, fortls, asm-lsp passthroughs).
+//! source files (clangd and asm-lsp passthroughs, native Fortran).
 
 pub mod doxygen;
 mod index;
@@ -16,11 +16,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use index::LanguageIndexer;
+use indexers::AsmIndexer;
 #[cfg(feature = "clang-bridge")]
 use indexers::ClangIndexer;
-#[cfg(feature = "fortran-lsp")]
 use indexers::FortranIndexer;
-use indexers::AsmIndexer;
 
 use crate::build::generate_lsp_compile_commands_at;
 use crate::manifest::{find_manifest_dir, load_manifest_cached, load_workspace_manifest};
@@ -40,7 +39,6 @@ use protocol::*;
 
 pub(crate) const INTERNAL_ID_PREFIX: &str = "__freight_";
 const INTERNAL_CLANGD_INIT_ID: &str = "__freight_clangd_initialize";
-const INTERNAL_FORTLS_INIT_ID: &str = "__freight_fortls_initialize";
 const INTERNAL_ASM_LSP_INIT_ID: &str = "__freight_asm_lsp_initialize";
 
 // ---------------------------------------------------------------------------
@@ -53,10 +51,6 @@ pub struct Args {
     pub clangd: String,
     #[arg(long)]
     pub no_clangd: bool,
-    #[arg(long, default_value = "fortls")]
-    pub fortls: String,
-    #[arg(long)]
-    pub no_fortls: bool,
     #[arg(long, default_value = "asm-lsp")]
     pub asm_lsp: String,
     #[arg(long)]
@@ -65,7 +59,7 @@ pub struct Args {
     /// `asm-lsp` passthrough.
     #[arg(long)]
     pub no_native_asm: bool,
-    #[arg(long, default_value = "dev")]
+    #[arg(long, default_value = "debug")]
     pub profile: String,
     /// Use the in-process clang bridge to serve C/C++ language features (hover,
     /// goto, completion, document symbols, folding, references, highlight,
@@ -131,12 +125,6 @@ fn clangd_supports_flag(clangd_bin: &str, flag: &str) -> bool {
                 || String::from_utf8_lossy(&o.stderr).contains(flag)
         })
         .unwrap_or(false)
-}
-
-fn native_fortran_enabled() -> bool {
-    // The native Fortran indexer is opt-in (the `fortran-lsp` cargo feature).
-    // When it's not compiled in, `freight lsp` passes Fortran through to fortls.
-    cfg!(feature = "fortran-lsp")
 }
 
 /// Whether the native assembly indexer serves `.s`/`.asm`/`.nasm` files. When
@@ -220,7 +208,6 @@ struct ServerState {
     docs: HashMap<String, String>,
     templates: Vec<crate::toolchain::CompilerTemplate>,
     clangd: Option<Passthrough>,
-    fortls: Option<Passthrough>,
     asm_lsp: Option<Passthrough>,
     /// Header → package mapping for `#include` hover.
     header_index: HeaderIndex,
@@ -287,7 +274,6 @@ enum PendingClangdRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SourceServer {
     Clangd,
-    Fortls,
     AsmLsp,
 }
 
@@ -322,9 +308,6 @@ impl Server {
         // (hover/goto/completion/documentSymbol/folding/references/highlight/
         // semanticTokens/inlay/diagnostics) falls through to the clangd forward.
         let mut indexers: Vec<Box<dyn LanguageIndexer>> = Vec::new();
-        // The native Fortran indexer is opt-in (`fortran-lsp` feature); otherwise
-        // Fortran falls through to the fortls passthrough.
-        #[cfg(feature = "fortran-lsp")]
         indexers.push(Box::new(FortranIndexer::new()));
         if native_asm_enabled(&args) {
             indexers.push(Box::new(AsmIndexer::new()));
@@ -350,7 +333,6 @@ impl Server {
                 docs: HashMap::new(),
                 templates: load_all_templates(),
                 clangd: None,
-                fortls: None,
                 asm_lsp: None,
                 header_index: HeaderIndex::default(),
                 module_index: ModuleIndex::default(),
@@ -408,11 +390,14 @@ impl Server {
                 "textDocument/inlayHint" => self.handle_inlay_hints(msg)?,
                 "textDocument/definition" => self.handle_definition_or_forward(msg)?,
                 "textDocument/declaration" => self.handle_definition_or_forward(msg)?,
+                "textDocument/implementation" => self.handle_implementation_or_forward(msg)?,
                 "textDocument/documentLink" => self.handle_document_links(msg)?,
                 "textDocument/documentSymbol" => self.handle_document_symbol(msg)?,
+                "workspace/symbol" => self.handle_workspace_symbol(msg)?,
                 "textDocument/foldingRange" => self.handle_folding_range(msg)?,
                 "textDocument/references" => self.handle_references(msg)?,
                 "textDocument/documentHighlight" => self.handle_document_highlight(msg)?,
+                "textDocument/selectionRange" => self.handle_selection_range(msg)?,
                 "textDocument/semanticTokens/full" => self.handle_semantic_tokens(msg)?,
                 "freight/workspaceInfo" => self.handle_workspace_info(msg)?,
                 "freight/setConfig" => self.handle_set_config(msg)?,
@@ -434,11 +419,6 @@ impl Server {
         let mut source_caps = Vec::new();
         if !self.args.no_clangd {
             if let Some(caps) = self.start_clangd(&msg) {
-                source_caps.push(caps);
-            }
-        }
-        if !native_fortran_enabled() && !self.args.no_fortls {
-            if let Some(caps) = self.start_fortls(&msg) {
                 source_caps.push(caps);
             }
         }
@@ -745,9 +725,9 @@ impl Server {
 
         // Forward all hover requests directly to the passthrough server.
         match source_server_for_uri(&uri) {
-            Some(SourceServer::Clangd)
-            | Some(SourceServer::Fortls)
-            | Some(SourceServer::AsmLsp) => self.forward_by_uri(&uri, &msg),
+            Some(SourceServer::Clangd) | Some(SourceServer::AsmLsp) => {
+                self.forward_by_uri(&uri, &msg)
+            }
             _ => self.respond(msg.get("id").cloned(), Value::Null),
         }
     }
@@ -829,7 +809,8 @@ impl Server {
             )
             .unwrap_or_else(|| "system".to_string());
             let stubs = crate::toolchain::system_libs::load_system_lib_stubs();
-            if let Some(stub) = crate::toolchain::system_libs::find_stub_by_header(&header, &stubs) {
+            if let Some(stub) = crate::toolchain::system_libs::find_stub_by_header(&header, &stubs)
+            {
                 let os = stub.section_os();
                 let status = if self.declared_system_features().contains(&stub.name) {
                     format!("Linked via `[os.{os}] features = [\"{}\"]`.", stub.name)
@@ -893,6 +874,21 @@ impl Server {
             .indexers
             .iter_mut()
             .find_map(|ix| ix.goto_definition(&uri, &msg))
+        {
+            return self.respond(msg.get("id").cloned(), location);
+        }
+        self.forward_by_uri(&uri, &msg)
+    }
+
+    fn handle_implementation_or_forward(&mut self, msg: Value) -> io::Result<()> {
+        let Some(uri) = text_document_uri(&msg) else {
+            return self.forward_or_null(msg);
+        };
+        if let Some(location) = self
+            .state
+            .indexers
+            .iter_mut()
+            .find_map(|ix| ix.goto_implementation(&uri, &msg))
         {
             return self.respond(msg.get("id").cloned(), location);
         }
@@ -1003,7 +999,7 @@ impl Server {
     }
 
     /// `textDocument/documentSymbol` — prefer a language indexer (clang-bridge
-    /// for C/C++), otherwise forward to the source server (clangd/fortls/…).
+    /// for C/C++), otherwise forward to the source server (clangd/asm-lsp/…).
     fn handle_document_symbol(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let uri = text_document_uri(&msg);
@@ -1017,6 +1013,23 @@ impl Server {
             return self.respond(Some(id), Value::Array(syms));
         }
         self.forward_or_null(msg)
+    }
+
+    /// `workspace/symbol` — aggregate flat symbols from native language indexers.
+    fn handle_workspace_symbol(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let query = msg
+            .get("params")
+            .and_then(|params| params.get("query"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let mut symbols = Vec::new();
+        for indexer in &mut self.state.indexers {
+            if let Some(mut items) = indexer.workspace_symbols(query) {
+                symbols.append(&mut items);
+            }
+        }
+        self.respond(Some(id), Value::Array(symbols))
     }
 
     /// `textDocument/foldingRange` — prefer a language indexer, else forward.
@@ -1067,32 +1080,41 @@ impl Server {
         self.forward_or_null(msg)
     }
 
-    /// `textDocument/semanticTokens/full` — prefer a language indexer, else
-    /// forward.  The indexer returns the LSP-encoded `data` array directly.
+    /// `textDocument/selectionRange` — prefer a language indexer, else forward.
+    fn handle_selection_range(&mut self, msg: Value) -> io::Result<()> {
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let uri = text_document_uri(&msg);
+        let result = uri.as_deref().and_then(|u| {
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.selection_ranges(u, &msg))
+        });
+        if let Some(ranges) = result {
+            return self.respond(Some(id), Value::Array(ranges));
+        }
+        self.forward_or_null(msg)
+    }
+
+    /// `textDocument/semanticTokens/full` — prefer a language indexer. The
+    /// indexer returns the LSP-encoded `data` array directly.
     ///
-    /// Freight's indexers emit tokens against freight's legend, which is only the
-    /// advertised global legend when the clang bridge is on (see
-    /// `freight_capabilities`). With the bridge off, clangd owns the legend, so we
-    /// forward *every* request to it rather than mixing freight-legend tokens
-    /// (e.g. from the Fortran indexer) into a clangd-legend stream — that mismatch
-    /// is what scrambles highlighting colours.
+    /// Freight advertises its own global semantic-token legend when native
+    /// token-producing indexers are active. Do not forward clangd semantic tokens
+    /// under that legend: clangd uses a different token index order.
     fn handle_semantic_tokens(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let result = if self.clang_bridge_active() {
-            let uri = text_document_uri(&msg);
-            uri.as_deref().and_then(|u| {
-                self.state
-                    .indexers
-                    .iter_mut()
-                    .find_map(|ix| ix.semantic_tokens(u))
-            })
-        } else {
-            None
-        };
+        let uri = text_document_uri(&msg);
+        let result = uri.as_deref().and_then(|u| {
+            self.state
+                .indexers
+                .iter_mut()
+                .find_map(|ix| ix.semantic_tokens(u))
+        });
         if let Some(data) = result {
             return self.respond(Some(id), json!({ "data": data }));
         }
-        self.forward_or_null(msg)
+        self.respond(Some(id), Value::Null)
     }
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
@@ -1752,12 +1774,12 @@ fn header_provider_label(
     // The header index is sysroot-aware, so a resolved C++ path reflects the
     // target's libstdc++/libc++ even on a cross build.
     Some(
-        resolve_provider(cap, providers, triple.as_deref(), resolved_path).unwrap_or_else(
-            || match cap {
+        resolve_provider(cap, providers, triple.as_deref(), resolved_path).unwrap_or_else(|| {
+            match cap {
                 "cxx" => "C++ stdlib".to_string(),
                 _ => "libc".to_string(),
-            },
-        ),
+            }
+        }),
     )
 }
 
@@ -1899,7 +1921,6 @@ impl Server {
     fn forward_to_passthrough(&mut self, kind: SourceServer, msg: &Value) -> io::Result<bool> {
         let server = match kind {
             SourceServer::Clangd => self.state.clangd.as_ref(),
-            SourceServer::Fortls => self.state.fortls.as_ref(),
             SourceServer::AsmLsp => self.state.asm_lsp.as_ref(),
         };
         let Some(server) = server else {
@@ -1910,11 +1931,7 @@ impl Server {
     }
 
     fn forward_to_all_passthroughs(&mut self, msg: &Value) -> io::Result<()> {
-        for kind in [
-            SourceServer::Clangd,
-            SourceServer::Fortls,
-            SourceServer::AsmLsp,
-        ] {
+        for kind in [SourceServer::Clangd, SourceServer::AsmLsp] {
             let _ = self.forward_to_passthrough(kind, msg);
         }
         Ok(())
@@ -1957,47 +1974,48 @@ impl Server {
         let _ = uri;
         #[cfg(feature = "clang-bridge")]
         {
-        if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
-            return;
-        }
-        let Some(path) = path_from_uri(uri) else {
-            return;
-        };
-        let flags: Vec<String> = self
-            .state
-            .indexers
-            .iter()
-            .flat_map(|ix| ix.flags_for(&path))
-            .collect();
-        let uri = uri.to_string();
-        let out = Arc::clone(&self.out);
-        let cache = Arc::clone(&self.state.diag_cache);
-        thread::spawn(move || {
-            let path_str = path.to_string_lossy().into_owned();
-            let flag_refs: Vec<&str> = flags.iter().map(String::as_str).collect();
-            let tidy_diags: Vec<Value> = clang_bridge::tidy::run(None, &path_str, None, &flag_refs)
-                .filter(|d| d.file == path_str)
-                .map(|d| indexers::Clang::diag_to_lsp(&d, "clang-tidy"))
-                .collect();
-            tracing::debug!(file = %path_str, count = tidy_diags.len(), "clang-tidy done");
-            let mut guard = cache.lock().unwrap();
-            let entry = guard.entry(uri.clone()).or_default();
-            entry.tidy = tidy_diags;
-            let merged: Vec<Value> = entry
-                .clangd
+            if !matches!(source_server_for_uri(uri), Some(SourceServer::Clangd)) {
+                return;
+            }
+            let Some(path) = path_from_uri(uri) else {
+                return;
+            };
+            let flags: Vec<String> = self
+                .state
+                .indexers
                 .iter()
-                .chain(entry.tidy.iter())
-                .chain(entry.freight.iter())
-                .cloned()
+                .flat_map(|ix| ix.flags_for(&path))
                 .collect();
-            drop(guard);
-            let msg = json!({
-                "jsonrpc": "2.0",
-                "method": "textDocument/publishDiagnostics",
-                "params": { "uri": uri, "diagnostics": merged }
+            let uri = uri.to_string();
+            let out = Arc::clone(&self.out);
+            let cache = Arc::clone(&self.state.diag_cache);
+            thread::spawn(move || {
+                let path_str = path.to_string_lossy().into_owned();
+                let flag_refs: Vec<&str> = flags.iter().map(String::as_str).collect();
+                let tidy_diags: Vec<Value> =
+                    clang_bridge::tidy::run(None, &path_str, None, &flag_refs)
+                        .filter(|d| d.file == path_str)
+                        .map(|d| indexers::Clang::diag_to_lsp(&d, "clang-tidy"))
+                        .collect();
+                tracing::debug!(file = %path_str, count = tidy_diags.len(), "clang-tidy done");
+                let mut guard = cache.lock().unwrap();
+                let entry = guard.entry(uri.clone()).or_default();
+                entry.tidy = tidy_diags;
+                let merged: Vec<Value> = entry
+                    .clangd
+                    .iter()
+                    .chain(entry.tidy.iter())
+                    .chain(entry.freight.iter())
+                    .cloned()
+                    .collect();
+                drop(guard);
+                let msg = json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/publishDiagnostics",
+                    "params": { "uri": uri, "diagnostics": merged }
+                });
+                let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
             });
-            let _ = write_lsp_message(&mut *out.lock().unwrap(), &msg);
-        });
         }
     }
 
@@ -2559,39 +2577,6 @@ impl Server {
         caps
     }
 
-    fn start_fortls(&mut self, initialize_msg: &Value) -> Option<Value> {
-        // Tell fortls where the sources live so it can resolve modules and
-        // includes. We always include `src/` plus the project root.
-        let root = self
-            .active_manifest_dir()
-            .unwrap_or_else(|| self.state.root_dir.clone());
-        let src_dir = root.join("src");
-        let mut args = vec![
-            "--source_dirs".to_string(),
-            if src_dir.is_dir() {
-                format!("{}", src_dir.display())
-            } else {
-                format!("{}", root.display())
-            },
-            "--incremental_sync".to_string(),
-            "--notify_init".to_string(),
-        ];
-        // Suppress fortls's banner chatter in the output channel.
-        args.push("--silent".to_string());
-        let (server, caps) = self.start_passthrough_in(
-            "fortls",
-            &self.args.fortls,
-            &args,
-            INTERNAL_FORTLS_INIT_ID,
-            initialize_msg,
-            Some(&root),
-            None,
-            None,
-        )?;
-        self.state.fortls = Some(server);
-        caps
-    }
-
     fn start_asm_lsp(&mut self, initialize_msg: &Value) -> Option<Value> {
         let root = self
             .active_manifest_dir()
@@ -2729,7 +2714,6 @@ impl Server {
     fn shutdown_passthroughs(&mut self) {
         let shutdowns = [
             (SourceServer::Clangd, "__freight_clangd_shutdown"),
-            (SourceServer::Fortls, "__freight_fortls_shutdown"),
             (SourceServer::AsmLsp, "__freight_asm_lsp_shutdown"),
         ];
         for (kind, id) in shutdowns {
@@ -2740,9 +2724,6 @@ impl Server {
 
     fn kill_passthroughs(&mut self) {
         if let Some(mut s) = self.state.clangd.take() {
-            let _ = s.child.kill();
-        }
-        if let Some(mut s) = self.state.fortls.take() {
             let _ = s.child.kill();
         }
         if let Some(mut s) = self.state.asm_lsp.take() {
@@ -2826,11 +2807,13 @@ mod tests {
         let providers = crate::toolchain::std_providers::load_std_providers();
         // libc from the cross triple.
         assert_eq!(
-            header_provider_label("stdio.h", None, Some("aarch64-linux-musl"), &providers).as_deref(),
+            header_provider_label("stdio.h", None, Some("aarch64-linux-musl"), &providers)
+                .as_deref(),
             Some("musl")
         );
         assert_eq!(
-            header_provider_label("pthread.h", None, Some("x86_64-linux-gnu"), &providers).as_deref(),
+            header_provider_label("pthread.h", None, Some("x86_64-linux-gnu"), &providers)
+                .as_deref(),
             Some("glibc")
         );
         // Native C++ from the resolved path.
@@ -2845,7 +2828,10 @@ mod tests {
             Some("libstdc++")
         );
         // Not a system header.
-        assert_eq!(header_provider_label("myproj.h", None, None, &providers), None);
+        assert_eq!(
+            header_provider_label("myproj.h", None, None, &providers),
+            None
+        );
     }
 
     #[test]
@@ -2861,7 +2847,8 @@ mod tests {
 
     #[test]
     fn insert_os_feature_appends_to_existing() {
-        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[os.unix]\nfeatures = [\"m\"]\n";
+        let src =
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[os.unix]\nfeatures = [\"m\"]\n";
         let out = insert_os_feature_toml(src, "unix", "pthread").expect("inserts");
         let feats = crate::manifest::load_manifest_str(&out).unwrap().os["unix"]
             .features

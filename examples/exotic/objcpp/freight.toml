@@ -17,7 +17,7 @@ features = ["Foundation"]   # -framework Foundation
 backend  = "clang++"
 warnings = "all"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

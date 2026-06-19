@@ -7,7 +7,7 @@ description = "Pure Ada binary: records, subtype constraints, insertion sort, ex
 name = "ada-hello"
 src  = "src/main.adb"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

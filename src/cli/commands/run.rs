@@ -70,7 +70,7 @@ fn cmd_run_example(
     sanitize: &[String],
     run_args: &[String],
 ) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
     if at_workspace_root() {
         print_error("`--example` is not supported at a workspace root — run it from a member");
         return;
@@ -121,7 +121,7 @@ pub fn cmd_run(
     run_args: &[String],
     sanitize: &[String],
 ) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
 
     if at_workspace_root() {
         let Some(pkg) = package else {

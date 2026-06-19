@@ -111,7 +111,10 @@ fn cmd_reports(registry: &FreightRegistry, status: Option<&str>) {
         Ok(reports) => {
             for r in reports {
                 let version = r.version.as_deref().unwrap_or("*");
-                println!("#{}  [{}]  {}@{}  — {}", r.id, r.status, r.package, version, r.reason);
+                println!(
+                    "#{}  [{}]  {}@{}  — {}",
+                    r.id, r.status, r.package, version, r.reason
+                );
                 if let Some(details) = r.details.as_deref().filter(|d| !d.is_empty()) {
                     println!("    {details}");
                 }

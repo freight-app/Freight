@@ -143,8 +143,9 @@ fn extract_archive(archive: &Path, dest: &Path, ext: &str) -> Result<(), Freight
 /// every entry (matching `tar --strip-components=1`). Done in-process via the
 /// `zip` crate so no external `unzip` binary is required.
 fn extract_zip(archive: &Path, dest: &Path) -> Result<(), FreightError> {
-    let file = std::fs::File::open(archive)
-        .map_err(|e| FreightError::ManifestParse(format!("opening '{}': {e}", archive.display())))?;
+    let file = std::fs::File::open(archive).map_err(|e| {
+        FreightError::ManifestParse(format!("opening '{}': {e}", archive.display()))
+    })?;
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| FreightError::ManifestParse(format!("reading zip archive: {e}")))?;
 
@@ -203,8 +204,15 @@ mod tests {
         assert!(
             dest.join("include/foo.h").exists(),
             "first path component should be stripped (got {:?})",
-            std::fs::read_dir(&dest).unwrap().flatten().map(|e| e.path()).collect::<Vec<_>>()
+            std::fs::read_dir(&dest)
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .collect::<Vec<_>>()
         );
-        assert!(!dest.join("pkg-1.0").exists(), "top-level dir must be stripped");
+        assert!(
+            !dest.join("pkg-1.0").exists(),
+            "top-level dir must be stripped"
+        );
     }
 }

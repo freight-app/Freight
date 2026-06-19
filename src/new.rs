@@ -159,7 +159,7 @@ opt-level = 2
 debug     = false
 warnings  = "all"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

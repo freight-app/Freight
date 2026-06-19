@@ -6,8 +6,8 @@ Shows two Cargo-style binary-target controls:
 - **`default-run`** — `freight run` picks `toolkit` without needing `--bin`.
 
 ```sh
-freight build                    # → target/dev/toolkit only
-freight build --features extras  # → target/dev/toolkit AND target/dev/diag
+freight build                    # → target/debug/toolkit only
+freight build --features extras  # → target/debug/toolkit AND target/debug/diag
 freight run                      # runs toolkit (default-run)
 freight run --bin diag           # needs the diag binary to exist first
 ```

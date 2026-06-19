@@ -268,7 +268,7 @@ pub fn cmd_build(
     emit: &[String],
     time_passes: bool,
 ) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
 
     // --time-passes uses a specialised progress that collects timing data;
     // skip the TUI for that path.
@@ -366,7 +366,7 @@ pub fn cmd_build_examples(
     use_defaults: bool,
     sanitize: &[String],
 ) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
     if at_workspace_root() {
         print_error("`--example(s)` is not supported at a workspace root — run it from a member");
         return;
@@ -446,7 +446,7 @@ pub fn cmd_build_graph(
 ) {
     use owo_colors::OwoColorize;
 
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
 
     let cwd = match std::env::current_dir() {
         Ok(d) => d,

@@ -536,9 +536,7 @@ fn build_foreign_member_closure(
         // Header-only / copy-only ports often keep their header(s) at the archive
         // root (e.g. plf_colony.h, stb_image.h) rather than in include/. Expose the
         // source root so dependents can find them — no build tool is involved.
-        if matches!(node.build.as_str(), "none" | "header")
-            && !include_dirs.contains(&source_dir)
-        {
+        if matches!(node.build.as_str(), "none" | "header") && !include_dirs.contains(&source_dir) {
             include_dirs.push(source_dir.clone());
         }
         if let Some(p) = install_prefix(&source_dir, &node.build) {

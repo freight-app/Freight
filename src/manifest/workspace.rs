@@ -109,7 +109,10 @@ fn is_marker(item: &Item) -> bool {
         == Some(true)
 }
 
-fn resolve_package(doc: &mut DocumentMut, workspace: &dyn toml_edit::TableLike) -> Result<(), FreightError> {
+fn resolve_package(
+    doc: &mut DocumentMut,
+    workspace: &dyn toml_edit::TableLike,
+) -> Result<(), FreightError> {
     let Some(pkg) = doc.get_mut("package").and_then(Item::as_table_like_mut) else {
         return Ok(());
     };

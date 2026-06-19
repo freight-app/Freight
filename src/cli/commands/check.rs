@@ -129,7 +129,7 @@ fn print_manifest_summary(m: &Manifest) {
     }
 
     let profiles: Vec<&str> = [
-        m.profile.dev.is_some().then_some("dev"),
+        m.profile.debug.is_some().then_some("debug"),
         m.profile.release.is_some().then_some("release"),
     ]
     .into_iter()

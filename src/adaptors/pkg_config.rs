@@ -174,29 +174,37 @@ fn run_pkg_config(
     let exe =
         targeted_env_var("PKG_CONFIG", target).unwrap_or_else(|| OsString::from("pkg-config"));
 
-    let out = build_command(&exe, flag, &parts, is_static, target, override_path, sysroot)
-        .output()
-        .or_else(|e| {
-            // Fallback to pkgconf when pkg-config binary is not found and no
-            // explicit PKG_CONFIG override is in the environment.
-            if e.kind() == std::io::ErrorKind::NotFound
-                && targeted_env_var("PKG_CONFIG", target).is_none()
-            {
-                build_command(
-                    &OsString::from("pkgconf"),
-                    flag,
-                    &parts,
-                    is_static,
-                    target,
-                    override_path,
-                    sysroot,
-                )
-                .output()
-            } else {
-                Err(e)
-            }
-        })
-        .map_err(|e| FreightError::CompilerNotFound(format!("pkg-config not found: {e}")))?;
+    let out = build_command(
+        &exe,
+        flag,
+        &parts,
+        is_static,
+        target,
+        override_path,
+        sysroot,
+    )
+    .output()
+    .or_else(|e| {
+        // Fallback to pkgconf when pkg-config binary is not found and no
+        // explicit PKG_CONFIG override is in the environment.
+        if e.kind() == std::io::ErrorKind::NotFound
+            && targeted_env_var("PKG_CONFIG", target).is_none()
+        {
+            build_command(
+                &OsString::from("pkgconf"),
+                flag,
+                &parts,
+                is_static,
+                target,
+                override_path,
+                sysroot,
+            )
+            .output()
+        } else {
+            Err(e)
+        }
+    })
+    .map_err(|e| FreightError::CompilerNotFound(format!("pkg-config not found: {e}")))?;
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);

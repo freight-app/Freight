@@ -7,7 +7,7 @@ description = "Pure Fortran binary: array operations, derived types, and element
 name = "fortran-hello"
 src  = "src/main.f90"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

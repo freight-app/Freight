@@ -19,7 +19,7 @@ json    = []
 tls     = ["net"]    # tls activates net automatically
 net     = []
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

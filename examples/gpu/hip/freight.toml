@@ -10,7 +10,7 @@ std = "c++17"
 name = "hip-hello"
 src  = "src/main.hip"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

@@ -5,7 +5,7 @@ use semver::Version;
 
 use super::types::{
     is_platform_dep, is_unpinned_version, known_arch_keys, known_platform_keys, Dependency,
-    DetailedDep, LibType, Manifest, Profile,
+    DetailedDep, Manifest, Profile,
 };
 use crate::toolchain::CompilerTemplate;
 
@@ -569,8 +569,8 @@ fn validate_compiler(m: &Manifest, errors: &mut Vec<ValidationError>) {
 }
 
 fn validate_profiles(m: &Manifest, errors: &mut Vec<ValidationError>) {
-    if let Some(dev) = &m.profile.dev {
-        validate_profile(dev, "[profile.dev]", errors);
+    if let Some(debug) = &m.profile.debug {
+        validate_profile(debug, "[profile.debug]", errors);
     }
     if let Some(rel) = &m.profile.release {
         validate_profile(rel, "[profile.release]", errors);
@@ -800,7 +800,7 @@ opt-level = 2
 debug     = false
 warnings  = "all"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 
@@ -1144,10 +1144,10 @@ version = "0.1.0"
 [[bin]]
 name = "foo"
 src  = "src/main.cpp"
-[profile.dev]
+[profile.debug]
 opt-level = 9
 "#;
-        assert!(!field_errors(s, "[profile.dev]").is_empty());
+        assert!(!field_errors(s, "[profile.debug]").is_empty());
     }
 
     #[test]

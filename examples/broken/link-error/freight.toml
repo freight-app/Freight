@@ -10,5 +10,5 @@ std = "c++17"
 name = "link-error"
 src  = "src/main.cpp"
 
-[profile.dev]
+[profile.debug]
 debug = true

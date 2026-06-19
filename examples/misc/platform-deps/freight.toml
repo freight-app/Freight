@@ -29,7 +29,7 @@ defines = ["PLATFORM_WINDOWS"]
 [os.unix]
 defines = ["PLATFORM_UNIX"]
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

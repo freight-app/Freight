@@ -114,9 +114,7 @@ pub fn resolve_cpu_feature_flags(names: &[String]) -> Vec<String> {
 pub fn feature_allows_arch(feature: &CpuFeature, arch: &str) -> bool {
     match &feature.arch {
         None => true,
-        Some(expr) => expr
-            .split('|')
-            .any(|a| a.trim().eq_ignore_ascii_case(arch)),
+        Some(expr) => expr.split('|').any(|a| a.trim().eq_ignore_ascii_case(arch)),
     }
 }
 

@@ -52,9 +52,7 @@ pub fn find_stub_by_header<'a>(
     header: &str,
     stubs: &'a [SystemLibStub],
 ) -> Option<&'a SystemLibStub> {
-    stubs
-        .iter()
-        .find(|s| s.headers.iter().any(|h| h == header))
+    stubs.iter().find(|s| s.headers.iter().any(|h| h == header))
 }
 
 // ── Data file format ────────────────────────────────────────────────────────────

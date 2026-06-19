@@ -7,6 +7,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 
 ## [Unreleased]
 
+### Changed
+- The default build profile is renamed **`dev` → `debug`** (so output lands in
+  `target/debug/`, matching the `Debug` CMake config name). Old manifests keep
+  working: `[profile.dev]` is accepted as an alias for `[profile.debug]`, and the
+  `dev` profile name still resolves.
+
 ### Added
 - **`include/` auto-detected as an include directory** (alongside `inc/`) — the
   dominant C/C++ convention, and what most migrated CMake libraries use, so they

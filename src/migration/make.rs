@@ -623,7 +623,11 @@ fn emit_toml(spec: &ProjectSpec) -> String {
             TargetKind::StaticLib | TargetKind::DynamicLib if !doc.contains_key("lib") => {
                 let mut tbl = Table::new();
                 tbl["name"] = value(target.name.as_str());
-                tbl["type"] = value(if target.kind == TargetKind::StaticLib { "static" } else { "shared" });
+                tbl["type"] = value(if target.kind == TargetKind::StaticLib {
+                    "static"
+                } else {
+                    "shared"
+                });
                 doc["lib"] = Item::Table(tbl);
             }
             _ => {} // additional libraries dropped (warned about in import_make)
@@ -1494,8 +1498,14 @@ mod tests {
         let toml = emit_toml(&spec);
         // Version is pkg-config's `--modversion` when known, else `*`; assert on
         // the dep key, not the version.
-        assert!(toml.contains("ssl ="), "expected individual ssl dep:\n{toml}");
-        assert!(toml.contains("curl ="), "expected individual curl dep:\n{toml}");
+        assert!(
+            toml.contains("ssl ="),
+            "expected individual ssl dep:\n{toml}"
+        );
+        assert!(
+            toml.contains("curl ="),
+            "expected individual curl dep:\n{toml}"
+        );
         // Real deps must not be grouped as features.
         assert!(
             !toml.contains("features"),
@@ -1525,7 +1535,10 @@ mod tests {
         };
         let toml = emit_toml(&spec);
         // ws2_32 is a system library → `[os.windows] features`, not a dep.
-        assert!(toml.contains("[os.windows]"), "expected os.windows:\n{toml}");
+        assert!(
+            toml.contains("[os.windows]"),
+            "expected os.windows:\n{toml}"
+        );
         assert!(
             toml.contains("features = [\"ws2_32\"]"),
             "ws2_32 should be a windows feature:\n{toml}"

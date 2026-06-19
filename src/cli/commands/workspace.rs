@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 use freight::manifest::types::Dependency;
 use freight::manifest::{load_manifest, load_workspace_manifest};
 
-use crate::output::{
-    print_error, render_dot_graph, render_mermaid_graph, GraphEdge, GraphFormat,
-};
+use crate::output::{print_error, render_dot_graph, render_mermaid_graph, GraphEdge, GraphFormat};
 use owo_colors::OwoColorize;
 
 #[derive(clap::Args)]

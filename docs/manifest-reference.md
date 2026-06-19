@@ -581,7 +581,7 @@ Named build profiles override `[compiler]` settings. Two profiles are always ava
 reserved for future use.
 
 ```toml
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 sanitize  = ["address", "undefined"]  # comma-separated list of sanitizers

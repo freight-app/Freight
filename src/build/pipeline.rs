@@ -116,9 +116,9 @@ pub fn stage_features(
     config: &PipelineConfig,
 ) -> Result<FeatureResolution, FreightError> {
     let profile_features: Vec<String> = match config.profile.as_str() {
-        "dev" => manifest
+        "debug" | "dev" => manifest
             .profile
-            .dev
+            .debug
             .as_ref()
             .map_or(vec![], |p| p.features.clone()),
         "release" => manifest

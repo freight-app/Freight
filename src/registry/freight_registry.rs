@@ -681,12 +681,7 @@ impl FreightRegistry {
     }
 
     /// `PATCH /api/v1/admin/reports/:id` — resolve or dismiss a report (moderator+).
-    pub fn resolve_report(
-        &self,
-        id: i64,
-        status: &str,
-        note: &str,
-    ) -> Result<(), FreightError> {
+    pub fn resolve_report(&self, id: i64, status: &str, note: &str) -> Result<(), FreightError> {
         let token = self.require_token()?;
         let url = format!("{}/api/v1/admin/reports/{}", self.base_url, id);
         let body = serde_json::json!({ "status": status, "note": note });

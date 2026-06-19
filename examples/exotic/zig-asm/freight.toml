@@ -10,7 +10,7 @@ src  = "src/main.zig"
 [compiler]
 backend = "zig"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 
 [profile.release]

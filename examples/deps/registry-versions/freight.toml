@@ -22,6 +22,6 @@ sqlite3 = ">=3.34.1"
 # registries (local mirror + freight.dev) and want to avoid ambiguity.
 fmt = { version = "10.2.0", repo = "local" }
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true

@@ -138,7 +138,7 @@ pub fn missing_toolchain(out: &Output) -> bool {
 /// Assumes a single binary whose name matches the package name.
 pub fn run_binary(example_dir: &Path, binary_name: &str, args: &[&str]) -> Output {
     // Try dev build first, then release.
-    let dev = example_dir.join(format!("target/dev/{binary_name}"));
+    let dev = example_dir.join(format!("target/debug/{binary_name}"));
     let bin = if dev.exists() {
         dev
     } else {

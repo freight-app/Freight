@@ -16,7 +16,7 @@ impl Args {
 }
 
 pub fn cmd_compile_commands(release: bool) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
     let cwd = match std::env::current_dir() {
         Ok(d) => d,
         Err(e) => {

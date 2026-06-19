@@ -114,14 +114,17 @@ pub fn merge_capability_object(into: &mut Value, from: &Value) {
         } else if key == "hoverProvider"
             || key == "definitionProvider"
             || key == "declarationProvider"
+            || key == "implementationProvider"
             || key == "documentLinkProvider"
             || key == "inlayHintProvider"
             // freight owns these via clang-bridge; its provider (and, for
             // semantic tokens, its legend) must win over a forwarded server's.
             || key == "documentSymbolProvider"
+            || key == "workspaceSymbolProvider"
             || key == "foldingRangeProvider"
             || key == "referencesProvider"
             || key == "documentHighlightProvider"
+            || key == "selectionRangeProvider"
             || key == "semanticTokensProvider"
             // The sync mode freight advertises must also win over a forwarded one.
             || key == "textDocumentSync"
@@ -231,21 +234,20 @@ pub fn freight_capabilities(use_clang_bridge: bool, use_native_fortran: bool) ->
     if use_clang_bridge || use_native_fortran {
         if let Some(obj) = caps.as_object_mut() {
             obj.insert("documentSymbolProvider".into(), json!(true));
+            obj.insert("workspaceSymbolProvider".into(), json!(true));
             obj.insert("foldingRangeProvider".into(), json!(true));
             obj.insert("referencesProvider".into(), json!(true));
             obj.insert("documentHighlightProvider".into(), json!(true));
+            obj.insert("selectionRangeProvider".into(), json!(true));
+            obj.insert("implementationProvider".into(), json!(true));
         }
     }
     // The semantic-token *legend* is a single global the client applies to every
-    // file, so it must match whoever actually serves the tokens. Freight only
-    // advertises its own legend when the clang bridge is on — then freight serves
-    // C/C++ (and Fortran) tokens under that legend. With the bridge off, clangd
-    // serves C/C++ tokens under *its* legend (kept via the capability merge);
-    // overriding it here would make the client decode clangd's token indices with
-    // freight's legend, scrambling all C/C++ highlighting. (Native-Fortran tokens
-    // are correspondingly only served when the bridge is on; see
-    // `handle_semantic_tokens`.)
-    if use_clang_bridge {
+    // file, so it must match whoever actually serves the tokens. Freight
+    // advertises its own legend when any native backend can serve tokens; the
+    // request handler then returns tokens only from native indexers and avoids
+    // forwarding clangd tokens under the wrong legend.
+    if use_clang_bridge || use_native_fortran {
         if let Some(obj) = caps.as_object_mut() {
             obj.insert(
                 "semanticTokensProvider".into(),
@@ -328,10 +330,8 @@ pub fn source_server_for_uri(uri: &str) -> Option<SourceServer> {
     let path = path_from_uri(uri)?;
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     match ext.as_str() {
-        // Fortran: free-form and fixed-form, with and without preprocessor suffix.
-        "f" | "for" | "ftn" | "f90" | "f95" | "f03" | "f08" | "f18" | "f77" | "f66" => {
-            Some(SourceServer::Fortls)
-        }
+        // Fortran is served by the native embedded Fortran indexer.
+        "f" | "for" | "ftn" | "f90" | "f95" | "f03" | "f08" | "f18" | "f77" | "f66" => None,
         // Assembly: GAS (.s/.S), NASM (.asm/.nasm), Intel HEX (.asm).
         "asm" | "nasm" | "s" => Some(SourceServer::AsmLsp),
         // C-family: C, C++, CUDA, HIP, Objective-C — all handled by clangd.
@@ -389,4 +389,65 @@ pub fn is_internal_client_response(msg: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|id| id.starts_with("__freight_client_"))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{freight_capabilities, source_server_for_uri};
+    use crate::lsp::SourceServer;
+    use serde_json::Value;
+
+    #[test]
+    fn fortran_extensions_are_native_not_passthrough() {
+        for ext in [
+            "f", "for", "ftn", "f90", "f95", "f03", "f08", "f18", "f77", "f66",
+        ] {
+            let uri = format!("file:///tmp/source.{ext}");
+            assert_eq!(source_server_for_uri(&uri), None, "{ext}");
+        }
+    }
+
+    #[test]
+    fn non_fortran_extensions_still_select_passthroughs() {
+        assert_eq!(
+            source_server_for_uri("file:///tmp/source.cpp"),
+            Some(SourceServer::Clangd)
+        );
+        assert_eq!(
+            source_server_for_uri("file:///tmp/source.asm"),
+            Some(SourceServer::AsmLsp)
+        );
+    }
+
+    #[test]
+    fn native_fortran_advertises_freight_semantic_token_legend() {
+        let caps = freight_capabilities(false, true);
+        let provider = caps
+            .get("semanticTokensProvider")
+            .expect("native Fortran advertises semantic tokens");
+        let token_types = provider["legend"]["tokenTypes"].as_array().unwrap();
+        assert_eq!(token_types[0], "namespace");
+        assert_eq!(token_types[8], "macro");
+    }
+
+    #[test]
+    fn native_fortran_advertises_workspace_symbols() {
+        let caps = freight_capabilities(false, true);
+        assert_eq!(
+            caps.get("workspaceSymbolProvider"),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn native_fortran_advertises_selection_ranges() {
+        let caps = freight_capabilities(false, true);
+        assert_eq!(caps.get("selectionRangeProvider"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn native_fortran_advertises_implementations() {
+        let caps = freight_capabilities(false, true);
+        assert_eq!(caps.get("implementationProvider"), Some(&Value::Bool(true)));
+    }
 }

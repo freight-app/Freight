@@ -171,7 +171,13 @@ mod tests {
     fn resolve_cxx_by_path_most_specific() {
         let p = load_std_providers();
         assert_eq!(
-            resolve_provider("cxx", &p, None, Some(Path::new("/usr/include/c++/13/vector"))).as_deref(),
+            resolve_provider(
+                "cxx",
+                &p,
+                None,
+                Some(Path::new("/usr/include/c++/13/vector"))
+            )
+            .as_deref(),
             Some("libstdc++")
         );
         // `/c++/v1/` matches both libc++ (v1) and libstdc++ (/c++/); most specific wins.

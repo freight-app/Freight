@@ -426,7 +426,9 @@ impl LanguageIndexer for AsmIndexer {
             let uri_str = uri_from_path(p);
             for i in &f.idents {
                 if i.name == target && (include_decl || !i.is_def) {
-                    out.push(json!({ "uri": uri_str, "range": span(i.line, i.start_col, i.end_col) }));
+                    out.push(
+                        json!({ "uri": uri_str, "range": span(i.line, i.start_col, i.end_col) }),
+                    );
                 }
             }
         }
@@ -1279,7 +1281,10 @@ const AARCH64_INSTRUCTIONS: &[(&str, &str)] = &[
 
 /// Common AArch64 (ARM64) registers.
 const AARCH64_REGISTERS: &[(&str, &str)] = &[
-    ("x0", "64-bit general-purpose / 1st argument & return value."),
+    (
+        "x0",
+        "64-bit general-purpose / 1st argument & return value.",
+    ),
     ("x1", "64-bit general-purpose / 2nd argument."),
     ("x2", "64-bit general-purpose / 3rd argument."),
     ("x3", "64-bit general-purpose / 4th argument."),
@@ -1554,9 +1559,15 @@ foo:           # comment with bar:
 
     #[test]
     fn arch_detection_and_per_arch_help() {
-        assert_eq!(Arch::from_target("aarch64-unknown-linux-gnu"), Arch::Aarch64);
+        assert_eq!(
+            Arch::from_target("aarch64-unknown-linux-gnu"),
+            Arch::Aarch64
+        );
         assert_eq!(Arch::from_target("arm64"), Arch::Aarch64);
-        assert_eq!(Arch::from_target("riscv64gc-unknown-linux-gnu"), Arch::RiscV);
+        assert_eq!(
+            Arch::from_target("riscv64gc-unknown-linux-gnu"),
+            Arch::RiscV
+        );
         assert_eq!(Arch::from_target("x86_64"), Arch::X86_64);
         assert_eq!(Arch::from_target("sparc"), Arch::Unknown);
 
@@ -1591,10 +1602,7 @@ foo:           # comment with bar:
         assert_eq!(loop_syms.len(), 2);
         assert!(loop_syms.iter().all(|s| s.in_macro));
         // The macro names themselves are not inside a body.
-        assert!(f
-            .symbols
-            .iter()
-            .any(|s| s.name == "one" && !s.in_macro));
+        assert!(f.symbols.iter().any(|s| s.name == "one" && !s.in_macro));
     }
 
     #[test]
@@ -1653,14 +1661,19 @@ foo:           # comment with bar:
         let mut ix = AsmIndexer::new();
 
         // goto `WIDTH` (operand on line 2) → its `.equ` in helper.inc.
-        let g = ix.goto_definition(&main_uri, &pos(2, 10)).expect("goto WIDTH");
+        let g = ix
+            .goto_definition(&main_uri, &pos(2, 10))
+            .expect("goto WIDTH");
         assert_eq!(g["uri"], json!(uri_from_path(&inc)));
         assert_eq!(g["range"]["start"]["line"], json!(0));
 
         // hover `prologue` (line 3) → macro defined in the included file.
         let h = ix.hover(&main_uri, &pos(3, 6)).expect("hover prologue");
         let text = h["contents"]["value"].as_str().unwrap();
-        assert!(text.contains("macro") && text.contains("helper.inc"), "{text}");
+        assert!(
+            text.contains("macro") && text.contains("helper.inc"),
+            "{text}"
+        );
 
         // completion offers symbols from the included file.
         let c = ix.completion(&main_uri, &pos(4, 0)).expect("completion");

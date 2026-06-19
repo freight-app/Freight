@@ -11,7 +11,7 @@ src  = "src/main.d"
 warnings = "all"
 backend   = "ldc2"
 
-[profile.dev]
+[profile.debug]
 opt-level = 1
 debug     = true
 

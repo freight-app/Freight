@@ -136,10 +136,7 @@ impl CacheEntry {
 
 /// Turn a cache entry into a query result: `Err` for a cached miss (so the caller
 /// falls through to the next resolver without re-running pkg-config).
-fn entry_to_result(
-    query: &str,
-    e: &CacheEntry,
-) -> Result<(PkgConfigResult, String), FreightError> {
+fn entry_to_result(query: &str, e: &CacheEntry) -> Result<(PkgConfigResult, String), FreightError> {
     if !e.found {
         return Err(FreightError::ManifestParse(format!(
             "pkg-config has no '{query}' (cached miss)"

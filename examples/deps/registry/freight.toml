@@ -16,6 +16,6 @@ src  = "src/main.cpp"
 fmt  = "10.2.0"
 zlib = "1.3.1"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true

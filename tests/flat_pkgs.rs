@@ -121,10 +121,10 @@ fn flat_pkgs_transitive_dep_at_root_level() {
     assert_success(&out, "flat_pkgs: app build");
 
     // mathlib artifacts go into the root project's target/deps/mathlib/ tree.
-    let mathlib_built = root_dir.join("target/deps/mathlib/dev/libmathlib.a");
+    let mathlib_built = root_dir.join("target/deps/mathlib/debug/libmathlib.a");
     assert!(
         mathlib_built.exists(),
-        "mathlib should be built in root target/deps/mathlib/dev/, not inside .pkgs/mathlib/target/"
+        "mathlib should be built in root target/deps/mathlib/debug/, not inside .pkgs/mathlib/target/"
     );
 
     // No nested .pkgs/ should have been created inside vecmath.
@@ -182,7 +182,7 @@ geometry = "0.1.0"
 
     assert!(
         root_dir
-            .join("target/deps/mathlib/dev/libmathlib.a")
+            .join("target/deps/mathlib/debug/libmathlib.a")
             .exists(),
         "mathlib must be built into root target/deps/mathlib/, not inside .pkgs/"
     );

@@ -1083,7 +1083,8 @@ mod tests {
     #[test]
     fn toolchain_use_rejects_versioned_unknown_family() {
         let templates = load_all_templates();
-        let result = super::super::super::toolchain::validate_toolchain_name("nofamily-14", &templates);
+        let result =
+            super::super::super::toolchain::validate_toolchain_name("nofamily-14", &templates);
         assert!(
             result.is_err(),
             "'nofamily-14' (unknown family) should be rejected"

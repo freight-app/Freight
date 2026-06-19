@@ -535,7 +535,7 @@ pub fn completion_result(
                 "Compiler settings",
                 "Backend, warnings, flags, includes, PCH, and unity settings.",
             ),
-            ("[profile.dev]", "Debug profile", "Debug profile overrides."),
+            ("[profile.debug]", "Debug profile", "Debug profile overrides."),
             (
                 "[profile.release]",
                 "Release profile",

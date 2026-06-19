@@ -7,7 +7,7 @@ description = "Native Zig binary — comptime, generics, tagged unions, and erro
 name = "zig-hello"
 src  = "src/main.zig"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 
 [profile.release]

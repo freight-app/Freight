@@ -80,7 +80,7 @@ pub fn install_project(
     opts: &InstallOptions,
 ) -> Result<InstallResult, FreightError> {
     let manifest = load_manifest(project_dir)?;
-    let profile = if opts.release { "release" } else { "dev" };
+    let profile = if opts.release { "release" } else { "debug" };
     if !opts.no_build {
         build_project_at(
             project_dir,
@@ -102,7 +102,7 @@ pub fn install_project_built(
     manifest: &crate::manifest::types::Manifest,
     opts: &InstallOptions,
 ) -> Result<InstallResult, FreightError> {
-    let profile = if opts.release { "release" } else { "dev" };
+    let profile = if opts.release { "release" } else { "debug" };
 
     // Derive target OS/arch: prefer the explicit override, then ~/.freight/config.toml, then host.
     let global_target = GlobalConfig::load().target;
@@ -222,7 +222,7 @@ pub fn package_project(
     target: Option<&str>,
 ) -> Result<PathBuf, FreightError> {
     let manifest = load_manifest(project_dir)?;
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
     build_project_at(
         project_dir,
         profile,
@@ -460,7 +460,6 @@ fn make_symlink(_dir: &Path, _link: &str, _target: &str) -> Result<(), FreightEr
     Ok(()) // Symlinks on Windows require elevated rights; skip silently.
 }
 
-
 fn create_zip_archive(parent: &Path, stem: &str, archive: &Path) -> Result<(), FreightError> {
     let root = parent.join(stem);
     let mut files = Vec::new();
@@ -618,7 +617,7 @@ pub fn installer_project(
     target: Option<&str>,
 ) -> Result<PathBuf, FreightError> {
     let manifest = load_manifest(project_dir)?;
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
 
     build_project_at(
         project_dir,

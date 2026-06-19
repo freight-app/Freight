@@ -17,7 +17,7 @@ warnings = "all"
 # with Zig's own _start from std/start.zig.
 backend  = "zig"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 
 [profile.release]

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use fortran_lsp::{
     CodeAction, CompletionItem, DiagnosticSeverity, DocumentSymbol, InlayHint, Location, Position,
-    Range, RenameError, SignatureHelp, SymbolKind, TextEdit, Workspace,
+    Range, RenameError, SelectionRange, SignatureHelp, Symbol, SymbolKind, TextEdit, Workspace,
 };
 use serde_json::{json, Value};
 
@@ -230,13 +230,25 @@ impl LanguageIndexer for FortranIndexer {
             return None;
         }
         let source = self.ensure_file(&path)?.to_string();
-        let sym = self
-            .workspace
-            .definition(&path, Position::new(line, character), &source)?;
-        Some(location_to_lsp(&Location {
-            file: sym.file.clone(),
-            range: sym.selection_range.clone(),
-        }))
+        let loc =
+            self.workspace
+                .definition_location(&path, Position::new(line, character), &source)?;
+        Some(location_to_lsp(&loc))
+    }
+
+    fn goto_implementation(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, character) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_fortran(&path) {
+            return None;
+        }
+        let source = self.ensure_file(&path)?.to_string();
+        let loc = self.workspace.implementation_location(
+            &path,
+            Position::new(line, character),
+            &source,
+        )?;
+        Some(location_to_lsp(&loc))
     }
 
     fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value> {
@@ -267,6 +279,16 @@ impl LanguageIndexer for FortranIndexer {
                 .document_symbols(&path)
                 .iter()
                 .map(document_symbol_to_lsp)
+                .collect(),
+        )
+    }
+
+    fn workspace_symbols(&mut self, query: &str) -> Option<Vec<Value>> {
+        Some(
+            self.workspace
+                .workspace_symbols(query)
+                .iter()
+                .map(workspace_symbol_to_lsp)
                 .collect(),
         )
     }
@@ -328,6 +350,22 @@ impl LanguageIndexer for FortranIndexer {
                 .into_iter()
                 .filter(|loc| loc.file == path)
                 .map(|loc| json!({ "range": range_to_lsp(&loc.range), "kind": 1 }))
+                .collect(),
+        )
+    }
+
+    fn selection_ranges(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
+        let positions = selection_range_positions(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_fortran(&path) {
+            return None;
+        }
+        let source = self.ensure_file(&path)?.to_string();
+        Some(
+            positions
+                .into_iter()
+                .filter_map(|pos| self.workspace.selection_range(&path, pos, &source))
+                .map(selection_range_to_lsp)
                 .collect(),
         )
     }
@@ -443,6 +481,32 @@ fn document_symbol_to_lsp(sym: &DocumentSymbol) -> Value {
     })
 }
 
+fn workspace_symbol_to_lsp(sym: &Symbol) -> Value {
+    let mut item = json!({
+        "name": sym.qualified_name(),
+        "kind": symbol_kind(sym.kind),
+        "location": location_to_lsp(&Location {
+            file: sym.file.clone(),
+            range: sym.selection_range.clone(),
+        })
+    });
+    if !sym.scope.is_empty() {
+        item.as_object_mut().unwrap().insert(
+            "containerName".to_string(),
+            Value::String(sym.scope.join("::")),
+        );
+    }
+    item
+}
+
+fn selection_range_to_lsp(selection: SelectionRange) -> Value {
+    let mut item = json!({ "range": range_to_lsp(&selection.range) });
+    if let Some(parent) = selection.parent {
+        item["parent"] = selection_range_to_lsp(*parent);
+    }
+    item
+}
+
 fn collect_symbol_folds(sym: &DocumentSymbol, out: &mut Vec<Value>) {
     if sym.range.end.line > sym.range.start.line {
         out.push(json!({
@@ -487,6 +551,21 @@ fn workspace_edit_to_lsp(edits: Vec<TextEdit>) -> Value {
             }));
     }
     json!({ "changes": changes })
+}
+
+fn selection_range_positions(msg: &Value) -> Option<Vec<Position>> {
+    let positions = msg.get("params")?.get("positions")?.as_array()?;
+    Some(
+        positions
+            .iter()
+            .filter_map(|pos| {
+                Some(Position::new(
+                    pos.get("line")?.as_u64()? as usize,
+                    pos.get("character")?.as_u64()? as usize,
+                ))
+            })
+            .collect(),
+    )
 }
 
 fn rename_error_to_lsp(err: RenameError) -> Value {
@@ -570,7 +649,9 @@ fn byte_idx_for_utf16_col(line: &str, character: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_fortran_include_roots;
+    use super::{collect_fortran_include_roots, FortranIndexer};
+    use crate::lsp::index::LanguageIndexer;
+    use crate::lsp::protocol::uri_from_path;
     use std::path::Path;
 
     fn write(path: &Path, text: &str) {
@@ -633,7 +714,7 @@ version = "1.0.0"
 "#,
         );
 
-        let roots = collect_fortran_include_roots(root, "dev");
+        let roots = collect_fortran_include_roots(root, "debug");
         assert!(contains_dir(&roots, root));
         assert!(contains_dir(&roots, &root.join("include")));
         assert!(contains_dir(&roots, &root.join("src")));
@@ -643,5 +724,105 @@ version = "1.0.0"
         assert!(contains_dir(&roots, &root.join("deps/math/generated")));
         assert!(contains_dir(&roots, &root.join(".pkgs/fft")));
         assert!(contains_dir(&roots, &root.join(".pkgs/fft/include")));
+    }
+
+    #[test]
+    fn fortran_indexer_serves_semantic_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("math.f90");
+        let source = "module math\ninteger :: value\nvalue = 1\nend module";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&uri, source);
+        let data = indexer
+            .semantic_tokens(&uri)
+            .expect("semantic tokens for Fortran source");
+
+        assert!(!data.is_empty());
+        assert_eq!(data.len() % 5, 0);
+    }
+
+    #[test]
+    fn fortran_indexer_serves_workspace_symbols() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("math.f90");
+        let source = "module math\ncontains\nsubroutine axpy()\nend subroutine\nend module";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&uri, source);
+        let symbols = indexer
+            .workspace_symbols("ax")
+            .expect("workspace symbols for Fortran source");
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0]["name"], "math::axpy");
+        assert_eq!(symbols[0]["containerName"], "math");
+        assert_eq!(symbols[0]["location"]["uri"], uri);
+    }
+
+    #[test]
+    fn fortran_indexer_serves_selection_ranges() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("math.f90");
+        let source =
+            "module math\ncontains\nsubroutine axpy()\ninteger :: value\nvalue = 1\nend subroutine\nend module";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&uri, source);
+        let msg = serde_json::json!({
+            "params": {
+                "textDocument": { "uri": uri },
+                "positions": [{ "line": 4, "character": 1 }]
+            }
+        });
+        let ranges = indexer
+            .selection_ranges(&uri, &msg)
+            .expect("selection ranges for Fortran source");
+
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0]["range"]["start"]["line"], 4);
+        assert_eq!(ranges[0]["range"]["end"]["character"], 5);
+        assert_eq!(ranges[0]["parent"]["range"]["start"]["line"], 2);
+        assert_eq!(
+            ranges[0]["parent"]["parent"]["parent"]["range"]["start"]["line"],
+            0
+        );
+    }
+
+    #[test]
+    fn fortran_indexer_serves_implementation_locations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let module_path = tmp.path().join("math.f90");
+        let impl_path = tmp.path().join("math_impl.f90");
+        let module = "module math\ninterface\nmodule subroutine axpy()\nend subroutine\nend interface\nend module";
+        let implementation =
+            "submodule (math) math_impl\ncontains\nmodule procedure axpy\nend procedure\nend submodule";
+        write(&module_path, module);
+        write(&impl_path, implementation);
+
+        let module_uri = uri_from_path(&module_path);
+        let impl_uri = uri_from_path(&impl_path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&module_uri, module);
+        indexer.reparse(&impl_uri, implementation);
+        let msg = serde_json::json!({
+            "params": {
+                "textDocument": { "uri": module_uri },
+                "position": { "line": 2, "character": 18 }
+            }
+        });
+        let location = indexer
+            .goto_implementation(&module_uri, &msg)
+            .expect("implementation location for module procedure prototype");
+
+        assert_eq!(location["uri"], impl_uri);
+        assert_eq!(location["range"]["start"]["line"], 2);
+        assert_eq!(location["range"]["start"]["character"], 17);
     }
 }

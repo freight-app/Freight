@@ -158,9 +158,12 @@ fn required_features_and_default_run() {
     // Plain build: only `toolkit` links; `diag` is gated out.
     let out = freight(&dir, &["build"]);
     assert_success(&out, "required-features default build");
-    assert!(dir.join("target/dev/toolkit").exists(), "toolkit should build");
     assert!(
-        !dir.join("target/dev/diag").exists(),
+        dir.join("target/debug/toolkit").exists(),
+        "toolkit should build"
+    );
+    assert!(
+        !dir.join("target/debug/diag").exists(),
         "diag must be gated out without --features extras"
     );
 
@@ -168,7 +171,7 @@ fn required_features_and_default_run() {
     let out = freight(&dir, &["build", "--features", "extras"]);
     assert_success(&out, "required-features extras build");
     assert!(
-        dir.join("target/dev/diag").exists(),
+        dir.join("target/debug/diag").exists(),
         "diag should build with --features extras"
     );
 
@@ -183,8 +186,14 @@ fn example_targets_build_and_run() {
     let dir = example(&["misc", "examples-target"]);
     let out = freight(&dir, &["build", "--examples"]);
     assert_success(&out, "build --examples");
-    assert!(dir.join("target/dev/examples/basic").exists(), "basic example");
-    assert!(dir.join("target/dev/examples/fancy").exists(), "fancy example");
+    assert!(
+        dir.join("target/debug/examples/basic").exists(),
+        "basic example"
+    );
+    assert!(
+        dir.join("target/debug/examples/fancy").exists(),
+        "fancy example"
+    );
 
     let run = freight(&dir, &["run", "--example", "fancy"]);
     assert_success(&run, "run --example fancy");

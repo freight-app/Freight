@@ -17,7 +17,7 @@ src  = "src/main.cpp"
 [dependencies]
 OpenCL = "1.0"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

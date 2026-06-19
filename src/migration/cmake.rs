@@ -110,7 +110,13 @@ pub fn import_cmake(input: &Path, out_dir: Option<&Path>) -> Result<ImportResult
     // (a package has at most one [lib]). Emit a workspace: one member package
     // per library (and per executable), each referencing the shared sources.
     if parsed.libs.len() > 1 {
-        return import_multi_lib_workspace(&project_dir, out_root, &parsed, &pkg_version, &mut warnings);
+        return import_multi_lib_workspace(
+            &project_dir,
+            out_root,
+            &parsed,
+            &pkg_version,
+            &mut warnings,
+        );
     }
 
     let toml = emit_toml(&pkg_name, &pkg_version, &parsed, &warnings);
@@ -193,7 +199,8 @@ fn import_multi_lib_workspace(
 ) -> Result<ImportResult> {
     std::fs::create_dir_all(out_root)
         .with_context(|| format!("creating {}", out_root.display()))?;
-    let project_abs = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    let project_abs =
+        std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
     let out_abs = std::fs::canonicalize(out_root).unwrap_or_else(|_| out_root.to_path_buf());
 
     let mut written: Vec<PathBuf> = Vec::new();
@@ -224,7 +231,8 @@ fn import_multi_lib_workspace(
         if srcs.len() > 1 {
             warnings.push(format!(
                 "executable `{bin_name}` has {} source files; only the entry point is wired \
-                 into its member (add the rest under its src/)", srcs.len()
+                 into its member (add the rest under its src/)",
+                srcs.len()
             ));
         }
         let member = unique_member_name(bin_name, &mut used_names);
@@ -254,7 +262,8 @@ fn import_multi_lib_workspace(
     warnings.push(format!(
         "multiple libraries → emitted a workspace with {} members; dependencies were copied to \
          each member and inter-library links (target_link_libraries between these targets) must \
-         be added manually as path deps", members.len()
+         be added manually as path deps",
+        members.len()
     ));
 
     Ok(ImportResult {
@@ -283,8 +292,7 @@ fn write_member(
     written: &mut Vec<PathBuf>,
 ) -> Result<()> {
     let dir = out_root.join(member);
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("creating {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let toml = emit_toml(member, version, ex, &[]);
     let dest = dir.join("freight.toml");
     std::fs::write(&dest, toml).with_context(|| format!("writing {}", dest.display()))?;
@@ -1795,10 +1803,7 @@ mod tests {
             endif()";
         let (ex, w) = extract_src(src);
         let toml = emit_toml("myapp", "0.1.0", &ex, &w);
-        assert!(
-            toml.contains("[os.windows]"),
-            "should have windows section"
-        );
+        assert!(toml.contains("[os.windows]"), "should have windows section");
         assert!(
             toml.contains("features = [\"ws2_32\"]"),
             "ws2_32 should be a windows feature, got:\n{toml}"
@@ -2355,17 +2360,24 @@ CPMAddPackage(
             "project(multi)\n\
              add_library(alpha STATIC alpha.c)\n\
              add_library(beta STATIC beta.c)\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = import_cmake(&dir, None).expect("import ok");
         let root = std::fs::read_to_string(dir.join("freight.toml")).unwrap();
-        assert!(root.contains("[workspace]"), "root should be a workspace:\n{root}");
+        assert!(
+            root.contains("[workspace]"),
+            "root should be a workspace:\n{root}"
+        );
         assert!(root.contains("alpha") && root.contains("beta"));
 
         // Each member is a valid single-[lib] package that round-trips.
         for member in ["alpha", "beta"] {
             let m = std::fs::read_to_string(dir.join(member).join("freight.toml")).unwrap();
-            assert!(m.contains("[lib]") && !m.contains("[[lib]]"), "member {member}:\n{m}");
+            assert!(
+                m.contains("[lib]") && !m.contains("[[lib]]"),
+                "member {member}:\n{m}"
+            );
             crate::manifest::load_manifest_str(&m).expect("member parses");
         }
         assert!(result.written.len() >= 3); // root + 2 members
@@ -2378,7 +2390,10 @@ CPMAddPackage(
         let (ex, w) = extract_src("add_definitions(-DFOO -UBAR)");
         let toml = emit_toml("app", "0.1.0", &ex, &w);
         assert!(toml.contains("FOO"));
-        assert!(!toml.contains("-U"), "undefine leaked into defines:\n{toml}");
+        assert!(
+            !toml.contains("-U"),
+            "undefine leaked into defines:\n{toml}"
+        );
         crate::manifest::load_manifest_str(&toml).expect("parses");
     }
 }

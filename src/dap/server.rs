@@ -442,7 +442,7 @@ fn dap_profile(config: &Value) -> String {
         if config_bool(config, "release").unwrap_or(false) {
             "release".to_string()
         } else {
-            "dev".to_string()
+            "debug".to_string()
         }
     })
 }
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn release_flag_selects_release_profile_when_profile_is_absent() {
         assert_eq!(profile_for_test(&json!({ "release": true })), "release");
-        assert_eq!(profile_for_test(&json!({ "release": false })), "dev");
+        assert_eq!(profile_for_test(&json!({ "release": false })), "debug");
         assert_eq!(
             profile_for_test(&json!({ "release": true, "profile": "custom" })),
             "custom"
@@ -700,7 +700,7 @@ mod tests {
                 if config_bool(config, "release").unwrap_or(false) {
                     "release"
                 } else {
-                    "dev"
+                    "debug"
                 }
             })
             .to_string()

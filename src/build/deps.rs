@@ -77,8 +77,7 @@ pub fn resolve_dep_graph(
         // transitive manifest are relative to that dep's own directory, but
         // version/git deps always resolve against root_dir.
         let empty = BTreeSet::new();
-        let sub_deps =
-            direct_compilable_deps(root_dir, &dir, &manifest, false, &empty, patches);
+        let sub_deps = direct_compilable_deps(root_dir, &dir, &manifest, false, &empty, patches);
         for (sub_name, sub_dir) in &sub_deps {
             if !sub_dir.exists() {
                 return Err(FreightError::ManifestParse(format!(
@@ -463,7 +462,10 @@ mod tests {
 
         let resolved =
             resolve_dep_graph(root.path(), &root_manifest, false, &BTreeSet::new()).unwrap();
-        let foo = resolved.iter().find(|r| r.name == "foo").expect("foo resolved");
+        let foo = resolved
+            .iter()
+            .find(|r| r.name == "foo")
+            .expect("foo resolved");
         assert!(
             foo.dir.ends_with("local/foo"),
             "patch should redirect to local/foo, got {}",

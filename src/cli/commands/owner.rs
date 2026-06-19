@@ -72,11 +72,17 @@ impl Args {
                 };
                 cmd_list(&registry, &pkg);
             }
-            OwnerCmd::Add { package, user, role } => cmd_add(&registry, &package, &user, &role),
+            OwnerCmd::Add {
+                package,
+                user,
+                role,
+            } => cmd_add(&registry, &package, &user, &role),
             OwnerCmd::Remove { package, user } => cmd_remove(&registry, &package, &user),
-            OwnerCmd::SetRole { package, user, role } => {
-                cmd_set_role(&registry, &package, &user, &role)
-            }
+            OwnerCmd::SetRole {
+                package,
+                user,
+                role,
+            } => cmd_set_role(&registry, &package, &user, &role),
         }
     }
 }

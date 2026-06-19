@@ -24,6 +24,6 @@ cxxopts = { url = "https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.2.1
 # otherwise the bundled `z` stub supplies `-lz`.
 zlib = "1.2"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true

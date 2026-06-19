@@ -42,6 +42,11 @@ pub trait LanguageIndexer: Send {
     /// Returns an LSP `Location` or `None`.
     fn goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value>;
 
+    /// Serve `textDocument/implementation`. Returns an LSP `Location` or `None`.
+    fn goto_implementation(&mut self, _uri: &str, _msg: &Value) -> Option<Value> {
+        None
+    }
+
     /// Serve `textDocument/completion`. Returns an LSP `CompletionList` or `None`.
     fn completion(&mut self, uri: &str, msg: &Value) -> Option<Value>;
 
@@ -77,6 +82,11 @@ pub trait LanguageIndexer: Send {
         None
     }
 
+    /// Serve `workspace/symbol`. Returns flat LSP `SymbolInformation[]`.
+    fn workspace_symbols(&mut self, _query: &str) -> Option<Vec<Value>> {
+        None
+    }
+
     /// Serve `textDocument/foldingRange`. Returns LSP `FoldingRange[]` or `None`.
     fn folding_ranges(&mut self, _uri: &str) -> Option<Vec<Value>> {
         None
@@ -95,6 +105,12 @@ pub trait LanguageIndexer: Send {
     /// Serve `textDocument/documentHighlight`. Returns `DocumentHighlight[]` or
     /// `None` if this indexer does not handle the file.
     fn document_highlight(&mut self, _uri: &str, _msg: &Value) -> Option<Vec<Value>> {
+        None
+    }
+
+    /// Serve `textDocument/selectionRange`. Returns `SelectionRange[]` or
+    /// `None` if this indexer does not handle the file.
+    fn selection_ranges(&mut self, _uri: &str, _msg: &Value) -> Option<Vec<Value>> {
         None
     }
 

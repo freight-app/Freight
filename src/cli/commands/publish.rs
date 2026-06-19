@@ -191,7 +191,7 @@ fn cmd_publish(dry_run: bool, yes: bool, no_verify: bool, repo: Option<&str>) {
 fn run_pre_publish_pipeline(name: &str) -> bool {
     // Step 1: build (dev profile — fast, includes debug info for scanning)
     print_status("verifying", &format!("[1/3] building `{name}`…"));
-    match build_project_with("dev", &[], true, &[], &silent()) {
+    match build_project_with("debug", &[], true, &[], &silent()) {
         Ok(output) => {
             print_status(
                 "ok",
@@ -200,7 +200,7 @@ fn run_pre_publish_pipeline(name: &str) -> bool {
 
             // Step 2: run tests
             print_status("verifying", &format!("[2/3] running tests for `{name}`…"));
-            match test_project_with("dev", None, &[], true, &[], &silent()) {
+            match test_project_with("debug", None, &[], true, &[], &silent()) {
                 Ok(summary) if summary.failed == 0 => {
                     print_status(
                         "ok",
@@ -418,7 +418,7 @@ fn cmd_publish_prebuilt(
         };
 
         print_status("verifying", &format!("[2/3] running tests for `{name}`…"));
-        match test_project_with("dev", None, &[], true, &[], &silent()) {
+        match test_project_with("debug", None, &[], true, &[], &silent()) {
             Ok(s) if s.failed == 0 => {
                 print_status("ok", &format!("[2/3] {} tests passed", s.passed))
             }

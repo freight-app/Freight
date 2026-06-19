@@ -734,7 +734,11 @@ fn emit_toml(
             // `lib` is a single table; only the first library target is kept
             // (a freight package has at most one library).
             TargetKind::StaticLib | TargetKind::SharedLib if !doc.contains_key("lib") => {
-                tbl["type"] = value(if t.kind == TargetKind::SharedLib { "shared" } else { "static" });
+                tbl["type"] = value(if t.kind == TargetKind::SharedLib {
+                    "shared"
+                } else {
+                    "static"
+                });
                 doc["lib"] = Item::Table(tbl);
             }
             _ => {}
@@ -994,7 +998,9 @@ mod tests {
         super::super::split_link_libs(&deps, &mut kept, &mut feats);
         assert!(kept.contains(&"ssl".to_string()));
         assert!(!kept.contains(&"m".to_string()));
-        assert!(feats.get("unix").is_some_and(|v| v.contains(&"m".to_string())));
+        assert!(feats
+            .get("unix")
+            .is_some_and(|v| v.contains(&"m".to_string())));
     }
 
     #[test]

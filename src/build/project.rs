@@ -297,7 +297,7 @@ impl Project {
         progress: &Progress,
     ) -> Result<InstallResult, FreightError> {
         if !opts.no_build {
-            let profile = if opts.release { "release" } else { "dev" };
+            let profile = if opts.release { "release" } else { "debug" };
             let config = pipeline::PipelineConfig {
                 profile: profile.to_string(),
                 use_defaults: true,
@@ -319,7 +319,7 @@ impl Project {
         target_triple: Option<&str>,
         progress: &Progress,
     ) -> Result<PathBuf, FreightError> {
-        let profile = if release { "release" } else { "dev" };
+        let profile = if release { "release" } else { "debug" };
         let config = pipeline::PipelineConfig {
             profile: profile.to_string(),
             use_defaults: true,

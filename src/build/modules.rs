@@ -767,7 +767,7 @@ mod tests {
         let plan = plan_module_build(
             Path::new("/proj"),
             Path::new("/proj/target"),
-            "dev",
+            "debug",
             sources,
         )
         .unwrap();
@@ -784,7 +784,7 @@ mod tests {
         let plan = plan_module_build(
             Path::new("/proj"),
             Path::new("/proj/target"),
-            "dev",
+            "debug",
             sources,
         )
         .unwrap();
@@ -803,7 +803,7 @@ mod tests {
         let plan = plan_module_build(
             Path::new("/proj"),
             Path::new("/proj/target"),
-            "dev",
+            "debug",
             sources,
         )
         .unwrap();
@@ -822,7 +822,7 @@ mod tests {
         let plan = plan_module_build(
             Path::new("/proj"),
             Path::new("/proj/target"),
-            "dev",
+            "debug",
             sources,
         )
         .unwrap();
@@ -843,7 +843,7 @@ mod tests {
         assert!(plan_module_build(
             Path::new("/proj"),
             Path::new("/proj/target"),
-            "dev",
+            "debug",
             sources
         )
         .is_err());
@@ -851,8 +851,8 @@ mod tests {
 
     #[test]
     fn bmi_path_has_correct_structure() {
-        let p = bmi_path(Path::new("/project/target"), "dev", "math");
-        assert_eq!(p, PathBuf::from("/project/target/dev/modules/math.pcm"));
+        let p = bmi_path(Path::new("/project/target"), "debug", "math");
+        assert_eq!(p, PathBuf::from("/project/target/debug/modules/math.pcm"));
     }
 
     #[test]
@@ -860,7 +860,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(
             "math".to_string(),
-            PathBuf::from("/proj/target/dev/modules/math.pcm"),
+            PathBuf::from("/proj/target/debug/modules/math.pcm"),
         );
         let flags = import_flags(
             &["math".to_string(), "unknown".to_string()],
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(flags.len(), 1);
         assert_eq!(
             flags[0],
-            "-fmodule-file=math=/proj/target/dev/modules/math.pcm"
+            "-fmodule-file=math=/proj/target/debug/modules/math.pcm"
         );
     }
 }

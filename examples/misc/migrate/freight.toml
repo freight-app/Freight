@@ -22,7 +22,7 @@ debug     = false
 warnings  = "all"
 includes  = ["include/"]
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

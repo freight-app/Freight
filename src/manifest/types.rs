@@ -95,7 +95,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Produce `BuildSettings` for the named profile (`"dev"` or `"release"`),
+    /// Produce `BuildSettings` for the named profile (`"debug"` or `"release"`),
     /// starting from the base `[compiler]` settings and applying profile and
     /// platform overrides.
     pub fn build_settings_for(&self, profile_name: &str) -> BuildSettings {
@@ -280,8 +280,8 @@ impl Manifest {
             } // cycle guard
             visited.push(current_name.clone());
             let p = match current_name.as_str() {
-                // "debug" is an alias for "dev" (used by freight dap).
-                "debug" | "dev" => self.profile.dev.clone().unwrap_or(Profile {
+                // "debug" is accepted as a legacy alias for the default "debug" profile.
+                "debug" | "dev" => self.profile.debug.clone().unwrap_or(Profile {
                     inherits: None,
                     opt_level: Some(0),
                     debug: Some(true),
@@ -1219,11 +1219,13 @@ fn default_warnings() -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Profiles {
-    #[serde(default)]
-    pub dev: Option<Profile>,
+    /// The default (unoptimised) profile. `alias = "debug"` keeps older manifests
+    /// that wrote `[profile.dev]` working.
+    #[serde(default, alias = "debug")]
+    pub debug: Option<Profile>,
     #[serde(default)]
     pub release: Option<Profile>,
-    /// Any `[profile.<name>]` other than dev/release.
+    /// Any `[profile.<name>]` other than debug/release.
     #[serde(flatten, default)]
     pub custom: std::collections::HashMap<String, Profile>,
 }
@@ -1327,7 +1329,7 @@ hostlib = {{ version = "1" }}
     #[test]
     fn os_overlay_merges_into_build_settings() {
         let m = load_manifest_str(&host_overlay_block()).unwrap();
-        let s = m.build_settings_for("dev");
+        let s = m.build_settings_for("debug");
         assert!(s.defines.contains(&"BASE".to_string()));
         assert!(s.defines.contains(&"FROM_HOST".to_string()));
         assert!(s.extra_flags.contains(&"-DPLATFORM_FLAG".to_string()));
@@ -1418,7 +1420,7 @@ flags = ["-march=foo", "-march=bar"]
 "#
         );
         let m = load_manifest_str(&s).unwrap();
-        let warns = m.cpu_tuning_warnings("dev");
+        let warns = m.cpu_tuning_warnings("debug");
         assert!(
             warns.iter().any(|w| w.contains("-march")),
             "expected a conflicting -march warning, got {warns:?}"
@@ -1443,7 +1445,7 @@ version = "12.3"
 "#
         );
         let m = load_manifest_str(&s).unwrap();
-        let bs = m.build_settings_for("dev");
+        let bs = m.build_settings_for("debug");
         assert!(bs
             .defines
             .iter()
@@ -1707,7 +1709,7 @@ src  = "src/main.cpp"
         let mut m = load_manifest_str(manifest_src).unwrap();
         m.compiler.target = Some("aarch64-linux-gnu".into());
         m.compiler.sysroot = Some("/opt/sysroot".into());
-        let s = m.build_settings_for("dev");
+        let s = m.build_settings_for("debug");
         assert_eq!(s.target_triple.as_deref(), Some("aarch64-linux-gnu"));
         assert_eq!(
             s.sysroot.as_deref(),

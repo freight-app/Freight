@@ -82,8 +82,13 @@ pub fn compile_sources(
 
     // If compile flags changed since the last build (features, forwarded defines,
     // manifest edits, …), every object is stale regardless of mtime.
-    let fingerprint =
-        config_fingerprint(project_dir, profile, feature_defines, header_unit_flags, include_dirs);
+    let fingerprint = config_fingerprint(
+        project_dir,
+        profile,
+        feature_defines,
+        header_unit_flags,
+        include_dirs,
+    );
     let flags_changed = config_changed(target_dir, profile, &fingerprint);
 
     let results: Result<Vec<(PathBuf, bool)>, FreightError> = sources
@@ -211,8 +216,13 @@ pub fn compile_sources_unity(
 
     // Capture flag-change state up front: the inner compile_sources call below
     // rewrites the fingerprint file, so it must be read before then.
-    let fingerprint =
-        config_fingerprint(project_dir, profile, feature_defines, header_unit_flags, include_dirs);
+    let fingerprint = config_fingerprint(
+        project_dir,
+        profile,
+        feature_defines,
+        header_unit_flags,
+        include_dirs,
+    );
     let flags_changed = config_changed(target_dir, profile, &fingerprint);
 
     // Split sources: unifiable langs vs. compile-individually langs.
@@ -523,14 +533,20 @@ pub fn settings_for_lang(
 /// `target_dir` is the root of the target tree (e.g. `project/target` or
 /// `root/target/deps/name` for pool deps).
 pub fn object_path(target_dir: &Path, profile: &str, source_rel: &Path) -> PathBuf {
-    let mut p = target_dir.join(profile).join("objs").join(safe_obj_rel(source_rel));
+    let mut p = target_dir
+        .join(profile)
+        .join("objs")
+        .join(safe_obj_rel(source_rel));
     p.set_extension("o");
     p
 }
 
 /// Same as `object_path` but with `.d` extension for the Makefile dependency file.
 pub fn dep_file_path(target_dir: &Path, profile: &str, source_rel: &Path) -> PathBuf {
-    let mut p = target_dir.join(profile).join("objs").join(safe_obj_rel(source_rel));
+    let mut p = target_dir
+        .join(profile)
+        .join("objs")
+        .join(safe_obj_rel(source_rel));
     p.set_extension("d");
     p
 }
@@ -1028,11 +1044,11 @@ mod tests {
     fn object_path_keeps_parent_refs_inside_objs() {
         let td = Path::new("/proj/target");
         // A normal src/ path is unchanged.
-        let normal = object_path(td, "dev", Path::new("src/a.c"));
-        assert!(normal.ends_with("dev/objs/src/a.o"));
+        let normal = object_path(td, "debug", Path::new("src/a.c"));
+        assert!(normal.ends_with("debug/objs/src/a.o"));
         // A `../shared.c` (workspace member) must not escape objs/.
-        let up = object_path(td, "dev", Path::new("../shared.c"));
-        assert!(up.ends_with("dev/objs/__up__/shared.o"), "got {up:?}");
+        let up = object_path(td, "debug", Path::new("../shared.c"));
+        assert!(up.ends_with("debug/objs/__up__/shared.o"), "got {up:?}");
         assert!(!up.to_string_lossy().contains("/objs/.."));
     }
 
@@ -1092,8 +1108,15 @@ mod tests {
         let detected = vec![mk("13.3.0"), mk("14.2.0")];
 
         let found = select_compiler("c", &Backend("gnu-14".into()), &detected, None);
-        assert!(found.is_some(), "versioned backend gnu-14 must select a compiler");
-        assert_eq!(found.unwrap().version, "14.2.0", "should pick the v14 compiler");
+        assert!(
+            found.is_some(),
+            "versioned backend gnu-14 must select a compiler"
+        );
+        assert_eq!(
+            found.unwrap().version,
+            "14.2.0",
+            "should pick the v14 compiler"
+        );
 
         // A plain family name still resolves too.
         assert!(select_compiler("c", &Backend("gnu".into()), &detected, None).is_some());
@@ -1241,10 +1264,10 @@ mod tests {
     fn dep_file_path_has_d_extension() {
         let dep = dep_file_path(
             Path::new("/project/target"),
-            "dev",
+            "debug",
             Path::new("src/main.cpp"),
         );
-        assert_eq!(dep, PathBuf::from("/project/target/dev/objs/src/main.d"));
+        assert_eq!(dep, PathBuf::from("/project/target/debug/objs/src/main.d"));
     }
 
     // ── parse_dep_file ────────────────────────────────────────────────────────
@@ -1281,10 +1304,10 @@ name = "p"
 src  = "src/main.cpp"
 "#;
         let manifest = crate::manifest::load_manifest_str(manifest_src).unwrap();
-        let s = settings_for_lang(&manifest, "dev", "cpp", &[], Path::new("/tmp"), &[]);
+        let s = settings_for_lang(&manifest, "debug", "cpp", &[], Path::new("/tmp"), &[]);
         assert_eq!(s.standard.as_deref(), Some("c++20"));
 
-        let s2 = settings_for_lang(&manifest, "dev", "c", &[], Path::new("/tmp"), &[]);
+        let s2 = settings_for_lang(&manifest, "debug", "c", &[], Path::new("/tmp"), &[]);
         assert_eq!(s2.standard.as_deref(), Some("c17"));
     }
 
@@ -1301,7 +1324,14 @@ src  = "src/main.cpp"
 "#;
         let manifest = crate::manifest::load_manifest_str(manifest_src).unwrap();
         let extra = vec![PathBuf::from("inc")];
-        let s = settings_for_lang(&manifest, "dev", "cpp", &extra, Path::new("/project"), &[]);
+        let s = settings_for_lang(
+            &manifest,
+            "debug",
+            "cpp",
+            &extra,
+            Path::new("/project"),
+            &[],
+        );
         assert!(s.include_paths.iter().any(|p| p.ends_with("inc")));
     }
 

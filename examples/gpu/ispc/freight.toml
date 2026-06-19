@@ -18,7 +18,7 @@ target = "avx2-i32x8"
 name = "ispc-hello"
 src  = "src/main.cpp"
 
-[profile.dev]
+[profile.debug]
 opt-level = 2      # ispc benefits from at least -O2 to vectorise cleanly
 debug     = true
 

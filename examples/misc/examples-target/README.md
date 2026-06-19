@@ -8,7 +8,7 @@ A static library plus runnable example programs, mirroring Cargo's `examples/`.
 Examples are **not** built by a plain `freight build`; build/run them explicitly:
 
 ```sh
-freight build --examples        # build all → target/dev/examples/{basic,fancy}
+freight build --examples        # build all → target/debug/examples/{basic,fancy}
 freight build --example fancy    # build just one
 freight run   --example basic    # build + run → "2 + 3 = 5"
 freight run   --example fancy    # → "(2 + 3) * 4 = 20"

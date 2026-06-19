@@ -26,7 +26,7 @@ impl Args {
 }
 
 pub fn cmd_watch(release: bool) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
 
     let Ok(cwd) = env::current_dir() else {
         print_error("cannot read working directory");

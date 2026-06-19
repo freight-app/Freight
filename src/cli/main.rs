@@ -69,7 +69,7 @@ enum Commands {
     Check(commands::check::Args),
     /// Wipe target/
     Clean(commands::clean::Args),
-    /// Generate compile_commands.json for clangd, fortls, serve-d and other language servers
+    /// Generate compile_commands.json for clangd, native Fortran LSP, serve-d and other language servers
     #[command(visible_alias = "compile-commands")]
     Compile(commands::compile_commands::Args),
     /// Open the dependency documentation browser, or generate API docs / man pages
@@ -252,7 +252,11 @@ mod tests {
     fn expand_aliases_never_touches_builtins() {
         // `build` is a real command, so the arg vector is returned unchanged even
         // if a (hypothetical) alias existed — proven by the slot staying put.
-        let args = vec!["freight".to_string(), "build".to_string(), "--release".to_string()];
+        let args = vec![
+            "freight".to_string(),
+            "build".to_string(),
+            "--release".to_string(),
+        ];
         assert_eq!(expand_aliases(args.clone()), args);
     }
 

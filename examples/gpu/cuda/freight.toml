@@ -12,7 +12,7 @@ std = "c++17"
 name = "cuda-hello"
 src  = "src/main.cu"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 

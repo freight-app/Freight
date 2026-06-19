@@ -674,7 +674,7 @@ fn safe_lsp_profile_dir(profile: &str) -> String {
         .collect();
 
     if safe.is_empty() {
-        "dev".to_string()
+        "debug".to_string()
     } else {
         safe
     }
@@ -1603,10 +1603,10 @@ fn apply_sanitize_override(
 ) {
     let list = sanitize.to_vec();
     match profile {
-        "dev" => {
+        "debug" => {
             manifest
                 .profile
-                .dev
+                .debug
                 .get_or_insert_with(Default::default)
                 .sanitize = list;
         }
@@ -1941,7 +1941,7 @@ mod tests {
     #[test]
     fn lsp_profile_dir_is_path_safe() {
         assert_eq!(safe_lsp_profile_dir("../release"), "___release");
-        assert_eq!(safe_lsp_profile_dir(""), "dev");
+        assert_eq!(safe_lsp_profile_dir(""), "debug");
     }
 
     #[test]

@@ -45,7 +45,7 @@ pub fn cmd_test(
     use_defaults: bool,
     sanitize: &[String],
 ) {
-    let profile = if release { "release" } else { "dev" };
+    let profile = if release { "release" } else { "debug" };
     let progress = super::build::make_progress();
     if super::build::at_workspace_root() {
         match test_workspace_with(profile, filter, package, features, use_defaults, &progress) {

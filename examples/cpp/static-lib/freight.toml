@@ -18,7 +18,7 @@ hdrs = ["inc/stats.h"]
 name = "demo"
 src  = "src/main.cpp"
 
-[profile.dev]
+[profile.debug]
 opt-level = 0
 debug     = true
 
