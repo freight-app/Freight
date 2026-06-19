@@ -233,7 +233,7 @@ clang-bridge/fortran-lsp.)
 **Status:** implemented and default-on — `src/lsp/indexers/Asm.rs` (GAS + NASM).
 `--no-native-asm` falls back to the external `asm-lsp` passthrough; otherwise
 that passthrough is not started and asm requests route to `AsmIndexer`.
-Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils handled. 16 unit
+Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils handled. 17 unit
 tests + end-to-end verified through `freight lsp`.
 
 Implemented:
@@ -257,13 +257,21 @@ Implemented:
   `refresh_flags`; an unknown arch tries every table.
 - **Folding** — `.macro`/`.rept`/conditional blocks and per-label regions.
 - **Diagnostics** — duplicate symbol definition.
+- **Document highlight** — every occurrence of the symbol under the cursor
+  (definition flagged Write, uses Read).
+- **Workspace symbols** — flat symbols across all parsed/included asm files,
+  filtered by a case-insensitive substring.
+- **Selection ranges** — identifier under the cursor → enclosing line.
+- **Semantic tokens** — labels/constants/macros tagged under freight's global
+  token legend (`function`/`enumMember`/`macro`); instructions and registers are
+  left to the client's TextMate grammar.
+- **Rename** — renames a label/constant/macro and every reference across the
+  `.include` closure; rejects invalid identifiers.
 
 **Remaining / how to grow it:**
 - [ ] **Fuller instruction/register DB** — the curated x86-64/AArch64/RISC-V
       tables cover common mnemonics/registers; fuller coverage could embed the
       upstream `asm-lsp` crate's data tables rather than hand-rolling.
-- [ ] **Semantic tokens** — only once freight owns the global legend (see the
-      clang-bridge legend note); otherwise leave to TextMate.
 - [ ] Consider extracting the parser into a `crates/asm-lsp`-style crate if it
       grows (kept inline in `Asm.rs` for now).
 

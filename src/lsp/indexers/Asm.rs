@@ -16,12 +16,17 @@
 //! - `completion` — symbols (current file + includes) plus common directives,
 //! - `foldingRange` — `.macro`/conditional blocks and per-label regions,
 //! - `diagnostics` — a symbol defined more than once (macro-body labels, which
-//!   are templated per expansion, are excluded).
+//!   are templated per expansion, are excluded),
+//! - `documentHighlight` — every occurrence of the symbol under the cursor,
+//! - `workspaceSymbol` — flat symbols across all parsed/included asm files,
+//! - `selectionRange` — identifier → enclosing line,
+//! - `semanticTokens` — labels/constants/macros tagged under freight's global
+//!   token legend (instructions/registers are left to the client's grammar),
+//! - `rename` — a label/constant/macro across the `.include` closure.
 //!
 //! Cross-file resolution follows `.include`/`%include` transitively from the
 //! queried file. Macro parameters (`\name`) and macro-body labels are treated as
-//! macro-locals. Semantic tokens are left to the client until freight owns the
-//! global token legend (see the clang-bridge note in `crates/freight/TODO.md`).
+//! macro-locals.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -509,6 +514,184 @@ impl LanguageIndexer for AsmIndexer {
             items.push(json!({ "label": name, "kind": 14, "detail": desc }));
         }
         Some(json!({ "isIncomplete": false, "items": items }))
+    }
+
+    fn document_highlight(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
+        let (line, character) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_asm(&path) {
+            return None;
+        }
+        let file = self.ensure_file(&path)?;
+        let name = Self::ident_at(file, line as u32, character as u32)?.name.clone();
+        // Every occurrence in this file; reads vs the definition (write).
+        Some(
+            file.idents
+                .iter()
+                .filter(|i| i.name == name)
+                .map(|i| {
+                    json!({
+                        "range": span(i.line, i.start_col, i.end_col),
+                        "kind": if i.is_def { 3 } else { 2 }, // Write / Read
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn workspace_symbols(&mut self, query: &str) -> Option<Vec<Value>> {
+        // Flat symbols from every parsed/included asm file, filtered by a
+        // case-insensitive substring of `query`.
+        let q = query.to_ascii_lowercase();
+        let mut out = Vec::new();
+        for (p, f) in &self.files {
+            let uri_str = uri_from_path(p);
+            for s in f.symbols.iter().filter(|s| !s.in_macro) {
+                if q.is_empty() || s.name.to_ascii_lowercase().contains(&q) {
+                    out.push(json!({
+                        "name": s.name,
+                        "kind": s.kind.lsp_symbol_kind(),
+                        "location": {
+                            "uri": uri_str,
+                            "range": span(s.line, s.start_col, s.end_col),
+                        },
+                    }));
+                }
+            }
+        }
+        Some(out)
+    }
+
+    fn selection_ranges(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
+        let path = path_from_uri(uri)?;
+        if !Self::is_asm(&path) {
+            return None;
+        }
+        let positions = msg.get("params")?.get("positions")?.as_array()?;
+        let file = self.ensure_file(&path)?;
+        // For each position, nest the identifier/word under the cursor inside the
+        // whole line.
+        let mut out = Vec::new();
+        for pos in positions {
+            let line = pos.get("line").and_then(Value::as_u64).unwrap_or(0) as u32;
+            let character = pos.get("character").and_then(Value::as_u64).unwrap_or(0) as u32;
+            let line_text = file.lines.get(line as usize).cloned().unwrap_or_default();
+            let line_range = span(line, 0, line_text.chars().count() as u32);
+            let inner = Self::ident_at(file, line, character)
+                .map(|i| (i.start_col, i.end_col))
+                .or_else(|| {
+                    word_at(&line_text, character).map(|(w, s)| (s, s + w.chars().count() as u32))
+                });
+            out.push(match inner {
+                Some((s, e)) => json!({
+                    "range": span(line, s, e),
+                    "parent": { "range": line_range },
+                }),
+                None => json!({ "range": line_range }),
+            });
+        }
+        Some(out)
+    }
+
+    fn semantic_tokens(&mut self, uri: &str) -> Option<Vec<u32>> {
+        let path = path_from_uri(uri)?;
+        if !Self::is_asm(&path) {
+            return None;
+        }
+        // Resolve each symbol name in the include closure to a legend token type,
+        // then emit a token for every identifier occurrence that names one. Other
+        // tokens (instructions, registers) are left to the client's grammar.
+        let closure = self.include_closure(&path);
+        let mut kinds: HashMap<String, u32> = HashMap::new();
+        for p in &closure {
+            if let Some(f) = self.files.get(p) {
+                for s in &f.symbols {
+                    kinds.entry(s.name.clone()).or_insert_with(|| sym_token_type(s.kind));
+                }
+            }
+        }
+        let file = self.files.get(&path)?;
+        let mut toks: Vec<(u32, u32, u32, u32)> = file
+            .idents
+            .iter()
+            .filter_map(|i| {
+                kinds
+                    .get(&i.name)
+                    .map(|&t| (i.line, i.start_col, i.end_col.saturating_sub(i.start_col), t))
+            })
+            .collect();
+        toks.sort_by_key(|t| (t.0, t.1));
+
+        // LSP delta encoding: [deltaLine, deltaStartChar, length, tokenType, mods].
+        let mut data = Vec::with_capacity(toks.len() * 5);
+        let (mut prev_line, mut prev_col) = (0u32, 0u32);
+        for (line, col, len, ty) in toks {
+            let dl = line - prev_line;
+            let dc = if dl == 0 { col - prev_col } else { col };
+            data.extend_from_slice(&[dl, dc, len, ty, 0]);
+            prev_line = line;
+            prev_col = col;
+        }
+        Some(data)
+    }
+
+    fn rename(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, character) = position(msg)?;
+        let new_name = msg.get("params")?.get("newName")?.as_str()?;
+        if !is_valid_ident(new_name) {
+            return None; // reject invalid identifiers — client shows "cannot rename"
+        }
+        let path = path_from_uri(uri)?;
+        if !Self::is_asm(&path) {
+            return None;
+        }
+        let closure = self.include_closure(&path);
+        let file = self.files.get(&path)?;
+        let target = Self::ident_at(file, line as u32, character as u32)?.name.clone();
+        // Only rename a name that resolves to a definition in the closure.
+        if !closure
+            .iter()
+            .filter_map(|p| self.files.get(p))
+            .any(|f| f.symbols.iter().any(|s| s.name == target))
+        {
+            return None;
+        }
+        // One text edit per occurrence, grouped by file URI.
+        let mut changes = serde_json::Map::new();
+        for p in &closure {
+            let Some(f) = self.files.get(p) else { continue };
+            let edits: Vec<Value> = f
+                .idents
+                .iter()
+                .filter(|i| i.name == target)
+                .map(|i| {
+                    json!({ "range": span(i.line, i.start_col, i.end_col), "newText": new_name })
+                })
+                .collect();
+            if !edits.is_empty() {
+                changes.insert(uri_from_path(p), json!(edits));
+            }
+        }
+        Some(json!({ "changes": changes }))
+    }
+}
+
+/// Map a symbol kind to a `semantic_tokens_legend()` token-type index.
+fn sym_token_type(kind: SymKind) -> u32 {
+    match kind {
+        SymKind::Label => 2,    // function
+        SymKind::Constant => 7, // enumMember (rendered like a named constant)
+        SymKind::Macro => 8,    // macro
+    }
+}
+
+/// Whether `name` is a syntactically valid assembly identifier (used to reject
+/// bad rename targets before producing a workspace edit).
+fn is_valid_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if is_ident_start(c) => chars.all(is_ident_char),
+        _ => false,
     }
 }
 
@@ -1707,5 +1890,71 @@ foo:           # comment with bar:
         assert_eq!(f.num_refs[0].value, "1");
         assert!(f.num_refs[0].forward);
         assert_eq!(f.num_labels[0].value, "1");
+    }
+
+    #[test]
+    fn semantic_highlight_rename_and_navigation_extras() {
+        // .equ WIDTH (line 0); main label (line 1); two WIDTH uses (lines 2,3);
+        // a macro and its use.
+        let src = "\
+.equ WIDTH, 80
+main:
+    mov $WIDTH, %eax
+    add $WIDTH, %eax
+.macro prologue
+    push %rbp
+.endm
+    prologue
+";
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("a.s");
+        std::fs::write(&path, src).unwrap();
+        let uri = uri_from_path(&path);
+        let pos = |line: u32, ch: u32| {
+            json!({ "params": { "textDocument": { "uri": uri },
+                                "position": { "line": line, "character": ch } } })
+        };
+        let mut ix = AsmIndexer::new();
+
+        // semantic tokens: 5 ints per token; WIDTH constant -> enumMember (7),
+        // main label -> function (2), macro -> macro (8) all appear.
+        let toks = ix.semantic_tokens(&uri).expect("semantic tokens");
+        assert_eq!(toks.len() % 5, 0);
+        assert!(!toks.is_empty());
+        let types: Vec<u32> = toks.chunks(5).map(|c| c[3]).collect();
+        assert!(types.contains(&7), "constant token type missing: {types:?}");
+        assert!(types.contains(&2), "label token type missing");
+        assert!(types.contains(&8), "macro token type missing");
+
+        // document highlight on a WIDTH use: the def (Write=3) + both uses (Read=2).
+        let hl = ix.document_highlight(&uri, &pos(2, 10)).expect("highlight");
+        assert_eq!(hl.len(), 3);
+        assert!(hl.iter().any(|h| h["kind"] == json!(3))); // the .equ def
+        assert_eq!(hl.iter().filter(|h| h["kind"] == json!(2)).count(), 2);
+
+        // workspace symbols filtered by substring.
+        let ws = ix.workspace_symbols("wid").expect("ws symbols");
+        assert!(ws.iter().any(|s| s["name"] == json!("WIDTH")));
+        assert!(!ix.workspace_symbols("nonexistent").unwrap().iter().any(|_| true));
+
+        // selection range: identifier nested in its line.
+        let sr_msg = json!({ "params": { "textDocument": { "uri": uri },
+            "positions": [ { "line": 2, "character": 10 } ] } });
+        let sr = ix.selection_ranges(&uri, &sr_msg).expect("selection range");
+        assert_eq!(sr.len(), 1);
+        assert!(sr[0]["parent"]["range"].is_object());
+
+        // rename WIDTH -> WIDTH2: edits the def and both uses (3 total).
+        let rn_msg = json!({ "params": { "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 10 }, "newName": "WIDTH2" } });
+        let edit = ix.rename(&uri, &rn_msg).expect("rename");
+        let edits = edit["changes"][&uri].as_array().expect("edits for file");
+        assert_eq!(edits.len(), 3);
+        assert!(edits.iter().all(|e| e["newText"] == json!("WIDTH2")));
+
+        // rename rejects an invalid identifier.
+        let bad = json!({ "params": { "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 10 }, "newName": "1bad name" } });
+        assert!(ix.rename(&uri, &bad).is_none());
     }
 }

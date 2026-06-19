@@ -7,6 +7,14 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 
 ## [Unreleased]
 
+### Added
+- **Native assembly LSP — completed feature set.** The in-process `AsmIndexer`
+  (GAS + NASM) now also serves `documentHighlight`, `workspaceSymbol`,
+  `selectionRange`, `semanticTokens` (labels/constants/macros under freight's
+  token legend), and `rename` (a symbol + all references across the `.include`
+  closure), on top of the existing symbols/definition/references/hover/
+  completion/folding/diagnostics. No external `asm-lsp` binary needed.
+
 ### Changed
 - The default build profile is renamed **`dev` → `debug`** (so output lands in
   `target/debug/`, matching the `Debug` CMake config name). Old manifests keep
