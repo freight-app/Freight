@@ -123,7 +123,10 @@ pub fn discover(
             None => continue,
         };
         if let Some(lang_key) = ext_map.get(ext.as_str()) {
-            sources.push(SourceFile { path: rel, lang_key: lang_key.clone() });
+            sources.push(SourceFile {
+                path: rel,
+                lang_key: lang_key.clone(),
+            });
         }
     }
 
@@ -132,9 +135,13 @@ pub fn discover(
     sources.dedup_by(|a, b| a.path == b.path);
 
     let mut include_dirs: Vec<PathBuf> = Vec::new();
-    let inc_dir = project_dir.join("inc");
-    if inc_dir.is_dir() {
-        include_dirs.push(PathBuf::from("inc"));
+    // Auto-detect the conventional public-header directories. `include/` is the
+    // dominant C/C++ convention (and what most migrated CMake libraries use);
+    // `inc/` is freight's short form. Both are added when present.
+    for cand in ["include", "inc"] {
+        if project_dir.join(cand).is_dir() {
+            include_dirs.push(PathBuf::from(cand));
+        }
     }
     // Include the parent directory of each declared public header so a target
     // whose `hdrs` live outside `inc/` still resolves its own includes.

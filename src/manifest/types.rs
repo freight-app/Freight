@@ -244,14 +244,7 @@ impl Manifest {
     pub fn cpu_tuning_warnings(&self, profile: &str) -> Vec<String> {
         let flags = self.build_settings_for(profile).extra_flags;
         let mut warnings = Vec::new();
-        for knob in [
-            "-march",
-            "-mcpu",
-            "-mtune",
-            "-mfpu",
-            "-mabi",
-            "-mfloat-abi",
-        ] {
+        for knob in ["-march", "-mcpu", "-mtune", "-mfpu", "-mabi", "-mfloat-abi"] {
             let prefix = format!("{knob}=");
             let hits: Vec<&String> = flags.iter().filter(|f| f.starts_with(&prefix)).collect();
             if hits.len() > 1 {
@@ -528,7 +521,8 @@ fn merge_march_flags(flags: &mut Vec<String>) {
     }
     // Per base (first-seen order): the unioned feature suffixes.
     let mut order: Vec<String> = Vec::new();
-    let mut feats: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut feats: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for f in flags.iter() {
         if let Some(spec) = f.strip_prefix("-march=") {
             let mut parts = spec.split('+');
@@ -669,7 +663,11 @@ pub struct Package {
     pub provides: Vec<String>,
     /// Default `[[bin]]` to run with `freight run` when the project has more than
     /// one binary target and `--bin` is not given. Mirrors Cargo's `default-run`.
-    #[serde(default, rename = "default-run", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "default-run",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_run: Option<String>,
     /// Foreign-built package: when `url` + `build` are set (no local `[lib]`/sources),
     /// this package is itself fetched from `url` and built with the named foreign
@@ -723,8 +721,10 @@ impl LanguageSettings {
 pub struct LibTarget {
     #[serde(rename = "type", default)]
     pub lib_type: LibType,
-    /// Source files for this library. Accepts a single string or a list.
-    #[serde(deserialize_with = "deserialize_string_or_vec")]
+    /// Source files for this library. Accepts a single string or a list. When
+    /// omitted, the library is compiled from the auto-discovered `src/` tree (and
+    /// any `[os.*]/[arch.*]` sources), like a target-less project.
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
     pub srcs: Vec<String>,
     /// Public header files that form the library's API, exposed to dependents.
     /// Include directories are inferred from the parent directories of listed headers.
@@ -754,7 +754,11 @@ pub struct BinTarget {
     /// Features that must all be active for this binary to be built/linked.
     /// When any is inactive the target is silently skipped (mirrors Cargo's
     /// `required-features`). Empty (the default) means always built.
-    #[serde(default, rename = "required-features", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        rename = "required-features",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub required_features: Vec<String>,
 }
 
@@ -768,7 +772,11 @@ pub struct ExampleTarget {
     pub name: String,
     pub src: String,
     /// Features that must all be active for this example to build (mirrors `[[bin]]`).
-    #[serde(default, rename = "required-features", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        rename = "required-features",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub required_features: Vec<String>,
 }
 
@@ -1339,7 +1347,11 @@ hostlib = {{ version = "1" }}
     #[test]
     fn system_features_collected_for_host() {
         let host = std::env::consts::OS;
-        let other = if host == "windows" { "linux" } else { "windows" };
+        let other = if host == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
         let s = format!(
             r#"
 [package]
@@ -1374,10 +1386,7 @@ features = ["ws2_32"]
             "-march=armv8-a+sve2".to_string(),
         ];
         merge_march_flags(&mut flags);
-        assert_eq!(
-            flags,
-            vec!["-O2", "-march=armv8-a+sve+sve2", "-mfma"]
-        );
+        assert_eq!(flags, vec!["-O2", "-march=armv8-a+sve+sve2", "-mfma"]);
     }
 
     #[test]
@@ -1435,7 +1444,10 @@ version = "12.3"
         );
         let m = load_manifest_str(&s).unwrap();
         let bs = m.build_settings_for("dev");
-        assert!(bs.defines.iter().any(|d| d == "FREIGHT_OS_VERSION=\"12.3\""));
+        assert!(bs
+            .defines
+            .iter()
+            .any(|d| d == "FREIGHT_OS_VERSION=\"12.3\""));
     }
 
     #[test]

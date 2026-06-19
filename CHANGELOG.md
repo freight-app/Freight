@@ -8,6 +8,14 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- **`include/` auto-detected as an include directory** (alongside `inc/`) — the
+  dominant C/C++ convention, and what most migrated CMake libraries use, so they
+  build natively without extra configuration.
+- **`[lib].srcs` is now optional** — a library with no `srcs` is compiled from
+  the auto-discovered `src/` tree (like a target-less project). Validation no
+  longer requires `srcs`; a genuinely source-less build is still caught at build
+  time. Lets a migrated CMake library (whose sources were a `file(GLOB …)`) build
+  from its `src/` directory.
 - **Foreign packages build standalone** — `freight build` on a package whose
   `[package]` declares `url`/`build` and has no native targets (a vcpkg-scraper
   port) now fetches + foreign-builds it and places the produced library in

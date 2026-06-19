@@ -534,10 +534,9 @@ fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
     }
 
     if let Some(lib) = &m.lib {
-        let prebuilt = lib.link.is_some() || lib.lib_type == LibType::Header;
-        if !prebuilt && lib.srcs.is_empty() {
-            errors.push(ValidationError::new("[lib]", "srcs must not be empty"));
-        }
+        // An empty `srcs` is allowed: the library is compiled from the
+        // auto-discovered `src/` tree. A genuinely source-less build is caught at
+        // build time ("no source files found under src/").
         if lib.link.is_some() && !lib.srcs.is_empty() {
             errors.push(ValidationError::new(
                 "[lib]",
