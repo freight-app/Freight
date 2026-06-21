@@ -92,6 +92,51 @@ pub struct Manifest {
     /// relative to this manifest's directory.
     #[serde(default)]
     pub patch: HashMap<String, Dependency>,
+    /// Marks this package as a **build plugin** (`[plugin]`). A dependency whose
+    /// manifest declares this runs its script during the consumer's build when
+    /// the consumer declares one of the plugin's `handles` sections.
+    #[serde(default)]
+    pub plugin: Option<PluginManifest>,
+}
+
+/// `[plugin]` — declares a package as a build plugin (e.g. a code generator).
+///
+/// The plugin runs `entry` (a Rhai script) during a consuming project's build,
+/// once for each of its `handles` sections that the consumer declares. The
+/// script receives that section's config as `cfg` and a `ctx` object to glob
+/// inputs, run allow-listed `tools`, and feed generated sources / include dirs /
+/// defines back into the build.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PluginManifest {
+    /// Path to the plugin's entry script, relative to the package root
+    /// (e.g. `"proto.rhai"`).
+    pub entry: String,
+    /// Manifest sections this plugin handles. Empty = defaults to the package name.
+    #[serde(default)]
+    pub handles: Vec<String>,
+    /// External tools the script may run via `run(...)`. Anything not listed is
+    /// rejected — a plugin cannot execute arbitrary commands.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Build goals that activate the plugin: `build`, `test`, `bench`,
+    /// `examples`. Empty = every compiling goal.
+    #[serde(default)]
+    pub goals: Vec<String>,
+    /// Profiles that activate the plugin (`debug`, `release`, custom names).
+    /// Empty = every profile.
+    #[serde(default)]
+    pub profiles: Vec<String>,
+    /// Input globs (relative to the consuming project). When set, the plugin is
+    /// only re-run when one of these files (or its `cfg`/script) changes —
+    /// otherwise the previous generated output is reused. Empty = run every build.
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    /// `[plugin.schema]` — keys the plugin understands in its handled section,
+    /// each mapped to a one-line description. Purely advisory: it drives
+    /// editor completion and hover for the consumer's section (e.g. `[proto]`)
+    /// and is never enforced. Order is normalized (sorted) by the map.
+    #[serde(default)]
+    pub schema: std::collections::BTreeMap<String, String>,
 }
 
 impl Manifest {

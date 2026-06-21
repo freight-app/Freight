@@ -21,6 +21,13 @@ pub enum BuildEvent {
     Archiving { name: String },
     /// Running (or skipping cached) `build.freight` script.
     RunningScript { cached: bool },
+    /// A line of output captured from a tool a build plugin ran via `run(...)`.
+    /// `source` is the tool name; `is_err` marks the stderr stream.
+    ScriptOutput {
+        source: String,
+        text: String,
+        is_err: bool,
+    },
     /// Fetching a git/http/registry dep.
     FetchingDep { name: String, source: String },
     /// Starting a source build of a cached dep (no prebuilt available).

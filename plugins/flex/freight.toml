@@ -1,0 +1,10 @@
+[package]
+name        = "flex"
+version     = "0.1.0"
+description = "Flex lexer generation — compiles every .l lexer into the build."
+
+[plugin]
+entry   = "flex.rhai"
+handles = ["flex"]
+tools   = ["flex"]
+inputs  = ["**/*.l"]

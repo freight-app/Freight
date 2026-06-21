@@ -39,6 +39,7 @@ curl          = { version = "0.4", features = ["static-curl"] }
 git2          = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
 semver        = "1"
 owo-colors    = "4"
+rhai          = "1"   # embedded scripting engine for build plugins
 
 # CLI
 clap          = { version = "4", features = ["derive"] }

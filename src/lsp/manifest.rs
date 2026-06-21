@@ -124,11 +124,36 @@ pub fn completion_result(
     text: Option<&str>,
     pos: Option<(usize, usize)>,
     inventory: Option<&WorkspaceInventory>,
+    plugin_schemas: &[crate::build::plugin::PluginSchema],
 ) -> Value {
     let section = text
         .zip(pos)
         .and_then(|(t, (line, _))| current_section(t, line))
         .unwrap_or_default();
+
+    // A plugin-handled section (e.g. `[proto]`) isn't a built-in: offer the keys
+    // the plugin documents in `[plugin.schema]` instead of the section list.
+    if !section.is_empty() {
+        let mut plugin_items: Vec<Value> = Vec::new();
+        let mut seen_keys: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for schema in plugin_schemas.iter().filter(|s| s.handles_section(&section)) {
+            for (key, desc) in &schema.keys {
+                if !seen_keys.insert(key.as_str()) {
+                    continue;
+                }
+                plugin_items.push(json!({
+                    "label": key,
+                    "kind": 10,
+                    "detail": format!("plugin: {}", schema.plugin_name),
+                    "documentation": { "kind": "markdown", "value": desc },
+                    "insertText": key
+                }));
+            }
+        }
+        if !plugin_items.is_empty() {
+            return json!({ "isIncomplete": false, "items": plugin_items });
+        }
+    }
 
     let labels: Vec<(&str, &str, &str)> = if section == "package" {
         vec![
@@ -317,6 +342,16 @@ pub fn completion_result(
                 "stdlib",
                 "C++ standard library selection",
                 "libc++, libstdc++, or none for C++.",
+            ),
+            (
+                "max_line_length",
+                "Fortran LSP line limit",
+                "Maximum code-line length for native Fortran LSP warnings. Set as a string integer.",
+            ),
+            (
+                "max_comment_line_length",
+                "Fortran LSP comment limit",
+                "Maximum comment-line length for native Fortran LSP warnings. Set as a string integer.",
             ),
         ]
     } else if section == "lib" {
@@ -535,7 +570,11 @@ pub fn completion_result(
                 "Compiler settings",
                 "Backend, warnings, flags, includes, PCH, and unity settings.",
             ),
-            ("[profile.debug]", "Debug profile", "Debug profile overrides."),
+            (
+                "[profile.debug]",
+                "Debug profile",
+                "Debug profile overrides.",
+            ),
             (
                 "[profile.release]",
                 "Release profile",
@@ -674,11 +713,35 @@ fn inventory_completion_items(section: &str, inventory: Option<&WorkspaceInvento
 // Hover
 // ---------------------------------------------------------------------------
 
-pub fn hover_result(text: Option<&str>, pos: Option<(usize, usize)>) -> Option<Value> {
+pub fn hover_result(
+    text: Option<&str>,
+    pos: Option<(usize, usize)>,
+    plugin_schemas: &[crate::build::plugin::PluginSchema],
+) -> Option<Value> {
     let (text, (line, character)) = text.zip(pos)?;
     let section = current_section(text, line).unwrap_or_default();
     let line_text = text.lines().nth(line).unwrap_or("").trim();
     let key = key_at_position(line_text, character);
+
+    // Plugin-handled section: a documented key, or the section header itself.
+    if !section.is_empty() {
+        if let Some(schema) = plugin_schemas.iter().find(|s| s.handles_section(&section)) {
+            if let Some(k) = key {
+                if let Some((_, desc)) = schema.keys.iter().find(|(name, _)| name == k) {
+                    let value = format!("{desc}\n\n*provided by plugin `{}`*", schema.plugin_name);
+                    return Some(json!({ "contents": { "kind": "markdown", "value": value } }));
+                }
+            }
+            if line_text.starts_with('[') {
+                let value = format!(
+                    "`[{section}]` is handled by the build plugin `{}`. Its keys drive that plugin's codegen.",
+                    schema.plugin_name
+                );
+                return Some(json!({ "contents": { "kind": "markdown", "value": value } }));
+            }
+        }
+    }
+
     let value = if let Some(value) = key.and_then(hover_for_key) {
         value
     } else if section.contains("dependencies") || line_text == "[dependencies]" {
@@ -742,6 +805,8 @@ fn hover_for_key(key: &str) -> Option<&'static str> {
         "channel" => "Registry channel used for this dependency, such as `stable` or `experimental`.",
         "std" => "Language standard checked against the detected compiler template before compilation.",
         "stdlib" => "C++ standard library selection. Supported values are `libc++`, `libstdc++`, and `none`.",
+        "max_line_length" => "For `[language.fortran]`: maximum code-line length for native Fortran LSP warnings. Use a string integer; `0` or absence disables it.",
+        "max_comment_line_length" => "For `[language.fortran]`: maximum comment-line length for native Fortran LSP warnings. Use a string integer; `0` or absence disables it.",
         "srcs" => "Source files or glob patterns, depending on the section.",
         "hdrs" => "Public headers exported by a library target to packages that explicitly depend on it.",
         "link" => "Prebuilt or system library name passed to the linker.",
@@ -849,6 +914,14 @@ const LANGUAGE_PARAMS: &[(&str, &str)] = &[
         "Language standard checked against the active compiler template.",
     ),
     ("stdlib", "C++ standard library selection."),
+    (
+        "max_line_length",
+        "Fortran LSP maximum code-line length warning.",
+    ),
+    (
+        "max_comment_line_length",
+        "Fortran LSP maximum comment-line length warning.",
+    ),
 ];
 const LIB_PARAMS: &[(&str, &str)] = &[
     ("type", "Library artifact type: static, shared, or header."),
@@ -1147,6 +1220,7 @@ members = ["missing"]
             ),
             Some((2, 0)),
             Some(&inventory),
+            &[],
         );
         let items = result["items"].as_array().unwrap();
 
@@ -1158,8 +1232,51 @@ members = ["missing"]
     }
 
     #[test]
+    fn plugin_section_completion_offers_schema_keys() {
+        let schemas = vec![crate::build::plugin::PluginSchema {
+            handles: vec!["proto".to_string()],
+            keys: vec![
+                ("sources".to_string(), "Glob of .proto files".to_string()),
+                ("grpc".to_string(), "Generate gRPC stubs".to_string()),
+            ],
+            plugin_name: "proto".to_string(),
+        }];
+        let result = completion_result(Some("[proto]\n"), Some((1, 0)), None, &schemas);
+        let items = result["items"].as_array().unwrap();
+        let sources = items
+            .iter()
+            .find(|i| i["label"] == json!("sources"))
+            .expect("plugin schema key offered");
+        assert_eq!(sources["detail"], json!("plugin: proto"));
+        assert_eq!(sources["documentation"]["value"], json!("Glob of .proto files"));
+        assert!(items.iter().any(|i| i["label"] == json!("grpc")));
+        // The plugin section must not fall through to the section list.
+        assert!(!items.iter().any(|i| i["label"] == json!("[package]")));
+    }
+
+    #[test]
+    fn plugin_section_hover_describes_key_and_section() {
+        let schemas = vec![crate::build::plugin::PluginSchema {
+            handles: vec!["proto".to_string()],
+            keys: vec![("grpc".to_string(), "Generate gRPC stubs".to_string())],
+            plugin_name: "proto".to_string(),
+        }];
+        // Key hover.
+        let h = hover_result(Some("[proto]\ngrpc = true\n"), Some((1, 0)), &schemas).unwrap();
+        let v = h["contents"]["value"].as_str().unwrap();
+        assert!(v.contains("Generate gRPC stubs"));
+        assert!(v.contains("plugin `proto`"));
+        // Section-header hover.
+        let h = hover_result(Some("[proto]\n"), Some((0, 1)), &schemas).unwrap();
+        assert!(h["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("handled by the build plugin `proto`"));
+    }
+
+    #[test]
     fn dependency_completion_offers_known_system_packages() {
-        let result = completion_result(Some("[dependencies]\n"), Some((1, 0)), None);
+        let result = completion_result(Some("[dependencies]\n"), Some((1, 0)), None, &[]);
         let items = result["items"].as_array().unwrap();
         // zlib is in the Tier-A ownership seed; offered with a bare-version insert.
         let zlib = items

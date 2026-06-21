@@ -9,11 +9,13 @@ pub mod migration;
 pub mod supports;
 
 pub mod adaptors;
+pub mod environment;
 pub mod fetch;
 pub mod install;
 pub mod lock;
 pub mod manifest;
 pub mod new;
+pub mod project;
 pub mod registry;
 pub mod toolchain;
 pub mod vendor;

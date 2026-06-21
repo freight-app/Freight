@@ -287,6 +287,7 @@ pub fn bmi_path(target_dir: &Path, profile: &str, module_name: &str) -> PathBuf 
 ///
 /// Phase 1 — MIU batches in topo order (each batch is compiled in parallel).
 /// Phase 2 — MImplUs + regular TUs in parallel with appropriate `-fmodule-file=` flags.
+#[allow(clippy::too_many_arguments)]
 pub fn compile_module_sources(
     project_dir: &Path,
     target_dir: &Path,
@@ -298,6 +299,7 @@ pub fn compile_module_sources(
     detected: &[DetectedCompiler],
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<CompileResult, FreightError> {
     let mut all_objects: Vec<PathBuf> = Vec::new();
@@ -327,6 +329,7 @@ pub fn compile_module_sources(
                     &bmi_snapshot,
                     feature_defines,
                     header_unit_flags,
+                    tool_flags,
                     &progress,
                 )
             })
@@ -361,6 +364,7 @@ pub fn compile_module_sources(
                 bmi_map,
                 feature_defines,
                 header_unit_flags,
+                tool_flags,
                 &progress,
             )
         })
@@ -386,6 +390,7 @@ pub fn compile_module_sources(
 
 // ── MIU compilation ───────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn compile_miu(
     project_dir: &Path,
     target_dir: &Path,
@@ -398,6 +403,7 @@ fn compile_miu(
     bmi_map: &HashMap<String, PathBuf>,
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<(PathBuf, bool), FreightError> {
     let src_abs = project_dir.join(&scanned.source.path);
@@ -418,7 +424,7 @@ fn compile_miu(
 
     let compiler = select_compiler(&scanned.source.lang_key, backend, detected, None)
         .ok_or_else(|| FreightError::NoCompilerForLang(scanned.source.lang_key.clone()))?;
-    let settings = settings_for_lang(
+    let mut settings = settings_for_lang(
         manifest,
         profile,
         &scanned.source.lang_key,
@@ -426,6 +432,12 @@ fn compile_miu(
         project_dir,
         feature_defines,
     );
+    settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
+        tool_flags,
+        &compiler.template.name,
+        compiler.template.alias.as_deref(),
+        &compiler.template.family,
+    ));
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
 
     fs::create_dir_all(obj.parent().unwrap())?;
@@ -541,6 +553,7 @@ fn precompile_clang(
 
 // ── Non-MIU compilation (MImplUs + regular TUs) ───────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn compile_non_miu(
     project_dir: &Path,
     target_dir: &Path,
@@ -553,6 +566,7 @@ fn compile_non_miu(
     bmi_map: &HashMap<String, PathBuf>,
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<(PathBuf, bool), FreightError> {
     let src_abs = project_dir.join(&scanned.source.path);
@@ -568,7 +582,7 @@ fn compile_non_miu(
 
     let compiler = select_compiler(&scanned.source.lang_key, backend, detected, None)
         .ok_or_else(|| FreightError::NoCompilerForLang(scanned.source.lang_key.clone()))?;
-    let settings = settings_for_lang(
+    let mut settings = settings_for_lang(
         manifest,
         profile,
         &scanned.source.lang_key,
@@ -576,6 +590,12 @@ fn compile_non_miu(
         project_dir,
         feature_defines,
     );
+    settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
+        tool_flags,
+        &compiler.template.name,
+        compiler.template.alias.as_deref(),
+        &compiler.template.family,
+    ));
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
 
     // Build import flags using the compiler's template rather than a hardcoded format.

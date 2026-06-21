@@ -9,6 +9,31 @@ Items marked **[needs Rust]** require changes beyond a new template file.
 
 ---
 
+## Future: scripted toolchain providers (add a compiler without recompiling freight)
+
+Adding a compiler is currently `[needs Rust]`. The long-term goal is to let users
+add one via a **script**, as a third build-plugin kind (alongside codegen and the
+eventual build-system providers). This is the design the docs originally
+described for compiler templates (`compiler_option` / `language_option` handlers
+calling `add_flag`) — now buildable since a real Rhai engine exists (see
+`build/plugin.rs`).
+
+Shape (sketch, not built yet):
+- A plugin declares `provides = "toolchain"` and is consumed like any dependency.
+- **Detection** is fed from the existing template fields (`binary`,
+  `version_arg`, `version_regex`); the script maps a detected compiler to flags.
+- **Handler surface** mirrors the original design: `compiler_option(name, fn)` /
+  `language_option(name, fn)`, where the handler sees `ctx.value` / `ctx.version`
+  / `ctx.arch` / `ctx.os` and calls `add_flag(s)`; plus std → flag mapping and
+  link config (separator, `ar`, etc.).
+- Wiring: detection + flag injection route through the toolchain-provider plugin
+  instead of the built-in Rust closures, with built-ins remaining the fallback.
+
+Prereqs: the plugin system needs registry distribution + the toolchain-provider
+contract. Until then, new compilers go in `builtin/` as Rust templates below.
+
+---
+
 ## C / C++ Compilers
 
 ### `zig cc` / `zig c++` ✓ template exists

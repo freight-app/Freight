@@ -73,6 +73,24 @@ fn collect_fortran_include_roots(manifest_dir: &Path, profile: &str) -> Vec<Path
     roots
 }
 
+fn fortran_line_length_limits(manifest_dir: &Path) -> (Option<usize>, Option<usize>) {
+    let Ok(manifest) = load_manifest(manifest_dir) else {
+        return (None, None);
+    };
+    let Some(settings) = manifest.language.get("fortran") else {
+        return (None, None);
+    };
+    (
+        parse_positive_usize_option(settings.extra_options().get("max_line_length")),
+        parse_positive_usize_option(settings.extra_options().get("max_comment_line_length")),
+    )
+}
+
+fn parse_positive_usize_option(value: Option<&String>) -> Option<usize> {
+    let parsed = value?.trim().parse::<usize>().ok()?;
+    (parsed > 0).then_some(parsed)
+}
+
 fn collect_dep_include_roots(
     root_dir: &Path,
     declaring_dir: &Path,
@@ -165,6 +183,9 @@ impl LanguageIndexer for FortranIndexer {
     fn refresh_flags(&mut self, manifest_dir: &Path, _profile: &str) {
         let roots = collect_fortran_include_roots(manifest_dir, _profile);
         self.workspace.set_include_roots(roots);
+        let (max_line_length, max_comment_line_length) = fortran_line_length_limits(manifest_dir);
+        self.workspace
+            .set_line_length_limits(max_line_length, max_comment_line_length);
     }
 
     fn evict(&mut self, path: &Path) {
@@ -649,7 +670,7 @@ fn byte_idx_for_utf16_col(line: &str, character: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_fortran_include_roots, FortranIndexer};
+    use super::{collect_fortran_include_roots, fortran_line_length_limits, FortranIndexer};
     use crate::lsp::index::LanguageIndexer;
     use crate::lsp::protocol::uri_from_path;
     use std::path::Path;
@@ -724,6 +745,64 @@ version = "1.0.0"
         assert!(contains_dir(&roots, &root.join("deps/math/generated")));
         assert!(contains_dir(&roots, &root.join(".pkgs/fft")));
         assert!(contains_dir(&roots, &root.join(".pkgs/fft/include")));
+    }
+
+    #[test]
+    fn fortran_line_length_limits_follow_manifest_language_options() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            &root.join("freight.toml"),
+            r#"
+[package]
+name = "app"
+version = "0.1.0"
+
+[language.fortran]
+max_line_length = "12"
+max_comment_line_length = "10"
+"#,
+        );
+
+        assert_eq!(fortran_line_length_limits(root), (Some(12), Some(10)));
+    }
+
+    #[test]
+    fn fortran_indexer_uses_manifest_line_length_limits_for_diagnostics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            &root.join("freight.toml"),
+            r#"
+[package]
+name = "app"
+version = "0.1.0"
+
+[language.fortran]
+max_line_length = "12"
+max_comment_line_length = "10"
+"#,
+        );
+        let path = root.join("app.f90");
+        let source = "program app\ninteger :: long_name\n! comment that is too long\nend program";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.refresh_flags(root, "debug");
+        indexer.reparse(&uri, source);
+        let diagnostics = indexer.diagnostics(&uri);
+
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(
+            diagnostics[0]["message"],
+            "Line length exceeds \"max_line_length\" (12)"
+        );
+        assert_eq!(diagnostics[0]["source"], "fortran-lsp");
+        assert_eq!(
+            diagnostics[1]["message"],
+            "Comment line length exceeds \"max_comment_line_length\" (10)"
+        );
     }
 
     #[test]

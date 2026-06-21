@@ -88,7 +88,7 @@ use freight::manifest::{find_manifest_dir, load_manifest, load_workspace_manifes
 use crate::tui::{run_build_viewport, BuildTarget};
 
 use crate::output::{
-    print_error, print_status, print_success, print_warning, render_dot_graph,
+    print_error, print_script_output, print_status, print_success, print_warning, render_dot_graph,
     render_mermaid_graph, GraphCluster, GraphEdge, GraphFormat,
 };
 
@@ -182,6 +182,9 @@ pub fn make_progress() -> Progress {
         BuildEvent::Emitted { path, .. } => {
             println!("{:>12} {}", "Emitted".dimmed(), path.display());
         }
+        BuildEvent::ScriptOutput { source, text, is_err } => {
+            print_script_output(&source, &text, is_err);
+        }
     })
 }
 
@@ -235,6 +238,9 @@ fn make_timed_progress() -> (
         BuildEvent::Warning(msg) => print_warning(&msg),
         BuildEvent::Emitted { path, .. } => {
             println!("{:>12} {}", "Emitted".dimmed(), path.display())
+        }
+        BuildEvent::ScriptOutput { source, text, is_err } => {
+            print_script_output(&source, &text, is_err)
         }
         _ => {}
     });

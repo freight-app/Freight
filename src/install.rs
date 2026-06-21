@@ -5,12 +5,12 @@ use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 
 use crate::build::build_project_at;
+use crate::environment::Environment;
 use crate::error::FreightError;
 use crate::event::silent;
 use crate::manifest::load_manifest;
 use crate::manifest::types::LibType;
 use crate::toolchain::GlobalConfig;
-use crate::vendor::parse_triple;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -29,6 +29,12 @@ pub struct InstallOptions {
     /// When set, overrides `[compiler] target` in the manifest and drives
     /// platform-specific install decisions (shared lib naming, DLL placement).
     pub target: Option<String>,
+    /// Features to activate for the build (in addition to defaults, unless
+    /// `default_features` is false). Affects which sources/deps are compiled and
+    /// what ends up in the installed artifact.
+    pub features: Vec<String>,
+    /// Whether to activate the package's `default` feature set.
+    pub default_features: bool,
 }
 
 impl Default for InstallOptions {
@@ -39,6 +45,8 @@ impl Default for InstallOptions {
             release: true,
             no_build: false,
             target: None,
+            features: Vec::new(),
+            default_features: true,
         }
     }
 }
@@ -49,6 +57,7 @@ pub enum InstalledKind {
     SharedLib,
     Header,
     Symlink,
+    PkgConfig,
 }
 
 impl InstalledKind {
@@ -59,6 +68,7 @@ impl InstalledKind {
             Self::SharedLib => "shared-lib",
             Self::Header => "header",
             Self::Symlink => "symlink",
+            Self::PkgConfig => "pkg-config",
         }
     }
 }
@@ -75,25 +85,13 @@ pub struct InstallResult {
 // ── Public entry points ───────────────────────────────────────────────────────
 
 /// Build (unless `opts.no_build`) and install all outputs to `opts.prefix`.
+///
+/// Thin wrapper over [`crate::project::Project::install`], the central path.
 pub fn install_project(
     project_dir: &Path,
     opts: &InstallOptions,
 ) -> Result<InstallResult, FreightError> {
-    let manifest = load_manifest(project_dir)?;
-    let profile = if opts.release { "release" } else { "debug" };
-    if !opts.no_build {
-        build_project_at(
-            project_dir,
-            profile,
-            &[],
-            true,
-            opts.target.as_deref(),
-            &[],
-            &silent(),
-            None,
-        )?;
-    }
-    install_project_built(project_dir, &manifest, opts)
+    crate::project::Project::open(project_dir)?.install(opts, &silent())
 }
 
 /// Install build outputs that are already compiled (no build step).
@@ -104,15 +102,9 @@ pub fn install_project_built(
 ) -> Result<InstallResult, FreightError> {
     let profile = if opts.release { "release" } else { "debug" };
 
-    // Derive target OS/arch: prefer the explicit override, then ~/.freight/config.toml, then host.
-    let global_target = GlobalConfig::load().target;
-    let target_str = opts.target.as_deref().or(global_target.as_deref());
-    let (target_arch, target_os) = target_str.map(parse_triple).unwrap_or_else(|| {
-        (
-            std::env::consts::ARCH.to_string(),
-            std::env::consts::OS.to_string(),
-        )
-    });
+    // Target OS/arch: the explicit override, then ~/.freight/config.toml, then host.
+    let env = Environment::from_config(GlobalConfig::load(), opts.target.clone(), None);
+    let (target_arch, target_os) = (env.target_arch.clone(), env.target_os.clone());
 
     let root = install_root(&opts.prefix, opts.destdir.as_deref());
     let bin_dir = root.join("bin");
@@ -191,6 +183,21 @@ pub fn install_project_built(
                 }
             }
         }
+
+        // ── pkg-config descriptor ───────────────────────────────────────────────
+        // A `<name>.pc` makes the installed library consumable by every build
+        // system that speaks pkg-config (CMake's pkg_check_modules, Meson's
+        // dependency(), autotools' PKG_CHECK_MODULES, plain Makefiles, …) — the
+        // mirror of `freight migrate` for downstream interop.
+        let pc = render_pkg_config(manifest, lib, &opts.prefix);
+        let pc_dir = lib_dir.join("pkgconfig");
+        fs::create_dir_all(&pc_dir)?;
+        let pc_dst = pc_dir.join(format!("{}.pc", manifest.package.name));
+        fs::write(&pc_dst, pc)?;
+        items.push(InstalledItem {
+            dst: pc_dst,
+            kind: InstalledKind::PkgConfig,
+        });
     }
 
     // On Linux targets: refresh the dynamic linker cache when installing shared
@@ -221,19 +228,7 @@ pub fn package_project(
     release: bool,
     target: Option<&str>,
 ) -> Result<PathBuf, FreightError> {
-    let manifest = load_manifest(project_dir)?;
-    let profile = if release { "release" } else { "debug" };
-    build_project_at(
-        project_dir,
-        profile,
-        &[],
-        true,
-        target,
-        &[],
-        &silent(),
-        None,
-    )?;
-    package_project_built(project_dir, &manifest, release, target)
+    crate::project::Project::open(project_dir)?.package(release, target, &silent())
 }
 
 /// Package build outputs that are already compiled (no build step).
@@ -243,16 +238,8 @@ pub fn package_project_built(
     release: bool,
     target: Option<&str>,
 ) -> Result<PathBuf, FreightError> {
-    let global_target = GlobalConfig::load().target;
-    let (pkg_arch, pkg_os) = target
-        .or(global_target.as_deref())
-        .map(parse_triple)
-        .unwrap_or_else(|| {
-            (
-                std::env::consts::ARCH.to_string(),
-                std::env::consts::OS.to_string(),
-            )
-        });
+    let env = Environment::from_config(GlobalConfig::load(), target.map(str::to_string), None);
+    let (pkg_arch, pkg_os) = (env.target_arch.clone(), env.target_os.clone());
 
     let stem = format!(
         "{}-{}-{}-{}",
@@ -274,6 +261,8 @@ pub fn package_project_built(
             release,
             no_build: true,
             target: target.map(str::to_string),
+            features: Vec::new(),
+            default_features: true,
         },
     )?;
 
@@ -408,6 +397,84 @@ fn install_shared_lib(
         }
     }
     Ok(())
+}
+
+// ── pkg-config descriptor ─────────────────────────────────────────────────────
+
+/// Render a `<name>.pc` for an installed library. `prefix` is the *logical*
+/// install prefix (e.g. `/usr/local`) — not the destdir-staged path — so the
+/// emitted file resolves correctly at the package's final location.
+fn render_pkg_config(
+    manifest: &crate::manifest::types::Manifest,
+    lib: &crate::manifest::types::LibTarget,
+    prefix: &Path,
+) -> String {
+    let name = &manifest.package.name;
+    let description = if manifest.package.description.is_empty() {
+        name.clone()
+    } else {
+        manifest.package.description.clone()
+    };
+    // pkg-config wants forward slashes even on Windows.
+    let prefix_str = prefix.to_string_lossy().replace('\\', "/");
+
+    let mut out = String::new();
+    out.push_str(&format!("prefix={prefix_str}\n"));
+    out.push_str("exec_prefix=${prefix}\n");
+    out.push_str("libdir=${prefix}/lib\n");
+    out.push_str("includedir=${prefix}/include\n\n");
+    out.push_str(&format!("Name: {name}\n"));
+    out.push_str(&format!("Description: {description}\n"));
+    out.push_str(&format!("Version: {}\n", manifest.package.version));
+
+    // Transitive freight deps that are resolvable by pkg-config name go in
+    // Requires.private (only consulted for `--static`), so a missing module
+    // never breaks plain dynamic-link consumers.
+    let requires = pkg_config_requires(&manifest.dependencies);
+    if !requires.is_empty() {
+        out.push_str(&format!("Requires.private: {}\n", requires.join(" ")));
+    }
+
+    // Headers install under include/<name>/. Offer both roots so consumers can
+    // use `<name/foo.h>` or a bare `<foo.h>`.
+    out.push_str(&format!(
+        "Cflags: -I${{includedir}} -I${{includedir}}/{name}\n"
+    ));
+
+    // Header-only libraries have no link line.
+    if !matches!(lib.lib_type, crate::manifest::types::LibType::Header) {
+        let link = lib.link.clone().unwrap_or_else(|| name.clone());
+        out.push_str(&format!("Libs: -L${{libdir}} -l{link}\n"));
+    }
+    out
+}
+
+/// Dependency keys that are plain, system-resolvable version deps (the kind
+/// freight itself resolves via pkg-config), suitable for a `.pc` Requires line.
+/// Path / git / url / foreign / optional deps are excluded.
+fn pkg_config_requires(
+    deps: &std::collections::HashMap<String, crate::manifest::types::Dependency>,
+) -> Vec<String> {
+    use crate::manifest::types::Dependency;
+    let mut names: Vec<String> = deps
+        .iter()
+        .filter_map(|(name, dep)| match dep {
+            Dependency::Simple(_) => Some(name.clone()),
+            Dependency::Detailed(d) => {
+                let plain = d.version.is_some()
+                    && d.path.is_none()
+                    && d.url.is_none()
+                    && d.branch.is_none()
+                    && d.tag.is_none()
+                    && d.rev.is_none()
+                    && d.dep_type.is_none()
+                    && !d.optional;
+                plain.then(|| name.clone())
+            }
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 // ── File / dir utilities ──────────────────────────────────────────────────────
@@ -630,16 +697,8 @@ pub fn installer_project(
         None,
     )?;
 
-    let global_target = GlobalConfig::load().target;
-    let (pkg_arch, pkg_os) = target
-        .or(global_target.as_deref())
-        .map(parse_triple)
-        .unwrap_or_else(|| {
-            (
-                std::env::consts::ARCH.to_string(),
-                std::env::consts::OS.to_string(),
-            )
-        });
+    let env = Environment::from_config(GlobalConfig::load(), target.map(str::to_string), None);
+    let (pkg_arch, pkg_os) = (env.target_arch.clone(), env.target_os.clone());
 
     let pkg_dir = project_dir.join("target").join("package");
     fs::create_dir_all(&pkg_dir)?;
@@ -661,6 +720,8 @@ pub fn installer_project(
             release,
             no_build: true,
             target: target.map(str::to_string),
+            features: Vec::new(),
+            default_features: true,
         },
     )?;
 
@@ -1519,5 +1580,87 @@ fn default_prefix() -> PathBuf {
         PathBuf::from(r"C:\Program Files")
     } else {
         PathBuf::from("/usr/local")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::types::Manifest;
+
+    fn manifest(toml: &str) -> Manifest {
+        toml::from_str(toml).expect("parse test manifest")
+    }
+
+    #[test]
+    fn pkg_config_static_lib_with_requires() {
+        let m = manifest(
+            r#"
+            [package]
+            name = "mylib"
+            version = "1.2.3"
+            description = "My test library"
+
+            [lib]
+            type = "static"
+
+            [dependencies]
+            zlib = "1.3"
+            bar = { version = "2.0" }
+            foo = { path = "../foo" }
+            opt = { version = "1.0", optional = true }
+            "#,
+        );
+        let pc = render_pkg_config(&m, m.lib.as_ref().unwrap(), Path::new("/usr/local"));
+
+        assert!(pc.contains("prefix=/usr/local\n"), "{pc}");
+        assert!(pc.contains("Name: mylib\n"), "{pc}");
+        assert!(pc.contains("Description: My test library\n"), "{pc}");
+        assert!(pc.contains("Version: 1.2.3\n"), "{pc}");
+        // Sorted; path dep and optional dep excluded.
+        assert!(pc.contains("Requires.private: bar zlib\n"), "{pc}");
+        assert!(
+            pc.contains("Cflags: -I${includedir} -I${includedir}/mylib\n"),
+            "{pc}"
+        );
+        assert!(pc.contains("Libs: -L${libdir} -lmylib\n"), "{pc}");
+    }
+
+    #[test]
+    fn pkg_config_header_only_has_no_libs() {
+        let m = manifest(
+            r#"
+            [package]
+            name = "headeronly"
+            version = "0.1.0"
+
+            [lib]
+            type = "header"
+            "#,
+        );
+        let pc = render_pkg_config(&m, m.lib.as_ref().unwrap(), Path::new("/opt/x"));
+        assert!(pc.contains("Description: headeronly\n"), "{pc}"); // falls back to name
+        assert!(
+            !pc.contains("\nLibs:"),
+            "header-only must have no Libs line: {pc}"
+        );
+        assert!(!pc.contains("Requires.private"), "{pc}");
+    }
+
+    #[test]
+    fn pkg_config_respects_custom_link_name() {
+        let m = manifest(
+            r#"
+            [package]
+            name = "mypkg"
+            version = "3.0.0"
+
+            [lib]
+            type = "shared"
+            link = "customname"
+            "#,
+        );
+        let pc = render_pkg_config(&m, m.lib.as_ref().unwrap(), Path::new("/usr/local"));
+        assert!(pc.contains("Libs: -L${libdir} -lcustomname\n"), "{pc}");
     }
 }

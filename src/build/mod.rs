@@ -11,8 +11,7 @@ pub mod link;
 pub mod modules;
 pub mod pch;
 pub mod pipeline;
-pub mod project;
-pub mod proto;
+pub mod plugin;
 pub mod std_module;
 
 pub use compile::{
@@ -28,7 +27,9 @@ pub use modules::{
     ModuleBuildPlan, ModuleRole, ScannedSource,
 };
 pub use pipeline::{run_pipeline_at, PipelineConfig, PipelineGoal};
-pub use project::{source_package_dirs, PackageKind, Project};
+// `Project` is the central project model — it now lives at `crate::project`.
+// Re-exported here so existing `crate::build::{Project, …}` paths keep working.
+pub use crate::project::{source_package_dirs, PackageKind, Project};
 
 use crate::error::FreightError;
 use crate::event::{silent, BuildEvent, Progress};
@@ -40,7 +41,7 @@ use crate::manifest::validate::{validate, validate_dep_compat};
 use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest};
 use crate::toolchain::{
     backend_matches, check_manifest_version_bounds, detect_all_cached, load_all_templates,
-    CompilerTemplate, DetectedCompiler, GlobalConfig,
+    CompilerTemplate, DetectedCompiler,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -109,10 +110,11 @@ pub enum PipelineOutput {
 pub(crate) struct ProjectContext {
     project_dir: PathBuf,
     manifest: Manifest,
-    effective_backend: Backend,
+    // Read by `crate::project::Project` (e.g. for `emit_sources`); crate-visible.
+    pub(crate) effective_backend: Backend,
     templates: Vec<CompilerTemplate>,
-    detected: Vec<DetectedCompiler>,
-    found: DiscoveredSources,
+    pub(crate) detected: Vec<DetectedCompiler>,
+    pub(crate) found: DiscoveredSources,
 }
 
 /// Pre-built dep output: static lib path + include dirs to expose to the root project.
@@ -362,10 +364,11 @@ pub fn build_project_at(
         sanitize_override: sanitize_override.to_vec(),
         goal: PipelineGoal::Build,
     };
-    match run_pipeline_at(project_dir, &config, parent_root, progress)? {
-        PipelineOutput::Build(out) => Ok(out),
-        _ => unreachable!(),
+    let mut project = Project::open(project_dir)?;
+    if let Some(root) = parent_root {
+        project = project.with_parent_root(root.to_path_buf());
     }
+    project.build(&config, progress)
 }
 
 /// Build example programs (from `examples/` and `[[example]]`). `filter` selects
@@ -425,6 +428,7 @@ pub fn generate_compile_commands_at(
     let dep_includes = collect_dep_include_dirs(project_dir, manifest);
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(dep_includes);
+    include_dirs.extend(plugin::plugin_include_dirs(project_dir, profile));
 
     let target_dir = project_dir.join("target");
     let commands = compile_commands::generate_incremental(
@@ -585,6 +589,11 @@ fn generate_lsp_compile_commands_for_project(
     let (dep_includes, dep_roots) = collect_dep_include_dirs_and_roots(project_dir, manifest);
     let mut include_dirs = found.include_dirs.clone();
     include_dirs.extend(dep_includes);
+    // Generated headers from active plugins (e.g. `foo.pb.h`) live under
+    // target/<profile>/plugin-gen/<section>; expose them so clangd resolves them
+    // and the undeclared-include check (which reads these dirs back from
+    // compile_commands.json) treats them as project-owned.
+    include_dirs.extend(plugin::plugin_include_dirs(project_dir, profile));
     let include_dirs = lsp_visible_include_dirs(project_dir, &dep_roots, include_dirs);
 
     let mut commands = compile_commands::generate(
@@ -918,10 +927,7 @@ pub fn test_project_at(
             filter: filter.map(str::to_string),
         },
     };
-    match run_pipeline_at(project_dir, &config, None, progress)? {
-        PipelineOutput::Test(out) => Ok(out),
-        _ => unreachable!(),
-    }
+    Project::open(project_dir)?.test(&config, filter, progress)
 }
 
 // ── Bench pipeline ────────────────────────────────────────────────────────────
@@ -1033,10 +1039,7 @@ pub fn bench_project_at(
             filter: filter.map(str::to_string),
         },
     };
-    match run_pipeline_at(project_dir, &config, None, progress)? {
-        PipelineOutput::Bench(out) => Ok(out),
-        _ => unreachable!(),
-    }
+    Project::open(project_dir)?.bench(&config, filter, progress)
 }
 
 // ── Git dep helpers ───────────────────────────────────────────────────────────
@@ -1322,6 +1325,7 @@ fn header_name(spelling: &str) -> &str {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn build_sources(
     project_dir: &Path,
     target_dir: &Path,
@@ -1333,6 +1337,7 @@ fn build_sources(
     detected: &[DetectedCompiler],
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<CompileResult, FreightError> {
     // Include-hygiene Phase 2: reject (or warn about) `#include`/`import` of
@@ -1372,6 +1377,7 @@ fn build_sources(
             detected,
             feature_defines,
             extra_flags,
+            tool_flags,
             progress,
         )
     } else if manifest.compiler.unity {
@@ -1386,6 +1392,7 @@ fn build_sources(
             detected,
             feature_defines,
             extra_flags,
+            tool_flags,
             progress,
         )
     } else {
@@ -1400,6 +1407,7 @@ fn build_sources(
             detected,
             feature_defines,
             extra_flags,
+            tool_flags,
             progress,
         )
     }
@@ -1477,6 +1485,17 @@ fn build_resolved_deps(
     let mut built_include_dirs: Vec<PathBuf> = Vec::new();
 
     for dep in resolved {
+        // A plugin-only dependency (declares `[plugin]` but no library/binary to
+        // build) contributes solely through the plugin codegen stage — there is
+        // nothing to compile or link here, and it has no `src/` to discover.
+        if dep.manifest.plugin.is_some()
+            && dep.manifest.lib.is_none()
+            && dep.manifest.bins.is_empty()
+            && dep.manifest.package.build.is_none()
+        {
+            continue;
+        }
+
         // Resolve which features are active for this dep based on the root's dep declaration.
         let dep_feature_defines = {
             let effective = root_manifest.effective_dependencies();
@@ -1548,6 +1567,7 @@ fn build_resolved_deps(
                 detected,
                 &dep_feature_defines,
                 &[],
+                &[],
                 progress,
             )?
         } else {
@@ -1561,6 +1581,7 @@ fn build_resolved_deps(
                 &dep_include_dirs,
                 detected,
                 &dep_feature_defines,
+                &[],
                 &[],
                 progress,
             )?
@@ -1630,28 +1651,21 @@ fn apply_sanitize_override(
 
 // ── Shared project loading ────────────────────────────────────────────────────
 
-fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext, FreightError> {
+pub(crate) fn load_project_at(
+    project_dir: &Path,
+    _profile: &str,
+) -> Result<ProjectContext, FreightError> {
     let mut manifest = load_manifest(project_dir)?;
-    let mut global = GlobalConfig::load();
-    if let Some(local) = GlobalConfig::load_local(project_dir) {
-        global.apply_local(local);
-    }
-    // Project manifest backend wins over global config; "auto" defers to the next level.
+    // Resolve the host/target environment once (merged config + FREIGHT_SYSROOT).
+    let env = crate::environment::Environment::for_project(project_dir);
+
+    // Project manifest backend wins over the environment default; "auto" defers.
     let configured_backend = if !manifest.compiler.backend.is_auto() {
         manifest.compiler.backend.clone()
     } else {
-        global
-            .default_backend
-            .clone()
-            .map(Backend)
-            .unwrap_or_default()
+        env.default_backend.clone().map(Backend).unwrap_or_default()
     };
-    manifest.compiler.target = global.target.clone();
-    manifest.compiler.sysroot = std::env::var_os("FREIGHT_SYSROOT")
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string_lossy().into_owned())
-        .or_else(|| global.sysroot.clone());
-    manifest.compiler.auto_cpu_tuning = global.auto_cpu_tuning.unwrap_or(true);
+    env.apply_to_manifest(&mut manifest);
 
     let templates = load_all_templates();
 
@@ -1678,15 +1692,11 @@ fn load_project_at(project_dir: &Path, _profile: &str) -> Result<ProjectContext,
     };
 
     let found = discover(project_dir, &manifest, &templates);
-    // Allow projects whose only source files are `.proto` — protoc will generate
-    // C++ sources at build time.  For all other projects, fail fast if src/ is empty.
-    let proto_only = found.sources.is_empty()
-        && manifest.language.contains_key("proto")
-        && proto::has_proto_files(project_dir);
     // A foreign package (`[package].build` set, e.g. a vcpkg-scraper port) has no
-    // local sources — it's fetched and built with its own build system.
+    // local sources — it's fetched and built with its own build system. For all
+    // other projects, fail fast if src/ is empty.
     let foreign = manifest.package.build.is_some();
-    if found.sources.is_empty() && !proto_only && !foreign {
+    if found.sources.is_empty() && !foreign {
         return Err(FreightError::CompilerNotFound(
             "no source files found under src/".into(),
         ));

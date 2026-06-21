@@ -29,33 +29,21 @@ pub struct BuildFlags {
 }
 
 impl BuildFlags {
-    /// Set `FREIGHT_VERBOSE` / `FREIGHT_OFFLINE` / `FREIGHT_LOCKED` and configure
-    /// the rayon thread pool. Call once, before any build engine use.
+    /// Set the process-wide session flags and configure the rayon thread pool.
+    /// Call once, before any build engine use.
     pub fn apply(&self) {
-        // Safety: single-threaded here; rayon workers not yet started.
-        unsafe {
-            if self.verbose {
-                std::env::set_var("FREIGHT_VERBOSE", "1");
-            }
-            if self.offline || self.frozen {
-                std::env::set_var("FREIGHT_OFFLINE", "1");
-            }
-            if self.locked || self.frozen {
-                std::env::set_var("FREIGHT_LOCKED", "1");
-            }
-        }
+        freight::environment::Environment::set_session_flags(
+            self.verbose,
+            self.offline || self.frozen,
+            self.locked || self.frozen,
+        );
         apply_jobs(self.jobs);
     }
 }
 
 /// Configure the rayon thread pool from an optional `--jobs N` value.
 pub fn apply_jobs(jobs: Option<usize>) {
-    let n = jobs.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .min(6)
-    });
+    let n = jobs.unwrap_or_else(freight::environment::default_jobs);
     rayon::ThreadPoolBuilder::new()
         .num_threads(n)
         .build_global()

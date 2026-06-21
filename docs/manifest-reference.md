@@ -61,41 +61,238 @@ Available standard strings depend on the loaded template. Common values:
 | `c` | `c11` | `c17`, `c23` |
 | `fortran` | `f2018` | `f2003`, `f2008` |
 
-### `[language.proto]` — protobuf code generation
+> **Built-in protobuf codegen was removed.** It's now expressed as a **build
+> plugin** (see below) rather than a special `[language.proto]` language key — so
+> protobuf, Qt `moc`/`uic`, FlatBuffers, shader compilers, `config.h`, etc. all
+> use one mechanism instead of being baked into the core.
 
-`[language.proto]` is a special language key that triggers **protobuf code generation** via
-`protoc`. When declared, freight discovers all `.proto` files under `src/`, runs `protoc
---cpp_out=<dest>` on each, and injects the generated `.pb.cc` files into the normal C++
-compilation step. The generated header directory is added to the include path automatically
-so `#include "foo.pb.h"` works without any manual flags.
+---
+
+## `[plugin]` and build plugins
+
+A **plugin** is an ordinary dependency that runs a script during your build. A
+package becomes a plugin by declaring `[plugin]`:
 
 ```toml
-[language.proto]
-# Directory for generated C++ files.  Default: target/<profile>/proto-gen/
-# dest = "src/generated"
+# the plugin package's freight.toml
+[package]
+name    = "proto"
+version = "0.1.1"
 
-# Extra --proto_path roots beyond src/ and the project root (comma-separated).
-# srcs = "proto/"
+[plugin]
+entry   = "proto.rhai"     # Rhai script, relative to the package root
+handles = ["proto"]        # sections it activates on (defaults to the package name)
+tools   = ["protoc"]       # external tools the script may run (allow-list)
 
-# Extra flags forwarded verbatim to protoc (whitespace-separated).
-# extra_flags = "--experimental_allow_proto3_optional"
+# Activation conditions (all optional):
+goals    = ["build", "test"]   # build goals that trigger it (default: all)
+profiles = ["debug"]           # profiles that trigger it (default: all)
+inputs   = ["src/**/*.proto"]  # re-run only when these change (else reuse output)
+
+# Advisory editor schema (optional): keys the consumer's section understands.
+[plugin.schema]
+proto_path = "Import root passed to protoc (default: src/)."
+grpc       = "Generate gRPC service stubs (bool)."
 ```
 
-The `protoc` binary is resolved from **tool_paths** (populated by `[build-dependencies]`) first,
-then from the system PATH. To pin to a specific protoc version:
+The plugin runs when the consumer declares a matched `handles` section **and**
+every activation condition holds:
+
+- **`goals`** — only on these build goals (`build` / `test` / `bench` /
+  `examples`). e.g. a fixture generator that runs only on `test`.
+- **`profiles`** — only on these profiles. e.g. `profiles = ["debug"]` to enable
+  something only in debug builds.
+- **`inputs`** — incremental: freight fingerprints these files (plus `CFG` and
+  the script); if nothing changed since the last run, the previously generated
+  output is reused instead of re-running the tool (so editing a `.proto`
+  re-runs `protoc`, but an unrelated edit doesn't).
+
+`handles` entries are matched against the **dotted path** of every section the
+consumer declares, so a plugin can target nested config too:
+
+| Pattern | Matches |
+|---|---|
+| `proto` | top-level `[proto]` |
+| `compiler.clang` | exactly `[compiler.clang]` |
+| `compiler.*` | any one-level `[compiler.<x>]` |
+| `language.**` | `[language.<x>]` and deeper (one or more segments) |
+
+The plugin runs **once per matched section**; the matched path is available in
+the script as `section` (e.g. `"compiler.clang"`).
+
+You **consume** it like any dependency, and add the section it handles:
 
 ```toml
-[build-dependencies]
-# Prebuilt protoc binary — freight extracts it and uses the protoc from its bin/.
-protoc = { url = "https://github.com/protocolbuffers/protobuf/releases/download/v27.0/protoc-27.0-linux-x86_64.zip", type = "none" }
-
+# your project's freight.toml
 [dependencies]
-# Link the protobuf runtime library (resolved via pkg-config or the registry).
-protobuf = "3"
+proto = "0.1.1"
+
+[proto]                    # plain config data, handed to the plugin as `CFG`
+out = "src/generated"
 ```
 
-Incremental builds: protoc is only re-invoked for `.proto` files that are newer than their
-corresponding `.pb.cc` / `.pb.h` outputs. Other files are skipped with a `Fresh` event.
+During the build, the plugin's script runs with these **constants** in scope:
+
+| Constant | Value |
+|---|---|
+| `SECTION` | the matched section's dotted path (e.g. `"proto"`, `"compiler.clang"`) |
+| `PROJECT_DIR` | the project root |
+| `SRC_DIR` | `<project>/src` |
+| `INCLUDE_DIR` | `<project>/include` |
+| `TARGET_DIR` | `<project>/target/<profile>` |
+| `OUT_DIR` | this plugin's output dir, `TARGET_DIR/plugin-gen/<section>` (created for you) |
+| `PROFILE` | the build profile (`"debug"`, `"release"`, or a custom name) — branch on `PROFILE == "release"` |
+| `HOST` | host characteristics: `HOST.os`, `HOST.arch`, `HOST.family` (`"windows"`/`"unix"`/`"wasm"`), `HOST.pointer_width` |
+| `TARGET` | target characteristics: `TARGET.os`, `TARGET.arch`, `TARGET.family`, `TARGET.pointer_width`, `TARGET.triple` (`""` when building for the host, the full triple when cross-compiling) |
+| `LIB` | the consuming project's library, `#{ name, type, hdrs, srcs, link }` — or `()` when it builds no `[lib]` |
+| `BINS` | the project's executables as a map keyed by name (`BINS["cli"]`), each `#{ name, src, required_features }` |
+| `PKGS` | the project's dependencies as a map keyed by name (`PKGS["libfoo"].dir`), each `#{ name, dir, version }` |
+| `CFG` | the matched section's config data (`CFG.out`, `CFG.enabled`, …) |
+
+`BINS` is keyed by executable name (names are unique). Look one up with
+`BINS["cli"]`; iterate with `for b in BINS.values() { … b.name … }` or over
+`BINS.keys()`. (Rhai has no `for (key, value)` form.)
+
+`os`/`arch` use the same names as the manifest's `[os.*]` / `[arch.*]` sections
+(`linux`, `windows`, `macos`; `x86_64`, `aarch64`, …), so a plugin branches on the
+same vocabulary the consumer writes. For a native build `TARGET` mirrors `HOST`.
+
+…and these **functions**:
+
+**Build outputs** — what the plugin feeds back into the build:
+
+| Function | Returns | Effect |
+|---|---|---|
+| `glob(pattern)` | array | project files matching a glob |
+| `run(tool, [args])` | — | run a tool from the plugin's `tools` allow-list (anything else aborts the build); cwd = project root. Its stdout/stderr stream into the build output, and stderr is included in the error if it fails |
+| `capture(tool, [args])` | `#{ code, stdout, stderr }` | like `run`, but returns output instead of aborting on a non-zero exit (build stamping, version/`pkg-config` probes) |
+| `add_source(path)` / `add_sources([…])` | — | compile generated source(s) |
+| `add_include_dir(path)` | — | expose a generated header directory |
+| `define(name)` / `define(name, value)` | — | inject a `-D` define |
+| `add_flag(tool, flag)` | — | inject a flag into one tool's invocations (see below) |
+
+`add_flag` targets a specific tool. The `tool` is matched against an invoked
+compiler by its template `name`, `alias`, or `family`, the catch-all
+`"compiler"`, or a role keyword (`"linker"` / `"archiver"`). The `TOOLS` constant
+lists every valid target — each `#{ name, family, kind }` — so a script can
+discover what's available:
+
+```rhai
+add_flag("clang", "-fno-rtti");           // only clang/clang++ compiles
+add_flag("compiler", "-ffast-math");      // every compiler
+add_flag("linker", "-Wl,--gc-sections");  // the link step
+add_flag("archiver", "-D");               // static-archive (ar) step
+// TOOLS = [#{name:"gcc", family:"gnu", kind:"compiler"}, …, #{name:"linker", …}]
+```
+
+**Filesystem** — Python-flavoured helpers, all **confined to the project**
+(writes create missing parent dirs; reads of a missing file raise):
+
+| Function | Returns | Effect |
+|---|---|---|
+| `read_text(path)` | string | file contents (raises if missing) |
+| `write_text(path, s)` | — | write a file (creates parent dirs) |
+| `append_text(path, s)` | — | append to a file (creates it) |
+| `copy(src, dst)` | — | copy a file (creates dst's parent dirs) |
+| `makedirs(path)` | — | create a directory tree |
+| `listdir(path)` | array | entry names in a directory |
+| `exists(path)` / `is_file(path)` / `is_dir(path)` | bool | existence / type checks |
+
+**Path strings** — pure helpers (no filesystem), named like Python's `os.path`:
+
+| Function | Returns | Example |
+|---|---|---|
+| `join(a, b)` / `join([…])` | string | `join("a", "b")` → `"a/b"` |
+| `basename(path)` | string | `"a/calc.y"` → `"calc.y"` |
+| `dirname(path)` | string | `"a/calc.y"` → `"a"` |
+| `stem(path)` | string | `"a/calc.y"` → `"calc"` |
+| `ext(path)` | string | `"a/calc.y"` → `"y"` |
+| `strip(s)` | string | trimmed *copy* (Rhai's `.trim()` mutates in place and returns `()`) |
+| `lines(s)` | array | split text into lines |
+
+**Regex** — Python `re`-flavoured (pattern first); an invalid pattern raises:
+
+| Function | Returns | Effect |
+|---|---|---|
+| `re_test(pattern, text)` | bool | does `pattern` match anywhere? |
+| `re_find(pattern, text)` | array | first match as `[whole, group1, …]`; `[]` if none |
+| `re_find_all(pattern, text)` | array | every match, each an array of groups |
+| `re_replace(pattern, text, repl)` | string | replace all (`$1` / `${name}` in `repl`) |
+
+Pulling errors out of a tool's output (capture + regex + lines):
+
+```rhai
+let r = capture("mytool", glob("src/*.in"));
+for line in lines(r.stderr) {
+    let m = re_find("(\\S+):(\\d+): error: (.*)", line);   // file:line: error: msg
+    if m.len() > 0 { print(m[1] + ":" + m[2] + " — " + m[3]); }
+}
+```
+
+A build-info stamp, putting it all together:
+
+```rhai
+let r = capture("git", ["rev-parse", "--short", "HEAD"]);   // git in [plugin] tools
+if r.code == 0 { define("GIT_SHA", strip(r.stdout)); }
+write_text("gen/version.h", "#define APP_TARGET \"" + TARGET.triple + "\"\n");
+add_include_dir("gen");
+```
+
+> A plugin that stamps build info with `capture` should **omit `inputs`** so it
+> re-runs every build (otherwise the incremental cache serves a stale stamp).
+
+`print(msg)` writes to the build log (never stdout). To abort with a message,
+`throw "reason"` (surfaces as a build-script failure).
+
+(Plus the full Rhai language: `let`/`if`/`for`, user `fn`s, strings, arrays,
+maps, and Rhai's standard library. The filesystem helpers stay inside the
+project; the only way to reach outside it is an allow-listed `run` tool, which is
+the real trust boundary. Scripts are also bounded by operation/recursion limits.)
+
+```rhai
+// proto.rhai
+for f in glob("src/**/*.proto") {
+    run("protoc", ["--proto_path=" + SRC_DIR, "--cpp_out=" + OUT_DIR, f]);
+}
+add_include_dir(OUT_DIR);
+for g in glob("target/*/plugin-gen/" + SECTION + "/**/*.pb.cc") { add_source(g); }
+```
+
+### `[plugin.schema]` — editor key docs
+
+A plugin may document the keys its handled section accepts as a table of
+`key = "one-line description"`. This is **purely advisory** — freight never
+validates it — but `freight lsp` uses it to power completion and hover **inside
+the consumer's section**: typing in `[proto]` offers `proto_path`, `grpc`, … each
+labelled `plugin: proto` with its description, and hovering a key (or the
+`[proto]` header) explains it and names the providing plugin. Without a schema,
+the plugin still works; the editor just has nothing extra to suggest.
+
+Notes:
+- A plugin package may **also** ship a library (e.g. the protobuf runtime) — then
+  `proto = "0.1.1"` provides both the codegen and the link library. A
+  *plugin-only* package (no `[lib]`) is never built or linked; it only runs.
+- The manifest stays declarative — `[proto]` is data, and the plugin is a normal,
+  lock-pinned dependency.
+- **Security:**
+  - The script can only run tools the plugin declares in `tools`; arbitrary
+    commands are rejected.
+  - The file functions (`glob` / `add_source` / `add_include_dir`) are **confined
+    to the project directory** — a plugin can't read or inject files from outside
+    it (e.g. `glob("/etc/*")` returns nothing; `add_source("../x")` aborts the
+    build).
+  - Note the real trust boundary is `run`: an allow-listed external tool still
+    runs with your privileges and can touch anything you can. So plugin packages
+    must be vetted like crates / npm packages — they're versioned, lock-pinned,
+    and checksummed. An opt-in for project-granted external file access is
+    planned for the cases that need it.
+  - **Distribution:** a plugin works whether it's a `path` dependency or fetched
+    into `.pkgs/` from a registry, git, or archive URL — freight discovers
+    plugins from both. A fetched plugin runs automatically during the build (and
+    the LSP refresh), exactly like a path-dep plugin and like a Cargo build
+    script: the same `tools` allow-list and project-confinement apply, so vet
+    the package before depending on it. A finer-grained capability policy is in
+    progress.
 
 ---
 

@@ -67,7 +67,7 @@ classify(include_spelling, resolved_abs_path):
        pkg-config include dirs (Phase 3):                  -> Dependency(s.name)
     otherwise:                                             -> Undeclared
 
-project roots  = src/, include/, inc/, generated dirs (proto, header units)
+project roots  = src/, include/, inc/, generated dirs (header units, plugin codegen)
 dep roots      = union over each *active* declared dependency d of
                      dep_include_dirs(d.dir, d.manifest)    // build/deps.rs
 std_header_set = the C / C++ / ... standard-library header names for the active
@@ -277,9 +277,9 @@ the same treatment.
   is flagged with an `undeclared-module` diagnostic and a `⚠ undeclared` inlay
   hint; a resolved one is labelled with its owning package, completes from the
   declared set, and goto-definition opens its interface unit.
-- **Generated headers** (proto codegen, `[language.proto]`, header units): their
-  output dirs must be in the allowlist. Wire from the existing generated-include
-  paths in the pipeline.
+- **Generated headers** (header units; and any future codegen): their output
+  dirs must be in the allowlist. Wire from the existing generated-include paths
+  in the pipeline.
 - **`#include "local.h"`** quote-includes within the project: always Project, never
   flagged.
 - **Conditional deps**: a header only declared under `[os.windows.dependencies]`

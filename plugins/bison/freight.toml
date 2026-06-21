@@ -1,0 +1,10 @@
+[package]
+name        = "bison"
+version     = "0.1.0"
+description = "Bison parser generation — compiles every .y grammar into the build."
+
+[plugin]
+entry   = "bison.rhai"
+handles = ["bison"]
+tools   = ["bison"]
+inputs  = ["**/*.y"]

@@ -24,6 +24,12 @@ pub struct Args {
     /// Cross-compilation target triple (e.g. aarch64-linux-gnu)
     #[arg(long, value_name = "TRIPLE")]
     pub target: Option<String>,
+    /// Activate specific features (comma-separated or repeated)
+    #[arg(long, value_name = "FEATURES", value_delimiter = ',')]
+    pub features: Vec<String>,
+    /// Do not activate default features
+    #[arg(long)]
+    pub no_default_features: bool,
     #[command(flatten)]
     pub build: super::common::BuildFlags,
 }
@@ -37,6 +43,8 @@ impl Args {
             self.release,
             self.no_build,
             self.target.as_deref(),
+            &self.features,
+            !self.no_default_features,
         );
     }
 }
@@ -65,12 +73,15 @@ impl PackageArgs {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_install(
     prefix: Option<&str>,
     destdir: Option<&str>,
     release: bool,
     no_build: bool,
     target: Option<&str>,
+    features: &[String],
+    default_features: bool,
 ) {
     let cwd = std::env::current_dir().expect("cannot read cwd");
 
@@ -86,6 +97,8 @@ pub fn cmd_install(
         release,
         no_build,
         target: target.map(str::to_string),
+        features: features.to_vec(),
+        default_features,
     };
 
     let display_prefix = opts

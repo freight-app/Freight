@@ -523,7 +523,9 @@ impl LanguageIndexer for AsmIndexer {
             return None;
         }
         let file = self.ensure_file(&path)?;
-        let name = Self::ident_at(file, line as u32, character as u32)?.name.clone();
+        let name = Self::ident_at(file, line as u32, character as u32)?
+            .name
+            .clone();
         // Every occurrence in this file; reads vs the definition (write).
         Some(
             file.idents
@@ -606,7 +608,9 @@ impl LanguageIndexer for AsmIndexer {
         for p in &closure {
             if let Some(f) = self.files.get(p) {
                 for s in &f.symbols {
-                    kinds.entry(s.name.clone()).or_insert_with(|| sym_token_type(s.kind));
+                    kinds
+                        .entry(s.name.clone())
+                        .or_insert_with(|| sym_token_type(s.kind));
                 }
             }
         }
@@ -615,9 +619,14 @@ impl LanguageIndexer for AsmIndexer {
             .idents
             .iter()
             .filter_map(|i| {
-                kinds
-                    .get(&i.name)
-                    .map(|&t| (i.line, i.start_col, i.end_col.saturating_sub(i.start_col), t))
+                kinds.get(&i.name).map(|&t| {
+                    (
+                        i.line,
+                        i.start_col,
+                        i.end_col.saturating_sub(i.start_col),
+                        t,
+                    )
+                })
             })
             .collect();
         toks.sort_by_key(|t| (t.0, t.1));
@@ -647,7 +656,9 @@ impl LanguageIndexer for AsmIndexer {
         }
         let closure = self.include_closure(&path);
         let file = self.files.get(&path)?;
-        let target = Self::ident_at(file, line as u32, character as u32)?.name.clone();
+        let target = Self::ident_at(file, line as u32, character as u32)?
+            .name
+            .clone();
         // Only rename a name that resolves to a definition in the closure.
         if !closure
             .iter()
@@ -1935,7 +1946,11 @@ main:
         // workspace symbols filtered by substring.
         let ws = ix.workspace_symbols("wid").expect("ws symbols");
         assert!(ws.iter().any(|s| s["name"] == json!("WIDTH")));
-        assert!(!ix.workspace_symbols("nonexistent").unwrap().iter().any(|_| true));
+        assert!(!ix
+            .workspace_symbols("nonexistent")
+            .unwrap()
+            .iter()
+            .any(|_| true));
 
         // selection range: identifier nested in its line.
         let sr_msg = json!({ "params": { "textDocument": { "uri": uri },

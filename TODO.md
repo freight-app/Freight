@@ -9,6 +9,34 @@ This file covers items not tracked elsewhere.
 
 ---
 
+## Downstream interop — consume Freight packages from other build systems
+
+The mirror of `freight migrate`: let existing CMake/Meson/autotools/Make
+projects depend on a Freight library.
+
+- [x] **pkg-config descriptor** — `freight install` emits
+  `<prefix>/lib/pkgconfig/<name>.pc` (Name/Description/Version/Cflags/Libs,
+  plain version deps under `Requires.private`). Covers Meson `dependency()`,
+  autotools `PKG_CHECK_MODULES`, and Makefiles for free.
+- [x] **`cmake/Freight.cmake`** — `freight_dependency()` builds/installs a
+  Freight project on the fly (or imports an installed one) and exposes a
+  `freight::<name>` imported target, preferring the `.pc` with a direct-import
+  fallback. See `cmake/README.md`.
+- [x] **Forward features** — `freight install` gained `--features` /
+  `--no-default-features`, and `freight_dependency(... FEATURES … [
+  NO_DEFAULT_FEATURES])` passes them through so a CMake consumer selects the
+  Freight feature set it wants.
+  (A per-package `<Name>Config.cmake` is intentionally *not* pursued — it only
+  helps projects that pre-install a CMake config, and pkg-config already covers
+  the general case.)
+- [ ] **Bazel** — a `freight_repository`/`cc_import`-based Starlark rule that
+  shells out to `freight install` and exposes a `cc_library` to depend on.
+- [ ] **Meson wrap** — a `[wrap-*]` shim beyond plain pkg-config, for projects
+  that vendor deps via the Meson wrap DB.
+- [ ] **`Requires` (non-private)** — once dep→pkg-config-module mapping is
+  reliable, promote resolvable deps to `Requires` so dynamic consumers also get
+  transitive include flags.
+
 ## High priority
 
 ### DAP: additional debugger backends

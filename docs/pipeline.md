@@ -15,11 +15,16 @@ and delegate to it.
 | 3 | **Fetch** | `ensure_git_deps_fetched` + `dep_cmds::fetch_registry_deps` — clone/download missing deps |
 | 4 | **Resolve** | `resolve_dep_graph` + `check_slot_conflicts` — topo-sort dep graph, drop conflicting slots |
 | 5 | **Build deps** | `build_resolved_deps` + `adaptors::build_foreign_deps` — compile source deps, run cmake/make/meson |
-| 6 | **Proto** | `proto::run_protoc` — generate `.pb.cc` / `.pb.h` from `.proto` files (skipped if no `[language.proto]`) |
+| 6 | **Assemble includes** | `stage_assemble_includes` — merge `[compiler] includes`, discovered dirs, dep include dirs |
+| 6b | **Plugins (codegen)** | `plugin::run_plugins` — run plugin scripts for declared sections; fold generated sources / include dirs / defines into the build |
 | 7 | **Header units** | `header_units::precompile_dep_headers` — precompile dep headers as BMIs (C++20 builds only, `Build` goal only) |
 | 8 | **PCH** | `pch::compile_pch` — compile precompiled header if `[compiler] pch` is set |
 | 9 | **Compile** | `build_sources` — compile all project sources in parallel via rayon |
 | 10 | **Goal** | Goal-specific phase — link, run tests, run benchmarks, or build examples |
+
+> Built-in protobuf codegen (the former `[language.proto]` stage) was replaced by
+> the generic **build-plugin** mechanism (stage 6b). See
+> [`manifest-reference.md`](manifest-reference.md) → "Build plugins".
 
 ## Goal phase details
 

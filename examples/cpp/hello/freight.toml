@@ -31,3 +31,6 @@ debug     = false
 [dependencies]
 vecmath = "0.1.1"
 mathlib = "0.1.0"
+
+[os.unix]
+features = ["pthread"]

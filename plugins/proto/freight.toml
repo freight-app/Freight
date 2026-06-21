@@ -1,0 +1,15 @@
+[package]
+name        = "proto"
+version     = "0.1.0"
+description = "Protobuf code generation via protoc — adds [proto] to any project."
+
+[plugin]
+entry   = "proto.rhai"
+handles = ["proto"]
+tools   = ["protoc"]
+inputs  = ["src/**/*.proto"]
+
+# Advisory key docs surfaced as editor completion/hover inside the consumer's
+# `[proto]` section. Purely informational — never validated.
+[plugin.schema]
+proto_path = "Import root passed to protoc as --proto_path (default: src/)."

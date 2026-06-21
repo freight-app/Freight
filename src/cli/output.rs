@@ -33,6 +33,17 @@ pub fn print_status(verb: &str, detail: &str) {
     println!("{:>12} {}", verb.cyan().bold(), detail);
 }
 
+/// A line of output captured from a build-plugin tool. `source` is the tool
+/// name; stderr lines are tinted to stand out.
+pub fn print_script_output(source: &str, text: &str, is_err: bool) {
+    let tag = format!("{:>12}", format!("[{source}]"));
+    if is_err {
+        eprintln!("{} {}", tag.yellow(), text);
+    } else {
+        println!("{} {}", tag.dimmed(), text);
+    }
+}
+
 // ── Graph output formats ───────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]

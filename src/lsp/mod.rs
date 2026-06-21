@@ -145,6 +145,39 @@ fn inlay_hint_json(line: usize, col: usize, label: &str, tooltip_md: &str) -> Va
     })
 }
 
+/// Remap a native indexer's delta-encoded semantic tokens (`[dl, dc, len,
+/// tokenType, mods]` quintuples, `tokenType` indexed into
+/// [`index::FREIGHT_TOKEN_TYPES`]) so `tokenType` indexes into the advertised
+/// `legend` instead. When `legend` is empty or already matches, returns `data`
+/// unchanged. A native type name absent from `legend` falls back to index 0.
+fn remap_semantic_token_types(data: Vec<u32>, legend: &[String]) -> Vec<u32> {
+    use index::FREIGHT_TOKEN_TYPES;
+    // Identity when no forwarded legend, or it equals the native legend.
+    let identity = legend.is_empty()
+        || (legend.len() >= FREIGHT_TOKEN_TYPES.len()
+            && FREIGHT_TOKEN_TYPES
+                .iter()
+                .enumerate()
+                .all(|(i, n)| legend.get(i).map(String::as_str) == Some(*n)));
+    if identity {
+        return data;
+    }
+    let remap: Vec<u32> = FREIGHT_TOKEN_TYPES
+        .iter()
+        .map(|name| legend.iter().position(|l| l == name).unwrap_or(0) as u32)
+        .collect();
+    let mut out = data;
+    let mut i = 3;
+    while i < out.len() {
+        let ty = out[i] as usize;
+        if let Some(&mapped) = remap.get(ty) {
+            out[i] = mapped;
+        }
+        i += 5;
+    }
+    out
+}
+
 fn wait_for_debugger() {
     let pid = std::process::id();
     let pid_file = "/tmp/freight-lsp-debug.pid";
@@ -224,6 +257,10 @@ struct ServerState {
     /// refresh; recomputed only when the manifest set changes.
     package_dirs: Vec<(PathBuf, crate::build::PackageKind, Option<String>)>,
     workspace_inventory: WorkspaceInventory,
+    /// Advisory `[plugin.schema]` key docs of available plugins, for completion
+    /// inside a plugin-handled section (e.g. `[proto]`). Refreshed with the
+    /// workspace inventory.
+    plugin_schemas: Vec<crate::build::plugin::PluginSchema>,
     /// Pending clangd intercepts: rewritten-id → request metadata.
     /// Shared with the clangd reader thread so it can merge clangd's semantic
     /// answers with Freight package/docs context before forwarding.
@@ -253,6 +290,12 @@ struct ServerState {
     /// compile_commands.json). Avoids re-parsing it on every include edit;
     /// invalidated when compile commands are regenerated.
     declared_dirs_cache: HashMap<PathBuf, (Vec<PathBuf>, Option<String>)>,
+
+    /// Token-type names of the semantic-token legend actually advertised to the
+    /// client (clangd's when forwarding C/C++ tokens, else freight's). Native
+    /// indexer tokens are remapped from [`index::FREIGHT_TOKEN_TYPES`] into this
+    /// order before being returned. Empty until `initialize`.
+    semantic_legend: Vec<String>,
 }
 
 struct Passthrough {
@@ -339,6 +382,7 @@ impl Server {
                 active_manifest: None,
                 package_dirs: Vec::new(),
                 workspace_inventory: WorkspaceInventory::default(),
+                plugin_schemas: Vec::new(),
                 clangd_pending: Arc::new(Mutex::new(HashMap::new())),
                 diag_cache: Arc::new(Mutex::new(HashMap::new())),
                 indexers,
@@ -346,6 +390,7 @@ impl Server {
                 undeclared_includes: HashMap::new(),
                 last_includes: HashMap::new(),
                 declared_dirs_cache: HashMap::new(),
+                semantic_legend: Vec::new(),
             },
         }
     }
@@ -428,6 +473,15 @@ impl Server {
             }
         }
         let capabilities = merged_capabilities(source_caps, self.clang_bridge_active(), true);
+        // Remember the advertised legend so native-indexer tokens can be remapped
+        // into it (it may be a forwarded server's legend, e.g. clangd's).
+        self.state.semantic_legend = capabilities
+            .get("semanticTokensProvider")
+            .and_then(|s| s.get("legend"))
+            .and_then(|l| l.get("tokenTypes"))
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
         self.respond(
             msg.get("id").cloned(),
             json!({
@@ -471,7 +525,7 @@ impl Server {
                 ix.reparse(&uri, &text);
             }
             self.state.docs.insert(uri.clone(), text);
-            self.publish_indexer_diagnostics(&uri)?;
+            self.publish_related_indexer_diagnostics(&uri)?;
         }
         self.forward_by_text_document(&msg)
     }
@@ -489,7 +543,7 @@ impl Server {
                 }
                 self.compute_include_hygiene(&uri, &text);
                 self.state.docs.insert(uri.clone(), text);
-                self.publish_indexer_diagnostics(&uri)?;
+                self.publish_related_indexer_diagnostics(&uri)?;
             }
             return self.forward_by_uri(&uri, &msg);
         }
@@ -523,7 +577,7 @@ impl Server {
                 }
                 self.compute_include_hygiene(&uri, &text);
                 self.state.docs.insert(uri.clone(), text);
-                self.publish_indexer_diagnostics(&uri)?;
+                self.publish_related_indexer_diagnostics(&uri)?;
             }
             return Ok(());
         }
@@ -605,6 +659,7 @@ impl Server {
                 text.as_deref(),
                 position(&msg),
                 Some(&self.state.workspace_inventory),
+                &self.state.plugin_schemas,
             );
             return self.respond(msg.get("id").cloned(), result);
         }
@@ -702,7 +757,7 @@ impl Server {
 
         if is_freight_manifest_uri(&uri) {
             let text = self.manifest_text(&uri);
-            let result = hover_result(text.as_deref(), position(&msg));
+            let result = hover_result(text.as_deref(), position(&msg), &self.state.plugin_schemas);
             return self.respond(msg.get("id").cloned(), result.unwrap_or(Value::Null));
         }
 
@@ -1112,9 +1167,15 @@ impl Server {
                 .find_map(|ix| ix.semantic_tokens(u))
         });
         if let Some(data) = result {
+            // Native indexers emit token types indexed into FREIGHT_TOKEN_TYPES.
+            // The advertised legend may be a forwarded server's (clangd's), so
+            // remap each token's type into the advertised order by name.
+            let data = remap_semantic_token_types(data, &self.state.semantic_legend);
             return self.respond(Some(id), json!({ "data": data }));
         }
-        self.respond(Some(id), Value::Null)
+        // No native indexer covers this file — let the source server (clangd)
+        // answer. Its tokens use the legend freight advertised, so forward as-is.
+        self.forward_or_null(msg)
     }
 
     fn handle_inlay_hints(&mut self, msg: Value) -> io::Result<()> {
@@ -2373,6 +2434,39 @@ impl Server {
         Ok(())
     }
 
+    fn publish_related_indexer_diagnostics(&mut self, changed_uri: &str) -> io::Result<()> {
+        let Some(changed_path) = path_from_uri(changed_uri) else {
+            return self.publish_indexer_diagnostics(changed_uri);
+        };
+        let mut uris = Vec::new();
+        for candidate_uri in self.state.docs.keys() {
+            if is_freight_manifest_uri(candidate_uri) {
+                continue;
+            }
+            let Some(candidate_path) = path_from_uri(candidate_uri) else {
+                continue;
+            };
+            if self
+                .state
+                .indexers
+                .iter()
+                .any(|ix| ix.handles(&changed_path) && ix.handles(&candidate_path))
+            {
+                uris.push(candidate_uri.clone());
+            }
+        }
+        if uris.is_empty() || uris.len() > 32 {
+            uris.clear();
+            uris.push(changed_uri.to_string());
+        }
+        uris.sort();
+        uris.dedup();
+        for uri in uris {
+            self.publish_indexer_diagnostics(&uri)?;
+        }
+        Ok(())
+    }
+
     fn publish_diagnostics(&self, uri: &str, diagnostics: Vec<Value>) -> io::Result<()> {
         self.write_to_client(&json!({
             "jsonrpc": "2.0",
@@ -2411,22 +2505,10 @@ impl Server {
         self.state.active_manifest = active_dir.as_deref().and_then(|d| {
             let mut m = load_manifest_cached(d).ok()?;
             // `compiler.target`/`sysroot` are machine-local (#[serde(skip)]), so the
-            // parsed manifest never carries them. Apply the same sources the build
-            // pipeline uses (global + per-project config, FREIGHT_SYSROOT) so the
-            // header index and provider labels reflect the cross target.
-            let mut cfg = crate::toolchain::GlobalConfig::load();
-            if let Some(local) = crate::toolchain::GlobalConfig::load_local(d) {
-                cfg.apply_local(local);
-            }
-            if m.compiler.target.is_none() {
-                m.compiler.target = cfg.target.clone();
-            }
-            if m.compiler.sysroot.is_none() {
-                m.compiler.sysroot = std::env::var_os("FREIGHT_SYSROOT")
-                    .filter(|v| !v.is_empty())
-                    .map(|v| v.to_string_lossy().into_owned())
-                    .or_else(|| cfg.sysroot.clone());
-            }
+            // parsed manifest never carries them. Apply the same resolved
+            // environment the build pipeline uses (merged config + FREIGHT_SYSROOT)
+            // so the header index and provider labels reflect the cross target.
+            crate::environment::Environment::for_project(d).apply_to_manifest(&mut m);
             Some(m)
         });
         self.state.package_dirs = active_dir
@@ -2447,6 +2529,19 @@ impl Server {
             );
             return;
         };
+        // Run plugin codegen (incremental) so generated headers exist on disk for
+        // clangd and the include index. Best-effort: a missing tool or a failing
+        // plugin must not break the language server.
+        if let Err(e) = crate::build::plugin::run_plugins(
+            &dir,
+            &self.args.profile,
+            "build",
+            &[],
+            &crate::event::silent(),
+        ) {
+            tracing::debug!("plugin codegen skipped: {e}");
+        }
+
         if let Ok(dir) = generate_lsp_compile_commands_at(&dir, &self.args.profile) {
             tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
             self.state.compile_commands_dir = Some(dir);
@@ -2498,10 +2593,21 @@ impl Server {
             .active_manifest
             .as_ref()
             .and_then(|m| m.compiler.target.clone());
+        // Plugin-generated output dirs (with provenance) so generated headers
+        // hover/inlay as "generated by <plugin>" rather than project-owned.
+        let gen_dirs = crate::build::plugin::plugin_generated_dirs(&base, &self.args.profile);
+        let gen_specs: Vec<crate::lsp::index::GeneratedDirSpec<'_>> = gen_dirs
+            .iter()
+            .map(|d| crate::lsp::index::GeneratedDirSpec {
+                path: d.out_dir.as_path(),
+                plugin_name: d.plugin_name.as_str(),
+            })
+            .collect();
         // One traversal of each package's src/ fills both indexes.
         let indexes = crate::lsp::index::build_source_indexes(
             &specs,
             pkgs_opt,
+            &gen_specs,
             sysroot.as_deref(),
             target.as_deref(),
         );
@@ -2510,11 +2616,11 @@ impl Server {
     }
 
     fn refresh_workspace_inventory(&mut self) {
-        self.state.workspace_inventory = build_workspace_inventory(
-            &self
-                .active_manifest_dir()
-                .unwrap_or_else(|| self.state.root_dir.clone()),
-        );
+        let base = self
+            .active_manifest_dir()
+            .unwrap_or_else(|| self.state.root_dir.clone());
+        self.state.workspace_inventory = build_workspace_inventory(&base);
+        self.state.plugin_schemas = crate::build::plugin::plugin_schemas(&base);
     }
 
     fn notify_compile_commands_changed(&mut self) -> io::Result<()> {
@@ -2792,6 +2898,24 @@ mod tests {
     use serde_json::json;
 
     use super::{header_capability, header_provider_label};
+    use super::remap_semantic_token_types;
+
+    #[test]
+    fn remap_token_types_into_forwarded_legend() {
+        // Advertised legend reorders: function -> 0, namespace -> 1.
+        let legend = vec!["function".to_string(), "namespace".to_string()];
+        // Two tokens: type 2 (function) and type 0 (namespace) in FREIGHT_TOKEN_TYPES.
+        let data = vec![0, 0, 3, 2, 0, /* */ 1, 0, 3, 0, 0];
+        let out = remap_semantic_token_types(data, &legend);
+        assert_eq!(out[3], 0, "function -> advertised index 0");
+        assert_eq!(out[8], 1, "namespace -> advertised index 1");
+    }
+
+    #[test]
+    fn remap_is_identity_for_empty_legend() {
+        let data = vec![0, 0, 3, 5, 0];
+        assert_eq!(remap_semantic_token_types(data.clone(), &[]), data);
+    }
 
     #[test]
     fn header_capability_cases() {

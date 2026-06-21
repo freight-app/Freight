@@ -43,6 +43,10 @@ int main() {
     auto sq = square(v);
 
     // throw std::runtime_error("yeet");
+
+    printf("mean: %f\n", m);
+    printf("variance: %f\n", v);
+    printf("std dev: %f\n", std::sqrt(v));  
     
     {
         // std::ostringstream ss;

@@ -14,7 +14,7 @@ use crate::build::{build_project_with, build_workspace_with, BuildOutput};
 use crate::event::silent;
 use crate::manifest::{find_manifest_dir, load_manifest, load_workspace_manifest, Manifest};
 use crate::toolchain::{detect_debuggers, load_debugger_templates, GlobalConfig};
-use crate::vendor::parse_triple;
+use crate::vendor::resolve_target;
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -448,13 +448,7 @@ fn dap_profile(config: &Value) -> String {
 }
 
 fn dap_target_os(manifest: &Manifest) -> String {
-    manifest
-        .compiler
-        .target
-        .as_deref()
-        .map(parse_triple)
-        .map(|(_, os)| os)
-        .unwrap_or_else(|| std::env::consts::OS.to_string())
+    resolve_target(manifest.compiler.target.as_deref()).1
 }
 
 fn dap_executable_name(name: &str, target_os: &str) -> String {

@@ -140,10 +140,7 @@ flowchart TD
     CollectDeps --> ResolveDeps["5. Resolve dep graph\ntopo-sort\n(see Dependency resolution diagram)"]
     ResolveDeps --> FetchBuildDeps["6. Fetch build-dependencies\nprepend bin/ dirs to PATH"]
     FetchBuildDeps --> ForeignDeps["7. Build foreign deps\ncmake / make / meson / autotools\nrayon parallel"]
-    ForeignDeps --> ProtoCodegen{"[language.proto]\ndeclared?"}
-    ProtoCodegen -->|yes| RunProtoc["8a. Run protoc on src/*.proto\ninject .pb.cc into compile list\nadd generated header dir"]
-    ProtoCodegen -->|no| DiscoverSrc
-    RunProtoc --> DiscoverSrc["8b. Discover sources\nwalk src/ by extension → language key\nSRC.src = entry-point (linker dedup only)"]
+    ForeignDeps --> DiscoverSrc["8. Discover sources\nwalk src/ by extension → language key\nSRC.src = entry-point (linker dedup only)"]
     DiscoverSrc --> ModuleScan{"C++20 modules?"}
     ModuleScan -->|yes| ScanModules["9a. Scan export module / import\nbuild module DAG\nbatch by topo-order (Kahn)"]
     ModuleScan -->|no| Compile

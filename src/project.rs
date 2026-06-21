@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::{
+use crate::build::{
     check_slot_conflicts, clean_project_at, emit_sources, generate_compile_commands_at, pipeline,
     resolve_dep_graph, run_pipeline_at, BenchSummary, BuildOutput, EmitTarget, PipelineOutput,
     ResolvedDep, TestSummary,
@@ -273,7 +273,7 @@ impl Project {
     ) -> Result<PathBuf, FreightError> {
         let profile = &config.profile;
         let feat = pipeline::stage_features(&self.manifest, config)?;
-        let ctx = super::load_project_at(&self.dir, profile)?;
+        let ctx = crate::build::load_project_at(&self.dir, profile)?;
         let target_dir = self.dir.join("target");
         emit_sources(
             &target,
@@ -300,7 +300,8 @@ impl Project {
             let profile = if opts.release { "release" } else { "debug" };
             let config = pipeline::PipelineConfig {
                 profile: profile.to_string(),
-                use_defaults: true,
+                features: opts.features.clone(),
+                use_defaults: opts.default_features,
                 target_override: opts.target.clone(),
                 goal: pipeline::PipelineGoal::Build,
                 ..Default::default()

@@ -11,11 +11,10 @@
 ///  4. `resolve_deps`  — dep graph topo-sort + slot-conflict check
 ///  5. `build_deps`    — compile source-built deps + foreign (cmake/make/…) deps
 ///  6. `assemble_includes` — merge `[compiler] includes`, discovered dirs, dep dirs
-///  7. `codegen`       — run `protoc` if `[language.proto]` is declared
-///  8. `header_units`  — precompile dep headers as BMIs (C++20 builds only)
-///  9. `pch`           — compile precompiled header if configured
-/// 10. `compile`       — compile all project sources in parallel
-/// 11. goal phase      — link (build), run tests, or run benchmarks
+///  7. `header_units`  — precompile dep headers as BMIs (C++20 builds only)
+///  8. `pch`           — compile precompiled header if configured
+///  9. `compile`       — compile all project sources in parallel
+/// 10. goal phase      — link (build), run tests, or run benchmarks
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -23,8 +22,8 @@ use walkdir::WalkDir;
 
 use crate::build::{
     compile, compile_commands, discover, features, header_units, link_targets, link_test_binary,
-    object_path, pch, proto, BenchResult, BenchSummary, BuildOutput, CompileResult, PipelineOutput,
-    SourceFile, TestSummary,
+    object_path, pch, plugin, BenchResult, BenchSummary, BuildOutput, CompileResult,
+    PipelineOutput, SourceFile, TestSummary,
 };
 use crate::error::FreightError;
 use crate::event::{BuildEvent, Progress};
@@ -62,6 +61,16 @@ pub enum PipelineGoal {
 impl PipelineGoal {
     pub fn include_dev_deps(&self) -> bool {
         matches!(self, Self::Test { .. })
+    }
+
+    /// Short name used for plugin `goals` activation filtering.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Test { .. } => "test",
+            Self::Bench { .. } => "bench",
+            Self::Examples { .. } => "examples",
+        }
     }
 }
 
@@ -156,13 +165,13 @@ pub fn stage_features(
 /// freight must not touch the network and instead use whatever is already in
 /// `.pkgs/`. A missing dep then surfaces as a normal "run `freight fetch`" error.
 pub fn is_offline() -> bool {
-    std::env::var_os("FREIGHT_OFFLINE").is_some()
+    crate::environment::Environment::offline()
 }
 
 /// True when `--locked`/`--frozen` was requested: freight.lock must already be
 /// up to date and is never rewritten by the build.
 pub fn is_locked() -> bool {
-    std::env::var_os("FREIGHT_LOCKED").is_some()
+    crate::environment::Environment::locked()
 }
 
 /// Stage 3: fetch missing git + registry deps and verify the lock file.
@@ -285,31 +294,7 @@ pub fn stage_assemble_includes(
     dirs
 }
 
-/// Stage 7: run `protoc` codegen if `[language.proto]` is declared.
-/// Returns the (possibly extended) source list and include dirs.
-pub fn stage_codegen(
-    project_dir: &Path,
-    manifest: &Manifest,
-    profile: &str,
-    base_sources: Vec<SourceFile>,
-    include_dirs: &mut Vec<PathBuf>,
-    tool_paths: &[PathBuf],
-    progress: &Progress,
-) -> Result<Vec<SourceFile>, FreightError> {
-    if !manifest.language.contains_key("proto") {
-        return Ok(base_sources);
-    }
-    let proto_settings = manifest.effective_language_settings("proto");
-    let result = proto::run_protoc(project_dir, profile, &proto_settings, tool_paths, progress)?;
-    if !result.generated_include_dir.as_os_str().is_empty() {
-        include_dirs.push(result.generated_include_dir);
-    }
-    let mut srcs = base_sources;
-    srcs.extend(result.generated_sources);
-    Ok(srcs)
-}
-
-/// Stage 8: precompile dep headers as BMIs (C++20 builds only; no-op otherwise).
+/// Stage 7: precompile dep headers as BMIs (C++20 builds only; no-op otherwise).
 pub(crate) fn stage_header_units(
     project_dir: &Path,
     manifest: &Manifest,
@@ -343,7 +328,7 @@ pub(crate) fn stage_header_units(
     }
 }
 
-/// Stage 9: compile the precompiled header if configured; returns compile + clangd flags.
+/// Stage 8: compile the precompiled header if configured; returns compile + clangd flags.
 pub(crate) fn stage_pch(
     project_dir: &Path,
     target_dir: &Path,
@@ -503,6 +488,7 @@ fn run_test_goal(
         &ctx.detected,
         feature_defines,
         &[],
+        &[],
         progress,
     )?;
 
@@ -597,6 +583,7 @@ fn run_bench_goal(
         include_dirs,
         &ctx.detected,
         feature_defines,
+        &[],
         &[],
         progress,
     )?;
@@ -780,6 +767,7 @@ fn run_examples_goal(
         &ctx.detected,
         feature_defines,
         &[],
+        &[],
         progress,
     )?;
 
@@ -854,7 +842,7 @@ pub fn run_pipeline_at(
     });
 
     // ── Stage 2: Features ────────────────────────────────────────────────────
-    let feat = stage_features(manifest, config)?;
+    let mut feat = stage_features(manifest, config)?;
     for w in manifest.cpu_tuning_warnings(profile) {
         progress(BuildEvent::Warning(w));
     }
@@ -913,25 +901,24 @@ pub fn run_pipeline_at(
         &deps.include_dirs,
     );
 
-    // ── Stage 7: Proto codegen ───────────────────────────────────────────────
-    let all_sources = stage_codegen(
-        project_dir,
-        manifest,
-        profile,
-        found.sources.clone(),
-        &mut include_dirs,
-        &deps.tool_paths,
-        progress,
-    )?;
+    // ── Stage 6b: Build plugins (codegen) ────────────────────────────────────
+    // Path-dep plugins that handle a declared section generate sources, include
+    // dirs, and defines folded into the build below.
+    let plugin_out =
+        plugin::run_plugins(project_dir, profile, config.goal.name(), &deps.tool_paths, progress)?;
+    include_dirs.extend(plugin_out.include_dirs);
+    feat.defines.extend(plugin_out.defines);
+    let mut all_sources = found.sources.clone();
+    all_sources.extend(plugin_out.sources);
 
-    // ── Stage 8: Header units (build goal only) ──────────────────────────────
+    // ── Stage 7: Header units (build goal only) ──────────────────────────────
     let hu_flags = if matches!(config.goal, PipelineGoal::Build) {
         stage_header_units(project_dir, manifest, profile, &deps.include_dirs, &ctx)
     } else {
         vec![]
     };
 
-    // ── Stage 9: PCH ─────────────────────────────────────────────────────────
+    // ── Stage 8: PCH ─────────────────────────────────────────────────────────
     let pch = stage_pch(
         project_dir,
         &target_dir,
@@ -943,7 +930,7 @@ pub fn run_pipeline_at(
         progress,
     );
 
-    // ── Stage 10: Compile ────────────────────────────────────────────────────
+    // ── Stage 9: Compile ────────────────────────────────────────────────────
     let mut extra_flags = hu_flags;
     extra_flags.extend(pch.compile.iter().cloned());
     let compile_result = build_sources(
@@ -957,6 +944,7 @@ pub fn run_pipeline_at(
         &ctx.detected,
         &feat.defines,
         &extra_flags,
+        &plugin_out.tool_flags,
         progress,
     )?;
 
@@ -976,6 +964,7 @@ pub fn run_pipeline_at(
                 &deps.system_features,
                 &deps.raw_link_flags,
                 &feat.active,
+                &plugin_out.tool_flags,
                 progress,
             )?;
 

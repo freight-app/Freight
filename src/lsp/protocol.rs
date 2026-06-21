@@ -87,14 +87,32 @@ pub fn merged_capabilities(
     use_clang_bridge: bool,
     use_native_fortran: bool,
 ) -> Value {
+    // Capture a forwarded server's semantic-token provider (clangd's) before the
+    // freight merge overwrites it — when the in-process clang bridge is off,
+    // clangd serves C/C++ tokens, so we advertise ITS legend and forward its
+    // tokens verbatim (native-indexer tokens are remapped into this legend).
+    let source_semantic = if use_clang_bridge {
+        None
+    } else {
+        source_caps
+            .iter()
+            .find_map(|c| c.get("semanticTokensProvider").cloned())
+    };
+
     let mut caps = json!({});
-    for source in source_caps {
-        merge_capability_object(&mut caps, &source);
+    for source in &source_caps {
+        merge_capability_object(&mut caps, source);
     }
     merge_capability_object(
         &mut caps,
         &freight_capabilities(use_clang_bridge, use_native_fortran),
     );
+
+    if let Some(sem) = source_semantic {
+        if let Some(obj) = caps.as_object_mut() {
+            obj.insert("semanticTokensProvider".into(), sem);
+        }
+    }
     caps
 }
 
@@ -428,6 +446,35 @@ mod tests {
         let token_types = provider["legend"]["tokenTypes"].as_array().unwrap();
         assert_eq!(token_types[0], "namespace");
         assert_eq!(token_types[8], "macro");
+    }
+
+    #[test]
+    fn forwarded_clangd_legend_wins_when_clang_bridge_off() {
+        // With the bridge off, clangd serves C/C++ tokens — advertise its legend
+        // so forwarded tokens are coloured correctly.
+        let clangd = serde_json::json!({
+            "semanticTokensProvider": {
+                "legend": { "tokenTypes": ["variable", "function", "clangdType"], "tokenModifiers": [] },
+                "full": true
+            }
+        });
+        let caps = super::merged_capabilities(vec![clangd], false, true);
+        let tt = caps["semanticTokensProvider"]["legend"]["tokenTypes"]
+            .as_array()
+            .unwrap();
+        assert_eq!(tt[2], "clangdType", "clangd legend should win, got {tt:?}");
+    }
+
+    #[test]
+    fn clang_bridge_keeps_freight_legend() {
+        let clangd = serde_json::json!({
+            "semanticTokensProvider": { "legend": { "tokenTypes": ["clangdType"], "tokenModifiers": [] } }
+        });
+        let caps = super::merged_capabilities(vec![clangd], true, true);
+        let tt = caps["semanticTokensProvider"]["legend"]["tokenTypes"]
+            .as_array()
+            .unwrap();
+        assert_eq!(tt[0], "namespace", "clang-bridge keeps freight legend, got {tt:?}");
     }
 
     #[test]

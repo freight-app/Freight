@@ -579,12 +579,7 @@ pub fn fetch_package_deps(project_dir: &Path) -> Result<Vec<PackageDepOutcome>, 
     // Apply machine-local cross settings (same source as the build pipeline) so a
     // dep counts as "system present" only when the *target* provides it — host
     // pkg-config must not satisfy a cross build.
-    let global = crate::toolchain::GlobalConfig::load();
-    manifest.compiler.target = global.target.clone();
-    manifest.compiler.sysroot = std::env::var_os("FREIGHT_SYSROOT")
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string_lossy().into_owned())
-        .or_else(|| global.sysroot.clone());
+    crate::environment::Environment::for_project(project_dir).apply_to_manifest(&mut manifest);
     let cross = cross_build(&manifest);
     let mut outcomes = Vec::new();
 

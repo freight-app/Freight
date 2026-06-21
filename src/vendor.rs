@@ -100,6 +100,18 @@ pub fn parse_triple(triple: &str) -> (String, String) {
     (arch, os)
 }
 
+/// Resolve an optional target triple to `(arch, os)`, falling back to the host
+/// when `None`. The single place the host fallback lives; used by
+/// [`crate::environment::Environment`] and the build/dap target-OS helpers.
+pub fn resolve_target(triple: Option<&str>) -> (String, String) {
+    triple.map(parse_triple).unwrap_or_else(|| {
+        (
+            std::env::consts::ARCH.to_string(),
+            std::env::consts::OS.to_string(),
+        )
+    })
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

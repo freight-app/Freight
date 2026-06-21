@@ -63,6 +63,7 @@ pub struct CompileResult {
 ///
 /// Files whose object is newer than both the source and all headers listed in its
 /// `.d` dependency file are skipped. Compilation runs in parallel via rayon.
+#[allow(clippy::too_many_arguments)]
 pub fn compile_sources(
     project_dir: &Path,
     target_dir: &Path,
@@ -74,6 +75,7 @@ pub fn compile_sources(
     detected: &[DetectedCompiler],
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<CompileResult, FreightError> {
     let pf = primary_family(backend, detected);
@@ -87,6 +89,7 @@ pub fn compile_sources(
         profile,
         feature_defines,
         header_unit_flags,
+        tool_flags,
         include_dirs,
     );
     let flags_changed = config_changed(target_dir, profile, &fingerprint);
@@ -128,6 +131,15 @@ pub fn compile_sources(
                     }
                 }
             }
+
+            // Plugin-supplied flags aimed at this compiler (by name/alias/family
+            // or the catch-all "compiler").
+            settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
+                tool_flags,
+                &compiler.template.name,
+                compiler.template.alias.as_deref(),
+                &compiler.template.family,
+            ));
 
             // Whole-program builders (e.g. gnatmake for Ada) handle compile+bind+link
             // in a single invocation during the link step. Skip the separate compile
@@ -195,6 +207,7 @@ pub fn compile_sources(
 /// Languages in [`UNITY_SUPPORTED_LANGS`] are grouped and compiled as a single file each.
 /// Other languages (Fortran, assembly, ISPC, …) fall back to individual compilation.
 /// C++20 modules should not use this path — the caller must skip unity when modules are present.
+#[allow(clippy::too_many_arguments)]
 pub fn compile_sources_unity(
     project_dir: &Path,
     target_dir: &Path,
@@ -206,6 +219,7 @@ pub fn compile_sources_unity(
     detected: &[DetectedCompiler],
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<CompileResult, FreightError> {
     use std::collections::HashMap;
@@ -221,6 +235,7 @@ pub fn compile_sources_unity(
         profile,
         feature_defines,
         header_unit_flags,
+        tool_flags,
         include_dirs,
     );
     let flags_changed = config_changed(target_dir, profile, &fingerprint);
@@ -243,6 +258,7 @@ pub fn compile_sources_unity(
             detected,
             feature_defines,
             header_unit_flags,
+            tool_flags,
             progress,
         )?
     } else {
@@ -320,7 +336,7 @@ pub fn compile_sources_unity(
         let compiler = select_compiler(lang_key, backend, detected, pf)
             .ok_or_else(|| FreightError::NoCompilerForLang(lang_key.clone()))?;
 
-        let settings = settings_for_lang(
+        let mut settings = settings_for_lang(
             manifest,
             profile,
             lang_key,
@@ -328,6 +344,12 @@ pub fn compile_sources_unity(
             project_dir,
             feature_defines,
         );
+        settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
+            tool_flags,
+            &compiler.template.name,
+            compiler.template.alias.as_deref(),
+            &compiler.template.family,
+        ));
         let compile_bin = resolve_compile_binary(compiler, lang_key);
 
         for src in lang_sources {
@@ -609,6 +631,7 @@ fn config_fingerprint(
     profile: &str,
     feature_defines: &[String],
     header_unit_flags: &[String],
+    tool_flags: &[crate::build::plugin::ToolFlag],
     include_dirs: &[PathBuf],
 ) -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -622,6 +645,13 @@ fn config_fingerprint(
     defs.hash(&mut h);
 
     header_unit_flags.hash(&mut h);
+
+    let mut tf: Vec<(&str, &str)> = tool_flags
+        .iter()
+        .map(|t| (t.tool.as_str(), t.flag.as_str()))
+        .collect();
+    tf.sort_unstable();
+    tf.hash(&mut h);
 
     let mut incs: Vec<String> = include_dirs
         .iter()
@@ -758,7 +788,7 @@ pub(crate) fn compile_one(
     cmd.arg(source_abs);
     cmd.args(compiler.template.output_flag(obj_path));
 
-    if std::env::var_os("FREIGHT_VERBOSE").is_some() {
+    if crate::environment::Environment::verbose() {
         print_cmd(&cmd);
     }
     let out = cmd.output().map_err(FreightError::Io)?;
@@ -1007,7 +1037,7 @@ pub fn emit_sources(
         }
         cmd.arg(&src_abs).arg("-o").arg(&out_path);
 
-        if std::env::var_os("FREIGHT_VERBOSE").is_some() {
+        if crate::environment::Environment::verbose() {
             print_cmd(&cmd);
         }
 

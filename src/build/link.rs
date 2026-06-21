@@ -7,7 +7,7 @@ use crate::event::{BuildEvent, Progress};
 use crate::manifest::types::{Backend, LibType, Manifest};
 use crate::toolchain::template::BuildSettings;
 use crate::toolchain::{CompilerTemplate, DetectedCompiler};
-use crate::vendor::parse_triple;
+use crate::vendor::resolve_target;
 
 use super::compile::object_path;
 
@@ -54,6 +54,7 @@ pub struct LinkResult {
 ///
 /// `dep_libs` are pre-built `.a` archives from `target/deps/` that are linked in
 /// before any system libraries.
+#[allow(clippy::too_many_arguments)]
 pub fn link_targets(
     _project_dir: &Path,
     target_dir: &Path,
@@ -67,10 +68,18 @@ pub fn link_targets(
     dep_system_features: &[String],
     extra_link_flags: &[String],
     active_features: &std::collections::BTreeSet<String>,
+    tool_flags: &[crate::build::plugin::ToolFlag],
     progress: &Progress,
 ) -> Result<LinkResult, FreightError> {
     let mut outputs: Vec<PathBuf> = Vec::new();
     let target_os = link_target_os(manifest);
+
+    // Plugin flags aimed at the `linker` role are merged into the link command;
+    // `archiver` flags are applied to static-archive (`ar`) invocations below.
+    let mut link_flags = extra_link_flags.to_vec();
+    link_flags.extend(crate::build::plugin::role_tool_flags(tool_flags, "linker"));
+    let extra_link_flags = link_flags.as_slice();
+    let archiver_flags = crate::build::plugin::role_tool_flags(tool_flags, "archiver");
 
     for bin in &manifest.bins {
         // Skip targets whose `required-features` aren't all active.
@@ -145,7 +154,7 @@ pub fn link_targets(
                         select_linker(manifest, backend, detected, templates).ok_or_else(|| {
                             FreightError::CompilerNotFound("no suitable linker found".into())
                         })?;
-                    if link_static(&out, objects, linker.template.ar_binary())? {
+                    if link_static(&out, objects, linker.template.ar_binary(), &archiver_flags)? {
                         progress(BuildEvent::Archiving {
                             name: format!("lib{}.a", manifest.package.name),
                         });
@@ -217,7 +226,7 @@ pub fn link_test_binary(
 /// Archive a set of object files into a static library.
 /// `ar_bin` is the archiver binary to use (from `CompilerTemplate::ar_binary()`).
 pub fn link_static_lib(objects: &[PathBuf], out: &Path, ar_bin: &str) -> Result<(), FreightError> {
-    link_static(out, objects, ar_bin).map(|_| ())
+    link_static(out, objects, ar_bin, &[]).map(|_| ())
 }
 
 /// Pick the compiler binary that drives the final link step.
@@ -362,13 +371,18 @@ fn link_executable(
 }
 
 /// Returns `true` if archiving was performed, `false` if the output was already fresh.
-fn link_static(out: &Path, objects: &[PathBuf], ar_bin: &str) -> Result<bool, FreightError> {
+fn link_static(
+    out: &Path,
+    objects: &[PathBuf],
+    ar_bin: &str,
+    extra_ar_flags: &[String],
+) -> Result<bool, FreightError> {
     let inputs: Vec<&Path> = objects.iter().map(PathBuf::as_path).collect();
     if output_is_fresh(out, &inputs) {
         return Ok(false);
     }
     let mut cmd = Command::new(ar_bin);
-    cmd.arg("rcs").arg(out).args(objects);
+    cmd.args(extra_ar_flags).arg("rcs").arg(out).args(objects);
     run_cmd(cmd, out)?;
     Ok(true)
 }
@@ -392,13 +406,7 @@ pub(crate) fn executable_name(name: &str, target_os: &str) -> String {
 }
 
 fn link_target_os(manifest: &Manifest) -> String {
-    manifest
-        .compiler
-        .target
-        .as_deref()
-        .map(parse_triple)
-        .map(|(_, os)| os)
-        .unwrap_or_else(|| std::env::consts::OS.to_string())
+    resolve_target(manifest.compiler.target.as_deref()).1
 }
 
 /// Returns `true` if linking was performed, `false` if the output was already fresh.
@@ -473,7 +481,7 @@ fn strip_output(out: &Path, linker: &DetectedCompiler) -> Result<(), FreightErro
 }
 
 fn run_cmd(mut cmd: Command, out: &Path) -> Result<(), FreightError> {
-    if std::env::var_os("FREIGHT_VERBOSE").is_some() {
+    if crate::environment::Environment::verbose() {
         super::compile::print_cmd(&cmd);
     }
     let result = cmd.output().map_err(FreightError::Io)?;
