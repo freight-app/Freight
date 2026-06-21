@@ -1,0 +1,15 @@
+[package]
+name        = "scons-builder"
+version     = "0.1.0"
+description = "Build a dependency with SCons — adds [scons] to any project."
+
+[plugin]
+entry   = "scons.rhai"
+handles = ["scons"]
+tools   = ["scons"]
+
+[plugin.schema]
+build   = "Dependency name (or array of names) to build with SCons."
+defines = "Extra `VAR=VALUE` arguments passed to scons."
+target  = "SCons target to build (default: the SConstruct default)."
+include = "Header directory to expose, relative to the dep source (default: include/ or the root)."

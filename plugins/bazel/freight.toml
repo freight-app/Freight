@@ -1,0 +1,14 @@
+[package]
+name        = "bazel-builder"
+version     = "0.1.0"
+description = "Build a dependency with Bazel — adds [bazel] to any project."
+
+[plugin]
+entry   = "bazel.rhai"
+handles = ["bazel"]
+tools   = ["bazel"]
+
+[plugin.schema]
+build   = "Dependency name (or array of names) to build with Bazel."
+target  = "Bazel target/pattern to build (default: //...)."
+include = "Header directory to expose, relative to the dep source (default: the root)."

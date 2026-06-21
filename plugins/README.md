@@ -14,8 +14,10 @@ to generate sources. Each is an ordinary package with a `[plugin]` section.
 | [`make`](make) | `[make]` | `make` | builds an `external = true` dep with a plain Makefile |
 | [`meson`](meson) | `[meson]` | `meson` | builds an `external = true` dep with Meson |
 | [`autotools`](autotools) | `[autotools]` | `sh`, `make` | builds an `external = true` dep with `./configure && make` |
+| [`scons`](scons) | `[scons]` | `scons` | builds an `external = true` dep with SCons |
+| [`bazel`](bazel) | `[bazel]` | `bazel` | builds an `external = true` dep with Bazel |
 
-The `cmake` / `make` / `meson` / `autotools` plugins are a different shape from the
+The `cmake` / `make` / `meson` / `autotools` / `scons` / `bazel` plugins are a different shape from the
 codegen ones: rather than generating sources, they build an `external = true`
 dependency (`[cmake] build = "libfoo"`), reading `PKGS["libfoo"].dir` for the
 source and wiring the installed headers + libraries back in via `add_include_dir`
