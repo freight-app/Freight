@@ -307,6 +307,12 @@ pub fn build_foreign_deps(
             continue;
         }
 
+        // `external = true` deps are built by a plugin (e.g. one handling
+        // `[cmake]`), not by freight's core — skip the auto build/detect here.
+        if d.external {
+            continue;
+        }
+
         let dep_dir = if let Some(rel) = &d.path {
             dep_base.join(rel)
         } else if d.is_git() {

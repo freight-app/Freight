@@ -929,6 +929,12 @@ pub struct DetailedDep {
     /// directory's marker files (CMakeLists.txt, meson.build, etc.).
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub dep_type: Option<String>,
+    /// Mark this dependency as built by an **external build-system plugin** rather
+    /// than by freight's core. The source is still fetched into `.pkgs/<name>`,
+    /// but freight does not auto-detect or run a build for it — a plugin (e.g. one
+    /// handling `[cmake]`) reads `PKGS["<name>"].dir` and builds it instead.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub external: bool,
     /// Include directories to expose to code that depends on this dep,
     /// relative to the dep's source directory. Only used for foreign deps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

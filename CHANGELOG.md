@@ -58,6 +58,11 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   (flatc), `bison`, and `flex` — add `proto = { path = … }` + a `[proto]`
   section to a project and the codegen runs automatically. `proto` ships a
   `[plugin.schema]` documenting its `proto_path` key.
+- **`external = true` dependencies + the `cmake` reference plugin.** A dep marked
+  `external = true` is fetched but not built by core; a build-system plugin
+  (e.g. `cmake`, handling `[cmake] build = "…"`) reads `PKGS["…"].dir`, builds
+  it, and wires the headers + libraries in. First step toward expressing freight's
+  foreign build-system support as plugins rather than builtin adaptors.
 - **`freight lsp` recognizes plugins.** The server runs the (incremental) plugin
   codegen when it refreshes (on open and on `freight.toml` save), so generated
   files exist on disk, and adds each active plugin's output dir

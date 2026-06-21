@@ -146,7 +146,7 @@ During the build, the plugin's script runs with these **constants** in scope:
 | `TARGET` | target characteristics: `TARGET.os`, `TARGET.arch`, `TARGET.family`, `TARGET.pointer_width`, `TARGET.triple` (`""` when building for the host, the full triple when cross-compiling) |
 | `LIB` | the consuming project's library, `#{ name, type, hdrs, srcs, link }` — or `()` when it builds no `[lib]` |
 | `BINS` | the project's executables as a map keyed by name (`BINS["cli"]`), each `#{ name, src, required_features }` |
-| `PKGS` | the project's dependencies as a map keyed by name (`PKGS["libfoo"].dir`), each `#{ name, dir, version }` |
+| `PKGS` | the project's dependencies as a map keyed by name (`PKGS["libfoo"].dir`), each `#{ name, dir, version, external }` |
 | `CFG` | the matched section's config data (`CFG.out`, `CFG.enabled`, …) |
 
 `BINS` is keyed by executable name (names are unique). Look one up with
@@ -546,7 +546,22 @@ dep = {
                                          #   make KEY=VALUE); a leading -D is accepted.
                                          #   aliases: cmake-args / cmake_args
     include     = ["include/", "src/"],  # explicit include dirs (skips auto-detection)
+    external    = false,                 # true → built by a plugin, not core (see below)
 }
+```
+
+**`external = true`** marks a dependency as built by a **build-system plugin**
+rather than freight's core. The source is still fetched into `.pkgs/<name>` (or a
+`path` points at it), but freight does not auto-detect or run a build for it.
+A plugin that handles a section like `[cmake]` then reads `PKGS["<name>"].dir`
+and builds it — see the `cmake` reference plugin under `plugins/`:
+
+```toml
+[dependencies]
+zlib          = { version = "1.3", external = true }
+cmake-builder = "0.1"          # plugin handling [cmake]
+[cmake]
+build = "zlib"
 ```
 
 `type` is optional — freight auto-detects the build system from marker files in the dep directory

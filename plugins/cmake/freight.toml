@@ -1,0 +1,15 @@
+[package]
+name        = "cmake-builder"
+version     = "0.1.0"
+description = "Build a dependency with CMake — adds [cmake] to any project."
+
+[plugin]
+entry   = "cmake.rhai"
+handles = ["cmake"]
+tools   = ["cmake"]
+# No `inputs`: CMake is itself incremental (`--build` no-ops when up to date),
+# and fingerprinting an external `.pkgs/` dep's inputs is unreliable.
+
+[plugin.schema]
+build   = "Dependency name (or array of names) to build with CMake."
+defines = "Extra -D cache entries, e.g. [\"BUILD_SHARED_LIBS=OFF\"]."

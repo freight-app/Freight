@@ -623,6 +623,8 @@ struct PkgInfo {
     name: String,
     dir: String,
     version: String,
+    /// Declared `external = true`: fetched but built by a plugin, not core.
+    external: bool,
 }
 
 impl PluginEnv {
@@ -665,10 +667,10 @@ impl PluginEnv {
                     .effective_dependencies()
                     .into_iter()
                     .map(|(name, dep)| {
-                        let (version, dir) = match &dep {
-                            Dependency::Simple(ver) => (ver.clone(), None),
+                        let (version, dir, external) = match &dep {
+                            Dependency::Simple(ver) => (ver.clone(), None, false),
                             Dependency::Detailed(d) => {
-                                (d.version.clone().unwrap_or_default(), d.path.clone())
+                                (d.version.clone().unwrap_or_default(), d.path.clone(), d.external)
                             }
                         };
                         let dir = match dir {
@@ -679,6 +681,7 @@ impl PluginEnv {
                             name,
                             dir: path_string(&dir),
                             version,
+                            external,
                         }
                     })
                     .collect();
@@ -710,6 +713,7 @@ fn pkgs_map(env: &PluginEnv) -> Dynamic {
         m.insert("name".into(), Dynamic::from(p.name.clone()));
         m.insert("dir".into(), Dynamic::from(p.dir.clone()));
         m.insert("version".into(), Dynamic::from(p.version.clone()));
+        m.insert("external".into(), Dynamic::from(p.external));
         map.insert(p.name.clone().into(), Dynamic::from_map(m));
     }
     Dynamic::from_map(map)

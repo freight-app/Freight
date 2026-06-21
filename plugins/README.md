@@ -10,6 +10,13 @@ to generate sources. Each is an ordinary package with a `[plugin]` section.
 | [`flatbuffers`](flatbuffers) | `[flatbuffers]` | `flatc` | header-only `*_generated.h` from `.fbs` |
 | [`bison`](bison) | `[bison]` | `bison` | C parser `<stem>.tab.c` + `.tab.h` from `.y` |
 | [`flex`](flex) | `[flex]` | `flex` | C lexer `<stem>.yy.c` from `.l` |
+| [`cmake`](cmake) | `[cmake]` | `cmake` | builds an `external = true` dependency with CMake and links it |
+
+The `cmake` plugin is a different shape from the codegen ones: rather than
+generating sources, it builds an `external = true` dependency (`[cmake] build =
+"libfoo"`), reading `PKGS["libfoo"].dir` for the source and wiring the installed
+headers + libraries back in. It's the first step toward expressing freight's
+foreign build-system support as plugins instead of builtin adaptors.
 
 ## Using one
 
