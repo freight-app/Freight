@@ -1,0 +1,13 @@
+[package]
+name        = "autotools-builder"
+version     = "0.1.0"
+description = "Build a dependency with Autotools (configure + make) — adds [autotools]."
+
+[plugin]
+entry   = "autotools.rhai"
+handles = ["autotools"]
+tools   = ["sh", "make"]
+
+[plugin.schema]
+build   = "Dependency name (or array of names) to build with Autotools."
+defines = "Extra ./configure arguments, e.g. [\"--enable-shared=no\"]."

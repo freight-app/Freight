@@ -10,12 +10,16 @@ to generate sources. Each is an ordinary package with a `[plugin]` section.
 | [`flatbuffers`](flatbuffers) | `[flatbuffers]` | `flatc` | header-only `*_generated.h` from `.fbs` |
 | [`bison`](bison) | `[bison]` | `bison` | C parser `<stem>.tab.c` + `.tab.h` from `.y` |
 | [`flex`](flex) | `[flex]` | `flex` | C lexer `<stem>.yy.c` from `.l` |
-| [`cmake`](cmake) | `[cmake]` | `cmake` | builds an `external = true` dependency with CMake and links it |
+| [`cmake`](cmake) | `[cmake]` | `cmake` | builds an `external = true` dep with CMake and links it |
+| [`make`](make) | `[make]` | `make` | builds an `external = true` dep with a plain Makefile |
+| [`meson`](meson) | `[meson]` | `meson` | builds an `external = true` dep with Meson |
+| [`autotools`](autotools) | `[autotools]` | `sh`, `make` | builds an `external = true` dep with `./configure && make` |
 
-The `cmake` plugin is a different shape from the codegen ones: rather than
-generating sources, it builds an `external = true` dependency (`[cmake] build =
-"libfoo"`), reading `PKGS["libfoo"].dir` for the source and wiring the installed
-headers + libraries back in. It's the first step toward expressing freight's
+The `cmake` / `make` / `meson` / `autotools` plugins are a different shape from the
+codegen ones: rather than generating sources, they build an `external = true`
+dependency (`[cmake] build = "libfoo"`), reading `PKGS["libfoo"].dir` for the
+source and wiring the installed headers + libraries back in via `add_include_dir`
+/ `link_dir` / `link_lib`. They are the first step toward expressing freight's
 foreign build-system support as plugins instead of builtin adaptors.
 
 ## Using one

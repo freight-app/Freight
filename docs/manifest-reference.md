@@ -164,7 +164,7 @@ same vocabulary the consumer writes. For a native build `TARGET` mirrors `HOST`.
 | Function | Returns | Effect |
 |---|---|---|
 | `glob(pattern)` | array | project files matching a glob |
-| `run(tool, [args])` | — | run a tool from the plugin's `tools` allow-list (anything else aborts the build); cwd = project root. Its stdout/stderr stream into the build output, and stderr is included in the error if it fails |
+| `run(tool, [args])` / `run(tool, [args], cwd)` | — | run a tool from the plugin's `tools` allow-list (anything else aborts the build); cwd = project root, or a project-confined `cwd`. Its stdout/stderr stream into the build output, and stderr is included in the error if it fails |
 | `capture(tool, [args])` | `#{ code, stdout, stderr }` | like `run`, but returns output instead of aborting on a non-zero exit (build stamping, version/`pkg-config` probes) |
 | `add_source(path)` / `add_sources([…])` | — | compile generated source(s) |
 | `add_include_dir(path)` | — | expose a generated header directory |

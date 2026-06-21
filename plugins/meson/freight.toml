@@ -1,0 +1,13 @@
+[package]
+name        = "meson-builder"
+version     = "0.1.0"
+description = "Build a dependency with Meson — adds [meson] to any project."
+
+[plugin]
+entry   = "meson.rhai"
+handles = ["meson"]
+tools   = ["meson"]
+
+[plugin.schema]
+build   = "Dependency name (or array of names) to build with Meson."
+defines = "Extra -D project options, e.g. [\"default_library=static\"]."

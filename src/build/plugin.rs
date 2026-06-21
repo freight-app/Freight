@@ -131,6 +131,47 @@ fn emit_tool_output(progress: &Progress, tool: &str, bytes: &[u8], is_err: bool)
     }
 }
 
+/// Run an allow-listed tool, capturing its output into the build stream. `cwd`,
+/// when given, sets a project-confined working directory; otherwise the project
+/// root is used. A non-zero exit aborts the build (stderr folded into the error).
+fn do_run(s: &State, tool: &str, args: Array, cwd: Option<&str>) -> Result<(), Box<EvalAltResult>> {
+    let (root, resolved, progress) = {
+        let st = s.borrow();
+        if !st.allowed_tools.iter().any(|t| t == tool) {
+            return Err(rhai_err(format!(
+                "plugin tried to run disallowed tool '{tool}' — add it to `[plugin] tools`"
+            )));
+        }
+        (st.project_dir.clone(), resolve_tool(tool, &st.tool_paths), st.progress.clone())
+    };
+    let dir = match cwd {
+        Some(c) => contained(&root, c)?,
+        None => root,
+    };
+    let arg_strings: Vec<String> = args.iter().map(|d| d.to_string()).collect();
+    let output = Command::new(&resolved)
+        .args(&arg_strings)
+        .current_dir(&dir)
+        .output()
+        .map_err(|e| rhai_err(format!("failed to run '{tool}': {e}")))?;
+    emit_tool_output(&progress, tool, &output.stdout, false);
+    emit_tool_output(&progress, tool, &output.stderr, true);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        let suffix = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(": {detail}")
+        };
+        return Err(rhai_err(format!(
+            "tool '{tool}' exited with status {}{suffix}",
+            output.status.code().unwrap_or(-1)
+        )));
+    }
+    Ok(())
+}
+
 fn rhai_err(msg: impl Into<String>) -> Box<EvalAltResult> {
     Box::new(EvalAltResult::ErrorRuntime(
         Dynamic::from(msg.into()),
@@ -176,41 +217,18 @@ fn register_fns(engine: &mut Engine, state: &State) {
 
     let s = state.clone();
     engine.register_fn("run", move |tool: &str, args: Array| -> Result<(), Box<EvalAltResult>> {
-        let (project_dir, resolved, progress) = {
-            let st = s.borrow();
-            if !st.allowed_tools.iter().any(|t| t == tool) {
-                return Err(rhai_err(format!(
-                    "plugin tried to run disallowed tool '{tool}' — add it to `[plugin] tools`"
-                )));
-            }
-            (st.project_dir.clone(), resolve_tool(tool, &st.tool_paths), st.progress.clone())
-        };
-        let arg_strings: Vec<String> = args.iter().map(|d| d.to_string()).collect();
-        // Capture output so it can be surfaced in the build output (and so a
-        // failure can report stderr) rather than leaking straight to the parent
-        // stdio — which would corrupt the LSP's JSON-RPC stream.
-        let output = Command::new(&resolved)
-            .args(&arg_strings)
-            .current_dir(&project_dir)
-            .output()
-            .map_err(|e| rhai_err(format!("failed to run '{tool}': {e}")))?;
-        emit_tool_output(&progress, tool, &output.stdout, false);
-        emit_tool_output(&progress, tool, &output.stderr, true);
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let detail = stderr.trim();
-            let suffix = if detail.is_empty() {
-                String::new()
-            } else {
-                format!(": {detail}")
-            };
-            return Err(rhai_err(format!(
-                "tool '{tool}' exited with status {}{suffix}",
-                output.status.code().unwrap_or(-1)
-            )));
-        }
-        Ok(())
+        do_run(&s, tool, args, None)
     });
+    // `run(tool, args, cwd)` — run with the working directory set to a
+    // project-confined `cwd` (for build systems like autotools that must run
+    // inside an out-of-source build dir).
+    let s = state.clone();
+    engine.register_fn(
+        "run",
+        move |tool: &str, args: Array, cwd: &str| -> Result<(), Box<EvalAltResult>> {
+            do_run(&s, tool, args, Some(cwd))
+        },
+    );
 
     let s = state.clone();
     engine.register_fn(
@@ -1617,6 +1635,35 @@ mod tests {
         .unwrap();
         assert!(out.defines.contains(&"OUT=hello".to_string()));
         assert!(out.defines.contains(&"CODE=0".to_string()));
+    }
+
+    #[test]
+    fn run_with_cwd_executes_in_that_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(proj.join("sub")).unwrap();
+        // `sh -c 'pwd > marker'` run with cwd="sub" writes the marker inside sub/.
+        let script = write(
+            &proj,
+            "p.rhai",
+            r#"run("sh", ["-c", "pwd > pwd.txt"], "sub");
+               define("OK=" + exists("sub/pwd.txt"));
+               define("PWD=" + strip(read_text("sub/pwd.txt")).ends_with("/sub"));"#,
+        );
+        let out = run_script(
+            &script,
+            &proj,
+            "codegen",
+            &toml::Value::Table(Default::default()),
+            &["sh".to_string()],
+            &proj.join("out"),
+            &[],
+            &test_env(),
+            &crate::event::silent(),
+        )
+        .unwrap();
+        assert!(out.defines.contains(&"OK=true".to_string()));
+        assert!(out.defines.contains(&"PWD=true".to_string()));
     }
 
     #[test]

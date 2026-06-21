@@ -20,6 +20,7 @@ for name in names {
     // ── Configure ────────────────────────────────────────────────────────────
     let args = ["-S", src, "-B", build,
                 "-DCMAKE_BUILD_TYPE=" + (if PROFILE == "release" { "Release" } else { "Debug" }),
+                "-DCMAKE_INSTALL_LIBDIR=lib",     // force prefix/lib (distros vary: lib64)
                 "-DCMAKE_INSTALL_PREFIX=" + prefix];
     if "defines" in CFG { for d in CFG.defines { args.push("-D" + d); } }
     // Cross builds: TARGET.os / TARGET.arch / TARGET.triple are in scope here;
@@ -32,8 +33,10 @@ for name in names {
 
     // ── Wire results back into the freight build ───────────────────────────────
     add_include_dir(join(prefix, "include"));
-    link_dir(join(prefix, "lib"));
-    for lib in glob(join(prefix, "lib") + "/*.a") + glob(join(prefix, "lib") + "/*.so") {
-        link_lib(lib);                              // full archive/.so path → linker
+    for d in [join(prefix, "lib"), join(prefix, "lib64")] {
+        if is_dir(d) {
+            link_dir(d);
+            for lib in glob(d + "/*.a") + glob(d + "/*.so") { link_lib(lib); }
+        }
     }
 }

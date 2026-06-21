@@ -1,0 +1,15 @@
+[package]
+name        = "make-builder"
+version     = "0.1.0"
+description = "Build a dependency with a plain Makefile — adds [make] to any project."
+
+[plugin]
+entry   = "make.rhai"
+handles = ["make"]
+tools   = ["make"]
+
+[plugin.schema]
+build   = "Dependency name (or array of names) to build with make."
+defines = "Extra `VAR=VALUE` arguments passed to make."
+target  = "Make target to build (default: the Makefile's default)."
+include = "Header directory to expose, relative to the dep source (default: include/ or the root)."
