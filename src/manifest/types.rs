@@ -935,6 +935,12 @@ pub struct DetailedDep {
     /// handling `[cmake]`) reads `PKGS["<name>"].dir` and builds it instead.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub external: bool,
+    /// Force building this **freight-package** dependency from source even when a
+    /// prebuilt binary is available. The bootstrapping default prefers a prebuilt
+    /// and only builds from source when none exists; `source = true` overrides
+    /// that. Has no effect on system / pkg-config-resolved deps.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub source: bool,
     /// Include directories to expose to code that depends on this dep,
     /// relative to the dep's source directory. Only used for foreign deps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -643,6 +643,8 @@ struct PkgInfo {
     version: String,
     /// Declared `external = true`: fetched but built by a plugin, not core.
     external: bool,
+    /// Declared `source = true`: build from source even if a prebuilt exists.
+    source: bool,
 }
 
 impl PluginEnv {
@@ -685,11 +687,14 @@ impl PluginEnv {
                     .effective_dependencies()
                     .into_iter()
                     .map(|(name, dep)| {
-                        let (version, dir, external) = match &dep {
-                            Dependency::Simple(ver) => (ver.clone(), None, false),
-                            Dependency::Detailed(d) => {
-                                (d.version.clone().unwrap_or_default(), d.path.clone(), d.external)
-                            }
+                        let (version, dir, external, source) = match &dep {
+                            Dependency::Simple(ver) => (ver.clone(), None, false, false),
+                            Dependency::Detailed(d) => (
+                                d.version.clone().unwrap_or_default(),
+                                d.path.clone(),
+                                d.external,
+                                d.source,
+                            ),
                         };
                         let dir = match dir {
                             Some(p) => project_dir.join(p),
@@ -700,6 +705,7 @@ impl PluginEnv {
                             dir: path_string(&dir),
                             version,
                             external,
+                            source,
                         }
                     })
                     .collect();
@@ -732,6 +738,7 @@ fn pkgs_map(env: &PluginEnv) -> Dynamic {
         m.insert("dir".into(), Dynamic::from(p.dir.clone()));
         m.insert("version".into(), Dynamic::from(p.version.clone()));
         m.insert("external".into(), Dynamic::from(p.external));
+        m.insert("source".into(), Dynamic::from(p.source));
         map.insert(p.name.clone().into(), Dynamic::from_map(m));
     }
     Dynamic::from_map(map)
