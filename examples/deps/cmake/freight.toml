@@ -1,7 +1,7 @@
 [package]
 name        = "with-cmake-dep"
 version     = "0.1.0"
-description = "Linking a local CMake library as a path dependency"
+description = "Building a local CMake library via the cmake build-system plugin"
 
 [language.cpp]
 std = "c++17"
@@ -10,8 +10,12 @@ std = "c++17"
 name = "with-cmake-dep"
 src  = "src/main.cpp"
 
-# freight auto-detects CMakeLists.txt in vendor/mathlib, builds it, and links
-# any .a/.so it finds in the build directory.  The include/ directory is
-# auto-detected (no explicit include = [...] needed).
+# `mathlib` is marked `external = true`: freight does not build it itself. The
+# `cmake` build-system plugin handles the `[cmake]` section below — it reads
+# PKGS["mathlib"].dir, runs cmake configure/build/install, and links the result.
 [dependencies]
-mathlib = { path = "vendor/mathlib" }
+cmake-builder = { path = "../../../plugins/cmake" }
+mathlib       = { path = "vendor/mathlib", external = true }
+
+[cmake]
+build = "mathlib"

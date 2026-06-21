@@ -209,6 +209,64 @@ fn patch_overrides_dependency_source() {
     assert_output_missing(&out, "UPSTREAM greeter");
 }
 
+fn tool_available(tool: &str) -> bool {
+    std::process::Command::new(tool)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+// ── Foreign deps via build-system plugins (external = true) ────────────────────
+
+#[test]
+fn deps_cmake_plugin_example_runs() {
+    if !tool_available("cmake") {
+        eprintln!("skipping deps/cmake: cmake not installed");
+        return;
+    }
+    let dir = example(&["deps", "cmake"]);
+    let out = freight(&dir, &["run"]);
+    if missing_toolchain(&out) {
+        eprintln!("skipping deps/cmake: no C++ toolchain");
+        return;
+    }
+    assert_success(&out, "deps/cmake run");
+    assert_output_contains(&out, &["multiply(6, 7)   = 42"]);
+}
+
+#[test]
+fn deps_make_plugin_example_runs() {
+    if !tool_available("make") {
+        eprintln!("skipping deps/make: make not installed");
+        return;
+    }
+    let dir = example(&["deps", "make"]);
+    let out = freight(&dir, &["run"]);
+    if missing_toolchain(&out) {
+        eprintln!("skipping deps/make: no C toolchain");
+        return;
+    }
+    assert_success(&out, "deps/make run");
+    assert_output_contains(&out, &["word count:  5"]);
+}
+
+#[test]
+fn deps_meson_plugin_example_runs() {
+    if !tool_available("meson") {
+        eprintln!("skipping deps/meson: meson not installed");
+        return;
+    }
+    let dir = example(&["deps", "meson"]);
+    let out = freight(&dir, &["run"]);
+    if missing_toolchain(&out) {
+        eprintln!("skipping deps/meson: no C++ toolchain");
+        return;
+    }
+    assert_success(&out, "deps/meson run");
+    assert_output_contains(&out, &["7 squared is 49"]);
+}
+
 #[test]
 fn workspace_inheritance_resolves() {
     let dir = example(&["misc", "workspace-inherit", "app"]);

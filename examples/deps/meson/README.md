@@ -1,8 +1,9 @@
 # Meson dependency
 
-Links a local **Meson** library (`vendor/mathlib`) as a path dependency.
-freight auto-detects `meson.build`, runs `meson setup` + `ninja`, and links the
-`.a` it finds in the build directory; the `include/` dir is auto-detected.
+Builds a local **Meson** library (`vendor/mathlib`) via the `meson` build-system
+plugin. The dependency is marked `external = true`, and the `[meson]` section
+tells the plugin to build it: it runs `meson setup` / `compile` / `install` and
+links the result.
 
 ```sh
 freight run        # → "7 squared is 49"

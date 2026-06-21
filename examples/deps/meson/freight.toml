@@ -1,7 +1,7 @@
 [package]
 name        = "with-meson-dep"
 version     = "0.1.0"
-description = "Linking a local Meson library as a path dependency"
+description = "Building a local Meson library via the meson build-system plugin"
 
 [language.cpp]
 std = "c++17"
@@ -10,8 +10,12 @@ std = "c++17"
 name = "with-meson-dep"
 src  = "src/main.cpp"
 
-# freight auto-detects meson.build in vendor/mathlib, runs `meson setup` + ninja,
-# and links the .a it finds in the build directory. The include/ dir is
-# auto-detected (no explicit include = [...] needed). Requires meson + ninja.
+# `mathlib` is `external = true`: the `meson` build-system plugin handles the
+# `[meson]` section below — it runs meson setup/compile/install in
+# PKGS["mathlib"].dir and links the result. Requires meson + ninja.
 [dependencies]
-mathlib = { path = "vendor/mathlib", type = "meson" }
+meson-builder = { path = "../../../plugins/meson" }
+mathlib       = { path = "vendor/mathlib", external = true }
+
+[meson]
+build = "mathlib"

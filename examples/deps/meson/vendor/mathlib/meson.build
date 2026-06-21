@@ -5,4 +5,6 @@ mathlib = static_library(
   'mathlib',
   'src/mathlib.cpp',
   include_directories: inc,
+  install: true,
 )
+install_headers('include/mathlib.h')

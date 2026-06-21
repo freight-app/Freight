@@ -1,7 +1,7 @@
 [package]
 name        = "with-make-dep"
 version     = "0.1.0"
-description = "Linking a local Makefile library as a path dependency"
+description = "Building a local Makefile library via the make build-system plugin"
 
 [language.c]
 std = "c17"
@@ -10,7 +10,12 @@ std = "c17"
 name = "with-make-dep"
 src  = "src/main.c"
 
-# freight auto-detects the Makefile in vendor/strutil, runs make, then finds
-# libstrutil.a there.  include/ is auto-detected.
+# `strutil` is `external = true`: the `make` build-system plugin handles the
+# `[make]` section below — it runs `make` in PKGS["strutil"].dir, exposes the
+# include/ dir, and links the libstrutil.a the build produces in-tree.
 [dependencies]
-strutil = { path = "vendor/strutil" }
+make-builder = { path = "../../../plugins/make" }
+strutil      = { path = "vendor/strutil", external = true }
+
+[make]
+build = "strutil"
