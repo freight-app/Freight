@@ -9,16 +9,16 @@ pub mod bazel;
 pub mod cmake;
 pub mod make;
 pub mod meson;
-pub mod pkg_config;
-pub mod pkg_config_cache;
 pub mod scons;
-pub mod system_pm;
 
-pub use pkg_config::{
+// Dependency resolution moved to `crate::resolve`; these names are used heavily
+// here and re-exported for existing `adaptors::` consumers during the migration.
+pub use crate::resolve::pkg_config::{
     pkg_config_query, pkg_config_query_cross, pkg_config_query_with_path, pkg_config_version,
     PkgConfigResult, ResolvedPkgConfig,
 };
-pub use pkg_config_cache::PkgConfigCache;
+pub use crate::resolve::pkg_config_cache::PkgConfigCache;
+use crate::resolve::system_pm;
 
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};

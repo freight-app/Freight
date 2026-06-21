@@ -17,5 +17,6 @@ pub mod manifest;
 pub mod new;
 pub mod project;
 pub mod registry;
+pub mod resolve;
 pub mod toolchain;
 pub mod vendor;

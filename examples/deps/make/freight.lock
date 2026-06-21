@@ -3,8 +3,15 @@
 version = 1
 
 [[package]]
+name    = "make-builder"
+version = "0.1.0"
+source  = "path+../../../plugins/make"
+checksum = "sha256:00c27e7223e0904f9b0572f9087dd673a444a68a6a1b62437c6f6b8fcac7a497"
+
+[[package]]
 name    = "with-make-dep"
 version = "0.1.0"
 dependencies = [
+    "make-builder",
     "strutil",
 ]

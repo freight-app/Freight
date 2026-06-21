@@ -201,7 +201,7 @@ fn parse_override(text: &str) -> Option<OwnershipData> {
 /// roots (Tier B). Returns only dedicated subdirs that are safe to add to the
 /// allowlist without over-allowing all of `/usr/include`.
 pub fn pkg_config_dedicated_dirs(dep: &str) -> Vec<PathBuf> {
-    let Ok(result) = crate::adaptors::pkg_config::pkg_config_query(dep) else {
+    let Ok(result) = crate::resolve::pkg_config::pkg_config_query(dep) else {
         return Vec::new();
     };
     result
