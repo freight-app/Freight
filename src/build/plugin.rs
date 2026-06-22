@@ -902,27 +902,6 @@ fn run_script(
         progress: progress.clone(),
     }));
 
-    let mut engine = Engine::new();
-    // Route `print` to the build output via the progress sink (so it shows when
-    // building and is silent under the LSP), and `debug` to the log. Never write
-    // straight to stdout — that would corrupt the LSP's JSON-RPC stream.
-    let print_progress = progress.clone();
-    engine.on_print(move |text| {
-        print_progress(BuildEvent::ScriptOutput {
-            source: "plugin".to_string(),
-            text: text.to_string(),
-            is_err: false,
-        });
-    });
-    engine.on_debug(|text, source, pos| {
-        tracing::debug!(target: "freight::plugin", "{text} ({source:?} @ {pos:?})")
-    });
-    // Bound runaway/malicious scripts: cap total operations and recursion depth
-    // (codegen orchestration stays far under these; the real work is in `run`).
-    engine.set_max_operations(100_000_000);
-    engine.set_max_call_levels(256);
-    register_fns(&mut engine, &state);
-
     let mut scope = Scope::new();
     // Project directories + the matched section path, as `SCREAMING_CASE` constants.
     scope.push_constant("SECTION", section.to_string());
@@ -951,11 +930,168 @@ fn run_script(
     scope.push_constant("PKGS", pkgs_map(env));
     scope.push_constant("CFG", toml_to_dynamic(section_cfg));
 
-    engine.run_with_scope(&mut scope, &script).map_err(|e| {
-        FreightError::BuildScriptFailed(script_path.display().to_string(), e.to_string())
+    run_engine(&script, &script_path.display().to_string(), &state, &mut scope, progress)
+}
+
+/// Create the sandboxed Rhai engine (print/debug routing, resource limits, the
+/// plugin API), run `script` with `scope`, and return the collected output.
+/// Shared by `run_script` (manifest-driven plugins) and `run_build_system`
+/// (core building foreign source through a bundled build-system plugin).
+fn run_engine(
+    script: &str,
+    label: &str,
+    state: &State,
+    scope: &mut Scope,
+    progress: &Progress,
+) -> Result<RawOutput, FreightError> {
+    let mut engine = Engine::new();
+    // Route `print` to the build output via the progress sink (so it shows when
+    // building and is silent under the LSP), and `debug` to the log. Never write
+    // straight to stdout — that would corrupt the LSP's JSON-RPC stream.
+    let print_progress = progress.clone();
+    engine.on_print(move |text| {
+        print_progress(BuildEvent::ScriptOutput {
+            source: "plugin".to_string(),
+            text: text.to_string(),
+            is_err: false,
+        });
+    });
+    engine.on_debug(|text, source, pos| {
+        tracing::debug!(target: "freight::plugin", "{text} ({source:?} @ {pos:?})")
+    });
+    // Bound runaway/malicious scripts: cap total operations and recursion depth
+    // (codegen orchestration stays far under these; the real work is in `run`).
+    engine.set_max_operations(100_000_000);
+    engine.set_max_call_levels(256);
+    register_fns(&mut engine, state);
+
+    engine
+        .run_with_scope(scope, script)
+        .map_err(|e| FreightError::BuildScriptFailed(label.to_string(), e.to_string()))?;
+    Ok(std::mem::take(&mut state.borrow_mut().out))
+}
+
+// ── Building foreign source via bundled build-system plugins ─────────────────
+
+/// The build-system plugin scripts, embedded so core can build foreign source
+/// itself — foreign-self packages and from-source build-deps — by running the
+/// *same* plugin a consuming project would, with no on-disk `plugins/` needed at
+/// runtime. Returns the script and its allowed tools.
+fn embedded_build_system(backend: &str) -> Option<(&'static str, &'static [&'static str])> {
+    Some(match backend {
+        "cmake" => (include_str!("../../plugins/cmake/cmake.rhai"), &["cmake"]),
+        "make" => (include_str!("../../plugins/make/make.rhai"), &["make"]),
+        "meson" => (include_str!("../../plugins/meson/meson.rhai"), &["meson"]),
+        "autotools" => (
+            include_str!("../../plugins/autotools/autotools.rhai"),
+            &["sh", "make"],
+        ),
+        "scons" => (include_str!("../../plugins/scons/scons.rhai"), &["scons"]),
+        "bazel" => (include_str!("../../plugins/bazel/bazel.rhai"), &["bazel"]),
+        _ => return None,
+    })
+}
+
+/// Build the foreign-source package `name` (living at `source_dir`) with the
+/// bundled `backend` build-system plugin, into `out_dir`, and return the include
+/// dirs + link flags it wires up. `root` is the containment boundary and must
+/// contain both `source_dir` and `out_dir`. This is how core builds foreign
+/// source — it runs exactly the plugin a project would, with a synthesized scope
+/// (`PKGS` = just this package, `CFG.build` = its name).
+#[allow(clippy::too_many_arguments)]
+pub fn run_build_system(
+    backend: &str,
+    name: &str,
+    source_dir: &Path,
+    out_dir: &Path,
+    root: &Path,
+    profile: &str,
+    defines: &[String],
+    tool_paths: &[PathBuf],
+    progress: &Progress,
+) -> Result<PluginBuildOutput, FreightError> {
+    let (script, tools) = embedded_build_system(backend).ok_or_else(|| {
+        FreightError::BuildScriptFailed(
+            backend.to_string(),
+            format!("no bundled build-system plugin for '{backend}'"),
+        )
     })?;
 
-    let out = std::mem::take(&mut state.borrow_mut().out);
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let _ = std::fs::create_dir_all(out_dir);
+    let target_dir = root.join("target").join(profile);
+    let env = PluginEnv::for_project(&root);
+
+    let state: State = Rc::new(RefCell::new(CtxState {
+        project_dir: root.clone(),
+        allowed_tools: tools.iter().map(|s| s.to_string()).collect(),
+        tool_paths: tool_paths.to_vec(),
+        out: RawOutput::default(),
+        progress: progress.clone(),
+    }));
+
+    let mut scope = Scope::new();
+    scope.push_constant("SECTION", backend.to_string());
+    scope.push_constant("PROJECT_DIR", path_string(&root));
+    scope.push_constant("SRC_DIR", path_string(&root.join("src")));
+    scope.push_constant("INCLUDE_DIR", path_string(&root.join("include")));
+    scope.push_constant("TARGET_DIR", path_string(&target_dir));
+    scope.push_constant("OUT_DIR", path_string(out_dir));
+    scope.push_constant("PROFILE", profile.to_string());
+    scope.push_constant("HOST", platform_map(&env.host_os, &env.host_arch, None));
+    scope.push_constant(
+        "TARGET",
+        platform_map(
+            &env.target_os,
+            &env.target_arch,
+            Some(env.target_triple.as_deref().unwrap_or("")),
+        ),
+    );
+    scope.push_constant("TOOLS", tools_list());
+    scope.push_constant("LIB", Dynamic::UNIT);
+    scope.push_constant("BINS", Dynamic::from_map(Map::new()));
+
+    // Synthesized PKGS — just the package being built.
+    let mut pkg = Map::new();
+    pkg.insert("name".into(), Dynamic::from(name.to_string()));
+    pkg.insert("dir".into(), Dynamic::from(path_string(source_dir)));
+    pkg.insert("version".into(), Dynamic::from(String::new()));
+    pkg.insert("external".into(), Dynamic::from(true));
+    pkg.insert("source".into(), Dynamic::from(true));
+    pkg.insert("debug".into(), Dynamic::from(profile == "debug"));
+    let mut pkgs = Map::new();
+    pkgs.insert(name.into(), Dynamic::from_map(pkg));
+    scope.push_constant("PKGS", Dynamic::from_map(pkgs));
+
+    // Synthesized CFG — `build = name`, plus any configure defines.
+    let mut cfg = Map::new();
+    cfg.insert("build".into(), Dynamic::from(name.to_string()));
+    cfg.insert(
+        "defines".into(),
+        Dynamic::from_array(defines.iter().map(|d| Dynamic::from(d.clone())).collect()),
+    );
+    scope.push_constant("CFG", Dynamic::from_map(cfg));
+
+    let raw = run_engine(
+        script,
+        &format!("<bundled {backend} plugin>"),
+        &state,
+        &mut scope,
+        progress,
+    )?;
+
+    let mut out = PluginBuildOutput {
+        include_dirs: raw.include_dirs,
+        defines: raw.defines,
+        tool_flags: raw.tool_flags,
+        ..Default::default()
+    };
+    for abs in raw.sources {
+        if let Some(lang_key) = lang_key_for(&abs) {
+            let rel = abs.strip_prefix(&root).map(Path::to_path_buf).unwrap_or(abs);
+            out.sources.push(SourceFile { path: rel, lang_key });
+        }
+    }
     Ok(out)
 }
 
@@ -1874,6 +2010,49 @@ mod tests {
         assert!(has("ZLIBVER=1.3"));
         assert!(has("ZLIBDIR_OK=true"));
         assert!(has("LOCALDIR_OK=true"));
+    }
+
+    #[test]
+    fn run_build_system_builds_a_cmake_project() {
+        let cmake = std::process::Command::new("cmake").arg("--version").output();
+        if cmake.map(|o| !o.status.success()).unwrap_or(true) {
+            eprintln!("skipping run_build_system cmake test: cmake not installed");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let src = root.join("vendor/mylib");
+        std::fs::create_dir_all(src.join("include")).unwrap();
+        std::fs::create_dir_all(src.join("src")).unwrap();
+        std::fs::write(
+            src.join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.10)\nproject(mylib C)\n\
+             add_library(mylib STATIC src/mylib.c)\n\
+             target_include_directories(mylib PUBLIC include)\n\
+             install(TARGETS mylib ARCHIVE DESTINATION lib)\n\
+             install(DIRECTORY include/ DESTINATION include)\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("include/mylib.h"), "int f(void);\n").unwrap();
+        std::fs::write(src.join("src/mylib.c"), "int f(void){return 1;}\n").unwrap();
+
+        let out_dir = root.join("target/bs");
+        let p = crate::event::silent();
+        let out = run_build_system("cmake", "mylib", &src, &out_dir, &root, "release", &[], &[], &p)
+            .unwrap();
+        // The plugin installed headers + a static lib and wired them in.
+        assert!(
+            out.include_dirs.iter().any(|d| d.ends_with("install/include")),
+            "include dirs: {:?}",
+            out.include_dirs
+        );
+        assert!(
+            out.tool_flags
+                .iter()
+                .any(|t| t.tool == "linker" && t.flag.contains("libmylib.a")),
+            "tool_flags: {:?}",
+            out.tool_flags
+        );
     }
 
     #[test]
