@@ -4,7 +4,7 @@ version     = "0.1.0"
 description = "Protobuf code generation via protoc — adds [proto] to any project."
 
 [plugin]
-entry   = "proto.rhai"
+entry   = "proto.freight"
 handles = ["proto"]
 tools   = ["protoc"]
 inputs  = ["src/**/*.proto"]

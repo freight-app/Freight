@@ -911,6 +911,9 @@ fn run_script(
     scope.push_constant("TARGET_DIR", path_string(&target_dir));
     scope.push_constant("OUT_DIR", path_string(&out_dir));
     scope.push_constant("PROFILE", profile);
+    // The consuming project's own package name (so a plugin can recognise a
+    // self-build: `[cmake] build = "<this package>"` → build PROJECT_DIR).
+    scope.push_constant("PKG_NAME", env.pkg_name.clone());
     // Host/target characteristics as object maps (`HOST.os`, `TARGET.arch`, …).
     scope.push_constant("HOST", platform_map(&env.host_os, &env.host_arch, None));
     scope.push_constant(
@@ -979,15 +982,15 @@ fn run_engine(
 /// runtime. Returns the script and its allowed tools.
 fn embedded_build_system(backend: &str) -> Option<(&'static str, &'static [&'static str])> {
     Some(match backend {
-        "cmake" => (include_str!("../../plugins/cmake/cmake.rhai"), &["cmake"]),
-        "make" => (include_str!("../../plugins/make/make.rhai"), &["make"]),
-        "meson" => (include_str!("../../plugins/meson/meson.rhai"), &["meson"]),
+        "cmake" => (include_str!("../../plugins/cmake/cmake.freight"), &["cmake"]),
+        "make" => (include_str!("../../plugins/make/make.freight"), &["make"]),
+        "meson" => (include_str!("../../plugins/meson/meson.freight"), &["meson"]),
         "autotools" => (
-            include_str!("../../plugins/autotools/autotools.rhai"),
+            include_str!("../../plugins/autotools/autotools.freight"),
             &["sh", "make"],
         ),
-        "scons" => (include_str!("../../plugins/scons/scons.rhai"), &["scons"]),
-        "bazel" => (include_str!("../../plugins/bazel/bazel.rhai"), &["bazel"]),
+        "scons" => (include_str!("../../plugins/scons/scons.freight"), &["scons"]),
+        "bazel" => (include_str!("../../plugins/bazel/bazel.freight"), &["bazel"]),
         _ => return None,
     })
 }
@@ -1516,7 +1519,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let script = write(
             tmp.path(),
-            "p.rhai",
+            "p.freight",
             r#"add_source("gen/a.cpp");
                add_include_dir("gen");
                define("FOO");
@@ -1544,7 +1547,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let script = write(
             tmp.path(),
-            "p.rhai",
+            "p.freight",
             r#"if CFG.enabled { define("ON"); } define(CFG.name);"#,
         );
         let cfg: toml::Value = "enabled = true\nname = \"proto\"\n".parse().unwrap();
@@ -1559,7 +1562,7 @@ mod tests {
     fn disallowed_tool_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         // `rm` is not in the allow-list — must error before executing anything.
-        let script = write(tmp.path(), "p.rhai", r#"run("rm", ["-rf", "x"]);"#);
+        let script = write(tmp.path(), "p.freight", r#"run("rm", ["-rf", "x"]);"#);
         let err = run_script(
             &script,
             tmp.path(),
@@ -1581,7 +1584,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"define("PROJ=" + PROJECT_DIR);
                define("SRC=" + SRC_DIR);
                define("INC=" + INCLUDE_DIR);
@@ -1617,7 +1620,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"define("HOS=" + HOST.os);
                define("HARCH=" + HOST.arch);
                define("HFAM=" + HOST.family);
@@ -1666,7 +1669,7 @@ mod tests {
     fn native_target_triple_is_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let proj = tmp.path().canonicalize().unwrap();
-        let script = write(&proj, "p.rhai", r#"define("T=[" + TARGET.triple + "]");"#);
+        let script = write(&proj, "p.freight", r#"define("T=[" + TARGET.triple + "]");"#);
         let out = run_script(
             &script,
             &proj,
@@ -1688,7 +1691,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"
             // write creates parent dirs; read gets it back
             write_text("gen/sub/hello.txt", "hi");
@@ -1742,7 +1745,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let proj = tmp.path().join("proj");
         std::fs::create_dir_all(&proj).unwrap();
-        let script = write(&proj, "p.rhai", r#"write_text("../escape.txt", "x");"#);
+        let script = write(&proj, "p.freight", r#"write_text("../escape.txt", "x");"#);
         let err = run_script(
             &script,
             &proj,
@@ -1764,7 +1767,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"let r = capture("echo", ["hello"]);
                define("OUT=" + strip(r.stdout));
                define("CODE=" + r.code);"#,
@@ -1793,7 +1796,7 @@ mod tests {
         // `sh -c 'pwd > marker'` run with cwd="sub" writes the marker inside sub/.
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"run("sh", ["-c", "pwd > pwd.txt"], "sub");
                define("OK=" + exists("sub/pwd.txt"));
                define("PWD=" + strip(read_text("sub/pwd.txt")).ends_with("/sub"));"#,
@@ -1818,7 +1821,7 @@ mod tests {
     fn capture_disallowed_tool_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         let proj = tmp.path().canonicalize().unwrap();
-        let script = write(&proj, "p.rhai", r#"capture("rm", ["-rf", "x"]);"#);
+        let script = write(&proj, "p.freight", r#"capture("rm", ["-rf", "x"]);"#);
         let err = run_script(
             &script,
             &proj,
@@ -1839,7 +1842,7 @@ mod tests {
         use std::sync::{Arc, Mutex};
         let tmp = tempfile::tempdir().unwrap();
         let proj = tmp.path().canonicalize().unwrap();
-        let script = write(&proj, "p.rhai", r#"run("echo", ["hi"]);"#);
+        let script = write(&proj, "p.freight", r#"run("echo", ["hi"]);"#);
         let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
         let progress: Progress = Arc::new(move |e| {
@@ -1869,7 +1872,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"let line = "src/main.cpp:42: error: boom";
                define("TEST=" + re_test("error", line));
                let m = re_find("(\\S+):(\\d+): error: (.*)", line);
@@ -1912,11 +1915,11 @@ mod tests {
         std::fs::create_dir_all(&plug).unwrap();
         std::fs::write(
             plug.join("freight.toml"),
-            "[package]\nname=\"inspect\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.rhai\"\nhandles=[\"inspect\"]\n",
+            "[package]\nname=\"inspect\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.freight\"\nhandles=[\"inspect\"]\n",
         )
         .unwrap();
         std::fs::write(
-            plug.join("p.rhai"),
+            plug.join("p.freight"),
             r#"define("LIBNAME=" + LIB.name);
                define("LIBTYPE=" + LIB.type);
                define("NBINS=" + BINS.len());
@@ -1954,11 +1957,11 @@ mod tests {
         std::fs::create_dir_all(&plug).unwrap();
         std::fs::write(
             plug.join("freight.toml"),
-            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.rhai\"\nhandles=[\"p\"]\n",
+            "[package]\nname=\"p\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.freight\"\nhandles=[\"p\"]\n",
         )
         .unwrap();
         std::fs::write(
-            plug.join("p.rhai"),
+            plug.join("p.freight"),
             r#"if PROFILE == "release" { define("REL"); } else { define("DBG"); }
                define("P=" + PROFILE);"#,
         )
@@ -1986,11 +1989,11 @@ mod tests {
         std::fs::create_dir_all(&plug).unwrap();
         std::fs::write(
             plug.join("freight.toml"),
-            "[package]\nname=\"inspect\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.rhai\"\nhandles=[\"inspect\"]\n",
+            "[package]\nname=\"inspect\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.freight\"\nhandles=[\"inspect\"]\n",
         )
         .unwrap();
         std::fs::write(
-            plug.join("p.rhai"),
+            plug.join("p.freight"),
             r#"define("ZLIBVER=" + PKGS["zlib"].version);
                define("ZLIBDIR_OK=" + PKGS["zlib"].dir.ends_with(".pkgs/zlib"));
                define("LOCALDIR_OK=" + PKGS["local"].dir.ends_with("vendor/local"));"#,
@@ -2069,7 +2072,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"add_flag("clang", "-fno-rtti");
                add_flag("linker", "-Wl,--gc-sections");
                // TOOLS lists discoverable targets, incl. the linker role.
@@ -2105,7 +2108,7 @@ mod tests {
         let proj = tmp.path().canonicalize().unwrap();
         let script = write(
             &proj,
-            "p.rhai",
+            "p.freight",
             r#"link_lib("z");
                link_lib("/abs/libfoo.a");
                link_dir("/abs/lib");"#,
@@ -2154,7 +2157,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let proj = tmp.path().join("proj");
         std::fs::create_dir_all(&proj).unwrap();
-        let script = write(&proj, "p.rhai", r#"add_source("../escape.c");"#);
+        let script = write(&proj, "p.freight", r#"add_source("../escape.c");"#);
         let err = run_script(
             &script,
             &proj,
@@ -2187,7 +2190,7 @@ mod tests {
         std::fs::create_dir_all(&plug).unwrap();
         std::fs::write(
             plug.join("freight.toml"),
-            "[package]\nname=\"plug\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.rhai\"\nhandles=[\"proto\"]\n",
+            "[package]\nname=\"plug\"\nversion=\"0.1.0\"\n[plugin]\nentry=\"p.freight\"\nhandles=[\"proto\"]\n",
         )
         .unwrap();
         let app = root.join("app");
@@ -2223,10 +2226,10 @@ mod tests {
         std::fs::write(
             plug.join("freight.toml"),
             "[package]\nname=\"proto\"\nversion=\"0.1.0\"\n\
-             [plugin]\nentry=\"p.rhai\"\nhandles=[\"proto\"]\n",
+             [plugin]\nentry=\"p.freight\"\nhandles=[\"proto\"]\n",
         )
         .unwrap();
-        std::fs::write(plug.join("p.rhai"), r#"define("RAN");"#).unwrap();
+        std::fs::write(plug.join("p.freight"), r#"define("RAN");"#).unwrap();
         std::fs::write(
             app.join("freight.toml"),
             "[package]\nname=\"app\"\nversion=\"0.1.0\"\n\
@@ -2253,10 +2256,10 @@ mod tests {
         std::fs::write(
             plug.join("freight.toml"),
             "[package]\nname=\"plug\"\nversion=\"0.1.0\"\n\
-             [plugin]\nentry=\"p.rhai\"\nhandles=[\"codegen\"]\ngoals=[\"test\"]\n",
+             [plugin]\nentry=\"p.freight\"\nhandles=[\"codegen\"]\ngoals=[\"test\"]\n",
         )
         .unwrap();
-        std::fs::write(plug.join("p.rhai"), r#"define("RAN");"#).unwrap();
+        std::fs::write(plug.join("p.freight"), r#"define("RAN");"#).unwrap();
 
         let app = root.join("app");
         std::fs::create_dir_all(&app).unwrap();
@@ -2280,7 +2283,7 @@ mod tests {
         let proj = tmp.path();
         std::fs::create_dir_all(proj.join("inp")).unwrap();
         std::fs::write(proj.join("inp/a.txt"), "1").unwrap();
-        let script = proj.join("s.rhai");
+        let script = proj.join("s.freight");
         std::fs::write(&script, "").unwrap();
         let cfg = toml::Value::Table(Default::default());
         let inputs = vec!["inp/*.txt".to_string()];

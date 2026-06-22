@@ -1,10 +1,10 @@
 [package]
-name        = "bazel-builder"
+name        = "bazel"
 version     = "0.1.0"
 description = "Build a dependency with Bazel — adds [bazel] to any project."
 
 [plugin]
-entry   = "bazel.rhai"
+entry   = "bazel.freight"
 handles = ["bazel"]
 tools   = ["bazel"]
 

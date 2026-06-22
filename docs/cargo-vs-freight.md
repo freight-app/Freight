@@ -92,7 +92,7 @@ are built by build-system plugins: mark the dep `external = true` and add the
 matching plugin + section.
 ```toml
 SDL2          = { path = "../SDL2", external = true }
-cmake-builder = "0.1"
+cmake = "0.1"
 [cmake]
 build   = "SDL2"
 defines = ["SDL_STATIC=ON"]

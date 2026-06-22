@@ -109,7 +109,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PluginManifest {
     /// Path to the plugin's entry script, relative to the package root
-    /// (e.g. `"proto.rhai"`).
+    /// (e.g. `"proto.freight"`).
     pub entry: String,
     /// Manifest sections this plugin handles. Empty = defaults to the package name.
     #[serde(default)]

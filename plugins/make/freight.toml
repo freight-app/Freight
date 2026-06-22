@@ -1,10 +1,10 @@
 [package]
-name        = "make-builder"
+name        = "make"
 version     = "0.1.0"
 description = "Build a dependency with a plain Makefile — adds [make] to any project."
 
 [plugin]
-entry   = "make.rhai"
+entry   = "make.freight"
 handles = ["make"]
 tools   = ["make"]
 

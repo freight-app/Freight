@@ -14,7 +14,7 @@ src  = "src/main.c"
 # `[make]` section below — it runs `make` in PKGS["strutil"].dir, exposes the
 # include/ dir, and links the libstrutil.a the build produces in-tree.
 [dependencies]
-make-builder = { path = "../../../plugins/make" }
+make = { path = "../../../plugins/make" }
 strutil      = { path = "vendor/strutil", external = true }
 
 [make]

@@ -4,7 +4,7 @@
 //
 //   [dependencies]
 //   libfoo       = { path = "vendor/libfoo", external = true }
-//   make-builder = "0.1"
+//   make = "0.1"
 //   [make]
 //   build   = "libfoo"
 //   defines = ["CFLAGS=-O2"]
@@ -14,8 +14,9 @@
 let names = if type_of(CFG.build) == "string" { [CFG.build] } else { CFG.build };
 
 for name in names {
-    if !(name in PKGS) { throw "[make] build: '" + name + "' is not a dependency"; }
-    let src = PKGS[name].dir;
+    let src = if name in PKGS { PKGS[name].dir }
+              else if name == PKG_NAME { PROJECT_DIR }
+              else { throw "[make] build: '" + name + "' is not a dependency"; };
     if !is_dir(src) { throw "'" + name + "' is not fetched yet: " + src; }
 
     // ── Build (in the dep's own tree via -C) ─────────────────────────────────

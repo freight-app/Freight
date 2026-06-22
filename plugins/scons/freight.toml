@@ -1,10 +1,10 @@
 [package]
-name        = "scons-builder"
+name        = "scons"
 version     = "0.1.0"
 description = "Build a dependency with SCons — adds [scons] to any project."
 
 [plugin]
-entry   = "scons.rhai"
+entry   = "scons.freight"
 handles = ["scons"]
 tools   = ["scons"]
 

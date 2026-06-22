@@ -1,10 +1,10 @@
 [package]
-name        = "meson-builder"
+name        = "meson"
 version     = "0.1.0"
 description = "Build a dependency with Meson — adds [meson] to any project."
 
 [plugin]
-entry   = "meson.rhai"
+entry   = "meson.freight"
 handles = ["meson"]
 tools   = ["meson"]
 

@@ -80,7 +80,7 @@ name    = "proto"
 version = "0.1.1"
 
 [plugin]
-entry   = "proto.rhai"     # Rhai script, relative to the package root
+entry   = "proto.freight"     # Rhai script, relative to the package root
 handles = ["proto"]        # sections it activates on (defaults to the package name)
 tools   = ["protoc"]       # external tools the script may run (allow-list)
 
@@ -250,7 +250,7 @@ project; the only way to reach outside it is an allow-listed `run` tool, which i
 the real trust boundary. Scripts are also bounded by operation/recursion limits.)
 
 ```rhai
-// proto.rhai
+// proto.freight
 for f in glob("src/**/*.proto") {
     run("protoc", ["--proto_path=" + SRC_DIR, "--cpp_out=" + OUT_DIR, f]);
 }
@@ -564,7 +564,7 @@ and builds it — see the `cmake` reference plugin under `plugins/`:
 ```toml
 [dependencies]
 zlib          = { version = "1.3", external = true }
-cmake-builder = "0.1"          # plugin handling [cmake]
+cmake = "0.1"          # plugin handling [cmake]
 [cmake]
 build = "zlib"
 ```

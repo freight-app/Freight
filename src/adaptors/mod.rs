@@ -335,7 +335,7 @@ fn foreign_needs_external(name: &str, backend: &str) -> FreightError {
     FreightError::ManifestParse(format!(
         "dependency '{name}' is a foreign ({backend}) project, which freight no longer builds \
          itself. Mark it `external = true` and add the matching build-system plugin, e.g.\n    \
-         [dependencies]\n    {name} = {{ …, external = true }}\n    cmake-builder = \"0.1\"\n    \
+         [dependencies]\n    {name} = {{ …, external = true }}\n    cmake = \"0.1\"\n    \
          [cmake]\n    build = \"{name}\""
     ))
 }

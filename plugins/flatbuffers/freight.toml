@@ -4,7 +4,7 @@ version     = "0.1.0"
 description = "FlatBuffers code generation via flatc — adds [flatbuffers] to any project."
 
 [plugin]
-entry   = "flatbuffers.rhai"
+entry   = "flatbuffers.freight"
 handles = ["flatbuffers"]
 tools   = ["flatc"]
 inputs  = ["**/*.fbs"]

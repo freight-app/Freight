@@ -53,7 +53,7 @@ fn make_plugin_builds_and_links_an_external_dep() {
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
              [[bin]]\nname = \"app\"\nsrc = \"src/main.c\"\n\n\
              [dependencies]\n\
-             make-builder = {{ path = \"{}\" }}\n\
+             make = {{ path = \"{}\" }}\n\
              mylib = {{ path = \"vendor/mylib\", external = true }}\n\n\
              [make]\nbuild = \"mylib\"\n",
             plugin.display()

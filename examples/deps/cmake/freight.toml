@@ -14,7 +14,7 @@ src  = "src/main.cpp"
 # `cmake` build-system plugin handles the `[cmake]` section below — it reads
 # PKGS["mathlib"].dir, runs cmake configure/build/install, and links the result.
 [dependencies]
-cmake-builder = { path = "../../../plugins/cmake" }
+cmake = { path = "../../../plugins/cmake" }
 mathlib       = { path = "vendor/mathlib", external = true }
 
 [cmake]

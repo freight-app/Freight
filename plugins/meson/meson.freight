@@ -2,7 +2,7 @@
 //
 //   [dependencies]
 //   glib          = { version = "2", external = true }
-//   meson-builder = "0.1"
+//   meson = "0.1"
 //   [meson]
 //   build   = "glib"
 //   defines = ["default_library=static"]
@@ -10,8 +10,9 @@
 let names = if type_of(CFG.build) == "string" { [CFG.build] } else { CFG.build };
 
 for name in names {
-    if !(name in PKGS) { throw "[meson] build: '" + name + "' is not a dependency"; }
-    let src = PKGS[name].dir;
+    let src = if name in PKGS { PKGS[name].dir }
+              else if name == PKG_NAME { PROJECT_DIR }
+              else { throw "[meson] build: '" + name + "' is not a dependency"; };
     if !is_dir(src) { throw "'" + name + "' is not fetched yet: " + src; }
 
     let build  = join(OUT_DIR, name);

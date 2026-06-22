@@ -55,7 +55,7 @@ fn meson_plugin_builds_and_links_an_external_dep() {
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
              [[bin]]\nname = \"app\"\nsrc = \"src/main.c\"\n\n\
              [dependencies]\n\
-             meson-builder = {{ path = \"{}\" }}\n\
+             meson = {{ path = \"{}\" }}\n\
              mylib = {{ path = \"vendor/mylib\", external = true }}\n\n\
              [meson]\nbuild = \"mylib\"\n",
             plugin.display()

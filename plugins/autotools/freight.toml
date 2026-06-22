@@ -1,10 +1,10 @@
 [package]
-name        = "autotools-builder"
+name        = "autotools"
 version     = "0.1.0"
 description = "Build a dependency with Autotools (configure + make) — adds [autotools]."
 
 [plugin]
-entry   = "autotools.rhai"
+entry   = "autotools.freight"
 handles = ["autotools"]
 tools   = ["sh", "make"]
 

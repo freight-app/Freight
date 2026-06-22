@@ -3,15 +3,16 @@
 //
 //   [dependencies]
 //   libfoo        = { path = "vendor/libfoo", external = true }
-//   bazel-builder = "0.1"
+//   bazel = "0.1"
 //   [bazel]
 //   build = "libfoo"
 
 let names = if type_of(CFG.build) == "string" { [CFG.build] } else { CFG.build };
 
 for name in names {
-    if !(name in PKGS) { throw "[bazel] build: '" + name + "' is not a dependency"; }
-    let src = PKGS[name].dir;
+    let src = if name in PKGS { PKGS[name].dir }
+              else if name == PKG_NAME { PROJECT_DIR }
+              else { throw "[bazel] build: '" + name + "' is not a dependency"; };
     if !is_dir(src) { throw "'" + name + "' is not fetched yet: " + src; }
 
     let target = if "target" in CFG { CFG.target } else { "//..." };

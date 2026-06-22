@@ -1,10 +1,10 @@
 [package]
-name        = "cmake-builder"
+name        = "cmake"
 version     = "0.1.0"
 description = "Build a dependency with CMake — adds [cmake] to any project."
 
 [plugin]
-entry   = "cmake.rhai"
+entry   = "cmake.freight"
 handles = ["cmake"]
 tools   = ["cmake"]
 # No `inputs`: CMake is itself incremental (`--build` no-ops when up to date),

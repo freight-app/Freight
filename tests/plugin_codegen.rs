@@ -24,13 +24,13 @@ fn plugin_generates_and_links_a_source() {
     write(
         &plugin.join("freight.toml"),
         "[package]\nname = \"genplugin\"\nversion = \"0.1.0\"\n\n\
-         [plugin]\nentry = \"gen.rhai\"\nhandles = [\"codegen\"]\ntools = [\"cp\"]\n",
+         [plugin]\nentry = \"gen.freight\"\nhandles = [\"codegen\"]\ntools = [\"cp\"]\n",
     );
     // Template the plugin copies into the consumer's build as a generated source.
     write(&plugin.join("template.c"), "int plugin_value(void) { return 42; }\n");
     // The plugin script: copy the template into out_dir, register it, add a define.
     write(
-        &plugin.join("gen.rhai"),
+        &plugin.join("gen.freight"),
         r#"run("cp", [CFG.template, OUT_DIR + "/generated.c"]);
            add_source(OUT_DIR + "/generated.c");
            define("HAS_PLUGIN");"#,

@@ -71,7 +71,7 @@ tab=`printf '\t'`
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
              [[bin]]\nname = \"app\"\nsrc = \"src/main.c\"\n\n\
              [dependencies]\n\
-             autotools-builder = {{ path = \"{}\" }}\n\
+             autotools = {{ path = \"{}\" }}\n\
              mylib = {{ path = \"vendor/mylib\", external = true }}\n\n\
              [autotools]\nbuild = \"mylib\"\n",
             plugin.display()

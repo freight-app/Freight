@@ -4,7 +4,7 @@
 //
 //   [dependencies]
 //   libfoo            = { url = "…/libfoo-1.2.tar.gz", external = true }
-//   autotools-builder = "0.1"
+//   autotools = "0.1"
 //   [autotools]
 //   build   = "libfoo"
 //   defines = ["--enable-shared=no"]
@@ -12,8 +12,9 @@
 let names = if type_of(CFG.build) == "string" { [CFG.build] } else { CFG.build };
 
 for name in names {
-    if !(name in PKGS) { throw "[autotools] build: '" + name + "' is not a dependency"; }
-    let src = PKGS[name].dir;
+    let src = if name in PKGS { PKGS[name].dir }
+              else if name == PKG_NAME { PROJECT_DIR }
+              else { throw "[autotools] build: '" + name + "' is not a dependency"; };
     if !is_dir(src) { throw "'" + name + "' is not fetched yet: " + src; }
     if !is_file(join(src, "configure")) {
         throw "'" + name + "' has no ./configure script at " + src;

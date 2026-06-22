@@ -2,7 +2,7 @@
 //
 //   [dependencies]
 //   zlib          = { version = "1.3", external = true }  # fetched; core won't build it
-//   cmake-builder = "0.1"
+//   cmake = "0.1"
 //   [cmake]
 //   build   = "zlib"                  # a name, or ["zlib", "png"]
 //   defines = ["BUILD_SHARED_LIBS=OFF"]
@@ -10,8 +10,11 @@
 let names = if type_of(CFG.build) == "string" { [CFG.build] } else { CFG.build };
 
 for name in names {
-    if !(name in PKGS) { throw "[cmake] build: '" + name + "' is not a dependency"; }
-    let src = PKGS[name].dir;                       // .pkgs/<name> or a path dep
+    // A declared dependency, or `name == PKG_NAME` → build the project's own
+    // source (a `[cmake] build = "<self>"` self-build).
+    let src = if name in PKGS { PKGS[name].dir }
+              else if name == PKG_NAME { PROJECT_DIR }
+              else { throw "[cmake] build: '" + name + "' is not a dependency"; };
     if !is_dir(src) { throw "'" + name + "' is not fetched yet: " + src; }
 
     let build  = join(OUT_DIR, name);               // out-of-source build tree

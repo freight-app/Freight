@@ -14,7 +14,7 @@ src  = "src/main.cpp"
 # `[meson]` section below — it runs meson setup/compile/install in
 # PKGS["mathlib"].dir and links the result. Requires meson + ninja.
 [dependencies]
-meson-builder = { path = "../../../plugins/meson" }
+meson = { path = "../../../plugins/meson" }
 mathlib       = { path = "vendor/mathlib", external = true }
 
 [meson]
