@@ -408,20 +408,23 @@ impl Manifest {
     /// - `targets`: cross-compilation triple allowlist
     /// - `os`: host OS allowlist (supports family aliases like `"unix"`)
     /// - `arch`: host CPU architecture allowlist
+    /// Runtime dependencies for the current build. These are linked into the
+    /// target artifact, so their `os` / `arch` fields and the `[os.*]` /
+    /// `[arch.*]` dependency sections gate on the **build target** (what you are
+    /// compiling *for*), falling back to the host on a native build.
     pub fn effective_dependencies(&self) -> HashMap<String, Dependency> {
         let current_target = self.compiler.target.as_deref();
-        let current_arch = self
-            .target
-            .arch
-            .as_deref()
-            .unwrap_or(std::env::consts::ARCH);
+        let (rt_arch, rt_os) = crate::vendor::resolve_target(current_target);
+        let target_arch = self.target.arch.clone().unwrap_or(rt_arch);
+        let target_plats = platforms_for(&rt_os);
+
         let mut out: HashMap<String, Dependency> = self
             .dependencies
             .iter()
-            .filter(|(_, dep)| dep_matches_env(dep, current_target))
+            .filter(|(_, dep)| dep_matches_env(dep, &target_plats, &target_arch, current_target))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        for os_key in host_platforms() {
+        for os_key in &target_plats {
             if let Some(ov) = self
                 .os
                 .iter()
@@ -429,7 +432,7 @@ impl Manifest {
                 .map(|(_, v)| v)
             {
                 for (name, dep) in &ov.dependencies {
-                    if dep_matches_env(dep, current_target) {
+                    if dep_matches_env(dep, &target_plats, &target_arch, current_target) {
                         out.insert(name.clone(), dep.clone());
                     }
                 }
@@ -438,16 +441,30 @@ impl Manifest {
         if let Some(ov) = self
             .arch
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(current_arch))
+            .find(|(k, _)| k.eq_ignore_ascii_case(&target_arch))
             .map(|(_, v)| v)
         {
             for (name, dep) in &ov.dependencies {
-                if dep_matches_env(dep, current_target) {
+                if dep_matches_env(dep, &target_plats, &target_arch, current_target) {
                     out.insert(name.clone(), dep.clone());
                 }
             }
         }
         out
+    }
+
+    /// Build-time dependencies (tools run *during* the build). These execute on
+    /// the **host**, so their `os` / `arch` fields gate on the host platform, not
+    /// the build target.
+    pub fn effective_build_dependencies(&self) -> HashMap<String, Dependency> {
+        let current_target = self.compiler.target.as_deref();
+        let host_plats: Vec<String> = host_platforms().into_iter().map(String::from).collect();
+        let host_arch = std::env::consts::ARCH;
+        self.build_dependencies
+            .iter()
+            .filter(|(_, dep)| dep_matches_env(dep, &host_plats, host_arch, current_target))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Return the effective `LanguageSettings` for `lang_key`, applying any
@@ -497,14 +514,20 @@ impl Manifest {
 
 /// Returns `true` if the dependency should be included given the current build environment.
 ///
-/// Checks three optional filter fields on a `DetailedDep`:
+/// Checks the optional filter fields on a `DetailedDep` against a given platform
+/// (`platforms` = the family chain) and `arch`. Callers pass the **target**
+/// platform for `[dependencies]` and the **host** platform for
+/// `[build-dependencies]`:
 /// - `targets`: only included when `current_target` matches; absent = unconditional.
 ///   A `None` current target (native build) never satisfies a present `targets` list.
-/// - `os`: only included when the host OS (or a family alias from `host_platforms()`)
-///   appears in the list; absent = unconditional.
-/// - `arch`: only included when `std::env::consts::ARCH` appears in the list;
-///   absent = unconditional.
-fn dep_matches_env(dep: &Dependency, current_target: Option<&str>) -> bool {
+/// - `os`: only included when one of `platforms` matches; absent = unconditional.
+/// - `arch`: only included when `arch` matches; absent = unconditional.
+fn dep_matches_env(
+    dep: &Dependency,
+    platforms: &[String],
+    arch: &str,
+    current_target: Option<&str>,
+) -> bool {
     let Dependency::Detailed(d) = dep else {
         return true;
     };
@@ -520,28 +543,43 @@ fn dep_matches_env(dep: &Dependency, current_target: Option<&str>) -> bool {
     }
 
     if let Some(os_req) = &d.os {
-        let host_plats = host_platforms();
-        let ok = os_req.iter().any(|req| {
-            host_plats
-                .iter()
-                .any(|p| p.eq_ignore_ascii_case(req.as_str()))
-        });
+        let ok = os_req
+            .iter()
+            .any(|req| platforms.iter().any(|p| p.eq_ignore_ascii_case(req.as_str())));
         if !ok {
             return false;
         }
     }
 
     if let Some(arch_req) = &d.arch {
-        let host_arch = std::env::consts::ARCH;
-        let ok = arch_req
-            .iter()
-            .any(|req| req.eq_ignore_ascii_case(host_arch));
+        let ok = arch_req.iter().any(|req| req.eq_ignore_ascii_case(arch));
         if !ok {
             return false;
         }
     }
 
     true
+}
+
+/// The platform/family chain for an arbitrary OS name (family-first), e.g.
+/// `"linux"` → `["unix", "linux"]`, `"freebsd"` → `["unix", "bsd", "freebsd"]`,
+/// `"windows"` → `["windows"]`. The owned-string analogue of [`host_platforms`].
+pub fn platforms_for(os: &str) -> Vec<String> {
+    let unix = matches!(
+        os,
+        "linux" | "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" | "android" | "ios"
+            | "solaris" | "illumos"
+    );
+    let bsd = matches!(os, "freebsd" | "openbsd" | "netbsd" | "dragonfly");
+    let mut chain = Vec::new();
+    if unix {
+        chain.push("unix".to_string());
+    }
+    if bsd {
+        chain.push("bsd".to_string());
+    }
+    chain.push(os.to_string());
+    chain
 }
 
 fn merge_string_vec(into: &mut Vec<String>, items: &[String]) {
@@ -903,13 +941,15 @@ pub struct DetailedDep {
     /// Reserved for the cross-compilation phase.
     #[serde(default)]
     pub targets: Option<Vec<String>>,
-    /// Host OS requirement: dep is only included when the host OS (or a family
-    /// alias) is in this list. Accepts a bare string or an array.
+    /// OS requirement: dep is only included when the OS (or a family alias) is in
+    /// this list. For a `[dependencies]` entry this gates on the **build target**
+    /// (what you compile for); for a `[build-dependencies]` entry it gates on the
+    /// **host** (build-deps are tools that run on the host). Bare string or array.
     /// Examples: `os = "linux"`, `os = ["linux", "macos"]`, `os = "unix"`.
     #[serde(default, deserialize_with = "string_or_vec")]
     pub os: Option<Vec<String>>,
-    /// Host CPU architecture requirement: dep is only included when
-    /// `std::env::consts::ARCH` matches one of the listed values.
+    /// CPU architecture requirement, gated like `os`: on the **build target** for
+    /// `[dependencies]`, on the **host** for `[build-dependencies]`.
     /// Examples: `arch = "x86_64"`, `arch = ["x86_64", "aarch64"]`.
     #[serde(default, deserialize_with = "string_or_vec")]
     pub arch: Option<Vec<String>>,
@@ -1750,6 +1790,57 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
             !m.effective_dependencies().contains_key("mylib"),
             "dep for different target should be excluded"
         );
+    }
+
+    #[test]
+    fn regular_dep_os_arch_gate_on_the_target_not_the_host() {
+        // A windows-only dep, cross-compiling for windows from a non-windows host:
+        // it must be INCLUDED (os = target descriptor for regular deps).
+        let src = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\
+                   [dependencies]\nwinlib = { version = \"1\", os = \"windows\", arch = \"x86_64\" }\n";
+        let mut m = load_manifest_str(src).unwrap();
+        m.compiler.target = Some("x86_64-pc-windows-msvc".into());
+        assert!(
+            m.effective_dependencies().contains_key("winlib"),
+            "regular dep gated os=windows should be included when targeting windows"
+        );
+        // Cross-compiling for linux: the same windows dep must be excluded.
+        m.compiler.target = Some("aarch64-unknown-linux-gnu".into());
+        assert!(
+            !m.effective_dependencies().contains_key("winlib"),
+            "windows dep should be excluded when targeting linux"
+        );
+        // And arch follows the target too: x86_64-gated dep excluded for aarch64.
+        let src2 = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\
+                    [dependencies]\nx = { version = \"1\", arch = \"x86_64\" }\n";
+        let mut m2 = load_manifest_str(src2).unwrap();
+        m2.compiler.target = Some("aarch64-unknown-linux-gnu".into());
+        assert!(!m2.effective_dependencies().contains_key("x"));
+    }
+
+    #[test]
+    fn build_dep_os_arch_gate_on_the_host_not_the_target() {
+        // A build-dep gated to the host's OS stays included even when cross-
+        // compiling for another OS (build-deps are host tools).
+        let host_os = host_platforms()[host_platforms().len() - 1];
+        let src = format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\
+             [build-dependencies]\ngen = {{ version = \"1\", os = \"{host_os}\" }}\n"
+        );
+        let mut m = load_manifest_str(&src).unwrap();
+        m.compiler.target = Some("aarch64-pc-windows-msvc".into());
+        assert!(
+            m.effective_build_dependencies().contains_key("gen"),
+            "host-gated build-dep should survive a cross build"
+        );
+        // A build-dep gated to a different OS than the host is excluded.
+        let other = if host_os == "windows" { "linux" } else { "windows" };
+        let src2 = format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\
+             [build-dependencies]\ngen = {{ version = \"1\", os = \"{other}\" }}\n"
+        );
+        let m2 = load_manifest_str(&src2).unwrap();
+        assert!(!m2.effective_build_dependencies().contains_key("gen"));
     }
 
     #[test]

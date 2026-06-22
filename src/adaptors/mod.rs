@@ -152,7 +152,8 @@ pub fn build_foreign_deps(
     // tools take precedence over system ones.
     let mut tool_paths: Vec<PathBuf> = Vec::new();
 
-    for (name, dep) in &manifest.build_dependencies {
+    // Build-deps are host tools — gate them on the host platform, not the target.
+    for (name, dep) in &manifest.effective_build_dependencies() {
         let dep_dir = match build_dep_dir(name, dep, project_dir, pkgs_root) {
             Some(d) => d,
             None => continue,
