@@ -2027,6 +2027,7 @@ mod tests {
         std::fs::write(
             src.join("CMakeLists.txt"),
             "cmake_minimum_required(VERSION 3.10)\nproject(mylib C)\n\
+             find_package(Threads)\n\
              add_library(mylib STATIC src/mylib.c)\n\
              target_include_directories(mylib PUBLIC include)\n\
              install(TARGETS mylib ARCHIVE DESTINATION lib)\n\
@@ -2052,6 +2053,13 @@ mod tests {
                 .any(|t| t.tool == "linker" && t.flag.contains("libmylib.a")),
             "tool_flags: {:?}",
             out.tool_flags
+        );
+        // Freight.cmake recorded the project's find_package() calls.
+        let report = out_dir.join("mylib/freight-report.txt");
+        let recorded = std::fs::read_to_string(&report).unwrap_or_default();
+        assert!(
+            recorded.contains("find_package Threads"),
+            "report should record find_package(Threads): {recorded:?}"
         );
     }
 
