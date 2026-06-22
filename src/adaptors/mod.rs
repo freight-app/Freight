@@ -4,12 +4,6 @@
 //! (`build_foreign_deps`), shared types, detection logic, and helpers that all
 //! builders use.
 
-pub mod autotools;
-pub mod bazel;
-pub mod cmake;
-pub mod make;
-pub mod meson;
-pub mod scons;
 
 // Dependency resolution moved to `crate::resolve`; these names are used heavily
 // here and re-exported for existing `adaptors::` consumers during the migration.
@@ -20,7 +14,6 @@ pub use crate::resolve::pkg_config::{
 pub use crate::resolve::pkg_config_cache::PkgConfigCache;
 use crate::resolve::system_pm;
 
-use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -44,21 +37,6 @@ pub struct ForeignBuilt {
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
-/// Build all foreign deps declared in `manifest` and return their link artifacts,
-/// the resolved pkg-config results, and any executable bin-dirs accumulated from
-/// `[build-dependencies]` entries (prepended to PATH for subsequent build steps).
-/// A foreign dep that needs a subprocess build (cmake, make, meson, …).
-/// Collected in the sequential pass then dispatched in parallel.
-struct BuildJob {
-    name: String,
-    dep_dir: PathBuf,
-    backend: String,
-    defines: Vec<String>,
-    include: Vec<String>,
-    target: Option<String>,
-    /// Tool bin dirs accumulated from build-deps built before this job.
-    tool_paths: Vec<PathBuf>,
-}
 
 /// The effective `[patch]` table for a build. Patches are graph-wide and come
 /// from the workspace root. When building the root itself, that's the passed
@@ -135,7 +113,7 @@ pub fn build_foreign_deps(
     root_dir: &std::path::Path,
     manifest: &Manifest,
     profile: &str,
-    dep_defines: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    _dep_defines: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     progress: &Progress,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
     let pkgs_root = root_dir;
@@ -176,38 +154,18 @@ pub fn build_foreign_deps(
             continue;
         }
 
-        // Determine the backend (same logic as regular deps but build-deps rarely
-        // need compilation — most are prebuilt binary tarballs with build = "none").
-        let backend = if let Dependency::Detailed(d) = dep {
-            match d.dep_type.as_deref() {
-                Some("none") | None
-                    if !dep_dir.join("CMakeLists.txt").exists()
-                        && !dep_dir.join("Makefile").exists()
-                        && !dep_dir.join("meson.build").exists() =>
-                {
-                    None
-                }
-                Some(bs) => Some(bs.to_string()),
-                None => detect_build_system(&dep_dir),
-            }
-        } else {
-            detect_build_system(&dep_dir)
-        };
-
-        if let Some(bs) = backend {
-            let build_dir = dep_dir.join(".freight-build");
-            invoke_build_system(
-                &dep_dir,
-                &build_dir,
-                name,
-                &bs,
-                profile,
-                &[],
-                None,
-                progress,
-                &tool_paths,
-                &[],
-            )?;
+        // Build-deps are host tools: they must be prebuilt binaries (or system
+        // tools, already short-circuited above). freight no longer compiles a
+        // tool from source — a fetched build-dep that looks like a source project
+        // is rejected (the build-system plugins produce libraries, not tools).
+        if dep_dir.join("CMakeLists.txt").exists()
+            || dep_dir.join("Makefile").exists()
+            || dep_dir.join("meson.build").exists()
+        {
+            return Err(FreightError::ManifestParse(format!(
+                "build-dependency '{name}' is distributed as source, which freight no longer \
+                 builds. Use a prebuilt binary build-dep or a system tool."
+            )));
         }
 
         let new_bins = collect_bin_dirs(&dep_dir);
@@ -240,12 +198,6 @@ pub fn build_foreign_deps(
     // are resolved at link time by `collect_system_lib_flags` (which also handles
     // macOS `-framework` and MSVC `.lib` formatting), not here.
 
-    let mut jobs: Vec<BuildJob> = Vec::new();
-    // Vendored foreign packages (path / [patch] members with `[package]` url+build).
-    // Collected here, then built with their transitive foreign deps after the
-    // parallel pass (see build_foreign_member_closure).
-    let mut foreign_roots: Vec<(String, PathBuf)> = Vec::new();
-
     // `[patch]` overrides apply graph-wide and come from the workspace root.
     // Honour them here too (the dep-graph builder already does), so a dep that is
     // patched to a local path resolves to that member instead of falling through
@@ -270,20 +222,14 @@ pub fn build_foreign_deps(
             let dep_dir = pkgs_root.join(".pkgs").join(name);
             let bs_file = dep_dir.join(".freight-build-system");
             if bs_file.exists() {
+                // A registry dep fetched as source that needs a foreign build —
+                // freight no longer builds these itself; require external + plugin.
                 let bs = std::fs::read_to_string(&bs_file)
                     .ok()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "cmake".to_string());
-                jobs.push(BuildJob {
-                    name: name.clone(),
-                    dep_dir,
-                    backend: bs,
-                    defines: vec![],
-                    include: vec![],
-                    target: manifest.compiler.target.clone(),
-                    tool_paths: tool_paths.clone(),
-                });
+                return Err(foreign_needs_external(name, &bs));
             } else {
                 let query = package_query(name, version);
                 let repo = dep_repo(dep);
@@ -347,7 +293,10 @@ pub fn build_foreign_deps(
             )));
         }
 
-        let bs = match &d.dep_type {
+        // Header-only / no-build content stays core-handled. Anything that needs
+        // a foreign **build** (cmake/make/…) must be `external = true` so a
+        // build-system plugin builds it — core no longer runs foreign builders.
+        match &d.dep_type {
             Some(bs) if bs == "none" => {
                 let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
                 results.push(ForeignBuilt {
@@ -358,25 +307,19 @@ pub fn build_foreign_deps(
                 });
                 continue;
             }
-            Some(bs) => {
-                validate_backend(name, bs, &dep_dir)?;
-                bs.clone()
-            }
+            Some(bs) => return Err(foreign_needs_external(name, bs)),
             None => {
                 if d.path.is_some() && dep_dir.join("freight.toml").exists() {
-                    // The member may itself be a *foreign* package (`[package]` with
-                    // `url`/`build`, the vcpkg-scraper shape). Collect it as a root of
-                    // the foreign-member sub-graph, built — with its transitive
-                    // foreign deps, in topological order — after the parallel pass.
-                    // Otherwise it's a native freight package handled by the
-                    // dep-graph builder.
+                    // A foreign-wrapper package (`[package]` with `url`/`build`,
+                    // the vcpkg-scraper shape) must be built by a plugin; a native
+                    // freight package is handled by the dep-graph builder.
                     if foreign_package_spec(&dep_dir).is_some() {
-                        foreign_roots.push((name.clone(), dep_dir.clone()));
+                        return Err(foreign_needs_external(name, "foreign package"));
                     }
                     continue;
                 }
                 match detect_build_system(&dep_dir) {
-                    Some(detected) => detected,
+                    Some(detected) => return Err(foreign_needs_external(name, &detected)),
                     None => {
                         if !has_source_files(&dep_dir) {
                             let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
@@ -393,186 +336,24 @@ pub fn build_foreign_deps(
                     }
                 }
             }
-        };
-
-        // Per-dep defines: the dep's own `defines = [...]` plus any forwarded from
-        // the root manifest via `<dep>/define:NAME` feature entries.
-        let mut defines = d.defines.clone();
-        if let Some(fwd) = dep_defines.get(name) {
-            defines.extend(fwd.iter().cloned());
         }
-        jobs.push(BuildJob {
-            name: name.clone(),
-            dep_dir,
-            backend: bs,
-            defines,
-            include: d.include.clone(),
-            target: manifest.compiler.target.clone(),
-            tool_paths: tool_paths.clone(),
-        });
     }
-
-    // ── Parallel pass: invoke foreign build systems concurrently ─────────────
-    // progress is Arc<dyn Fn + Send + Sync> so it is safe to share across threads.
-    let built: Result<Vec<ForeignBuilt>, FreightError> = jobs
-        .into_par_iter()
-        .map(|job| {
-            let build_dir = job.dep_dir.join(".freight-build");
-            let libs = invoke_build_system(
-                &job.dep_dir,
-                &build_dir,
-                &job.name,
-                &job.backend,
-                profile,
-                &job.defines,
-                job.target.as_deref(),
-                progress,
-                &job.tool_paths,
-                &[], // leaf foreign deps: no transitive prefixes
-            )?;
-            let include_dirs = collect_include_dirs(&job.dep_dir, &job.include, Some(&build_dir));
-            Ok(ForeignBuilt {
-                name: job.name,
-                libs,
-                include_dirs,
-                raw_link_flags: vec![],
-            })
-        })
-        .collect();
-
-    results.extend(built?);
-
-    // Foreign-member sub-graph (vendored vcpkg-style packages reached via path /
-    // [patch]) is built in topological order so each member sees its already-built
-    // dependencies' install prefixes (CMAKE_PREFIX_PATH).
-    results.extend(build_foreign_member_closure(
-        &foreign_roots,
-        &patches,
-        root_dir,
-        profile,
-        progress,
-        &tool_paths,
-    )?);
 
     pc_cache.save(project_dir);
     Ok((results, pkg_results, tool_paths))
 }
 
-/// Build the closure of vendored foreign packages (path / `[patch]` members whose
-/// `[package]` declares `url`/`build`) in **topological order**, so each member's
-/// build sees the install prefixes of its already-built foreign dependencies
-/// (via `CMAKE_PREFIX_PATH`). `roots` are the directly-depended foreign members;
-/// their transitive foreign deps are discovered here.
-fn build_foreign_member_closure(
-    roots: &[(String, PathBuf)],
-    patches: &std::collections::HashMap<String, Dependency>,
-    root_dir: &Path,
-    profile: &str,
-    progress: &Progress,
-    tool_paths: &[PathBuf],
-) -> Result<Vec<ForeignBuilt>, FreightError> {
-    use std::collections::{BTreeMap, VecDeque};
-    if roots.is_empty() {
-        return Ok(vec![]);
-    }
-
-    struct Node {
-        dir: PathBuf,
-        url: Option<String>,
-        build: String,
-        patches: Vec<String>,
-        deps: Vec<String>,
-    }
-
-    // 1. Discover the closure.
-    let mut nodes: BTreeMap<String, Node> = BTreeMap::new();
-    let mut queue: VecDeque<(String, PathBuf)> = roots.iter().cloned().collect();
-    while let Some((name, dir)) = queue.pop_front() {
-        if nodes.contains_key(&name) {
-            continue;
-        }
-        let Some((url, build, mpatches)) = foreign_package_spec(&dir) else {
-            continue;
-        };
-        let mut fdeps = Vec::new();
-        if let Ok(m) = crate::manifest::load_manifest(&dir) {
-            for (dep_name, dep) in &m.dependencies {
-                if let Some(td) = foreign_dep_dir(patches, root_dir, &dir, dep_name, dep) {
-                    fdeps.push(dep_name.clone());
-                    if !nodes.contains_key(dep_name) {
-                        queue.push_back((dep_name.clone(), td));
-                    }
-                }
-            }
-        }
-        nodes.insert(
-            name,
-            Node {
-                dir,
-                url,
-                build,
-                patches: mpatches,
-                deps: fdeps,
-            },
-        );
-    }
-
-    // 2. Topological order (deps first).
-    let graph: BTreeMap<String, Vec<String>> = nodes
-        .iter()
-        .map(|(n, node)| (n.clone(), node.deps.clone()))
-        .collect();
-    let order = topo_order(&graph);
-
-    // 3. Build each, accumulating install prefixes for downstream members.
-    let mut prefixes: Vec<PathBuf> = Vec::new();
-    let mut built = Vec::new();
-    for name in order {
-        let Some(node) = nodes.get(&name) else {
-            continue;
-        };
-        let source_dir = match &node.url {
-            Some(url) => crate::fetch::http::fetch_url_dep(&name, url, None, &node.dir, progress)?,
-            None => node.dir.clone(),
-        };
-        apply_member_patches(&node.dir, &source_dir, &node.patches, progress);
-        let build_dir = source_dir.join(".freight-build");
-        let libs = invoke_build_system(
-            &source_dir,
-            &build_dir,
-            &name,
-            &node.build,
-            profile,
-            &[],
-            None,
-            progress,
-            tool_paths,
-            &prefixes,
-        )?;
-        let mut include_dirs = collect_include_dirs(&source_dir, &[], Some(&build_dir));
-        // Header-only / copy-only ports often keep their header(s) at the archive
-        // root (e.g. plf_colony.h, stb_image.h) rather than in include/. Expose the
-        // source root so dependents can find them — no build tool is involved.
-        if matches!(node.build.as_str(), "none" | "header") && !include_dirs.contains(&source_dir) {
-            include_dirs.push(source_dir.clone());
-        }
-        if let Some(p) = install_prefix(&source_dir, &node.build) {
-            if p.is_dir() {
-                prefixes.push(p);
-            }
-        }
-        built.push(ForeignBuilt {
-            name,
-            libs,
-            include_dirs,
-            raw_link_flags: vec![],
-        });
-    }
-    // Built deps-first (topological); the linker needs dependents before their
-    // dependencies for static archives, so return in reverse order.
-    built.reverse();
-    Ok(built)
+/// Error for a non-`external` dependency whose source needs a foreign build
+/// system. Foreign builds run through build-system plugins now, not core.
+fn foreign_needs_external(name: &str, backend: &str) -> FreightError {
+    FreightError::ManifestParse(format!(
+        "dependency '{name}' is a foreign ({backend}) project, which freight no longer builds \
+         itself. Mark it `external = true` and add the matching build-system plugin, e.g.\n    \
+         [dependencies]\n    {name} = {{ …, external = true }}\n    cmake-builder = \"0.1\"\n    \
+         [cmake]\n    build = \"{name}\""
+    ))
 }
+
 
 /// Build a *foreign package itself* (`[package]` with `url`/`build`, no native
 /// targets — the vcpkg-scraper shape) as a standalone `freight build`. Fetches
@@ -639,67 +420,8 @@ pub fn build_foreign_self(
     Ok(placed)
 }
 
-/// The directory a member's dependency resolves to *if* it's itself a foreign
-/// member — via a `[patch]` path (relative to the workspace root) or the dep's
-/// own `path` (relative to the member). `None` when it isn't a foreign package.
-fn foreign_dep_dir(
-    patches: &std::collections::HashMap<String, Dependency>,
-    root_dir: &Path,
-    member_dir: &Path,
-    dep_name: &str,
-    dep: &Dependency,
-) -> Option<PathBuf> {
-    let dir = if let Some(Dependency::Detailed(pd)) = patches.get(dep_name) {
-        root_dir.join(pd.path.as_ref()?)
-    } else if let Dependency::Detailed(d) = dep {
-        member_dir.join(d.path.as_ref()?)
-    } else {
-        return None;
-    };
-    (dir.join("freight.toml").exists() && foreign_package_spec(&dir).is_some()).then_some(dir)
-}
 
-/// The install prefix a foreign build produces (contains `include/` + `lib/`),
-/// fed to dependents' `CMAKE_PREFIX_PATH`.
-fn install_prefix(source_dir: &Path, build: &str) -> Option<PathBuf> {
-    match build {
-        "cmake" | "meson" | "autotools" => Some(source_dir.join(".freight-build").join("install")),
-        _ => Some(source_dir.to_path_buf()),
-    }
-}
 
-/// Topologically order `graph` (name → dep names), dependencies first. Cycle
-/// back-edges are ignored; every node appears exactly once.
-fn topo_order(graph: &std::collections::BTreeMap<String, Vec<String>>) -> Vec<String> {
-    use std::collections::HashSet;
-    fn visit(
-        n: &str,
-        graph: &std::collections::BTreeMap<String, Vec<String>>,
-        visited: &mut HashSet<String>,
-        on_stack: &mut HashSet<String>,
-        out: &mut Vec<String>,
-    ) {
-        if visited.contains(n) || !on_stack.insert(n.to_string()) {
-            return;
-        }
-        if let Some(deps) = graph.get(n) {
-            for d in deps {
-                visit(d, graph, visited, on_stack, out);
-            }
-        }
-        on_stack.remove(n);
-        if visited.insert(n.to_string()) {
-            out.push(n.to_string());
-        }
-    }
-    let mut visited = HashSet::new();
-    let mut on_stack = HashSet::new();
-    let mut out = Vec::new();
-    for n in graph.keys() {
-        visit(n, graph, &mut visited, &mut on_stack, &mut out);
-    }
-    out
-}
 
 /// Extract the cmake version constraint from `[build-dependencies]`, if any.
 /// Returns `Some(">=3.20")` when the user wrote `cmake = ">=3.20"` (or any
@@ -725,12 +447,35 @@ fn cmake_build_dep_constraint(manifest: &Manifest) -> Option<String> {
     }
 }
 
+/// Probe the cmake binary (from `tool_paths` first, else PATH) for its
+/// `(major, minor, patch)` version. `None` if cmake isn't found or unparseable.
+fn cmake_version(tool_paths: &[PathBuf]) -> Option<(u64, u64, u64)> {
+    let bin = tool_paths
+        .iter()
+        .map(|d| d.join("cmake"))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("cmake"));
+    let out = Command::new(bin).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // First line: "cmake version X.Y.Z".
+    let ver = text.split_whitespace().find(|w| w.contains('.'))?;
+    let mut parts = ver.split('.').map(|n| n.parse::<u64>().ok());
+    Some((
+        parts.next().flatten()?,
+        parts.next().flatten().unwrap_or(0),
+        parts.next().flatten().unwrap_or(0),
+    ))
+}
+
 /// Check that the cmake binary reachable via `tool_paths` (or system PATH)
 /// satisfies `constraint`.  Returns a descriptive error if it does not.
 fn check_cmake_version(constraint: &str, tool_paths: &[PathBuf]) -> Result<(), FreightError> {
     use semver::{Version, VersionReq};
 
-    let (major, minor, patch) = match cmake::cmake_version(tool_paths) {
+    let (major, minor, patch) = match cmake_version(tool_paths) {
         Some((maj, min, pat)) => (maj, min, pat),
         None => {
             return Err(FreightError::CompilerNotFound(
@@ -1191,43 +936,6 @@ fn resolve_fetched_dep(
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-fn validate_backend(name: &str, dep_type: &str, dep_dir: &Path) -> Result<(), FreightError> {
-    let (present, marker) = match dep_type {
-        "cmake" => (dep_dir.join("CMakeLists.txt").exists(), "CMakeLists.txt"),
-        "meson" => (dep_dir.join("meson.build").exists(), "meson.build"),
-        "autotools" => (
-            dep_dir.join("configure.ac").exists()
-                || dep_dir.join("configure.in").exists()
-                || dep_dir.join("autogen.sh").exists()
-                || dep_dir.join("configure").exists(),
-            "configure.ac / configure",
-        ),
-        "make" => (
-            dep_dir.join("Makefile").exists() || dep_dir.join("GNUmakefile").exists(),
-            "Makefile",
-        ),
-        "scons" => (dep_dir.join("SConstruct").exists(), "SConstruct"),
-        "bazel" => (
-            dep_dir.join("WORKSPACE").exists() || dep_dir.join("WORKSPACE.bazel").exists(),
-            "WORKSPACE",
-        ),
-        "auto" | "none" => return Ok(()),
-        other => {
-            return Err(FreightError::ManifestParse(format!(
-                "unknown type '{other}' for dep '{name}'; \
-             expected: cmake, make, meson, autotools, scons, bazel, none"
-            )))
-        }
-    };
-    if !present {
-        return Err(FreightError::ManifestParse(format!(
-            "type '{dep_type}' specified for dep '{name}' \
-             but '{marker}' not found in '{}'",
-            dep_dir.display()
-        )));
-    }
-    Ok(())
-}
 
 // ── Detection ─────────────────────────────────────────────────────────────────
 
@@ -1260,128 +968,9 @@ pub fn detect_build_system(dep_dir: &Path) -> Option<String> {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-fn invoke_build_system(
-    dep_dir: &Path,
-    build_dir: &Path,
-    name: &str,
-    build_system: &str,
-    profile: &str,
-    defines: &[String],
-    target: Option<&str>,
-    progress: &Progress,
-    tool_paths: &[PathBuf],
-    // Install prefixes of already-built dependencies (for transitive foreign
-    // deps). Passed to cmake as CMAKE_PREFIX_PATH so `find_package` finds them.
-    prefix_paths: &[PathBuf],
-) -> Result<Vec<PathBuf>, FreightError> {
-    let resolved = build_system.to_string();
-
-    std::fs::create_dir_all(build_dir)?;
-
-    progress(BuildEvent::BuildingForeignDep {
-        name: name.to_string(),
-        backend: resolved.clone(),
-    });
-
-    // `KEY=VALUE` bodies, with any leading `-D` stripped — each builder applies
-    // them in its native form below.
-    let bodies: Vec<&str> = defines
-        .iter()
-        .map(|d| d.strip_prefix("-D").unwrap_or(d))
-        .collect();
-
-    let search_dir = match resolved.as_str() {
-        "cmake" => {
-            // cmake cache variables: `-DKEY=VALUE`.
-            let mut args: Vec<String> = bodies.iter().map(|b| format!("-D{b}")).collect();
-            if !prefix_paths.is_empty() {
-                let joined = prefix_paths
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(";");
-                args.push(format!("-DCMAKE_PREFIX_PATH={joined}"));
-            }
-            cmake::build_cmake(dep_dir, build_dir, profile, &args, target, tool_paths)?;
-            build_dir.to_path_buf()
-        }
-        "make" => {
-            // make variable assignments: `KEY=VALUE`.
-            let vars: Vec<String> = bodies.iter().map(|b| b.to_string()).collect();
-            make::build_make(dep_dir, &vars, tool_paths)?;
-            dep_dir.to_path_buf()
-        }
-        "meson" => {
-            // meson project options: `-DKEY=VALUE`.
-            let args: Vec<String> = bodies.iter().map(|b| format!("-D{b}")).collect();
-            meson::build_meson(dep_dir, build_dir, &args, tool_paths)?;
-            build_dir.to_path_buf()
-        }
-        "autotools" => {
-            autotools::build_autotools(dep_dir, build_dir, target, tool_paths)?;
-            build_dir.join("install")
-        }
-        "scons" => {
-            scons::build_scons(dep_dir, tool_paths)?;
-            dep_dir.to_path_buf()
-        }
-        "bazel" => {
-            bazel::build_bazel(dep_dir, tool_paths)?;
-            dep_dir.to_path_buf()
-        }
-        // Header-only / no build system: nothing to compile — the source was
-        // fetched and its headers are exposed via collect_include_dirs by the
-        // caller. No cmake (or any build tool) is invoked.
-        "none" | "header" => dep_dir.to_path_buf(),
-        other => {
-            return Err(FreightError::ManifestParse(format!(
-                "unknown backend '{other}' for dep '{name}'; \
-                 expected: cmake, make, meson, autotools, scons, bazel, none"
-            )));
-        }
-    };
-
-    find_libs(&search_dir)
-}
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-/// Shared helper used by all builder submodules.
-///
-/// `tool_paths` is prepended to `PATH` so that build-time tool deps (cmake,
-/// ninja, protoc, …) installed by freight take precedence over system ones.
-pub(crate) fn run(
-    prog: &str,
-    args: &[&str],
-    cwd: &Path,
-    label: &str,
-    tool_paths: &[PathBuf],
-) -> Result<(), FreightError> {
-    let mut cmd = Command::new(prog);
-    cmd.args(args).current_dir(cwd);
-
-    if !tool_paths.is_empty() {
-        let current = std::env::var_os("PATH").unwrap_or_default();
-        let mut parts: Vec<PathBuf> = tool_paths.to_vec();
-        parts.extend(std::env::split_paths(&current));
-        if let Ok(new_path) = std::env::join_paths(parts) {
-            cmd.env("PATH", new_path);
-        }
-    }
-
-    let status = cmd
-        .status()
-        .map_err(|e| FreightError::CompilerNotFound(format!("{prog} not found: {e}")))?;
-
-    if !status.success() {
-        return Err(FreightError::CompileFailed(
-            label.to_string(),
-            format!("{prog} exited with status {}", status.code().unwrap_or(-1)),
-        ));
-    }
-    Ok(())
-}
 
 /// Resolve include directories for a dep.
 pub(crate) fn collect_include_dirs(
@@ -1503,24 +1092,6 @@ fn is_executable(path: &Path) -> bool {
         )
 }
 
-fn find_libs(search_dir: &Path) -> Result<Vec<PathBuf>, FreightError> {
-    let mut libs = Vec::new();
-    for entry in walkdir::WalkDir::new(search_dir)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if matches!(ext, "a" | "so" | "dylib") {
-                libs.push(path.to_path_buf());
-            }
-        }
-    }
-    libs.sort();
-    Ok(libs)
-}
 
 #[cfg(test)]
 mod foreign_pkg_tests {
@@ -1541,32 +1112,6 @@ mod foreign_pkg_tests {
         assert_eq!(spec.0.as_deref(), Some("https://x/c.tar.gz"));
         assert_eq!(spec.1, "cmake");
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn topo_order_puts_deps_before_dependents() {
-        use super::topo_order;
-        use std::collections::BTreeMap;
-        let mut g: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        g.insert("app".into(), vec!["mid".into()]);
-        g.insert("mid".into(), vec!["base".into()]);
-        g.insert("base".into(), vec![]);
-        let order = topo_order(&g);
-        let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
-        assert!(pos("base") < pos("mid"));
-        assert!(pos("mid") < pos("app"));
-        assert_eq!(order.len(), 3);
-    }
-
-    #[test]
-    fn topo_order_tolerates_cycles() {
-        use super::topo_order;
-        use std::collections::BTreeMap;
-        let mut g: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        g.insert("a".into(), vec!["b".into()]);
-        g.insert("b".into(), vec!["a".into()]); // cycle
-        let order = topo_order(&g);
-        assert_eq!(order.len(), 2); // both present, no infinite loop
     }
 
     #[test]
