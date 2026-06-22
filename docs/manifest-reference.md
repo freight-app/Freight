@@ -146,7 +146,7 @@ During the build, the plugin's script runs with these **constants** in scope:
 | `TARGET` | target characteristics: `TARGET.os`, `TARGET.arch`, `TARGET.family`, `TARGET.pointer_width`, `TARGET.triple` (`""` when building for the host, the full triple when cross-compiling) |
 | `LIB` | the consuming project's library, `#{ name, type, hdrs, srcs, link }` — or `()` when it builds no `[lib]` |
 | `BINS` | the project's executables as a map keyed by name (`BINS["cli"]`), each `#{ name, src, required_features }` |
-| `PKGS` | the project's dependencies as a map keyed by name (`PKGS["libfoo"].dir`), each `#{ name, dir, version, external, source }` |
+| `PKGS` | the project's dependencies as a map keyed by name (`PKGS["libfoo"].dir`), each `#{ name, dir, version, external, source, debug }` |
 | `CFG` | the matched section's config data (`CFG.out`, `CFG.enabled`, …) |
 
 `BINS` is keyed by executable name (names are unique). Look one up with
@@ -549,6 +549,8 @@ dep = {
     external    = false,                 # true → built by a plugin, not core (see below)
     source      = false,                 # true → build this freight package from source
                                          #   even if a prebuilt binary exists
+    debug       = false,                 # true → in a debug build, fetch this dep's
+                                         #   debug prebuilt (default: always release)
 }
 ```
 

@@ -645,6 +645,8 @@ struct PkgInfo {
     external: bool,
     /// Declared `source = true`: build from source even if a prebuilt exists.
     source: bool,
+    /// Declared `debug = true`: fetch the debug prebuilt in debug builds.
+    debug: bool,
 }
 
 impl PluginEnv {
@@ -687,13 +689,14 @@ impl PluginEnv {
                     .effective_dependencies()
                     .into_iter()
                     .map(|(name, dep)| {
-                        let (version, dir, external, source) = match &dep {
-                            Dependency::Simple(ver) => (ver.clone(), None, false, false),
+                        let (version, dir, external, source, debug) = match &dep {
+                            Dependency::Simple(ver) => (ver.clone(), None, false, false, false),
                             Dependency::Detailed(d) => (
                                 d.version.clone().unwrap_or_default(),
                                 d.path.clone(),
                                 d.external,
                                 d.source,
+                                d.debug,
                             ),
                         };
                         let dir = match dir {
@@ -706,6 +709,7 @@ impl PluginEnv {
                             version,
                             external,
                             source,
+                            debug,
                         }
                     })
                     .collect();
@@ -739,6 +743,7 @@ fn pkgs_map(env: &PluginEnv) -> Dynamic {
         m.insert("version".into(), Dynamic::from(p.version.clone()));
         m.insert("external".into(), Dynamic::from(p.external));
         m.insert("source".into(), Dynamic::from(p.source));
+        m.insert("debug".into(), Dynamic::from(p.debug));
         map.insert(p.name.clone().into(), Dynamic::from_map(m));
     }
     Dynamic::from_map(map)

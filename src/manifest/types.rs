@@ -941,6 +941,12 @@ pub struct DetailedDep {
     /// that. Has no effect on system / pkg-config-resolved deps.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub source: bool,
+    /// When the consuming build uses the **debug** profile, fetch this dep's
+    /// *debug* prebuilt binary instead of the default (release) one. No effect in
+    /// release builds or for source-built deps. Default: always link the release
+    /// prebuilt, even in debug builds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub debug: bool,
     /// Include directories to expose to code that depends on this dep,
     /// relative to the dep's source directory. Only used for foreign deps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
