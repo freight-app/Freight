@@ -188,6 +188,62 @@ fn resolve_one(
     Ok(())
 }
 
+// ── Real environment ────────────────────────────────────────────────────────
+
+/// The real [`ToolEnv`], backed by the host `PATH` and fetched package manifests.
+///
+/// `prebuilt` is always `None` until freight grows a prebuilt-binary registry
+/// index; until then the resolver chooses **system tool if present, else build
+/// from source** (and `source = true` still forces source). `deps_of` reads a
+/// fetched package's own `[build-dependencies]`, so the bootstrapping recursion
+/// works for anything already in `.pkgs/`.
+pub struct HostToolEnv {
+    /// The `.pkgs/` cache where fetched build-deps live.
+    pub pkgs_dir: std::path::PathBuf,
+}
+
+fn dep_req(dep: &crate::manifest::types::Dependency) -> String {
+    use crate::manifest::types::Dependency;
+    match dep {
+        Dependency::Simple(v) => v.clone(),
+        Dependency::Detailed(d) => d.version.clone().unwrap_or_else(|| "*".to_string()),
+    }
+}
+
+impl ToolEnv for HostToolEnv {
+    fn prebuilt(&self, _name: &str, _req: &str) -> Option<String> {
+        None // no prebuilt-binary registry index yet
+    }
+
+    fn system(&self, name: &str, _req: &str) -> bool {
+        // Presence on PATH. (Version-aware system matching is a later refinement.)
+        crate::toolchain::detect::which(name).is_some()
+    }
+
+    fn source(&self, name: &str, req: &str) -> Option<String> {
+        // A declared build-dep is always source-buildable (fetched + built). Use
+        // the fetched manifest's version when available, else the requested one.
+        if let Ok(m) = crate::manifest::load_manifest(&self.pkgs_dir.join(name)) {
+            return Some(m.package.version);
+        }
+        Some(if req == "*" { "*".to_string() } else { req.to_string() })
+    }
+
+    fn deps_of(&self, name: &str, _version: &str) -> Vec<ToolReq> {
+        use crate::manifest::types::Dependency;
+        let Ok(m) = crate::manifest::load_manifest(&self.pkgs_dir.join(name)) else {
+            return Vec::new();
+        };
+        m.effective_build_dependencies()
+            .into_iter()
+            .map(|(n, d)| {
+                let force = matches!(&d, Dependency::Detailed(dd) if dd.source);
+                ToolReq::new(n, dep_req(&d), force)
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -153,7 +153,17 @@ pub fn build_foreign_deps(
     let mut tool_paths: Vec<PathBuf> = Vec::new();
 
     // Build-deps are host tools — gate them on the host platform, not the target.
+    let tool_env = crate::resolve::build_deps::HostToolEnv {
+        pkgs_dir: pkgs_root.join(".pkgs"),
+    };
     for (name, dep) in &manifest.effective_build_dependencies() {
+        // Resolver decision (no prebuilt index yet): a system tool on PATH
+        // satisfies the build-dep with no fetch/build — unless `source = true`
+        // forces a from-source build.
+        let source_forced = matches!(dep, Dependency::Detailed(d) if d.source);
+        if !source_forced && crate::resolve::build_deps::ToolEnv::system(&tool_env, name, "*") {
+            continue;
+        }
         let dep_dir = match build_dep_dir(name, dep, project_dir, pkgs_root) {
             Some(d) => d,
             None => continue,
