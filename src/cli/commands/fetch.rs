@@ -64,7 +64,7 @@ fn cmd_fetch(prebuilt: PrebuiltKind, triple: &str) {
             Dependency::Detailed(_) if freight::manifest::types::is_platform_dep(name) => {
                 print_status("skip", &format!("{name} (platform)"));
             }
-            Dependency::Detailed(d) if d.path.is_some() && d.dep_type.is_none() => {
+            Dependency::Detailed(d) if d.path.is_some() => {
                 any_work = true;
                 let rel = d.path.as_deref().unwrap();
                 let dep_dir = project_dir.join(rel);
@@ -74,9 +74,6 @@ fn cmd_fetch(prebuilt: PrebuiltKind, triple: &str) {
                     print_error(&format!("{name}: not found at {rel}"));
                     all_ok = false;
                 }
-            }
-            Dependency::Detailed(d) if d.dep_type.is_some() => {
-                print_status("skip", &format!("{name} (foreign — built on demand)"));
             }
             _ => {}
         }

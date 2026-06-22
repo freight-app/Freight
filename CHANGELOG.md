@@ -79,6 +79,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   produced the file instead of treating it as an ordinary project header.
 
 ### Removed
+- **Built-in foreign build systems + `freight migrate` are removed.** The six
+  builtin builders (cmake/make/meson/autotools/scons/bazel) and `invoke_build_system`
+  are gone — foreign source is now built by the **build-system plugins** under
+  `plugins/` (mark a dep `external = true` + add the matching plugin/section). The
+  dep `type = "cmake"/...` field is removed (a foreign dep that isn't `external`
+  is a hard error). `freight migrate` and the `migration/` module are removed;
+  foreign-build setup will move to detection in `init`/`add`. Build-deps must be
+  prebuilt binaries or system tools (no from-source tool builds). pkg-config /
+  system-lib resolution moved to `src/resolve/`.
 - **Built-in protobuf code generation (`[language.proto]` / `protoc`) is removed.**
   The `proto` codegen pipeline stage, the `build::proto` module, and the
   `.proto`-only source guard are gone. Protobuf is now expressed as a **build

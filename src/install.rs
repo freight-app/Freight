@@ -467,7 +467,6 @@ fn pkg_config_requires(
                     && d.branch.is_none()
                     && d.tag.is_none()
                     && d.rev.is_none()
-                    && d.dep_type.is_none()
                     && !d.optional;
                 plain.then(|| name.clone())
             }

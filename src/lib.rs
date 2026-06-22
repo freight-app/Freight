@@ -5,7 +5,6 @@ pub mod doc;
 pub mod error;
 pub mod event;
 pub mod lsp;
-pub mod migration;
 pub mod supports;
 
 pub mod adaptors;

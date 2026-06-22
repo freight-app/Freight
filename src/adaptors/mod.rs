@@ -296,45 +296,31 @@ pub fn build_foreign_deps(
         // Header-only / no-build content stays core-handled. Anything that needs
         // a foreign **build** (cmake/make/…) must be `external = true` so a
         // build-system plugin builds it — core no longer runs foreign builders.
-        match &d.dep_type {
-            Some(bs) if bs == "none" => {
-                let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
-                results.push(ForeignBuilt {
-                    name: name.clone(),
-                    libs: vec![],
-                    include_dirs,
-                    raw_link_flags: vec![],
-                });
-                continue;
+        if d.path.is_some() && dep_dir.join("freight.toml").exists() {
+            // A foreign-wrapper package (`[package]` with `url`/`build`, the
+            // vcpkg-scraper shape) must be built by a plugin; a native freight
+            // package is handled by the dep-graph builder.
+            if foreign_package_spec(&dep_dir).is_some() {
+                return Err(foreign_needs_external(name, "foreign package"));
             }
-            Some(bs) => return Err(foreign_needs_external(name, bs)),
+            continue;
+        }
+        match detect_build_system(&dep_dir) {
+            Some(detected) => return Err(foreign_needs_external(name, &detected)),
             None => {
-                if d.path.is_some() && dep_dir.join("freight.toml").exists() {
-                    // A foreign-wrapper package (`[package]` with `url`/`build`,
-                    // the vcpkg-scraper shape) must be built by a plugin; a native
-                    // freight package is handled by the dep-graph builder.
-                    if foreign_package_spec(&dep_dir).is_some() {
-                        return Err(foreign_needs_external(name, "foreign package"));
-                    }
-                    continue;
-                }
-                match detect_build_system(&dep_dir) {
-                    Some(detected) => return Err(foreign_needs_external(name, &detected)),
-                    None => {
-                        if !has_source_files(&dep_dir) {
-                            let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
-                            if !include_dirs.is_empty() {
-                                results.push(ForeignBuilt {
-                                    name: name.clone(),
-                                    libs: vec![],
-                                    include_dirs,
-                                    raw_link_flags: vec![],
-                                });
-                            }
-                        }
-                        continue;
+                // No build system detected: expose includes for a header-only dep.
+                if !has_source_files(&dep_dir) {
+                    let include_dirs = collect_include_dirs(&dep_dir, &d.include, None);
+                    if !include_dirs.is_empty() {
+                        results.push(ForeignBuilt {
+                            name: name.clone(),
+                            libs: vec![],
+                            include_dirs,
+                            raw_link_flags: vec![],
+                        });
                     }
                 }
+                continue;
             }
         }
     }

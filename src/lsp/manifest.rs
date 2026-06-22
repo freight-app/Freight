@@ -306,9 +306,19 @@ pub fn completion_result(
                 "Include this prebuilt dependency only for matching triples.",
             ),
             (
-                "type",
-                "Foreign build type",
-                "cmake, make, meson, autotools, scons, bazel, or none.",
+                "external",
+                "Built by a plugin",
+                "true → built by a build-system plugin (e.g. [cmake]), not core.",
+            ),
+            (
+                "source",
+                "Force from source",
+                "true → build this freight package from source even if a prebuilt exists.",
+            ),
+            (
+                "debug",
+                "Debug prebuilt",
+                "true → fetch the debug prebuilt in a debug build.",
             ),
             (
                 "include",
@@ -798,7 +808,7 @@ fn hover_for_key(key: &str) -> Option<&'static str> {
         "os" => "OS/family filter for a dependency. Supported family keys include `unix`, `bsd`, `linux`, `windows`, and `macos`.",
         "arch" => "CPU architecture filter or target override. Values mirror Rust target architecture names such as `x86_64` and `aarch64`.",
         "targets" => "Target triple allowlist for a dependency, mainly for prebuilts and cross-compilation.",
-        "type" => "Artifact or foreign build type depending on context: library `static/shared/header`, or dependency `cmake/make/meson/autotools/scons/bazel/none`.",
+        "type" => "Library artifact type: `static`, `shared`, or `header` (in `[lib]`).",
         "include" => "Include directories exported by a foreign dependency, relative to that dependency's source root.",
         "includes" => "Include directories added to compiler invocations in the current section.",
         "patches" => "Patch files applied after fetching a dependency, in order.",
@@ -897,7 +907,6 @@ const DEPENDENCY_PARAMS: &[(&str, &str)] = &[
     ("os", "OS or OS-family allowlist."),
     ("arch", "CPU architecture allowlist."),
     ("targets", "Target triple allowlist."),
-    ("type", "Foreign build type."),
     (
         "external",
         "Built by a build-system plugin (e.g. [cmake]) rather than core.",
@@ -997,7 +1006,7 @@ const TOOL_PARAMS: &[(&str, &str)] = &[
 fn signature_spec_for_context(section: &str, line_until_pos: &str) -> Option<SignatureSpec> {
     if section.contains("dependencies") || inline_table_key(line_until_pos).is_some() {
         return Some(SignatureSpec {
-            label: "freight::dependency { semver version, path path, url git, string branch, string tag, string rev, url url, sha256 sha256, resolver repo, string[] features, bool default-features, bool optional, os[] os, arch[] arch, triple[] targets, build type, bool external, bool source, bool debug, path[] include, string[] defines, path[] patches, string channel }",
+            label: "freight::dependency { semver version, path path, url git, string branch, string tag, string rev, url url, sha256 sha256, resolver repo, string[] features, bool default-features, bool optional, os[] os, arch[] arch, triple[] targets, bool external, bool source, bool debug, path[] include, string[] defines, path[] patches, string channel }",
             params: DEPENDENCY_PARAMS,
             documentation: "Freight dependency table. Only explicitly listed, active dependencies contribute headers and link flags.",
         });

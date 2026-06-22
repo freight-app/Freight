@@ -963,12 +963,6 @@ pub struct DetailedDep {
     /// specific commit and prevents `freight update` from moving it forward.
     #[serde(default)]
     pub rev: Option<String>,
-    /// How the dep content should be treated. Covers build systems and
-    /// content kinds. Values: `"cmake"`, `"make"`, `"meson"`, `"autotools"`,
-    /// `"scons"`, `"bazel"`, `"none"`. Omit to auto-detect from the dep
-    /// directory's marker files (CMakeLists.txt, meson.build, etc.).
-    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
-    pub dep_type: Option<String>,
     /// Mark this dependency as built by an **external build-system plugin** rather
     /// than by freight's core. The source is still fetched into `.pkgs/<name>`,
     /// but freight does not auto-detect or run a build for it — a plugin (e.g. one

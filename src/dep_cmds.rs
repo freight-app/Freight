@@ -72,8 +72,8 @@ pub fn manifest_add_dep(
             if let Some(v) = &d.version {
                 inline.insert("version", Value::from(v.as_str()));
             }
-            if let Some(bs) = &d.dep_type {
-                inline.insert("type", Value::from(bs.as_str()));
+            if d.external {
+                inline.insert("external", Value::from(true));
             }
             if !d.include.is_empty() {
                 let mut arr = toml_edit::Array::new();

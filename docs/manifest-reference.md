@@ -541,18 +541,19 @@ Any dep with a source (path, git, or archive url) supports these additional keys
 ```toml
 dep = {
     path        = "../dep",
-    type        = "cmake",               # cmake | make | meson | autotools | scons | bazel | none
-    defines     = ["BUILD_TESTS=OFF"],   # configure defines, applied per builder (cmake/meson -D,
-                                         #   make KEY=VALUE); a leading -D is accepted.
-                                         #   aliases: cmake-args / cmake_args
-    include     = ["include/", "src/"],  # explicit include dirs (skips auto-detection)
-    external    = false,                 # true → built by a plugin, not core (see below)
+    external    = true,                  # built by a build-system plugin, not core (see below)
+    defines     = ["BUILD_TESTS=OFF"],   # configure defines forwarded to the plugin's section
+    include     = ["include/", "src/"],  # explicit include dirs (header-only deps)
     source      = false,                 # true → build this freight package from source
                                          #   even if a prebuilt binary exists
     debug       = false,                 # true → in a debug build, fetch this dep's
                                          #   debug prebuilt (default: always release)
 }
 ```
+
+> Foreign builds are no longer driven by a `type` field — freight builds them
+> through **build-system plugins**. Mark the dep `external = true` and add the
+> matching plugin + section (e.g. `[cmake]`); see below.
 
 **`external = true`** marks a dependency as built by a **build-system plugin**
 rather than freight's core. The source is still fetched into `.pkgs/<name>` (or a
@@ -568,28 +569,13 @@ cmake-builder = "0.1"          # plugin handling [cmake]
 build = "zlib"
 ```
 
-`type` is optional — freight auto-detects the build system from marker files in the dep directory
-(`CMakeLists.txt` → cmake, `meson.build` → meson, `configure.ac` → autotools, `Makefile` → make, etc.).
-Specifying an explicit `type` when the required marker file is absent is an error.
-
-`type = "none"` skips the build entirely — useful when you want to explicitly declare a
-header-only dep or a prebuilt binary tarball. Freight also auto-detects header-only deps: if no
-compilable source files are found after fetching, the build step is skipped and include dirs are
-collected automatically.
-
-**CMake build details** — when `type = "cmake"` (or auto-detected):
-- Ninja is used as the generator when `ninja` is on `$PATH`; otherwise CMake's default (Unix Makefiles) is used.
-- When `[compiler] target` is set, `-DCMAKE_SYSTEM_NAME` and `-DCMAKE_SYSTEM_PROCESSOR` are injected automatically from the target triple.
-- Parallel builds via `cmake --build --parallel N` on CMake ≥ 3.12.
-- `cmake --install` installs built artifacts to `.freight-build/install/` so headers and archives are always found at a predictable path.
-- Additional configure defines from `defines` are forwarded to the configure step as `-D<KEY=VALUE>`.
-
-**Autotools build details** — when `type = "autotools"` (or auto-detected):
-- When `[compiler] target` is set, `--host=<triple>` is passed to `configure` automatically.
-- Configure is skipped when `config.status` and `Makefile` are already present and `configure` has not been modified since the last configure run (fast-build).
-- `--enable-static --disable-shared` is always passed for predictable static archive output.
-- `make -j{N}` runs with all available CPU cores.
-- For wasm/Emscripten targets, `emconfigure` and `emmake` are used in place of `configure` and `make`.
+Foreign builds (cmake/make/meson/autotools/scons/bazel) are performed by the
+**build-system plugins** under `plugins/`, not by freight's core. Declare the dep
+`external = true` and add the matching plugin + section — the plugin runs the
+tool, installs the result, and wires the headers + libraries back in. A
+header-only dep needs no plugin: with no compilable sources, freight skips the
+build and collects its include dirs. See [`[plugin]` and build
+plugins](#plugin-and-build-plugins).
 
 ### Dependency filters
 

@@ -22,8 +22,7 @@ freight/
 │           ├── registry/       # package registry clients and repo dispatch
 │           ├── fetch/          # git and URL/archive fetching into .pkgs/
 │           ├── doc/            # dependency documentation browser/rendering
-│           ├── meta/           # foreign build systems and package managers
-│           └── migration/      # CMake/Make/Autotools migration helpers
+│           └── resolve/        # dependency resolution (pkg-config, system libs, build-dep bootstrap)
 ├── toolchains/                 # compiler, debugger, formatter, linter templates (.rhai) + system-lib stubs (.toml)
 │   ├── system-libs/            # freight.toml-compatible stubs for well-known OS libraries
 │   │   ├── pthread.toml        # Linux/macOS POSIX threads
@@ -193,7 +192,6 @@ flowchart LR
 
     subgraph Tools["Tooling"]
         D["freight doc"]
-        M["freight migrate\ncmake / make / autotools"]
         N["freight new name"]
         U["freight update"]
         P["freight publish"]

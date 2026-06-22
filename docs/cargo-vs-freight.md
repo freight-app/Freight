@@ -87,9 +87,15 @@ zlib = { version = "1.3", repo = "system" }
 json = { url = "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz", sha256 = "..." }
 ```
 
-**Foreign build system deps** — CMake, Meson, Autotools, Make, Bazel, SCons:
+**Foreign build system deps** — CMake, Meson, Autotools, Make, Bazel, SCons —
+are built by build-system plugins: mark the dep `external = true` and add the
+matching plugin + section.
 ```toml
-SDL2 = { path = "../SDL2", type = "cmake", defines = ["SDL_STATIC=ON"] }
+SDL2          = { path = "../SDL2", external = true }
+cmake-builder = "0.1"
+[cmake]
+build   = "SDL2"
+defines = ["SDL_STATIC=ON"]
 ```
 
 **System libraries** — resolved via pkg-config → stub → registry from a bare version:

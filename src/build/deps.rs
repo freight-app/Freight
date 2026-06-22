@@ -295,10 +295,10 @@ fn compilable_dep_dir(
             } else {
                 return None;
             };
-            // Explicitly foreign, or auto-detected as foreign (and not a freight project).
-            if d.dep_type.is_some()
-                || (!(d.path.is_some() && dep_dir.join("freight.toml").exists())
-                    && crate::adaptors::detect_build_system(&dep_dir).is_some())
+            // Auto-detected as foreign (and not a freight project): not built by
+            // the dep-graph builder — a build-system plugin handles it.
+            if !(d.path.is_some() && dep_dir.join("freight.toml").exists())
+                && crate::adaptors::detect_build_system(&dep_dir).is_some()
             {
                 return None;
             }

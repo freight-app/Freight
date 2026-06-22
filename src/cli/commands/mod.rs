@@ -21,7 +21,6 @@ pub mod lint;
 pub mod login;
 pub mod logout;
 pub mod metadata;
-pub mod migrate;
 pub mod new;
 pub mod outdated;
 pub mod owner;

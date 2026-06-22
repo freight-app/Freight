@@ -97,8 +97,6 @@ enum Commands {
     Fmt(commands::fmt::Args),
     /// Lint source files
     Lint(commands::lint::Args),
-    /// Import a project from another build system into freight
-    Migrate(commands::migrate::Args),
     /// Start the freight.toml language server and clangd passthrough
     Lsp(lsp::Args),
     /// Manage compiler toolchains
@@ -204,7 +202,6 @@ fn main() {
         Commands::Owner(args) => args.run(),
         Commands::Fmt(args) => args.run(),
         Commands::Lint(args) => args.run(),
-        Commands::Migrate(args) => args.run(),
         Commands::Lsp(args) => args.run(),
         Commands::Toolchain(args) => args.run(),
         Commands::Admin(args) => args.run(),
