@@ -604,18 +604,25 @@ pub fn build_foreign_self(
     };
     apply_member_patches(project_dir, &source_dir, &pkg.patches, progress);
     let build_dir = source_dir.join(".freight-build");
-    let libs = invoke_build_system(
-        &source_dir,
-        &build_dir,
-        &pkg.name,
-        &build,
-        profile,
-        &[],
-        manifest.compiler.target.as_deref(),
-        progress,
-        tool_paths,
-        prefix_paths,
+    // Build the package's own foreign source through the bundled build-system
+    // plugin (not the hardcoded builders). Transitive `CMAKE_PREFIX_PATH` for
+    // dependent foreign packages isn't plumbed through the plugin path yet.
+    let _ = prefix_paths;
+    let root = source_dir.parent().unwrap_or(source_dir.as_path());
+    let out = crate::build::plugin::run_build_system(
+        &build, &pkg.name, &source_dir, &build_dir, root, profile, &[], tool_paths, progress,
     )?;
+    let libs: Vec<PathBuf> = out
+        .tool_flags
+        .into_iter()
+        .filter(|tf| tf.tool == "linker")
+        .map(|tf| tf.flag)
+        .filter(|f| {
+            let p = Path::new(f);
+            p.is_absolute() && p.exists()
+        })
+        .map(PathBuf::from)
+        .collect();
 
     // Place the built libraries in the package's own target/<profile>/.
     let out_dir = target_dir.join(profile);
