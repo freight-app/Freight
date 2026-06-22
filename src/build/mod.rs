@@ -1541,21 +1541,8 @@ fn build_resolved_deps(
             profile: profile.to_string(),
         });
 
-        // Unity override: root manifest's `mylib = { ..., unity = true/false }` wins over dep's own flag.
-        let effective_unity = root_manifest
-            .effective_dependencies()
-            .get(&dep.name)
-            .and_then(|d| {
-                if let Dependency::Detailed(dd) = d {
-                    dd.unity
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(dep.manifest.compiler.unity);
-
         let dep_target_dir = dep.dir.join("target");
-        let compile_result = if effective_unity {
+        let compile_result = if dep.manifest.compiler.unity {
             compile::compile_sources_unity(
                 &dep.dir,
                 &dep_target_dir,

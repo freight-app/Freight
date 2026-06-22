@@ -899,12 +899,23 @@ const DEPENDENCY_PARAMS: &[(&str, &str)] = &[
     ("targets", "Target triple allowlist."),
     ("type", "Foreign build type."),
     (
+        "external",
+        "Built by a build-system plugin (e.g. [cmake]) rather than core.",
+    ),
+    (
+        "source",
+        "Build this freight package from source even if a prebuilt exists.",
+    ),
+    (
+        "debug",
+        "In a debug build, fetch this dependency's debug prebuilt.",
+    ),
+    (
         "include",
         "Foreign dependency include dirs exported to dependents.",
     ),
     ("defines", "Build-system configure defines (KEY=VALUE)."),
     ("patches", "Patch files applied after fetching."),
-    ("unity", "Override unity builds for this dependency."),
     ("channel", "Registry channel to use."),
 ];
 
@@ -986,7 +997,7 @@ const TOOL_PARAMS: &[(&str, &str)] = &[
 fn signature_spec_for_context(section: &str, line_until_pos: &str) -> Option<SignatureSpec> {
     if section.contains("dependencies") || inline_table_key(line_until_pos).is_some() {
         return Some(SignatureSpec {
-            label: "freight::dependency { semver version, path path, url git, string branch, string tag, string rev, url url, sha256 sha256, resolver repo, string[] features, bool default-features, bool optional, os[] os, arch[] arch, triple[] targets, build type, path[] include, string[] defines, path[] patches, bool unity, string channel }",
+            label: "freight::dependency { semver version, path path, url git, string branch, string tag, string rev, url url, sha256 sha256, resolver repo, string[] features, bool default-features, bool optional, os[] os, arch[] arch, triple[] targets, build type, bool external, bool source, bool debug, path[] include, string[] defines, path[] patches, string channel }",
             params: DEPENDENCY_PARAMS,
             documentation: "Freight dependency table. Only explicitly listed, active dependencies contribute headers and link flags.",
         });

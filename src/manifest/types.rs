@@ -986,11 +986,6 @@ pub struct DetailedDep {
     /// When omitted, freight tries `pkg-config → system stubs → registry` in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
-    /// Override the dep's own `[compiler] unity` setting.
-    /// `unity = true` forces a unity build of this dep regardless of its manifest;
-    /// `unity = false` disables unity even if the dep enables it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unity: Option<bool>,
     /// Registry channel to fetch this dep from (e.g. `"stable"`, `"experimental"`).
     /// When absent the registry uses its default channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
