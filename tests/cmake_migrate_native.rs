@@ -87,3 +87,56 @@ fn native_migration_of_single_library_cmake_project() {
         String::from_utf8_lossy(&build.stderr),
     );
 }
+
+/// A library plus an executable that links it migrates to a single freight package
+/// with `[lib]` + `[[bin]]`, which builds and runs.
+#[test]
+fn native_migration_of_library_plus_executable() {
+    if !have("cmake") || !(have("cc") || have("gcc") || have("clang")) {
+        eprintln!("skipping: cmake or C compiler missing");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("greetapp");
+
+    write(
+        &proj.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.20)\n\
+         project(greetapp C)\n\
+         add_library(greet STATIC src/greet.c)\n\
+         target_include_directories(greet PUBLIC include)\n\
+         add_executable(app app/main.c)\n\
+         target_link_libraries(app greet)\n\
+         target_include_directories(app PRIVATE include)\n",
+    );
+    write(&proj.join("include/greet.h"), "int greet(void);\n");
+    write(&proj.join("src/greet.c"), "#include <greet.h>\nint greet(void){return 42;}\n");
+    write(
+        &proj.join("app/main.c"),
+        "#include <greet.h>\nint main(void){return greet()==42?0:1;}\n",
+    );
+
+    let init = Command::new(env!("CARGO_BIN_EXE_freight"))
+        .args(["init", "--migrate", "--native"])
+        .current_dir(&proj)
+        .output()
+        .expect("run init");
+    assert!(init.status.success());
+
+    let manifest = fs::read_to_string(proj.join("freight.toml")).unwrap();
+    assert!(manifest.contains("[lib]"), "{manifest}");
+    assert!(manifest.contains("srcs = [\"src/greet.c\"]"), "{manifest}");
+    assert!(manifest.contains("[[bin]]"), "{manifest}");
+    assert!(manifest.contains("src  = \"app/main.c\""), "{manifest}");
+
+    let build = Command::new(env!("CARGO_BIN_EXE_freight"))
+        .arg("build")
+        .current_dir(&proj)
+        .output()
+        .expect("run build");
+    assert!(
+        build.status.success(),
+        "lib + bin migration should build.\nstderr: {}",
+        String::from_utf8_lossy(&build.stderr),
+    );
+}

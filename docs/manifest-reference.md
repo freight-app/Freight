@@ -629,11 +629,13 @@ when `src/` is empty); adopting an existing build system is opt-in:
   dirs, language standard — from CMake's
   [File API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
   (a throwaway `cmake` configure, CMake's own evaluation) and writes a
-  freight-**native** manifest (`[lib]` with an authoritative `srcs` list +
+  freight-**native** manifest (`[lib]` + `[[bin]]` with authoritative `srcs` lists +
   `auto-discover = false`). Targets under test/example/vendor subdirectories are
-  ignored. This maps faithfully for single-library projects (the leaf-lib shape, e.g.
-  fmt); anything else (multiple libraries, an application, or a configure failure)
-  **falls back** to the `build = "cmake"` self-build.
+  ignored. It maps a project to a single freight package: up to one library plus any
+  number of executables (which auto-link the library), with defines/include dirs
+  unioned into `[compiler]`. It **falls back** to the `build = "cmake"` self-build
+  when the shape can't be represented in one package — more than one library (that
+  needs a workspace), a multi-source executable, or a configure failure.
   - **Vendored submodules → deps.** If the project has a `.gitmodules`, `--migrate`
     converts each vendored git submodule (e.g. gRPC's `third_party/*`) into a
     freight `{ url, rev }` dependency, pinned to the exact commit the superproject

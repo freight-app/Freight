@@ -10,33 +10,56 @@ pub mod cmake_fileapi;
 
 pub use cmake_fileapi::{extract, CmakeModel, CmakeTarget, TargetKind};
 
-/// Render a freight-native `freight.toml` from an extracted CMake model, for the
-/// faithful case: a project that builds exactly one library (the common leaf-library
-/// shape, e.g. fmt). Executable targets — typically the project's own tests and
-/// examples — are ignored, since the migration deliverable is the library itself.
-/// Returns `None` when there isn't exactly one library target, so the caller can
-/// fall back to a `build = "cmake"` adoption.
+/// Render a freight-native `freight.toml` from an extracted CMake model, as a single
+/// freight package: up to one library (`[lib]`) plus any number of executables
+/// (`[[bin]]`, which auto-link the library). Defines / include dirs are unioned
+/// across targets into `[compiler]`, and the standard is taken from the library (or
+/// the first executable). Returns `None` — so the caller falls back to a
+/// `build = "cmake"` adoption — when the shape can't be represented faithfully in one
+/// package: more than one library (needs a workspace), or any executable built from
+/// more than one source (`[[bin]]` carries a single entry source).
 pub fn render_native_manifest(name: &str, model: &CmakeModel) -> Option<String> {
     let libs: Vec<&CmakeTarget> = model
         .targets
         .iter()
         .filter(|t| matches!(t.kind, TargetKind::StaticLib | TargetKind::SharedLib))
         .collect();
+    let exes: Vec<&CmakeTarget> = model
+        .targets
+        .iter()
+        .filter(|t| matches!(t.kind, TargetKind::Executable))
+        .collect();
 
-    if libs.len() != 1 {
+    // > 1 library → workspace territory; a multi-source executable can't be a
+    // single `[[bin]]`; nothing to build → fall back in all three cases.
+    if libs.len() > 1 || exes.iter().any(|e| e.sources.len() != 1) {
         return None;
     }
-    let lib = libs[0];
-    if lib.sources.is_empty() {
+    if libs.is_empty() && exes.is_empty() {
         return None;
     }
 
-    let is_cpp = lib.language.as_deref() == Some("CXX");
+    let lib = libs.first().copied();
+    // Language/standard come from the library, else the first executable.
+    let primary = lib.or_else(|| exes.first().copied())?;
+    let is_cpp = model.targets.iter().any(|t| t.language.as_deref() == Some("CXX"));
     let lang_key = if is_cpp { "cpp" } else { "c" };
-    let lib_type = match lib.kind {
-        TargetKind::SharedLib => "shared",
-        _ => "static",
-    };
+
+    // Union defines + includes across every emitted target.
+    let mut defines: Vec<String> = Vec::new();
+    let mut includes: Vec<String> = Vec::new();
+    for t in libs.iter().chain(exes.iter()) {
+        for d in &t.defines {
+            if !defines.contains(d) {
+                defines.push(d.clone());
+            }
+        }
+        for i in &t.includes {
+            if !includes.contains(i) {
+                includes.push(i.clone());
+            }
+        }
+    }
 
     let mut out = String::new();
     out.push_str(&format!(
@@ -46,21 +69,38 @@ pub fn render_native_manifest(name: &str, model: &CmakeModel) -> Option<String> 
          auto-discover = false\n\n",
     ));
 
-    if let Some(std) = lib.std.as_ref() {
+    if let Some(std) = primary.std.as_ref() {
         let prefix = if is_cpp { "c++" } else { "c" };
         out.push_str(&format!("[language.{lang_key}]\nstd = \"{prefix}{std}\"\n\n"));
     }
 
-    out.push_str(&format!("[lib]\ntype = \"{lib_type}\"\n"));
-    out.push_str(&format!("srcs = [{}]\n", toml_str_list(&lib.sources)));
-
-    if !lib.defines.is_empty() || !lib.includes.is_empty() {
-        out.push_str("\n[compiler]\n");
-        if !lib.includes.is_empty() {
-            out.push_str(&format!("includes = [{}]\n", toml_str_list(&lib.includes)));
+    if let Some(lib) = lib {
+        if lib.sources.is_empty() {
+            return None;
         }
-        if !lib.defines.is_empty() {
-            out.push_str(&format!("defines  = [{}]\n", toml_str_list(&lib.defines)));
+        let lib_type = match lib.kind {
+            TargetKind::SharedLib => "shared",
+            _ => "static",
+        };
+        out.push_str(&format!("[lib]\ntype = \"{lib_type}\"\n"));
+        out.push_str(&format!("srcs = [{}]\n\n", toml_str_list(&lib.sources)));
+    }
+
+    for exe in &exes {
+        out.push_str(&format!(
+            "[[bin]]\nname = \"{}\"\nsrc  = \"{}\"\n\n",
+            exe.name,
+            exe.sources[0].replace('\\', "/"),
+        ));
+    }
+
+    if !defines.is_empty() || !includes.is_empty() {
+        out.push_str("[compiler]\n");
+        if !includes.is_empty() {
+            out.push_str(&format!("includes = [{}]\n", toml_str_list(&includes)));
+        }
+        if !defines.is_empty() {
+            out.push_str(&format!("defines  = [{}]\n", toml_str_list(&defines)));
         }
     }
 
@@ -108,16 +148,44 @@ mod tests {
         crate::manifest::load_manifest_str(&toml).expect("renders valid toml");
     }
 
+    fn exe_target(name: &str, src: &str) -> CmakeTarget {
+        CmakeTarget {
+            name: name.into(),
+            kind: TargetKind::Executable,
+            sources: vec![src.into()],
+            defines: vec![],
+            includes: vec![],
+            std: Some("17".into()),
+            language: Some("CXX".into()),
+        }
+    }
+
     #[test]
-    fn executable_targets_are_ignored() {
-        // A single library plus test/example executables → still native (lib only).
-        let mut exe = lib_target("tests");
-        exe.kind = TargetKind::Executable;
+    fn library_plus_single_source_exe_emits_lib_and_bin() {
         let model = CmakeModel {
-            targets: vec![lib_target("fmt"), exe],
+            targets: vec![lib_target("fmt"), exe_target("demo", "app/main.cc")],
         };
-        let toml = render_native_manifest("fmt", &model).expect("lib extracted, exe ignored");
+        let toml = render_native_manifest("fmt", &model).expect("lib + bin → native");
         assert!(toml.contains("[lib]"));
+        assert!(toml.contains("[[bin]]\nname = \"demo\"\nsrc  = \"app/main.cc\""));
+    }
+
+    #[test]
+    fn pure_application_emits_bin_only() {
+        let model = CmakeModel {
+            targets: vec![exe_target("app", "src/main.c")],
+        };
+        let toml = render_native_manifest("app", &model).expect("app → native bin");
+        assert!(!toml.contains("[lib]"));
+        assert!(toml.contains("[[bin]]\nname = \"app\"\nsrc  = \"src/main.c\""));
+    }
+
+    #[test]
+    fn multi_source_executable_falls_back() {
+        let mut exe = exe_target("app", "src/main.c");
+        exe.sources.push("src/extra.c".into());
+        let model = CmakeModel { targets: vec![exe] };
+        assert!(render_native_manifest("x", &model).is_none());
     }
 
     #[test]
@@ -129,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn no_library_falls_back() {
+    fn no_targets_falls_back() {
         let model = CmakeModel { targets: vec![] };
         assert!(render_native_manifest("x", &model).is_none());
     }
