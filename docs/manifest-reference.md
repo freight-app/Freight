@@ -31,10 +31,9 @@ identifiers such as `windows`, `linux`, `macos`/`osx`, `unix`, `uwp`, `x86`, `x6
 
 `auto-discover` (default `true`) controls the zero-config `src/` walk. When `false`,
 freight compiles **only** the files explicitly listed in `[lib].srcs` / `[[bin]].src`
-(plus `[os.*]`/`[arch.*]` sources) — the `src/` tree is not auto-walked. A native
-migration (`freight init --migrate --native`) sets this so the source list it
-extracted from CMake is authoritative (e.g. so a stray `src/fmt.cc` module unit isn't
-picked up).
+(plus `[os.*]`/`[arch.*]` sources) — the `src/` tree is not auto-walked. This is the
+blunt "I list every source" switch; for dropping just a few files while keeping the
+walk, prefer a `!` negation in `[lib].srcs` (above).
 
 ---
 
@@ -321,7 +320,10 @@ defines = ["SPDLOG_COMPILED_LIB"]        # exported defines — see below
 ```
 
 `srcs` accepts either a single string or a list. Glob patterns are expanded relative to the
-project root.
+project root. These entries are **additive** to the zero-config `src/` walk (useful for sources
+outside `src/`). An entry prefixed with `!` is a **negation** — a glob over project-relative
+paths that *removes* matching files from the discovered set, e.g. `srcs = ["!src/fmt.cc"]` keeps
+the walk but drops a module unit CMake wouldn't compile. (Negations are applied after additions.)
 
 `defines` lists **exported (public/interface) preprocessor defines**. They are applied to this
 library's *own* compilation **and** propagated to every dependent — so a consumer compiles in the
@@ -629,13 +631,16 @@ when `src/` is empty); adopting an existing build system is opt-in:
   dirs, language standard — from CMake's
   [File API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
   (a throwaway `cmake` configure, CMake's own evaluation) and writes a
-  freight-**native** manifest (`[lib]` + `[[bin]]` with authoritative `srcs` lists +
-  `auto-discover = false`). Targets under test/example/vendor subdirectories are
-  ignored. It maps a project to a single freight package: up to one library plus any
-  number of executables (which auto-link the library), with defines/include dirs
-  unioned into `[compiler]`. It **falls back** to the `build = "cmake"` self-build
-  when the shape can't be represented in one package — more than one library (that
-  needs a workspace), a multi-source executable, or a configure failure.
+  freight-**native** manifest. It maps a project to a single freight package: up to
+  one library (`[lib]`) plus any number of executables (`[[bin]]`, which auto-link the
+  library), with defines/include dirs unioned into `[compiler]`. Targets under
+  test/example/vendor subdirectories are ignored. The generated manifest is **minimal**
+  — it relies on the `src/` walk and only lists *differences*: a `!` negation for any
+  file the walk would pick up that CMake doesn't compile (e.g. a module unit), and a
+  plain entry for any source outside `src/`. So a tidy library migrates to a manifest
+  with no `srcs` at all. It **falls back** to the `build = "cmake"` self-build when the
+  shape can't be one package — more than one library (needs a workspace), a
+  multi-source executable, or a configure failure.
   - **Vendored submodules → deps.** If the project has a `.gitmodules`, `--migrate`
     converts each vendored git submodule (e.g. gRPC's `third_party/*`) into a
     freight `{ url, rev }` dependency, pinned to the exact commit the superproject

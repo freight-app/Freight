@@ -124,7 +124,8 @@ pub fn init_project(
         // foreign self-build below.
         if native {
             if let Ok(model) = crate::migration::extract(&cwd) {
-                if let Some(toml) = crate::migration::render_native_manifest(&name, &model) {
+                let walk = crate::migration::walk_source_set(&cwd, &model);
+                if let Some(toml) = crate::migration::render_native_manifest(&name, &model, &walk) {
                     fs::write(cwd.join("freight.toml"), toml)?;
                     if !cwd.join(".gitignore").exists() {
                         write_gitignore(&cwd)?;

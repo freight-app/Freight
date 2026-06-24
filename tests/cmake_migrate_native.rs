@@ -64,12 +64,12 @@ fn native_migration_of_single_library_cmake_project() {
     );
 
     let manifest = fs::read_to_string(proj.join("freight.toml")).unwrap();
-    // Native (not a foreign self-build) and authoritative sources.
+    // Native (not a foreign self-build). The walk compiles src/a.c + src/b.c, so no
+    // `srcs` and no `auto-discover` clutter are emitted.
     assert!(!manifest.contains("build = \"cmake\""), "should be native, got:\n{manifest}");
     assert!(manifest.contains("[lib]"), "{manifest}");
-    assert!(manifest.contains("auto-discover = false"), "{manifest}");
-    assert!(manifest.contains("src/a.c"), "{manifest}");
-    assert!(manifest.contains("src/b.c"), "{manifest}");
+    assert!(!manifest.contains("auto-discover"), "walk matches → no flag:\n{manifest}");
+    assert!(!manifest.contains("srcs ="), "walk matches → no srcs:\n{manifest}");
     assert!(manifest.contains("includes = [\"include\"]"), "{manifest}");
     // The test executable must not have leaked in.
     assert!(!manifest.contains("[[bin]]"), "test exe should be ignored:\n{manifest}");
@@ -125,7 +125,7 @@ fn native_migration_of_library_plus_executable() {
 
     let manifest = fs::read_to_string(proj.join("freight.toml")).unwrap();
     assert!(manifest.contains("[lib]"), "{manifest}");
-    assert!(manifest.contains("srcs = [\"src/greet.c\"]"), "{manifest}");
+    // src/greet.c is walk-discovered → not listed; the app's main is outside src/.
     assert!(manifest.contains("[[bin]]"), "{manifest}");
     assert!(manifest.contains("src  = \"app/main.c\""), "{manifest}");
 

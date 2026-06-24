@@ -8,7 +8,56 @@
 
 pub mod cmake_fileapi;
 
+use std::collections::BTreeSet;
+use std::path::Path;
+
 pub use cmake_fileapi::{extract, CmakeModel, CmakeTarget, TargetKind};
+
+/// The set of source files freight's `src/` walk would compile, as project-relative
+/// paths: every file under `src/` whose extension matches one the model's targets
+/// actually compile (e.g. `{"cc"}` for fmt). A native migration uses this so it can
+/// rely on the zero-config walk and list only the *differences* — `!` negations for
+/// files CMake doesn't build (a module unit), and plain additions for sources outside
+/// `src/`.
+pub fn walk_source_set(project_dir: &Path, model: &CmakeModel) -> BTreeSet<String> {
+    let exts: BTreeSet<String> = model
+        .targets
+        .iter()
+        .flat_map(|t| t.sources.iter())
+        .filter_map(|s| {
+            Path::new(s)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+        })
+        .collect();
+    let src_dir = project_dir.join("src");
+    let mut out = BTreeSet::new();
+    if exts.is_empty() || !src_dir.is_dir() {
+        return out;
+    }
+    for entry in walkdir::WalkDir::new(&src_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let matches = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| exts.contains(&e.to_ascii_lowercase()))
+            .unwrap_or(false);
+        if matches {
+            if let Ok(rel) = path.strip_prefix(project_dir) {
+                out.insert(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    out
+}
 
 /// Render a freight-native `freight.toml` from an extracted CMake model, as a single
 /// freight package: up to one library (`[lib]`) plus any number of executables
@@ -18,7 +67,11 @@ pub use cmake_fileapi::{extract, CmakeModel, CmakeTarget, TargetKind};
 /// `build = "cmake"` adoption — when the shape can't be represented faithfully in one
 /// package: more than one library (needs a workspace), or any executable built from
 /// more than one source (`[[bin]]` carries a single entry source).
-pub fn render_native_manifest(name: &str, model: &CmakeModel) -> Option<String> {
+pub fn render_native_manifest(
+    name: &str,
+    model: &CmakeModel,
+    walk_set: &BTreeSet<String>,
+) -> Option<String> {
     let libs: Vec<&CmakeTarget> = model
         .targets
         .iter()
@@ -40,10 +93,24 @@ pub fn render_native_manifest(name: &str, model: &CmakeModel) -> Option<String> 
     }
 
     let lib = libs.first().copied();
-    // Language/standard come from the library, else the first executable.
     let primary = lib.or_else(|| exes.first().copied())?;
     let is_cpp = model.targets.iter().any(|t| t.language.as_deref() == Some("CXX"));
     let lang_key = if is_cpp { "cpp" } else { "c" };
+
+    // Every source actually compiled by some target. Files the `src/` walk would
+    // pick up but that no target compiles (e.g. a module unit) are "extras" to
+    // negate with `!`, so we keep the zero-config walk and only spell out the diff.
+    let compiled: BTreeSet<String> = libs
+        .iter()
+        .chain(exes.iter())
+        .flat_map(|t| t.sources.iter().cloned())
+        .collect();
+    let extras: Vec<String> = walk_set.difference(&compiled).cloned().collect();
+    // Negations have to live in `[lib].srcs`; with no library there's nowhere to put
+    // them, so fall back to the cmake self-build for that (rare) shape.
+    if lib.is_none() && !extras.is_empty() {
+        return None;
+    }
 
     // Union defines + includes across every emitted target.
     let mut defines: Vec<String> = Vec::new();
@@ -64,9 +131,7 @@ pub fn render_native_manifest(name: &str, model: &CmakeModel) -> Option<String> 
     let mut out = String::new();
     out.push_str(&format!(
         "# Migrated from CMake (native) by `freight init --migrate --native`.\n\
-         [package]\nname        = \"{name}\"\nversion     = \"0.1.0\"\ndescription = \"\"\nlicense     = \"MIT\"\n\
-         # Source list is authoritative (extracted from CMake) — no src/ auto-walk.\n\
-         auto-discover = false\n\n",
+         [package]\nname        = \"{name}\"\nversion     = \"0.1.0\"\ndescription = \"\"\nlicense     = \"MIT\"\n\n",
     ));
 
     if let Some(std) = primary.std.as_ref() {
@@ -75,15 +140,24 @@ pub fn render_native_manifest(name: &str, model: &CmakeModel) -> Option<String> 
     }
 
     if let Some(lib) = lib {
-        if lib.sources.is_empty() {
-            return None;
-        }
         let lib_type = match lib.kind {
             TargetKind::SharedLib => "shared",
             _ => "static",
         };
         out.push_str(&format!("[lib]\ntype = \"{lib_type}\"\n"));
-        out.push_str(&format!("srcs = [{}]\n\n", toml_str_list(&lib.sources)));
+        // srcs lists only the differences from the walk: library sources the walk
+        // wouldn't find (outside `src/`) as plain entries, plus `!`-negated extras.
+        let mut srcs: Vec<String> = lib
+            .sources
+            .iter()
+            .filter(|s| !walk_set.contains(*s))
+            .cloned()
+            .collect();
+        srcs.extend(extras.iter().map(|e| format!("!{e}")));
+        if !srcs.is_empty() {
+            out.push_str(&format!("srcs = [{}]\n", toml_str_list(&srcs)));
+        }
+        out.push('\n');
     }
 
     for exe in &exes {
@@ -132,20 +206,49 @@ mod tests {
         }
     }
 
+    fn walk(paths: &[&str]) -> BTreeSet<String> {
+        paths.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
-    fn single_library_renders_native() {
+    fn walk_matches_so_no_srcs_listed() {
+        // The walk would compile exactly the library's sources → no `srcs` at all.
         let model = CmakeModel {
             targets: vec![lib_target("fmt")],
         };
-        let toml = render_native_manifest("fmt", &model).expect("single lib → native");
+        let w = walk(&["src/format.cc", "src/os.cc"]);
+        let toml = render_native_manifest("fmt", &model, &w).expect("single lib → native");
         assert!(toml.contains("[lib]"));
         assert!(toml.contains("type = \"static\""));
-        assert!(toml.contains("srcs = [\"src/format.cc\", \"src/os.cc\"]"));
+        assert!(!toml.contains("srcs ="), "walk matches → no srcs:\n{toml}");
+        assert!(!toml.contains("auto-discover"), "no flag needed:\n{toml}");
         assert!(toml.contains("std = \"c++17\""));
         assert!(toml.contains("includes = [\"include\"]"));
         assert!(toml.contains("defines  = [\"FMT_LOCALE\"]"));
-        // It parses as a valid manifest.
         crate::manifest::load_manifest_str(&toml).expect("renders valid toml");
+    }
+
+    #[test]
+    fn extra_walked_file_is_negated() {
+        // The walk also finds src/fmt.cc (a module unit no target compiles) → negate.
+        let model = CmakeModel {
+            targets: vec![lib_target("fmt")],
+        };
+        let w = walk(&["src/format.cc", "src/os.cc", "src/fmt.cc"]);
+        let toml = render_native_manifest("fmt", &model, &w).expect("native");
+        assert!(toml.contains("srcs = [\"!src/fmt.cc\"]"), "{toml}");
+        crate::manifest::load_manifest_str(&toml).expect("valid toml");
+    }
+
+    #[test]
+    fn library_source_outside_walk_is_listed_plainly() {
+        // A library source the walk wouldn't find (outside src/) is added explicitly.
+        let mut lib = lib_target("x");
+        lib.sources = vec!["vendor/extra.c".into()];
+        lib.language = Some("C".into());
+        let model = CmakeModel { targets: vec![lib] };
+        let toml = render_native_manifest("x", &model, &BTreeSet::new()).expect("native");
+        assert!(toml.contains("srcs = [\"vendor/extra.c\"]"), "{toml}");
     }
 
     fn exe_target(name: &str, src: &str) -> CmakeTarget {
@@ -165,7 +268,8 @@ mod tests {
         let model = CmakeModel {
             targets: vec![lib_target("fmt"), exe_target("demo", "app/main.cc")],
         };
-        let toml = render_native_manifest("fmt", &model).expect("lib + bin → native");
+        let w = walk(&["src/format.cc", "src/os.cc"]);
+        let toml = render_native_manifest("fmt", &model, &w).expect("lib + bin → native");
         assert!(toml.contains("[lib]"));
         assert!(toml.contains("[[bin]]\nname = \"demo\"\nsrc  = \"app/main.cc\""));
     }
@@ -175,9 +279,20 @@ mod tests {
         let model = CmakeModel {
             targets: vec![exe_target("app", "src/main.c")],
         };
-        let toml = render_native_manifest("app", &model).expect("app → native bin");
+        let w = walk(&["src/main.c"]);
+        let toml = render_native_manifest("app", &model, &w).expect("app → native bin");
         assert!(!toml.contains("[lib]"));
         assert!(toml.contains("[[bin]]\nname = \"app\"\nsrc  = \"src/main.c\""));
+    }
+
+    #[test]
+    fn pure_app_with_extra_walked_file_falls_back() {
+        // No library to host the negation for the stray src/ file → fall back.
+        let model = CmakeModel {
+            targets: vec![exe_target("app", "src/main.c")],
+        };
+        let w = walk(&["src/main.c", "src/orphan.c"]);
+        assert!(render_native_manifest("app", &model, &w).is_none());
     }
 
     #[test]
@@ -185,7 +300,7 @@ mod tests {
         let mut exe = exe_target("app", "src/main.c");
         exe.sources.push("src/extra.c".into());
         let model = CmakeModel { targets: vec![exe] };
-        assert!(render_native_manifest("x", &model).is_none());
+        assert!(render_native_manifest("x", &model, &BTreeSet::new()).is_none());
     }
 
     #[test]
@@ -193,12 +308,12 @@ mod tests {
         let model = CmakeModel {
             targets: vec![lib_target("a"), lib_target("b")],
         };
-        assert!(render_native_manifest("x", &model).is_none());
+        assert!(render_native_manifest("x", &model, &BTreeSet::new()).is_none());
     }
 
     #[test]
     fn no_targets_falls_back() {
         let model = CmakeModel { targets: vec![] };
-        assert!(render_native_manifest("x", &model).is_none());
+        assert!(render_native_manifest("x", &model, &BTreeSet::new()).is_none());
     }
 }

@@ -107,9 +107,20 @@ pub fn discover(
     // whose sources sit at the repo root, or a workspace member referencing a
     // shared `../file.c`). The `src/` walk stays the zero-config default; these
     // are additive and de-duplicated below.
+    //
+    // A `[lib].srcs` entry prefixed with `!` is a *negation*: it removes matching
+    // files from the discovered set instead of adding one. The pattern is a glob
+    // over project-relative paths — e.g. `"!src/fmt.cc"` drops a module unit the
+    // walk would otherwise pick up. Negations are applied after all additions.
     let mut explicit: Vec<String> = Vec::new();
+    let mut exclude_patterns: Vec<String> = Vec::new();
     if let Some(lib) = &manifest.lib {
-        explicit.extend(lib.srcs.iter().cloned());
+        for s in &lib.srcs {
+            match s.strip_prefix('!') {
+                Some(neg) => exclude_patterns.push(neg.trim().to_string()),
+                None => explicit.push(s.clone()),
+            }
+        }
     }
     explicit.extend(manifest.bins.iter().map(|b| b.src.clone()));
     for rel_str in explicit {
@@ -133,6 +144,19 @@ pub fn discover(
     // Stable sort + dedup in case globs from different sections overlap.
     sources.sort_by(|a, b| a.path.cmp(&b.path));
     sources.dedup_by(|a, b| a.path == b.path);
+
+    // Apply `!` negations from `[lib].srcs`: drop any discovered source whose
+    // project-relative path matches an exclusion glob.
+    if !exclude_patterns.is_empty() {
+        let patterns: Vec<glob::Pattern> = exclude_patterns
+            .iter()
+            .filter_map(|p| glob::Pattern::new(p).ok())
+            .collect();
+        sources.retain(|s| {
+            let rel = s.path.to_string_lossy().replace('\\', "/");
+            !patterns.iter().any(|p| p.matches(&rel))
+        });
+    }
 
     let mut include_dirs: Vec<PathBuf> = Vec::new();
     // Auto-detect the conventional public-header directories. `include/` is the
@@ -451,6 +475,31 @@ src  = "src/main.cpp"
             .sources
             .iter()
             .any(|s| s.path.ends_with("core/engine.cpp")));
+    }
+
+    #[test]
+    fn bang_prefixed_lib_src_negates_a_walked_file() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("format.cc"), "").unwrap();
+        fs::write(src.join("fmt.cc"), "").unwrap(); // a module unit we don't want
+
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname = \"fmt\"\nversion = \"0.1.0\"\n\
+             [language.cpp]\nstd = \"c++17\"\n\
+             [lib]\ntype = \"static\"\nsrcs = [\"!src/fmt.cc\"]\n",
+        )
+        .unwrap();
+        let found = discover(dir.path(), &manifest, &templates());
+        assert!(
+            found.sources.iter().any(|s| s.path.ends_with("format.cc")),
+            "format.cc should still be discovered"
+        );
+        assert!(
+            !found.sources.iter().any(|s| s.path.ends_with("fmt.cc")),
+            "fmt.cc should be negated out by `!src/fmt.cc`"
+        );
     }
 
     #[test]
