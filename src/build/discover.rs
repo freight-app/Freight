@@ -6,6 +6,23 @@ use walkdir::WalkDir;
 use crate::manifest::types::Manifest;
 use crate::toolchain::CompilerTemplate;
 
+/// Glob options for `!` source negations: case-sensitive, and `*` does **not**
+/// cross a path separator (so `**` is what spans directories — gitignore-like).
+const EXCLUDE_MATCH_OPTS: glob::MatchOptions = glob::MatchOptions {
+    case_sensitive: true,
+    require_literal_separator: true,
+    require_literal_leading_dot: false,
+};
+
+/// Normalize a `!`-negation glob to compare against project-relative paths:
+/// forward slashes, and no leading `/` or `./` anchor (so `!/src/x` and `!src/x`
+/// and `!./src/x` all mean the same thing).
+fn normalize_exclude_glob(pattern: &str) -> String {
+    let p = pattern.replace('\\', "/");
+    let p = p.strip_prefix("./").unwrap_or(&p);
+    p.strip_prefix('/').unwrap_or(p).to_string()
+}
+
 /// A single compilable source file found under `src/`.
 #[derive(Debug, Clone)]
 pub struct SourceFile {
@@ -146,15 +163,18 @@ pub fn discover(
     sources.dedup_by(|a, b| a.path == b.path);
 
     // Apply `!` negations from `[lib].srcs`: drop any discovered source whose
-    // project-relative path matches an exclusion glob.
+    // project-relative path matches an exclusion glob. Patterns are matched with
+    // gitignore-like semantics — `*` stays within one path segment and `**` spans
+    // directories — so `!src/windows/**` drops that whole tree without `*` leaking
+    // across `/`.
     if !exclude_patterns.is_empty() {
         let patterns: Vec<glob::Pattern> = exclude_patterns
             .iter()
-            .filter_map(|p| glob::Pattern::new(p).ok())
+            .filter_map(|p| glob::Pattern::new(&normalize_exclude_glob(p)).ok())
             .collect();
         sources.retain(|s| {
             let rel = s.path.to_string_lossy().replace('\\', "/");
-            !patterns.iter().any(|p| p.matches(&rel))
+            !patterns.iter().any(|p| p.matches_with(&rel, EXCLUDE_MATCH_OPTS))
         });
     }
 
@@ -500,6 +520,68 @@ src  = "src/main.cpp"
             !found.sources.iter().any(|s| s.path.ends_with("fmt.cc")),
             "fmt.cc should be negated out by `!src/fmt.cc`"
         );
+    }
+
+    #[test]
+    fn bang_glob_excludes_directory_tree_not_siblings() {
+        let dir = tempdir().unwrap();
+        for f in [
+            "src/core.c",
+            "src/windows/win.c",
+            "src/windows/sub/more.c",
+            "src/linux/lin.c",
+        ] {
+            let p = dir.path().join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, "").unwrap();
+        }
+        // Leading slash + `**` directory-tree negation.
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\
+             [language.c]\nstd = \"c11\"\n\
+             [lib]\ntype = \"static\"\nsrcs = [\"!/src/windows/**\"]\n",
+        )
+        .unwrap();
+        let found = discover(dir.path(), &manifest, &templates());
+        let has = |suffix: &str| found.sources.iter().any(|s| s.path.ends_with(suffix));
+        assert!(has("src/core.c"), "sibling file kept");
+        assert!(has("linux/lin.c"), "other dir kept");
+        assert!(!has("windows/win.c"), "windows/ excluded");
+        assert!(!has("windows/sub/more.c"), "windows/ subtree excluded");
+    }
+
+    #[test]
+    fn bang_star_stays_within_one_segment() {
+        let dir = tempdir().unwrap();
+        for f in ["src/a.c", "src/nested/b.c"] {
+            let p = dir.path().join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, "").unwrap();
+        }
+        // `src/*.c` must NOT reach into src/nested/ — that needs `**`.
+        let manifest = crate::manifest::load_manifest_str(
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\
+             [language.c]\nstd = \"c11\"\n\
+             [lib]\ntype = \"static\"\nsrcs = [\"!src/*.c\"]\n",
+        )
+        .unwrap();
+        let found = discover(dir.path(), &manifest, &templates());
+        assert!(
+            !found.sources.iter().any(|s| s.path.ends_with("src/a.c")),
+            "src/a.c excluded by src/*.c"
+        );
+        assert!(
+            found.sources.iter().any(|s| s.path.ends_with("nested/b.c")),
+            "src/nested/b.c must survive (single * doesn't cross /)"
+        );
+    }
+
+    #[test]
+    fn normalize_exclude_glob_strips_anchors() {
+        assert_eq!(normalize_exclude_glob("/src/x/**"), "src/x/**");
+        assert_eq!(normalize_exclude_glob("./src/x.c"), "src/x.c");
+        assert_eq!(normalize_exclude_glob("src\\win\\a.c"), "src/win/a.c");
+        assert_eq!(normalize_exclude_glob("src/x.c"), "src/x.c");
     }
 
     #[test]

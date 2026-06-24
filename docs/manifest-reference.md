@@ -321,9 +321,19 @@ defines = ["SPDLOG_COMPILED_LIB"]        # exported defines — see below
 
 `srcs` accepts either a single string or a list. Glob patterns are expanded relative to the
 project root. These entries are **additive** to the zero-config `src/` walk (useful for sources
-outside `src/`). An entry prefixed with `!` is a **negation** — a glob over project-relative
-paths that *removes* matching files from the discovered set, e.g. `srcs = ["!src/fmt.cc"]` keeps
-the walk but drops a module unit CMake wouldn't compile. (Negations are applied after additions.)
+outside `src/`).
+
+An entry prefixed with `!` is a **negation** — a glob that *removes* matching files from the
+discovered set (applied after additions). Negation globs use gitignore-like semantics:
+
+- patterns are relative to the project root; a leading `/` or `./` is ignored, so `!/src/x.c`,
+  `!./src/x.c`, and `!src/x.c` are equivalent;
+- `*` matches within a single path segment and does **not** cross `/`;
+- `**` spans directories, so a whole subtree is `!src/windows/**`.
+
+Examples: `"!src/fmt.cc"` drops one module unit the walk would otherwise compile;
+`"!src/windows/**"` drops a platform subtree; `"!src/*.generated.c"` drops generated files in
+one directory.
 
 `defines` lists **exported (public/interface) preprocessor defines**. They are applied to this
 library's *own* compilation **and** propagated to every dependent — so a consumer compiles in the
