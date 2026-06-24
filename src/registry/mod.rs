@@ -4,9 +4,11 @@
 //! concrete version. Build-time resolution (pkg-config → system stubs → registry)
 //! is separate — the registry is only consulted at `freight add` time.
 
+pub mod directory;
 pub mod freight_registry;
 pub mod repos;
 
+pub use directory::DirectoryRegistry;
 pub use freight_registry::FreightRegistry;
 pub use repos::{default_repo, registries_in_order, repo_by_name};
 

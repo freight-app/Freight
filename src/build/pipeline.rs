@@ -95,6 +95,9 @@ pub struct FeatureResolution {
     pub activated_deps: std::collections::BTreeSet<String>,
     /// Defines forwarded into specific deps via `<dep>/define:NAME`, keyed by dep.
     pub dep_defines: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// This package's own exported defines (`[lib].defines` + active `pub-define:`).
+    /// Already folded into `defines` for its own build; retained for inspection.
+    pub public_defines: std::collections::BTreeSet<String>,
 }
 
 /// Aggregated dep output: static libs + include dirs + raw link flags + tool paths.
@@ -107,6 +110,10 @@ pub struct BuiltDepsOutput {
     /// system libraries so a dep's needs (e.g. pthread) are linked without the
     /// root re-declaring them.
     pub system_features: Vec<String>,
+    /// Exported defines from deps (`[lib].defines` + active `pub-define:`), applied
+    /// to the consumer's own compilation so it builds in the same configuration as
+    /// the libraries it links.
+    pub public_defines: Vec<String>,
 }
 
 /// Compiler flags from the PCH stage.
@@ -153,11 +160,21 @@ pub fn stage_features(
     // `define:NAME[=value]` entries those features carried.
     let mut defines = features::to_defines(&resolution.active);
     defines.extend(resolution.defines.iter().cloned());
+    // This package's OWN exported defines — always-on `[lib].defines` plus any
+    // active `pub-define:` entries — also land in its own compilation. (Propagation
+    // to dependents, when this package is itself a dep, is handled in
+    // `build_resolved_deps`.)
+    let mut public_defines = resolution.public_defines.clone();
+    if let Some(lib) = manifest.lib.as_ref() {
+        public_defines.extend(lib.defines.iter().cloned());
+    }
+    defines.extend(public_defines.iter().cloned());
     Ok(FeatureResolution {
         active: resolution.active,
         defines,
         activated_deps: resolution.activated_deps,
         dep_defines: resolution.dep_defines,
+        public_defines,
     })
 }
 
@@ -261,6 +278,7 @@ pub(crate) fn stage_build_deps(
         raw_link_flags: Vec::new(),
         tool_paths,
         system_features,
+        public_defines: built.public_defines,
     };
     for f in foreign {
         output.libs.extend(f.libs);
@@ -865,6 +883,17 @@ pub fn run_pipeline_at(
     )?;
     let deps = native_deps;
 
+    // Exported defines from dependencies (`[lib].defines` + their active
+    // `pub-define:` entries) apply to this package's own compilation, so it builds
+    // in the same configuration as the libraries it links (e.g. a consumer of the
+    // spdlog port sees SPDLOG_COMPILED_LIB / SPDLOG_FMT_EXTERNAL without restating
+    // them).
+    for d in &deps.public_defines {
+        if !feat.defines.contains(d) {
+            feat.defines.push(d.clone());
+        }
+    }
+
     // ── Foreign self-build ───────────────────────────────────────────────────
     // A foreign package (`[package].build` set, no native targets — the
     // vcpkg-scraper port shape) is fetched + built with its own build system,
@@ -903,9 +932,23 @@ pub fn run_pipeline_at(
 
     // ── Stage 6b: Build plugins (codegen) ────────────────────────────────────
     // Path-dep plugins that handle a declared section generate sources, include
-    // dirs, and defines folded into the build below.
-    let plugin_out =
-        plugin::run_plugins(project_dir, profile, config.goal.name(), &deps.tool_paths, progress)?;
+    // dirs, and defines folded into the build below. Core-resolved deps' install
+    // prefixes seed the plugins' `CFG.prefixes` (parent of each dep include dir,
+    // same heuristic as the foreign-self path) so a foreign dep built by a plugin
+    // can find_package an already-resolved freight dep.
+    let seed_prefixes: Vec<PathBuf> = deps
+        .include_dirs
+        .iter()
+        .filter_map(|d| d.parent().map(Path::to_path_buf))
+        .collect();
+    let plugin_out = plugin::run_plugins(
+        project_dir,
+        profile,
+        config.goal.name(),
+        &deps.tool_paths,
+        &seed_prefixes,
+        progress,
+    )?;
     include_dirs.extend(plugin_out.include_dirs);
     feat.defines.extend(plugin_out.defines);
     let mut all_sources = found.sources.clone();
@@ -1102,6 +1145,136 @@ pub fn run_pipeline_at(
                 compiled: compile_result.compiled,
                 skipped: compile_result.skipped,
             }))
+        }
+    }
+}
+
+// ── CMake transitive-dep build + export ───────────────────────────────────────
+
+/// Provide a single CMake dependency **on demand** for the cmake plugin's
+/// dependency provider — invoked as `freight cmake-provide <name>` from inside a
+/// CMake configure (see `plugins/cmake/cmake.freight`). Returns an install prefix
+/// to add to `CMAKE_PREFIX_PATH`, or `None` when freight provides nothing (the
+/// dep is already on the host, or freight has no copy of it).
+///
+/// Resolution: already-installed (pkg-config / `<Name>Config.cmake`) → `None`
+/// (the parent's CMake finds it). A freight package fetched under `.pkgs/<name>`
+/// → built natively + wrapped in a generated `.pc` + `<Name>Config.cmake`. A
+/// foreign CMake project under `.pkgs/<name>` → built via the cmake plugin (which
+/// installs its own real config).
+pub fn provide_cmake_package(
+    cmake_name: &str,
+    project_dir: &Path,
+    profile: &str,
+    progress: &Progress,
+) -> Option<PathBuf> {
+    use crate::resolve::cmake::{cmake_to_freight_name, is_installed_cmake_package};
+
+    let freight_name = cmake_to_freight_name(cmake_name);
+    // Already on the host → the parent's CMake finds it directly.
+    if !crate::resolve::pkg_config::pkg_config_version(&freight_name).is_empty()
+        || is_installed_cmake_package(cmake_name)
+    {
+        return None;
+    }
+
+    let target_dir = project_dir.join("target");
+    let dep_dir = project_dir.join(".pkgs").join(&freight_name);
+
+    if dep_dir.join("freight.toml").is_file() {
+        provide_native(cmake_name, &freight_name, &dep_dir, project_dir, &target_dir, profile, progress)
+    } else if dep_dir.join("CMakeLists.txt").is_file() {
+        provide_foreign(cmake_name, &dep_dir, project_dir, &target_dir, profile, progress)
+    } else {
+        None
+    }
+}
+
+/// A freight package fetched under `.pkgs/`: build it natively (sharing the root
+/// `.pkgs` pool) and wrap it in a generated `.pc` + `<Name>Config.cmake`.
+fn provide_native(
+    cmake_name: &str,
+    freight_name: &str,
+    dep_dir: &Path,
+    root_dir: &Path,
+    target_dir: &Path,
+    profile: &str,
+    progress: &Progress,
+) -> Option<PathBuf> {
+    let cfg = PipelineConfig {
+        profile: profile.to_string(),
+        goal: PipelineGoal::Build,
+        ..Default::default()
+    };
+    if let Err(e) = run_pipeline_at(dep_dir, &cfg, Some(root_dir), progress) {
+        progress(BuildEvent::Warning(format!(
+            "failed to build cmake dep '{cmake_name}': {e}"
+        )));
+        return None;
+    }
+
+    let pkg_name = crate::manifest::load_manifest(dep_dir)
+        .map(|m| m.package.name)
+        .unwrap_or_else(|_| freight_name.to_string());
+    let version = crate::manifest::load_manifest(dep_dir)
+        .map(|m| m.package.version)
+        .unwrap_or_default();
+    let lib_out = root_dir.join("target").join("deps").join(&pkg_name).join(profile);
+    let mut libs = Vec::new();
+    for ext in ["a", "so", "dylib"] {
+        if let Ok(paths) = glob::glob(&lib_out.join(format!("*.{ext}")).to_string_lossy()) {
+            libs.extend(paths.flatten());
+        }
+    }
+    let includes: Vec<PathBuf> = [dep_dir.join("include")]
+        .into_iter()
+        .filter(|p| p.is_dir())
+        .collect();
+    if libs.is_empty() && includes.is_empty() {
+        return None;
+    }
+
+    let prefix = target_dir.join("cmake-export").join(cmake_name);
+    let spec = crate::build::cmake_export::ExportSpec {
+        cmake_name,
+        pc_name: freight_name,
+        version: &version,
+    };
+    if let Err(e) =
+        crate::build::cmake_export::assemble_export_prefix(&prefix, &includes, &libs, &spec)
+    {
+        progress(BuildEvent::Warning(format!(
+            "failed to export cmake dep '{cmake_name}': {e}"
+        )));
+        return None;
+    }
+    Some(prefix)
+}
+
+/// A foreign CMake project fetched under `.pkgs/`: build it via the cmake plugin
+/// (which configures, builds, and runs its own `install`). Returns its install
+/// prefix (with the project's real `<Name>Config.cmake`).
+fn provide_foreign(
+    cmake_name: &str,
+    dep_dir: &Path,
+    root_dir: &Path,
+    target_dir: &Path,
+    profile: &str,
+    progress: &Progress,
+) -> Option<PathBuf> {
+    let out_dir = target_dir.join("cmake-source").join(cmake_name);
+    match crate::build::plugin::run_build_system(
+        "cmake", cmake_name, dep_dir, &out_dir, root_dir, profile, &[], &[], &[], progress,
+    ) {
+        Ok(built) => built
+            .include_dirs
+            .iter()
+            .find_map(|inc| inc.parent().map(Path::to_path_buf)),
+        Err(e) => {
+            progress(BuildEvent::Warning(format!(
+                "failed to build source dep '{cmake_name}': {e}"
+            )));
+            None
         }
     }
 }

@@ -4,6 +4,8 @@
 //! rather than in a build-system plugin.
 
 pub mod build_deps;
+pub mod cmake;
 pub mod pkg_config;
 pub mod pkg_config_cache;
 pub mod system_pm;
+pub mod system_registry;

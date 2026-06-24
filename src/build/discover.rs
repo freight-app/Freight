@@ -46,7 +46,7 @@ pub fn discover(
     let src_dir = project_dir.join("src");
     let mut sources: Vec<SourceFile> = Vec::new();
 
-    if src_dir.is_dir() {
+    if src_dir.is_dir() && manifest.package.auto_discover {
         for entry in WalkDir::new(&src_dir)
             .follow_links(false)
             .into_iter()

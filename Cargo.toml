@@ -13,6 +13,13 @@ path = "src/lib.rs"
 name = "freight"
 path = "src/cli/main.rs"
 
+# Generates the system-side registry: a `[package]` stub per installed
+# pkg-config package, pulled from a registry or synthesized from the system
+# package manager. A separate executable, run on demand. Reuses freight_core.
+[[bin]]
+name = "freight-system-registry"
+path = "src/bin/system_registry.rs"
+
 [features]
 default   = []
 rich-math = ["dep:ratatui-image", "dep:image", "dep:mathjax-svg-rs", "dep:resvg"]

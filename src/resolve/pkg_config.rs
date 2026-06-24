@@ -120,6 +120,39 @@ pub fn pkg_config_query_with_path(
 
 /// Run `pkg-config --modversion` for the package name extracted from `query`.
 /// Returns an empty string on any failure.
+/// Enumerate every pkg-config package installed on the system: `(name,
+/// description)` where the description is pkg-config's own `Description` field.
+/// Empty when pkg-config/pkgconf isn't available. Order follows `--list-all`.
+pub fn pkg_config_list_all() -> Vec<(String, String)> {
+    let output = Command::new("pkg-config")
+        .arg("--list-all")
+        .output()
+        .or_else(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Command::new("pkgconf").arg("--list-all").output()
+            } else {
+                Err(e)
+            }
+        })
+        .ok();
+    let Some(output) = output.filter(|o| o.status.success()) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            // "name<spaces>Name - Description"
+            let mut it = line.splitn(2, char::is_whitespace);
+            let name = it.next()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let desc = it.next().unwrap_or("").trim().to_string();
+            Some((name.to_string(), desc))
+        })
+        .collect()
+}
+
 pub fn pkg_config_version(query: &str) -> String {
     let pkg_name = query.split_whitespace().next().unwrap_or(query);
     let result = Command::new("pkg-config")

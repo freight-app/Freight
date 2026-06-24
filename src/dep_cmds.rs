@@ -128,6 +128,68 @@ pub fn manifest_remove_dep(manifest_path: &Path, name: &str) -> Result<bool, Fre
     Ok(removed)
 }
 
+/// Register a foreign (non-freight) dependency's build with the matching build
+/// plugin: ensure the plugin itself (`cmake`, `make`, …) is a **build**
+/// dependency (it's a build-time tool, not linked into the artifact), and add
+/// `dep_name` to that plugin's `[<backend>] build` list. The list is created as a
+/// single string for the first entry and promoted to an array thereafter.
+pub fn manifest_add_foreign_build(
+    manifest_path: &Path,
+    dep_name: &str,
+    backend: &str,
+) -> Result<(), FreightError> {
+    let src = std::fs::read_to_string(manifest_path)?;
+    let mut doc: DocumentMut = src
+        .parse()
+        .map_err(|e: toml_edit::TomlError| FreightError::ManifestParse(e.to_string()))?;
+
+    // 1. Ensure the build-system plugin is a build dependency.
+    if !doc.contains_key("build-dependencies") {
+        doc["build-dependencies"] = Item::Table(Table::new());
+    }
+    let deps = doc["build-dependencies"]
+        .as_table_mut()
+        .ok_or_else(|| FreightError::ManifestParse("[build-dependencies] is not a table".into()))?;
+    if !deps.contains_key(backend) {
+        deps[backend] = value("0.1");
+    }
+
+    // 2. Add `dep_name` to the plugin's [<backend>] build list.
+    if !doc.contains_key(backend) {
+        doc[backend] = Item::Table(Table::new());
+    }
+    let table = doc[backend]
+        .as_table_mut()
+        .ok_or_else(|| FreightError::ManifestParse(format!("[{backend}] is not a table")))?;
+
+    match table.get("build") {
+        None => {
+            table["build"] = value(dep_name);
+        }
+        Some(item) => {
+            let mut names: Vec<String> = match item.as_value() {
+                Some(Value::String(s)) => vec![s.value().to_string()],
+                Some(Value::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if !names.iter().any(|n| n == dep_name) {
+                names.push(dep_name.to_string());
+            }
+            let mut arr = toml_edit::Array::new();
+            for n in names {
+                arr.push(n.as_str());
+            }
+            table["build"] = value(arr);
+        }
+    }
+
+    std::fs::write(manifest_path, doc.to_string())?;
+    Ok(())
+}
+
 // ── Git dep fetch / update ───────────────────────────────────────────────────
 
 /// Outcome of a single git dep fetch / update operation.
@@ -695,4 +757,40 @@ pub fn locate_project() -> Result<(std::path::PathBuf, Manifest), FreightError> 
         .ok_or_else(|| FreightError::ManifestNotFound(cwd.to_string_lossy().into_owned()))?;
     let manifest = load_manifest(&dir)?;
     Ok((dir, manifest))
+}
+
+#[cfg(test)]
+mod foreign_build_tests {
+    use super::*;
+
+    #[test]
+    fn wires_first_then_promotes_to_array() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = tmp.path().join("freight.toml");
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        manifest_add_foreign_build(&manifest, "zlib", "cmake").unwrap();
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        assert!(
+            text.contains("[build-dependencies]") && text.contains("cmake = \"0.1\""),
+            "plugin added as a build dependency:\n{text}"
+        );
+        assert!(text.contains("build = \"zlib\""), "single string:\n{text}");
+
+        // A second foreign dep on the same backend promotes `build` to an array.
+        manifest_add_foreign_build(&manifest, "png", "cmake").unwrap();
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        assert!(text.contains("\"zlib\""), "{text}");
+        assert!(text.contains("\"png\""), "{text}");
+        assert!(text.contains('['), "build promoted to array:\n{text}");
+
+        // Idempotent: re-adding the same dep does not duplicate it.
+        manifest_add_foreign_build(&manifest, "png", "cmake").unwrap();
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        assert_eq!(text.matches("\"png\"").count(), 1, "{text}");
+    }
 }

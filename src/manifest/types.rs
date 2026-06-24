@@ -768,6 +768,22 @@ pub struct Package {
     /// package directory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<String>,
+    /// Configure defines for a foreign self-build (`build = "..."`) — passed to
+    /// the build system as `-D` cache entries (cmake/meson) or `KEY=VALUE` (make),
+    /// e.g. `defines = ["gRPC_ZLIB_PROVIDER=package"]`. Aliases: `cmake-args`.
+    #[serde(
+        default,
+        alias = "cmake-args",
+        alias = "cmake_args",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub defines: Vec<String>,
+    /// When `false`, freight does **not** auto-walk `src/`; only files explicitly
+    /// listed in `[lib].srcs` / `[[bin]].src` (plus `[os.*]`/`[arch.*]` sources) are
+    /// compiled. Default `true` (the zero-config walk). A native migration sets this
+    /// `false` so the extracted source list is authoritative.
+    #[serde(default = "default_true", rename = "auto-discover")]
+    pub auto_discover: bool,
 }
 
 // ── Language ──────────────────────────────────────────────────────────────────
@@ -813,6 +829,15 @@ pub struct LibTarget {
     /// Include directories are inferred from the parent directories of listed headers.
     #[serde(default)]
     pub hdrs: Vec<String>,
+    /// Exported (public/interface) preprocessor defines. Applied to this library's
+    /// own compilation AND propagated to every dependent, so consumers compile in
+    /// the same configuration the library was built with (cf. CMake's
+    /// `target_compile_definitions(... PUBLIC ...)`). On a header-only library
+    /// (`type = "header"`) there are no own sources, so these are interface-only.
+    /// Ready for `-D` prefixing (`"NAME"`, `"NAME=value"`). The feature-gated
+    /// counterpart is a `pub-define:` entry in a `[features]` list.
+    #[serde(default)]
+    pub defines: Vec<String>,
     /// Prebuilt library name passed to the linker (e.g. `-l<link>`). When set,
     /// `srcs` must be empty — `link` and source compilation are mutually exclusive.
     /// For `type = "system"` this defaults to the package name when omitted.

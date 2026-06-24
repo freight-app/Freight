@@ -8,6 +8,7 @@ pub mod bench;
 pub mod build;
 pub mod check;
 pub mod clean;
+pub mod cmake_provide;
 pub mod common;
 pub mod compile_commands;
 pub mod completions;

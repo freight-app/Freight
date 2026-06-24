@@ -2537,6 +2537,7 @@ impl Server {
             &self.args.profile,
             "build",
             &[],
+            &[],
             &crate::event::silent(),
         ) {
             tracing::debug!("plugin codegen skipped: {e}");

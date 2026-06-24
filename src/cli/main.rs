@@ -67,6 +67,9 @@ enum Commands {
     Search(commands::search::Args),
     /// Validate freight.toml
     Check(commands::check::Args),
+    /// Internal: provide a CMake dependency for the cmake plugin's provider
+    #[command(hide = true)]
+    CmakeProvide(commands::cmake_provide::Args),
     /// Wipe target/
     Clean(commands::clean::Args),
     /// Generate compile_commands.json for clangd, native Fortran LSP, serve-d and other language servers
@@ -185,6 +188,7 @@ fn main() {
         Commands::Info(args) => args.run(),
         Commands::Search(args) => args.run(),
         Commands::Check(args) => args.run(),
+        Commands::CmakeProvide(args) => args.run(),
         Commands::Clean(args) => args.run(),
         Commands::Compile(args) => args.run(),
         Commands::Doc(args) => args.run(),

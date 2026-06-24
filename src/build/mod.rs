@@ -1,3 +1,4 @@
+pub mod cmake_export;
 pub mod compile;
 pub mod compile_commands;
 pub mod deps;
@@ -121,6 +122,9 @@ pub(crate) struct ProjectContext {
 struct BuiltDeps {
     libs: Vec<PathBuf>,
     include_dirs: Vec<PathBuf>,
+    /// Exported defines collected from deps (`[lib].defines` + active `pub-define:`),
+    /// to be applied to the consumer's own compilation. De-duplicated, sorted.
+    public_defines: Vec<String>,
 }
 
 // ── Build pipeline ────────────────────────────────────────────────────────────
@@ -1476,6 +1480,7 @@ fn build_resolved_deps(
         return Ok(BuiltDeps {
             libs: vec![],
             include_dirs: vec![],
+            public_defines: vec![],
         });
     }
 
@@ -1483,6 +1488,8 @@ fn build_resolved_deps(
     let mut all_include_dirs: Vec<PathBuf> = Vec::new();
     // Accumulate include dirs from already-built deps so later deps can see them.
     let mut built_include_dirs: Vec<PathBuf> = Vec::new();
+    // Exported defines each dep contributes to the consumer's own compilation.
+    let mut public_defines: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for dep in resolved {
         // A plugin-only dependency (declares `[plugin]` but no library/binary to
@@ -1513,10 +1520,22 @@ fn build_resolved_deps(
             let resolution =
                 features::resolve_features(&dep.manifest.features, &req, use_defaults)?;
             let mut defs = features::to_defines(&resolution.active);
+            defs.extend(resolution.defines.iter().cloned());
             // Explicit defines forwarded from the root via `<dep>/define:NAME`.
             if let Some(fwd) = dep_defines.get(&dep.name) {
                 defs.extend(fwd.iter().cloned());
             }
+            // This dep's exported defines: always-on `[lib].defines` plus any active
+            // `pub-define:` entries. They apply to the dep's OWN compilation here and
+            // are also collected (below) for the consumer's compilation, so both
+            // sides build in the same configuration.
+            let mut exported: std::collections::BTreeSet<String> =
+                resolution.public_defines.clone();
+            if let Some(lib) = dep.manifest.lib.as_ref() {
+                exported.extend(lib.defines.iter().cloned());
+            }
+            defs.extend(exported.iter().cloned());
+            public_defines.extend(exported);
             defs
         };
 
@@ -1597,6 +1616,7 @@ fn build_resolved_deps(
     Ok(BuiltDeps {
         libs,
         include_dirs: all_include_dirs,
+        public_defines: public_defines.into_iter().collect(),
     })
 }
 

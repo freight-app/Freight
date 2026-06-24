@@ -1,4 +1,7 @@
-use freight::dep_cmds::{fetch_git_deps, manifest_add_dep, DetailedDep, GitDepAction};
+use freight::adaptors::detect_build_system;
+use freight::dep_cmds::{
+    fetch_git_deps, manifest_add_dep, manifest_add_foreign_build, DetailedDep, GitDepAction,
+};
 use freight::manifest::find_manifest_dir;
 use freight::manifest::types::Dependency;
 use freight::registry::repos::{registries_in_order, repo_by_name};
@@ -177,6 +180,10 @@ pub fn cmd_add(
                 }
                 Err(e) => print_error(&format!("fetch failed: {e}")),
             }
+            // A cloned dep without a freight.toml is a foreign project: mark it
+            // `external` (freight won't build it directly) and, if a build system
+            // is recognised, wire it to the matching build plugin.
+            adopt_foreign_dep(&project_dir, &dep_name, package, branch, tag, rev, dev);
         }
         super::common::refresh_lock(&project_dir);
         return;
@@ -359,6 +366,55 @@ pub fn cmd_add(
     }
 
     super::common::refresh_lock(&project_dir);
+}
+
+/// Inspect a just-cloned git dependency. If it ships a `freight.toml` it is a
+/// native freight package and nothing changes. Otherwise it is foreign: re-write
+/// the dep with `external = true` and, when a build system is recognised, wire it
+/// to the matching build plugin (`[cmake] build = ["dep"]`, etc.).
+fn adopt_foreign_dep(
+    project_dir: &std::path::Path,
+    dep_name: &str,
+    url: &str,
+    branch: Option<&str>,
+    tag: Option<&str>,
+    rev: Option<&str>,
+    dev: bool,
+) {
+    let dep_dir = project_dir.join(".pkgs").join(dep_name);
+    if !dep_dir.is_dir() || dep_dir.join("freight.toml").is_file() {
+        return; // not fetched, or a native freight package
+    }
+
+    let manifest = project_dir.join("freight.toml");
+    let dep = Dependency::Detailed(DetailedDep {
+        url: Some(url.to_string()),
+        branch: branch.map(str::to_string),
+        tag: tag.map(str::to_string),
+        rev: rev.map(str::to_string),
+        external: true,
+        ..Default::default()
+    });
+    if let Err(e) = manifest_add_dep(&manifest, dep_name, &dep, dev) {
+        print_error(&e.to_string());
+        return;
+    }
+    print_status("foreign", &format!("`{dep_name}` is not a freight package → external = true"));
+
+    match detect_build_system(&dep_dir) {
+        Some(backend) => {
+            if let Err(e) = manifest_add_foreign_build(&manifest, dep_name, &backend) {
+                print_error(&e.to_string());
+                return;
+            }
+            print_success(&format!(
+                "wired `{dep_name}` to the `{backend}` plugin ([{backend}] build)"
+            ));
+        }
+        None => print_warning(&format!(
+            "no build system detected for `{dep_name}`; add headers via `include = [..]` if it is header-only"
+        )),
+    }
 }
 
 /// Interactive `freight add` (no package name given) — opens the package browser.

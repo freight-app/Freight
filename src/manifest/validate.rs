@@ -480,7 +480,15 @@ fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
     // A foreign package (`[package].build` set, e.g. a vcpkg-scraper port) has no
     // native targets — it's fetched and built with its own build system.
     let is_foreign = m.package.build.is_some();
-    if m.bins.is_empty() && m.lib.is_none() && !is_foreign {
+    // A project adopted from a foreign build system delegates to a build-system
+    // plugin (e.g. `freight init` on a CMake project writes `[build-dependencies]
+    // cmake` + `[cmake] build = "<self>"`): the plugin produces the artifacts, so
+    // there are no freight-native `[[bin]]`/`[lib]` targets.
+    const BUILD_PLUGINS: &[&str] = &["cmake", "make", "meson", "autotools", "scons", "bazel"];
+    let delegates_to_plugin = BUILD_PLUGINS.iter().any(|p| {
+        m.build_dependencies.contains_key(*p) || m.dependencies.contains_key(*p)
+    });
+    if m.bins.is_empty() && m.lib.is_none() && !is_foreign && !delegates_to_plugin {
         errors.push(ValidationError::new(
             "targets",
             "at least one [[bin]] or [lib] target must be defined",

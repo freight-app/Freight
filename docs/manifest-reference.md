@@ -29,6 +29,13 @@ controls whether the package is buildable on the current host/target. Freight su
 identifiers such as `windows`, `linux`, `macos`/`osx`, `unix`, `uwp`, `x86`, `x64`/`x86_64`,
 `arm`, and `arm64`/`aarch64`, plus the operators `!`, `&`, `|`, and parentheses.
 
+`auto-discover` (default `true`) controls the zero-config `src/` walk. When `false`,
+freight compiles **only** the files explicitly listed in `[lib].srcs` / `[[bin]].src`
+(plus `[os.*]`/`[arch.*]` sources) — the `src/` tree is not auto-walked. A native
+migration (`freight init --migrate --native`) sets this so the source list it
+extracted from CMake is authoritative (e.g. so a stray `src/fmt.cc` module unit isn't
+picked up).
+
 ---
 
 ## `[language.<key>]`
@@ -147,7 +154,7 @@ During the build, the plugin's script runs with these **constants** in scope:
 | `LIB` | the consuming project's library, `#{ name, type, hdrs, srcs, link }` — or `()` when it builds no `[lib]` |
 | `BINS` | the project's executables as a map keyed by name (`BINS["cli"]`), each `#{ name, src, required_features }` |
 | `PKGS` | the project's dependencies as a map keyed by name (`PKGS["libfoo"].dir`), each `#{ name, dir, version, external, source, debug }` |
-| `CFG` | the matched section's config data (`CFG.out`, `CFG.enabled`, …) |
+| `CFG` | the matched section's config data (`CFG.out`, `CFG.enabled`, …). `CFG.prefixes` is an array of install prefixes of everything built before this plugin (core-resolved deps + earlier foreign-build plugins), so a build-system plugin can point `find_package` / pkg-config at them |
 
 `BINS` is keyed by executable name (names are unique). Look one up with
 `BINS["cli"]`; iterate with `for b in BINS.values() { … b.name … }` or over
@@ -170,6 +177,7 @@ same vocabulary the consumer writes. For a native build `TARGET` mirrors `HOST`.
 | `add_include_dir(path)` | — | expose a generated header directory |
 | `define(name)` / `define(name, value)` | — | inject a `-D` define |
 | `add_flag(tool, flag)` | — | inject a flag into one tool's invocations (see below) |
+| `add_prefix(path)` | — | register an install prefix this plugin produced; freight threads it into later plugins' `CFG.prefixes` so a foreign dep built afterwards can resolve it |
 
 `add_flag` targets a specific tool. The `tool` is matched against an invoked
 compiler by its template `name`, `alias`, or `family`, the catch-all
@@ -272,6 +280,10 @@ Notes:
 - A plugin package may **also** ship a library (e.g. the protobuf runtime) — then
   `proto = "0.1.1"` provides both the codegen and the link library. A
   *plugin-only* package (no `[lib]`) is never built or linked; it only runs.
+- **Placement:** a plugin-only build tool (e.g. the `cmake`/`make`/`meson`
+  build-system plugins, which run a tool but link nothing) belongs in
+  `[build-dependencies]`. A plugin that also ships a linked runtime (like `proto`)
+  goes in `[dependencies]`. Both are discovered the same way.
 - The manifest stays declarative — `[proto]` is data, and the plugin is a normal,
   lock-pinned dependency.
 - **Security:**
@@ -302,13 +314,25 @@ Declares a library output. Omit this section for binary-only projects.
 
 ```toml
 [lib]
-type = "static"                          # required — static | shared | header-only
-srcs = ["src/mathlib.cpp", "src/vec.cpp"] # source files (string or list; globs allowed)
-hdrs = ["include/mathlib.h"]             # public headers exposed to dependents
+type    = "static"                       # required — static | shared | header-only
+srcs    = ["src/mathlib.cpp", "src/vec.cpp"] # source files (string or list; globs allowed)
+hdrs    = ["include/mathlib.h"]          # public headers exposed to dependents
+defines = ["SPDLOG_COMPILED_LIB"]        # exported defines — see below
 ```
 
 `srcs` accepts either a single string or a list. Glob patterns are expanded relative to the
 project root.
+
+`defines` lists **exported (public/interface) preprocessor defines**. They are applied to this
+library's *own* compilation **and** propagated to every dependent — so a consumer compiles in the
+same configuration the library was built with, without restating them (mirrors CMake's
+`target_compile_definitions(... PUBLIC ...)`). Use it for macros that are part of the library's
+public API/ABI: e.g. a spdlog port built with the external-fmt option declares
+`defines = ["SPDLOG_COMPILED_LIB", "SPDLOG_FMT_EXTERNAL"]`, and anyone who depends on it picks
+those up automatically. On a `header-only` library there is no own compilation, so `defines`
+are interface-only (dependents only). Private, non-exported defines go in `[compiler].defines`.
+For a define that should be exported only when a feature is active, use a `pub-define:` entry in
+`[features]` (see `[features]`).
 
 `hdrs` lists the public API headers. Freight infers the public include directories from the
 parent paths of the listed files — e.g. `["include/mathlib.h", "include/vec.h"]` automatically
@@ -561,10 +585,17 @@ rather than freight's core. The source is still fetched into `.pkgs/<name>` (or 
 A plugin that handles a section like `[cmake]` then reads `PKGS["<name>"].dir`
 and builds it — see the `cmake` reference plugin under `plugins/`:
 
+The build-system plugin is a build-time tool (it runs cmake; it is not linked
+into the artifact), so it goes in `[build-dependencies]`. The library it builds
+is linked, so it stays in `[dependencies]`:
+
 ```toml
+[build-dependencies]
+cmake = "0.1"          # plugin handling [cmake] (a build-time tool)
+
 [dependencies]
-zlib          = { version = "1.3", external = true }
-cmake = "0.1"          # plugin handling [cmake]
+zlib  = { version = "1.3", external = true }   # linked into the artifact
+
 [cmake]
 build = "zlib"
 ```
@@ -576,6 +607,99 @@ tool, installs the result, and wires the headers + libraries back in. A
 header-only dep needs no plugin: with no compilable sources, freight skips the
 build and collects its include dirs. See [`[plugin]` and build
 plugins](#plugin-and-build-plugins).
+
+**Automatic adoption.** You rarely write the `external = true` + `[cmake]` wiring
+by hand. Plain `freight init` writes a freight-native manifest (and a hello-world
+when `src/` is empty); adopting an existing build system is opt-in:
+
+- **`freight init`** (plain) sets up a native manifest. If it notices a
+  `CMakeLists.txt` it prints a hint suggesting `--migrate`, but does not touch it.
+- **`freight init --migrate`** in a directory containing a `CMakeLists.txt` writes a
+  **foreign self-build** manifest (`[package] build = "cmake"`) — CMake configures
+  and builds the whole project; freight does not compile its sources natively. It
+  harvests `find_package()` calls (from `CMakeLists.txt` **and** `cmake/*.cmake`
+  modules) into `[dependencies]`, each probed with pkg-config (known version →
+  active `external = true`; unknown → commented suggestion). Toolchain packages
+  (`Threads`, `PkgConfig`, …) are skipped. Pass CMake cache options via
+  `[package] defines = ["gRPC_SSL_PROVIDER=package", …]` (alias `cmake-args`) to
+  steer the project toward freight/system-provided deps. (Errors if there is no
+  `CMakeLists.txt` to migrate.)
+- **`freight init --migrate --native`** goes further: instead of a `build = "cmake"`
+  self-build, it extracts the project's *real* build data — sources, defines, include
+  dirs, language standard — from CMake's
+  [File API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
+  (a throwaway `cmake` configure, CMake's own evaluation) and writes a
+  freight-**native** manifest (`[lib]` with an authoritative `srcs` list +
+  `auto-discover = false`). Targets under test/example/vendor subdirectories are
+  ignored. This maps faithfully for single-library projects (the leaf-lib shape, e.g.
+  fmt); anything else (multiple libraries, an application, or a configure failure)
+  **falls back** to the `build = "cmake"` self-build.
+  - **Vendored submodules → deps.** If the project has a `.gitmodules`, `--migrate`
+    converts each vendored git submodule (e.g. gRPC's `third_party/*`) into a
+    freight `{ url, rev }` dependency, pinned to the exact commit the superproject
+    references — so the build pulls them through freight instead of carrying the
+    vendored trees. A submodule whose pinned commit can't be resolved becomes a
+    commented suggestion; one whose derived name collides with an already-harvested
+    `find_package` dep is skipped (no duplicate keys). freight does **not** delete
+    anything — it prints a prune report (`git rm <path>`) so you can remove the
+    trees yourself after a clean build.
+  - **FetchContent → deps.** `FetchContent_Declare(name …)` calls (in
+    `CMakeLists.txt` and `cmake/*.cmake`) are converted too: a git source
+    (`GIT_REPOSITORY` + `GIT_TAG`) becomes `{ url, tag }` — or `{ url, rev }` when
+    the tag looks like a commit SHA — and an archive (`URL` + `URL_HASH SHA256=`)
+    becomes `{ url, sha256 }`. Names colliding with a harvested `find_package` /
+    submodule dep are skipped.
+  - **Vendored `add_subdirectory` → deps.** `add_subdirectory(third_party/x)` calls
+    pointing at a vendored sub-project (a dir with its own `CMakeLists.txt`, under a
+    conventional vendor dir — `third_party`, `external`, `vendor`, … — or its own
+    git checkout) are converted. If the dir is a git checkout, freight recovers its
+    `remote.origin.url` + `HEAD` commit → `{ url, rev }` (pruneable); otherwise it
+    emits a commented `{ path = … }` suggestion (upstream unknown). The project's own
+    subdirs (`src/`, `lib/`, …) and `${var}` paths are left alone.
+- **`freight add <git-url>`** fetches the repo and, if it ships no `freight.toml`,
+  marks the dep `external = true`; when a build system is recognised it also adds
+  the matching plugin to `[build-dependencies]` and a `[<backend>] build` entry.
+
+**On-demand dependency provider.** When the cmake plugin builds a CMake project,
+the injected `Freight.cmake` registers a [CMake dependency
+provider](https://cmake.org/cmake/help/latest/command/cmake_language.html#dependency-providers)
+(CMake 3.24+) that intercepts every `find_package` and `FetchContent_MakeAvailable`
+at configure time — using CMake's own evaluation, not text scraping. For each one
+it calls `freight cmake-provide <name>`, which makes freight's copy available and
+prints an install prefix to add to `CMAKE_PREFIX_PATH`. The dep resolves to:
+
+- **installed** — already on the host (pkg-config, *or* an installed
+  `<Name>Config.cmake` — so `find_package(c-ares)` is matched even though
+  pkg-config calls it `libcares`). Freight provides nothing; CMake finds it.
+- a **freight package** fetched under `.pkgs/` — built natively and wrapped in a
+  generated `.pc` + `<Name>Config.cmake`.
+- a **foreign CMake project** fetched under `.pkgs/` — built via the cmake plugin
+  (which runs its own `install`, yielding its real `<Name>Config.cmake`).
+- otherwise freight provides nothing and CMake's normal search runs (system
+  package, or a `FetchContent` download — freight sets
+  `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=ALWAYS` so a freight/installed copy still
+  wins when present).
+
+This is dynamic and self-contained: no separate resolver binary, no resolution
+file — the cmake script calls `freight` directly, on demand. `freight init` still
+harvests `find_package` names statically (from `CMakeLists.txt` + `cmake/*.cmake`)
+to seed `[dependencies]`.
+
+**System registry.** `freight-system-registry` builds a local directory of
+`[package]` stubs — one per pkg-config package installed on the host — so freight
+can resolve locally-installed libraries offline:
+
+```
+freight-system-registry [--out DIR] [--force] [--no-registry] [--limit N]
+```
+
+For each installed pkg-config package it writes `<name>.toml` (default
+`$FREIGHT_HOME/registries/system/`): a registry's metadata when the package is
+published, otherwise a stub whose `version` comes from pkg-config and whose
+`description` comes from the system package manager (apt/dnf/pacman/…). The result
+is consulted as the `system` repo (`repo = "system"`) and checked first by the
+CMake resolver, so a `find_package` for anything already on the host resolves
+without a network round-trip.
 
 ### Dependency filters
 
@@ -695,11 +819,18 @@ fast   = ["define:NDEBUG", "define:LEVEL=3"]  # inject -DNDEBUG / -DLEVEL=3 into
 crypto = ["openssl/define:WITH_TLS"]          # inject -DWITH_TLS into openssl's build (and
                                               #   activate openssl if it is optional)
 extra  = ["openssl?/define:WITH_EXTRA"]       # weak: inject into openssl only if it is already active
+fmt-ext = ["dep:fmt", "pub-define:USE_EXTERNAL_FMT"]  # EXPORTED define: this package + its dependents
 ```
 
 - `dep:name` — activate optional dependency `name` (no define), mirroring Cargo's `dep:` syntax.
 - `define:NAME` / `define:NAME=value` — inject an explicit `-DNAME` / `-DNAME=value` into the
-  current package (the `=value` is optional).
+  current package (the `=value` is optional). **Private** — not seen by dependents.
+- `pub-define:NAME[=value]` — inject an **exported** define: it lands in this package's own
+  compilation **and** propagates to every dependent (the feature-gated counterpart of
+  `[lib].defines`). Use it when a feature toggles a macro that is part of the library's public
+  API/ABI, so consumers automatically build in the same configuration. Because freight builds each
+  package once with its unified resolved feature set, a flipped feature flips the exported define
+  for the library and all its consumers in lockstep.
 - `<dep>/define:NAME[=value]` — forward the explicit define into **dependency `<dep>`'s** build
   instead of this package, mirroring Cargo's `<dep>/<feature>` syntax. Activates `<dep>` if optional.
 - `<dep>?/define:NAME[=value]` — the weak form: forwards only when `<dep>` is already activated by

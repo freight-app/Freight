@@ -372,12 +372,14 @@ pub fn build_foreign_self(
     apply_member_patches(project_dir, &source_dir, &pkg.patches, progress);
     let build_dir = source_dir.join(".freight-build");
     // Build the package's own foreign source through the bundled build-system
-    // plugin (not the hardcoded builders). Transitive `CMAKE_PREFIX_PATH` for
-    // dependent foreign packages isn't plumbed through the plugin path yet.
-    let _ = prefix_paths;
-    let root = source_dir.parent().unwrap_or(source_dir.as_path());
+    // plugin. `root` is the freight project that owns the `.pkgs/` pool + target
+    // dir (so the cmake provider's `freight cmake-provide` resolves it and outputs
+    // land under <project>/target). Dependent foreign packages' install prefixes
+    // are threaded in via `CFG.prefixes` so this build can find_package them.
+    let root = project_dir;
     let out = crate::build::plugin::run_build_system(
-        &build, &pkg.name, &source_dir, &build_dir, root, profile, &[], tool_paths, progress,
+        &build, &pkg.name, &source_dir, &build_dir, root, profile, &pkg.defines, prefix_paths,
+        tool_paths, progress,
     )?;
     let libs: Vec<PathBuf> = out
         .tool_flags
@@ -414,23 +416,22 @@ pub fn build_foreign_self(
 /// detailed form with a `version` field).
 fn cmake_build_dep_constraint(manifest: &Manifest) -> Option<String> {
     let dep = manifest.build_dependencies.get("cmake")?;
-    match dep {
-        Dependency::Simple(v) => {
-            if crate::manifest::types::is_unpinned_version(v) {
-                None
-            } else {
-                Some(v.trim().to_string())
-            }
-        }
-        Dependency::Detailed(d) => {
-            let v = d.version.as_deref()?;
-            if crate::manifest::types::is_unpinned_version(v) {
-                None
-            } else {
-                Some(v.trim().to_string())
-            }
-        }
+    let v = match dep {
+        Dependency::Simple(v) => v.as_str(),
+        Dependency::Detailed(d) => d.version.as_deref()?,
+    };
+    if crate::manifest::types::is_unpinned_version(v) {
+        return None;
     }
+    let v = v.trim();
+    // The `cmake` build-dep does double duty: it's the build-system *plugin*
+    // package (version `0.x`) AND, historically, a constraint on the cmake
+    // *tool*. CMake tools are `>=3`, so a `0.x` constraint is the plugin version,
+    // not a tool floor — don't enforce it against the installed cmake.
+    if v.trim_start_matches(['>', '=', '^', '~', ' ']).starts_with("0.") {
+        return None;
+    }
+    Some(v.to_string())
 }
 
 /// Probe the cmake binary (from `tool_paths` first, else PATH) for its

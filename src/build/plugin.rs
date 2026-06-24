@@ -48,6 +48,10 @@ struct RawOutput {
     /// is a compiler name/alias/family, the catch-all `"compiler"`, or a role
     /// keyword (`"linker"` / `"archiver"`). See [`ToolFlag`].
     tool_flags: Vec<ToolFlag>,
+    /// Install prefixes (a foreign dep's `CMAKE_INSTALL_PREFIX`, …) this plugin
+    /// produced. Threaded into plugins that run after it as `CFG.prefixes` so a
+    /// later foreign dep can resolve an earlier one (`find_package`, pkg-config).
+    prefixes: Vec<PathBuf>,
 }
 
 /// A flag a plugin directed at one build tool. `tool` is matched against the
@@ -66,6 +70,8 @@ pub struct PluginBuildOutput {
     pub include_dirs: Vec<PathBuf>,
     pub defines: Vec<String>,
     pub tool_flags: Vec<ToolFlag>,
+    /// Install prefixes produced by foreign-build plugins (see [`RawOutput`]).
+    pub prefixes: Vec<PathBuf>,
 }
 
 /// Flags a plugin aimed at a compiler whose template has this `name` / `alias` /
@@ -320,6 +326,16 @@ fn register_fns(engine: &mut Engine, state: &State) {
             .tool_flags
             .push(ToolFlag { tool: "linker".into(), flag: format!("-L{path}") });
     });
+    // Register an install prefix this plugin produced (e.g. a foreign dep's
+    // `CMAKE_INSTALL_PREFIX`). Threaded to later plugins as `CFG.prefixes` so a
+    // dep built afterwards can resolve this one via find_package / pkg-config.
+    let s = state.clone();
+    engine.register_fn("add_prefix", move |path: &str| -> Result<(), Box<EvalAltResult>> {
+        let root = s.borrow().project_dir.clone();
+        let abs = contained(&root, path)?;
+        s.borrow_mut().out.prefixes.push(abs);
+        Ok(())
+    });
 
     register_io_fns(engine, state);
     register_path_fns(engine);
@@ -532,6 +548,17 @@ fn absolutize(root: &Path, path: &str) -> PathBuf {
 
 fn path_string(p: &Path) -> String {
     p.to_string_lossy().into_owned()
+}
+
+/// Path to the running `freight` executable, exposed to plugins as `FREIGHT_BIN`
+/// so a build-system plugin can call freight back (e.g. the cmake dependency
+/// provider runs `${FREIGHT_BIN} cmake-provide <name>` on demand). Falls back to
+/// the bare name (resolved via PATH) if the current exe can't be determined.
+fn freight_bin_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|p| path_string(&p))
+        .unwrap_or_else(|| "freight".to_string())
 }
 
 /// Lexically collapse `.` / `..` (no filesystem access — works for not-yet-created
@@ -911,6 +938,7 @@ fn run_script(
     scope.push_constant("TARGET_DIR", path_string(&target_dir));
     scope.push_constant("OUT_DIR", path_string(&out_dir));
     scope.push_constant("PROFILE", profile);
+    scope.push_constant("FREIGHT_BIN", freight_bin_path());
     // The consuming project's own package name (so a plugin can recognise a
     // self-build: `[cmake] build = "<this package>"` → build PROJECT_DIR).
     scope.push_constant("PKG_NAME", env.pkg_name.clone());
@@ -1002,6 +1030,7 @@ fn embedded_build_system(backend: &str) -> Option<(&'static str, &'static [&'sta
 /// source — it runs exactly the plugin a project would, with a synthesized scope
 /// (`PKGS` = just this package, `CFG.build` = its name).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn run_build_system(
     backend: &str,
     name: &str,
@@ -1010,6 +1039,7 @@ pub fn run_build_system(
     root: &Path,
     profile: &str,
     defines: &[String],
+    prefixes: &[PathBuf],
     tool_paths: &[PathBuf],
     progress: &Progress,
 ) -> Result<PluginBuildOutput, FreightError> {
@@ -1041,6 +1071,7 @@ pub fn run_build_system(
     scope.push_constant("TARGET_DIR", path_string(&target_dir));
     scope.push_constant("OUT_DIR", path_string(out_dir));
     scope.push_constant("PROFILE", profile.to_string());
+    scope.push_constant("FREIGHT_BIN", freight_bin_path());
     scope.push_constant("HOST", platform_map(&env.host_os, &env.host_arch, None));
     scope.push_constant(
         "TARGET",
@@ -1073,6 +1104,17 @@ pub fn run_build_system(
         "defines".into(),
         Dynamic::from_array(defines.iter().map(|d| Dynamic::from(d.clone())).collect()),
     );
+    if !prefixes.is_empty() {
+        cfg.insert(
+            "prefixes".into(),
+            Dynamic::from_array(
+                prefixes
+                    .iter()
+                    .map(|p| Dynamic::from(path_string(p)))
+                    .collect(),
+            ),
+        );
+    }
     scope.push_constant("CFG", Dynamic::from_map(cfg));
 
     let raw = run_engine(
@@ -1087,6 +1129,7 @@ pub fn run_build_system(
         include_dirs: raw.include_dirs,
         defines: raw.defines,
         tool_flags: raw.tool_flags,
+        prefixes: raw.prefixes,
         ..Default::default()
     };
     for abs in raw.sources {
@@ -1117,6 +1160,23 @@ fn plugin_packages(project_dir: &Path) -> Vec<(PathBuf, crate::manifest::Manifes
     for (dep_dir, kind, _key) in source_package_dirs(project_dir) {
         if matches!(kind, PackageKind::PathDep) {
             candidates.push(dep_dir);
+        }
+    }
+
+    // Build-dependency path deps. A build plugin (cmake, protoc, …) is a build
+    // dependency, but `source_package_dirs` only walks runtime/dev deps (build
+    // deps aren't linked/included), so scan them here too. Version build-dep
+    // plugins are already covered by the `.pkgs/` scan below.
+    if let Ok(m) = load_manifest_cached(project_dir) {
+        for dep in m.build_dependencies.values() {
+            if let crate::manifest::types::Dependency::Detailed(d) = dep {
+                if let Some(rel) = &d.path {
+                    let dir = project_dir.join(rel);
+                    if dir.is_dir() {
+                        candidates.push(dir);
+                    }
+                }
+            }
         }
     }
 
@@ -1156,6 +1216,7 @@ pub fn run_plugins(
     profile: &str,
     goal: &str,
     tool_paths: &[PathBuf],
+    seed_prefixes: &[PathBuf],
     progress: &Progress,
 ) -> Result<PluginBuildOutput, FreightError> {
     // The consumer's section tables (e.g. `[proto]`) are read from the raw
@@ -1175,6 +1236,10 @@ pub fn run_plugins(
     let env = PluginEnv::for_project(project_dir);
 
     let mut out = PluginBuildOutput::default();
+    // Install prefixes available to the next plugin run: core-resolved deps seed
+    // it, then each foreign-build plugin appends the prefixes it produced. Fed in
+    // as `CFG.prefixes` so a dep built later can find_package an earlier one.
+    let mut acc_prefixes: Vec<PathBuf> = seed_prefixes.to_vec();
 
     for (dep_dir, dep_manifest) in plugin_packages(project_dir) {
         let Some(plugin) = &dep_manifest.plugin else {
@@ -1212,6 +1277,10 @@ pub fn run_plugins(
                 .join("plugin-gen")
                 .join(path);
 
+            // Thread the prefixes built so far into this plugin's `CFG.prefixes`.
+            let cfg = inject_prefixes(cfg, &acc_prefixes);
+            let cfg = &cfg;
+
             // Incremental: when `inputs` are declared, reuse the previous output
             // unless an input (or the cfg/script) changed.
             let raw_out = if plugin.inputs.is_empty() {
@@ -1232,6 +1301,14 @@ pub fn run_plugins(
                     }
                 }
             };
+
+            // Prefixes this plugin produced become visible to later plugins.
+            for p in &raw_out.prefixes {
+                if !acc_prefixes.contains(p) {
+                    acc_prefixes.push(p.clone());
+                }
+            }
+            out.prefixes.extend(raw_out.prefixes);
 
             for abs in raw_out.sources {
                 if let Some(lang_key) = lang_key_for(&abs) {
@@ -1371,6 +1448,9 @@ struct PluginCache {
     /// Persisted `(tool, flag)` pairs so a cached run still contributes them.
     #[serde(default)]
     tool_flags: Vec<(String, String)>,
+    /// Persisted install prefixes so a cached run still exports them downstream.
+    #[serde(default)]
+    prefixes: Vec<String>,
 }
 
 impl PluginCache {
@@ -1384,6 +1464,7 @@ impl PluginCache {
                 .into_iter()
                 .map(|(tool, flag)| ToolFlag { tool, flag })
                 .collect(),
+            prefixes: self.prefixes.into_iter().map(PathBuf::from).collect(),
         }
     }
 }
@@ -1408,6 +1489,7 @@ fn write_cache(out_dir: &Path, fingerprint: &str, out: &RawOutput) {
             .iter()
             .map(|tf| (tf.tool.clone(), tf.flag.clone()))
             .collect(),
+        prefixes: out.prefixes.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
     };
     if let Ok(json) = serde_json::to_string(&cache) {
         let _ = std::fs::create_dir_all(out_dir);
@@ -1442,6 +1524,22 @@ fn fingerprint(project_dir: &Path, inputs: &[String], cfg: &toml::Value, script_
         hasher.update(format!("{mtime:?}").as_bytes());
     }
     format!("{:x}", hasher.finalize())
+}
+
+/// Return a copy of a section's config table with `prefixes` set to the given
+/// install-prefix paths (as a string array). Lets the pipeline hand each plugin
+/// the prefixes of everything built before it via `CFG.prefixes`. A plugin that
+/// already declares `prefixes` keeps its own value (explicit wins).
+fn inject_prefixes(cfg: &toml::Value, prefixes: &[PathBuf]) -> toml::Value {
+    let mut table = cfg.as_table().cloned().unwrap_or_default();
+    if !prefixes.is_empty() && !table.contains_key("prefixes") {
+        let arr = prefixes
+            .iter()
+            .map(|p| toml::Value::String(p.to_string_lossy().into_owned()))
+            .collect();
+        table.insert("prefixes".to_string(), toml::Value::Array(arr));
+    }
+    toml::Value::Table(table)
 }
 
 /// All table paths in a manifest, dotted (e.g. `proto`, `compiler.clang`).
@@ -1940,7 +2038,7 @@ mod tests {
         .unwrap();
 
         let p = crate::event::silent();
-        let out = run_plugins(&app, "debug", "build", &[], &p).unwrap();
+        let out = run_plugins(&app, "debug", "build", &[], &[], &p).unwrap();
         let has = |s: &str| out.defines.contains(&s.to_string());
         assert!(has("LIBNAME=app"));
         assert!(has("LIBTYPE=shared"));
@@ -1973,10 +2071,10 @@ mod tests {
         .unwrap();
 
         let prog = crate::event::silent();
-        let dbg = run_plugins(&app, "debug", "build", &[], &prog).unwrap();
+        let dbg = run_plugins(&app, "debug", "build", &[], &[], &prog).unwrap();
         assert!(dbg.defines.contains(&"DBG".to_string()));
         assert!(dbg.defines.contains(&"P=debug".to_string()));
-        let rel = run_plugins(&app, "release", "build", &[], &prog).unwrap();
+        let rel = run_plugins(&app, "release", "build", &[], &[], &prog).unwrap();
         assert!(rel.defines.contains(&"REL".to_string()));
         assert!(rel.defines.contains(&"P=release".to_string()));
     }
@@ -2008,7 +2106,7 @@ mod tests {
         .unwrap();
 
         let p = crate::event::silent();
-        let out = run_plugins(&app, "debug", "build", &[], &p).unwrap();
+        let out = run_plugins(&app, "debug", "build", &[], &[], &p).unwrap();
         let has = |s: &str| out.defines.contains(&s.to_string());
         assert!(has("ZLIBVER=1.3"));
         assert!(has("ZLIBDIR_OK=true"));
@@ -2042,8 +2140,9 @@ mod tests {
 
         let out_dir = root.join("target/bs");
         let p = crate::event::silent();
-        let out = run_build_system("cmake", "mylib", &src, &out_dir, &root, "release", &[], &[], &p)
-            .unwrap();
+        let out =
+            run_build_system("cmake", "mylib", &src, &out_dir, &root, "release", &[], &[], &[], &p)
+                .unwrap();
         // The plugin installed headers + a static lib and wired them in.
         assert!(
             out.include_dirs.iter().any(|d| d.ends_with("install/include")),
@@ -2057,11 +2156,12 @@ mod tests {
             "tool_flags: {:?}",
             out.tool_flags
         );
-        // Freight.cmake recorded the project's find_package() calls.
+        // Freight.cmake's dependency provider recorded the find_package() calls
+        // (method name is upper-cased, as CMake passes it to the provider).
         let report = out_dir.join("mylib/freight-report.txt");
         let recorded = std::fs::read_to_string(&report).unwrap_or_default();
         assert!(
-            recorded.contains("find_package Threads"),
+            recorded.contains("FIND_PACKAGE Threads"),
             "report should record find_package(Threads): {recorded:?}"
         );
     }
@@ -2243,8 +2343,70 @@ mod tests {
 
         // And it actually runs.
         let p = crate::event::silent();
-        let out = run_plugins(&app, "debug", "build", &[], &p).unwrap();
+        let out = run_plugins(&app, "debug", "build", &[], &[], &p).unwrap();
         assert_eq!(out.defines, vec!["RAN".to_string()]);
+    }
+
+    #[test]
+    fn inject_prefixes_adds_array_without_clobbering_explicit() {
+        let cfg: toml::Value = toml::from_str("build = \"zlib\"\n").unwrap();
+        let augmented = inject_prefixes(&cfg, &[PathBuf::from("/a"), PathBuf::from("/b")]);
+        let arr = augmented.get("prefixes").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].as_str(), Some("/a"));
+
+        // An explicit `prefixes` in the manifest is preserved (explicit wins).
+        let cfg: toml::Value = toml::from_str("prefixes = [\"/x\"]\n").unwrap();
+        let augmented = inject_prefixes(&cfg, &[PathBuf::from("/a")]);
+        let arr = augmented.get("prefixes").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].as_str(), Some("/x"));
+    }
+
+    #[test]
+    fn seed_prefixes_reach_cfg_and_add_prefix_is_exported() {
+        // A plugin reads CFG.prefixes (seeded by the pipeline) and registers its
+        // own install prefix via add_prefix — which run_plugins surfaces so a
+        // later plugin can resolve it.
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().canonicalize().unwrap();
+        let plug = app.join(".pkgs/dep");
+        std::fs::create_dir_all(&plug).unwrap();
+        std::fs::write(
+            plug.join("freight.toml"),
+            "[package]\nname=\"dep\"\nversion=\"0.1.0\"\n\
+             [plugin]\nentry=\"p.freight\"\nhandles=[\"dep\"]\n",
+        )
+        .unwrap();
+        // For each seeded prefix define a marker, then export OUT_DIR as a prefix.
+        std::fs::write(
+            plug.join("p.freight"),
+            r#"for p in CFG.prefixes { define("SEEN_" + basename(p)); }
+               add_prefix(OUT_DIR);"#,
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("freight.toml"),
+            "[package]\nname=\"app\"\nversion=\"0.1.0\"\n\
+             [dependencies]\ndep=\"0.1.0\"\n[dep]\nx=1\n",
+        )
+        .unwrap();
+
+        let seed = app.join("seedprefix");
+        let p = crate::event::silent();
+        let out = run_plugins(&app, "debug", "build", &[], &[seed.clone()], &p).unwrap();
+
+        assert!(
+            out.defines.contains(&"SEEN_seedprefix".to_string()),
+            "seed prefix reached CFG.prefixes: {:?}",
+            out.defines
+        );
+        assert!(
+            out.prefixes
+                .contains(&app.join("target/debug/plugin-gen/dep")),
+            "add_prefix exported the plugin's OUT_DIR: {:?}",
+            out.prefixes
+        );
     }
 
     #[test]
@@ -2271,9 +2433,9 @@ mod tests {
         .unwrap();
 
         let p = crate::event::silent();
-        let build = run_plugins(&app, "debug", "build", &[], &p).unwrap();
+        let build = run_plugins(&app, "debug", "build", &[], &[], &p).unwrap();
         assert!(build.defines.is_empty(), "gated off for `build`: {:?}", build.defines);
-        let test = run_plugins(&app, "debug", "test", &[], &p).unwrap();
+        let test = run_plugins(&app, "debug", "test", &[], &[], &p).unwrap();
         assert_eq!(test.defines, vec!["RAN".to_string()]);
     }
 
@@ -2298,6 +2460,7 @@ mod tests {
             include_dirs: vec![proj.join("inc")],
             defines: vec!["D".to_string()],
             tool_flags: vec![ToolFlag { tool: "clang".into(), flag: "-X".into() }],
+            prefixes: vec![proj.join("prefix")],
         };
         let od = proj.join("out");
         write_cache(&od, "fp", &out);
@@ -2307,6 +2470,7 @@ mod tests {
         assert_eq!(raw.sources, vec![proj.join("g.cpp")]);
         assert_eq!(raw.defines, vec!["D".to_string()]);
         assert_eq!(raw.tool_flags, out.tool_flags);
+        assert_eq!(raw.prefixes, vec![proj.join("prefix")]);
     }
 
     #[test]

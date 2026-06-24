@@ -52,11 +52,19 @@ pub fn resolve_dep_graph(
         activated_deps,
         patches,
     );
-    // Queue carries (name, dir, depth): direct deps of root start at depth 1.
-    let mut queue: VecDeque<(String, PathBuf, usize)> =
-        initial.into_iter().map(|(n, d)| (n, d, 1)).collect();
+    // Queue carries (name, dir, depth, requested_features, use_defaults). The
+    // feature request for each dep comes from the manifest that declared it, so a
+    // transitive dep's own features (and thus which of its *optional* deps are
+    // active) can be resolved during the walk.  Direct deps of root start at depth 1.
+    let mut queue: VecDeque<(String, PathBuf, usize, Vec<String>, bool)> = initial
+        .into_iter()
+        .map(|(n, d)| {
+            let (req, use_defaults) = requested_features_for(root_manifest, &n);
+            (n, d, 1, req, use_defaults)
+        })
+        .collect();
 
-    while let Some((name, dir, depth)) = queue.pop_front() {
+    while let Some((name, dir, depth, req_features, use_defaults)) = queue.pop_front() {
         if nodes.contains_key(&name) {
             continue;
         }
@@ -72,12 +80,25 @@ pub fn resolve_dep_graph(
         let manifest = load_manifest(&dir)
             .map_err(|e| FreightError::ManifestParse(format!("dep '{name}': {e}")))?;
 
+        // Resolve *this* dep's features so its `dep:name` entries activate the
+        // corresponding optional deps. Without this a transitive dep's optional
+        // deps (e.g. spdlog's `dep:fmt` behind its default `external-fmt` feature)
+        // would be silently dropped from the graph, taking their include dirs,
+        // libs, and exported defines with them. Resolution errors are left for the
+        // build step to report; fall back to no activation here.
+        let activated = super::features::resolve_features(
+            &manifest.features,
+            &req_features,
+            use_defaults,
+        )
+        .map(|r| r.activated_deps)
+        .unwrap_or_default();
+
         // All deps — including transitive ones — live in the root project's flat
         // .pkgs/ pool, not in a nested .pkgs/ inside each dep.  Path deps in a
         // transitive manifest are relative to that dep's own directory, but
         // version/git deps always resolve against root_dir.
-        let empty = BTreeSet::new();
-        let sub_deps = direct_compilable_deps(root_dir, &dir, &manifest, false, &empty, patches);
+        let sub_deps = direct_compilable_deps(root_dir, &dir, &manifest, false, &activated, patches);
         for (sub_name, sub_dir) in &sub_deps {
             if !sub_dir.exists() {
                 return Err(FreightError::ManifestParse(format!(
@@ -90,10 +111,21 @@ pub fn resolve_dep_graph(
         let sub_names: Vec<String> = sub_deps.iter().map(|(n, _)| n.clone()).collect();
         deps_of.insert(name.clone(), sub_names);
         depths.insert(name.clone(), depth);
+
+        // Capture each sub-dep's requested features (declared by this manifest)
+        // before `manifest` is moved into `nodes`.
+        let next: Vec<(String, PathBuf, Vec<String>, bool)> = sub_deps
+            .into_iter()
+            .map(|(sub_name, sub_dir)| {
+                let (req, ud) = requested_features_for(&manifest, &sub_name);
+                (sub_name, sub_dir, req, ud)
+            })
+            .collect();
+
         nodes.insert(name, (dir, manifest));
 
-        for sub in sub_deps {
-            queue.push_back((sub.0, sub.1, depth + 1));
+        for (sub_name, sub_dir, req, ud) in next {
+            queue.push_back((sub_name, sub_dir, depth + 1, req, ud));
         }
     }
 
@@ -227,6 +259,22 @@ pub fn dep_include_dirs(dep_dir: &Path, manifest: &Manifest) -> Vec<PathBuf> {
 ///
 /// For the root project both are the same. For transitive deps, `root_dir`
 /// stays fixed while `declaring_dir` is the dep's own directory.
+/// The feature request a manifest makes for one of its dependencies: the explicit
+/// `features = [...]` list and whether `default-features` is on. Used to resolve
+/// that dependency's own features (and thus its active optional deps) during the
+/// graph walk. Defaults to "no extra features, defaults on" — matching a bare
+/// `name = "1.0"` / `{ path = "..." }` entry and how `build_resolved_deps` reads it.
+fn requested_features_for(parent: &Manifest, dep_name: &str) -> (Vec<String>, bool) {
+    parent
+        .effective_dependencies()
+        .get(dep_name)
+        .and_then(|d| match d {
+            Dependency::Detailed(d) => Some((d.features.clone(), d.default_features)),
+            Dependency::Simple(_) => None,
+        })
+        .unwrap_or((Vec::new(), true))
+}
+
 fn direct_compilable_deps(
     root_dir: &Path,
     declaring_dir: &Path,

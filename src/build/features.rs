@@ -17,6 +17,13 @@
 //! that dep). The strong form activates `<dep>` if it is optional; the weak form
 //! `<dep>?/define:NAME[=value]` forwards the define only when `<dep>` is already
 //! activated by something else, and never activates it itself.
+//!
+//! A `pub-define:NAME[=value]` entry injects an *exported* define: it lands in this
+//! package's own compilation AND propagates to every dependent (the conditional
+//! counterpart of the always-on `[lib].defines`). Use it when a feature toggles a
+//! macro that is part of the library's public API/ABI (e.g. `SPDLOG_FMT_EXTERNAL`),
+//! so consumers automatically compile in the same configuration the library was
+//! built with. Plain `define:` stays private to this package.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
@@ -37,10 +44,17 @@ pub struct FeatureResolution {
     /// weak `<dep>?/define:NAME`). Keyed by dep name; values ready for `-D`
     /// prefixing. Sorted, de-duplicated per dep.
     pub dep_defines: BTreeMap<String, BTreeSet<String>>,
+    /// Public (exported) defines from `pub-define:NAME` / `pub-define:NAME=value`
+    /// entries. Applied to this package's own compilation AND propagated to its
+    /// dependents — the conditional counterpart of `[lib].defines`. Ready for `-D`
+    /// prefixing. Sorted, de-duplicated.
+    pub public_defines: BTreeSet<String>,
 }
 
-/// The prefix marking an explicit-define entry in a feature list.
+/// The prefix marking an explicit private-define entry in a feature list.
 const DEFINE_PREFIX: &str = "define:";
+/// The prefix marking an explicit public (exported) define entry in a feature list.
+const PUBLIC_DEFINE_PREFIX: &str = "pub-define:";
 
 // ── Resolution ────────────────────────────────────────────────────────────────
 
@@ -64,6 +78,7 @@ pub fn resolve_features(
             activated_deps: BTreeSet::new(),
             defines: BTreeSet::new(),
             dep_defines: BTreeMap::new(),
+            public_defines: BTreeSet::new(),
         });
     }
 
@@ -75,6 +90,7 @@ pub fn resolve_features(
     let mut active: BTreeSet<String> = BTreeSet::new();
     let mut activated_deps: BTreeSet<String> = BTreeSet::new();
     let mut defines: BTreeSet<String> = BTreeSet::new();
+    let mut public_defines: BTreeSet<String> = BTreeSet::new();
     let mut dep_defines: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     // Weak `<dep>?/define:NAME` entries, resolved after the BFS once the full
     // activated-dep set is known: (dep, define).
@@ -131,6 +147,18 @@ pub fn resolve_features(
             continue;
         }
 
+        // pub-define:NAME / pub-define:NAME=value → an exported preprocessor define
+        // (this package's own build + its dependents). Checked before the bare
+        // `define:` arm. The `<dep>/...` arm above already handled slash-prefixed
+        // entries, so this is always self-directed.
+        if let Some(def) = feat.strip_prefix(PUBLIC_DEFINE_PREFIX) {
+            let def = def.trim();
+            if !def.is_empty() {
+                public_defines.insert(def.to_string());
+            }
+            continue;
+        }
+
         // define:NAME / define:NAME=value → an explicit preprocessor define.
         if let Some(def) = feat.strip_prefix(DEFINE_PREFIX) {
             let def = def.trim();
@@ -168,6 +196,7 @@ pub fn resolve_features(
         activated_deps,
         defines,
         dep_defines,
+        public_defines,
     })
 }
 
@@ -301,6 +330,40 @@ mod tests {
         // `define:` entries are not treated as feature names or deps.
         assert!(!r.active.iter().any(|a| a.starts_with("define:")));
         assert!(r.activated_deps.is_empty());
+    }
+
+    #[test]
+    fn pub_define_separate_from_private_define() {
+        let f = map(&[
+            ("default", &["external-fmt"]),
+            (
+                "external-fmt",
+                &["pub-define:SPDLOG_FMT_EXTERNAL", "define:SPDLOG_PRIVATE"],
+            ),
+        ]);
+        let r = resolve_features(&f, &[], true).unwrap();
+        // Exported define lands in public_defines (propagated to dependents).
+        assert!(r.public_defines.contains("SPDLOG_FMT_EXTERNAL"));
+        // Private define stays in `defines`, never exported.
+        assert!(r.defines.contains("SPDLOG_PRIVATE"));
+        assert!(!r.public_defines.contains("SPDLOG_PRIVATE"));
+        assert!(!r.defines.contains("SPDLOG_FMT_EXTERNAL"));
+        // Neither prefix is treated as a feature name.
+        assert!(!r.active.iter().any(|a| a.contains("define:")));
+    }
+
+    #[test]
+    fn pub_define_gated_off_without_default_feature() {
+        let f = map(&[
+            ("default", &["external-fmt"]),
+            ("external-fmt", &["pub-define:SPDLOG_FMT_EXTERNAL"]),
+        ]);
+        // Defaults on → exported.
+        let on = resolve_features(&f, &[], true).unwrap();
+        assert!(on.public_defines.contains("SPDLOG_FMT_EXTERNAL"));
+        // --no-default-features → not exported.
+        let off = resolve_features(&f, &[], false).unwrap();
+        assert!(off.public_defines.is_empty());
     }
 
     #[test]
