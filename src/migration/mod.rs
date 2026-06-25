@@ -83,26 +83,59 @@ pub fn render_native_manifest(
         .filter(|t| matches!(t.kind, TargetKind::Executable))
         .collect();
 
-    // > 1 library → workspace territory; a multi-source executable can't be a
-    // single `[[bin]]`; nothing to build → fall back in all three cases.
-    if libs.len() > 1 || exes.iter().any(|e| e.sources.len() != 1) {
+    // Collapse static/shared variants of the *same* library (identical source set)
+    // into one — many projects build both, e.g. zlib's `zlib` + `zlibstatic`. A
+    // static variant is preferred as the representative. Genuinely distinct
+    // libraries (different sources) remain separate → workspace territory → fall back.
+    let mut src_sets: Vec<BTreeSet<String>> = Vec::new();
+    let mut reps: Vec<&CmakeTarget> = Vec::new();
+    for l in &libs {
+        let key: BTreeSet<String> = l.sources.iter().cloned().collect();
+        match src_sets.iter().position(|s| *s == key) {
+            Some(i) => {
+                if l.kind == TargetKind::StaticLib {
+                    reps[i] = l;
+                }
+            }
+            None => {
+                src_sets.push(key);
+                reps.push(l);
+            }
+        }
+    }
+
+    // > 1 distinct library → workspace territory → fall back.
+    if reps.len() > 1 {
         return None;
     }
-    if libs.is_empty() && exes.is_empty() {
+    let lib = reps.first().copied();
+
+    // When a library is present, executables are its tools / examples / tests — not
+    // the migration deliverable — so they're ignored (real-world example tools like
+    // zlib's minigzip break native builds and aren't wanted). A *pure application*
+    // (no library) migrates its single-source executables instead.
+    let emit_exes: Vec<&CmakeTarget> = if lib.is_some() {
+        Vec::new()
+    } else {
+        exes.clone()
+    };
+    if lib.is_none() && (emit_exes.is_empty() || emit_exes.iter().any(|e| e.sources.len() != 1)) {
         return None;
     }
 
-    let lib = libs.first().copied();
-    let primary = lib.or_else(|| exes.first().copied())?;
+    let primary = lib.or_else(|| emit_exes.first().copied())?;
     let is_cpp = model.targets.iter().any(|t| t.language.as_deref() == Some("CXX"));
     let lang_key = if is_cpp { "cpp" } else { "c" };
 
-    // Every source actually compiled by some target. Files the `src/` walk would
-    // pick up but that no target compiles (e.g. a module unit) are "extras" to
-    // negate with `!`, so we keep the zero-config walk and only spell out the diff.
-    let compiled: BTreeSet<String> = libs
+    // Targets whose flags/sources we actually emit (the library, or the app's exes).
+    let emitted: Vec<&CmakeTarget> = lib.into_iter().chain(emit_exes.iter().copied()).collect();
+
+    // Every source actually compiled by an emitted target. Files the `src/` walk
+    // would pick up but that no emitted target compiles (e.g. a module unit, or an
+    // ignored tool's source) are "extras" to negate with `!`, so we keep the
+    // zero-config walk and only spell out the diff.
+    let compiled: BTreeSet<String> = emitted
         .iter()
-        .chain(exes.iter())
         .flat_map(|t| t.sources.iter().cloned())
         .collect();
     let extras: Vec<String> = walk_set.difference(&compiled).cloned().collect();
@@ -112,10 +145,10 @@ pub fn render_native_manifest(
         return None;
     }
 
-    // Union defines + includes across every emitted target.
+    // Union defines + includes across the emitted targets.
     let mut defines: Vec<String> = Vec::new();
     let mut includes: Vec<String> = Vec::new();
-    for t in libs.iter().chain(exes.iter()) {
+    for t in &emitted {
         for d in &t.defines {
             if !defines.contains(d) {
                 defines.push(d.clone());
@@ -160,7 +193,7 @@ pub fn render_native_manifest(
         out.push('\n');
     }
 
-    for exe in &exes {
+    for exe in &emit_exes {
         out.push_str(&format!(
             "[[bin]]\nname = \"{}\"\nsrc  = \"{}\"\n\n",
             exe.name,
@@ -264,14 +297,15 @@ mod tests {
     }
 
     #[test]
-    fn library_plus_single_source_exe_emits_lib_and_bin() {
+    fn library_present_so_executables_are_ignored() {
+        // A library + an example/tool executable → migrate the library only.
         let model = CmakeModel {
             targets: vec![lib_target("fmt"), exe_target("demo", "app/main.cc")],
         };
         let w = walk(&["src/format.cc", "src/os.cc"]);
-        let toml = render_native_manifest("fmt", &model, &w).expect("lib + bin → native");
+        let toml = render_native_manifest("fmt", &model, &w).expect("lib → native");
         assert!(toml.contains("[lib]"));
-        assert!(toml.contains("[[bin]]\nname = \"demo\"\nsrc  = \"app/main.cc\""));
+        assert!(!toml.contains("[[bin]]"), "exe should be ignored when a lib exists:\n{toml}");
     }
 
     #[test]
@@ -304,10 +338,29 @@ mod tests {
     }
 
     #[test]
-    fn multiple_libraries_fall_back() {
+    fn static_and_shared_variants_collapse_to_one() {
+        // Same sources, two targets (e.g. zlib + zlibstatic) → one native [lib].
+        let mut shared = lib_target("z");
+        shared.kind = TargetKind::SharedLib;
+        let mut stat = lib_target("zstatic");
+        stat.kind = TargetKind::StaticLib;
         let model = CmakeModel {
-            targets: vec![lib_target("a"), lib_target("b")],
+            targets: vec![shared, stat],
         };
+        let w = walk(&["src/format.cc", "src/os.cc"]);
+        let toml = render_native_manifest("z", &model, &w).expect("variants collapse → native");
+        assert!(toml.contains("[lib]"));
+        // The static variant is the representative.
+        assert!(toml.contains("type = \"static\""), "{toml}");
+    }
+
+    #[test]
+    fn genuinely_distinct_libraries_fall_back() {
+        let mut a = lib_target("a");
+        a.sources = vec!["src/a.c".into()];
+        let mut b = lib_target("b");
+        b.sources = vec!["src/b.c".into()];
+        let model = CmakeModel { targets: vec![a, b] };
         assert!(render_native_manifest("x", &model, &BTreeSet::new()).is_none());
     }
 

@@ -641,16 +641,22 @@ when `src/` is empty); adopting an existing build system is opt-in:
   dirs, language standard — from CMake's
   [File API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
   (a throwaway `cmake` configure, CMake's own evaluation) and writes a
-  freight-**native** manifest. It maps a project to a single freight package: up to
-  one library (`[lib]`) plus any number of executables (`[[bin]]`, which auto-link the
-  library), with defines/include dirs unioned into `[compiler]`. Targets under
-  test/example/vendor subdirectories are ignored. The generated manifest is **minimal**
-  — it relies on the `src/` walk and only lists *differences*: a `!` negation for any
-  file the walk would pick up that CMake doesn't compile (e.g. a module unit), and a
-  plain entry for any source outside `src/`. So a tidy library migrates to a manifest
-  with no `srcs` at all. It **falls back** to the `build = "cmake"` self-build when the
-  shape can't be one package — more than one library (needs a workspace), a
-  multi-source executable, or a configure failure.
+  freight-**native** manifest. The migration is **library-focused**: when the project
+  builds a library, that becomes the `[lib]` and any executables are treated as the
+  library's tools / examples / tests and **ignored** (real example tools — e.g. zlib's
+  `minigzip` — often have their own build quirks and aren't the deliverable). Static and
+  shared variants of the same library (e.g. `zlib` + `zlibstatic`) collapse into one.
+  A *pure application* (no library) migrates its single-source executables as `[[bin]]`
+  instead. Targets under test/example/vendor subdirectories are ignored, defines/include
+  dirs are unioned into `[compiler]`, and the configure runs with
+  `-DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5` so older projects still
+  configure. The generated manifest is **minimal** — it relies on the `src/` walk and
+  only lists *differences*: a `!` negation for any file the walk would pick up that the
+  library doesn't compile (e.g. a module unit), and a plain entry for any source outside
+  `src/`. A tidy library migrates to a manifest with no `srcs` at all. It **falls back**
+  to the `build = "cmake"` self-build when the shape can't be one package — more than one
+  *distinct* library (needs a workspace), a header-only INTERFACE library (no sources),
+  or a configure failure.
   - **Vendored submodules → deps.** If the project has a `.gitmodules`, `--migrate`
     converts each vendored git submodule (e.g. gRPC's `third_party/*`) into a
     freight `{ url, rev }` dependency, pinned to the exact commit the superproject

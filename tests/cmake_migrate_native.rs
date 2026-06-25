@@ -88,8 +88,8 @@ fn native_migration_of_single_library_cmake_project() {
     );
 }
 
-/// A library plus an executable that links it migrates to a single freight package
-/// with `[lib]` + `[[bin]]`, which builds and runs.
+/// A library project that also builds a tool executable migrates to just the
+/// `[lib]` — the executable is treated as a tool/example and ignored — and builds.
 #[test]
 fn native_migration_of_library_plus_executable() {
     if !have("cmake") || !(have("cc") || have("gcc") || have("clang")) {
@@ -125,9 +125,8 @@ fn native_migration_of_library_plus_executable() {
 
     let manifest = fs::read_to_string(proj.join("freight.toml")).unwrap();
     assert!(manifest.contains("[lib]"), "{manifest}");
-    // src/greet.c is walk-discovered → not listed; the app's main is outside src/.
-    assert!(manifest.contains("[[bin]]"), "{manifest}");
-    assert!(manifest.contains("src  = \"app/main.c\""), "{manifest}");
+    // src/greet.c is walk-discovered → not listed; the `app` tool exe is ignored.
+    assert!(!manifest.contains("[[bin]]"), "tool exe should be ignored:\n{manifest}");
 
     let build = Command::new(env!("CARGO_BIN_EXE_freight"))
         .arg("build")
@@ -136,7 +135,7 @@ fn native_migration_of_library_plus_executable() {
         .expect("run build");
     assert!(
         build.status.success(),
-        "lib + bin migration should build.\nstderr: {}",
+        "library migration should build.\nstderr: {}",
         String::from_utf8_lossy(&build.stderr),
     );
 }

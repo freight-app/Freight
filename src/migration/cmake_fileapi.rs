@@ -61,6 +61,9 @@ pub fn extract(project_dir: &Path) -> Result<CmakeModel, FreightError> {
         .arg(&build)
         // Courtesy for CTest-based projects: fewer test targets to filter out.
         .arg("-DBUILD_TESTING=OFF")
+        // Let projects whose `cmake_minimum_required` predates 3.5 still configure
+        // under a modern CMake (which otherwise errors out).
+        .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
         .output()
         .map_err(|e| FreightError::OptionError(format!("could not run cmake: {e}")))?;
     if !output.status.success() {
