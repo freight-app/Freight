@@ -104,11 +104,19 @@ pub fn render_native_manifest(
         }
     }
 
-    // > 1 distinct library → workspace territory → fall back.
-    if reps.len() > 1 {
+    // One library → use it. Several distinct libraries that form a single connected
+    // dependency component are *components of one logical library* (e.g. abseil's ~90
+    // internal static libs sharing an include root) → merge them into one `[lib]`;
+    // their inter-deps become internal to the single archive. Disconnected groups are
+    // genuinely independent libraries → workspace territory → fall back for now.
+    let lib_owned: Option<CmakeTarget> = if reps.len() <= 1 {
+        reps.first().map(|l| (*l).clone())
+    } else if libs_form_single_component(&reps) {
+        Some(merge_libraries(name, &reps))
+    } else {
         return None;
-    }
-    let lib = reps.first().copied();
+    };
+    let lib = lib_owned.as_ref();
 
     // When a library is present, executables are its tools / examples / tests — not
     // the migration deliverable — so they're ignored (real-world example tools like
@@ -214,6 +222,86 @@ pub fn render_native_manifest(
     Some(out)
 }
 
+/// True when the library targets form a single connected component under their
+/// inter-dependency edges (treated as undirected). That is the signature of one
+/// logical library split into components (all interlinked), as opposed to several
+/// independent libraries that happen to live in the same repository.
+fn libs_form_single_component(libs: &[&CmakeTarget]) -> bool {
+    if libs.len() <= 1 {
+        return true;
+    }
+    let names: BTreeSet<&str> = libs.iter().map(|l| l.name.as_str()).collect();
+    // Undirected adjacency restricted to the library set.
+    let mut adj: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for l in libs {
+        for d in &l.dep_targets {
+            if names.contains(d.as_str()) {
+                adj.entry(l.name.as_str()).or_default().push(d.as_str());
+                adj.entry(d.as_str()).or_default().push(l.name.as_str());
+            }
+        }
+    }
+    // BFS from the first library; every library must be reachable.
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut queue = vec![libs[0].name.as_str()];
+    seen.insert(libs[0].name.as_str());
+    while let Some(n) = queue.pop() {
+        for &m in adj.get(n).into_iter().flatten() {
+            if seen.insert(m) {
+                queue.push(m);
+            }
+        }
+    }
+    seen.len() == names.len()
+}
+
+/// Merge several component libraries into one synthetic library target: the union of
+/// their sources, include dirs, and defines, with the highest language standard. The
+/// inter-component dependencies disappear — everything lands in one archive.
+fn merge_libraries(name: &str, libs: &[&CmakeTarget]) -> CmakeTarget {
+    let mut sources: Vec<String> = Vec::new();
+    let mut includes: Vec<String> = Vec::new();
+    let mut defines: Vec<String> = Vec::new();
+    for l in libs {
+        for s in &l.sources {
+            if !sources.contains(s) {
+                sources.push(s.clone());
+            }
+        }
+        for i in &l.includes {
+            if !includes.contains(i) {
+                includes.push(i.clone());
+            }
+        }
+        for d in &l.defines {
+            if !defines.contains(d) {
+                defines.push(d.clone());
+            }
+        }
+    }
+    sources.sort();
+    let std = libs
+        .iter()
+        .filter_map(|l| l.std.as_ref())
+        .max_by_key(|s| s.parse::<u32>().unwrap_or(0))
+        .cloned();
+    let language = if libs.iter().any(|l| l.language.as_deref() == Some("CXX")) {
+        Some("CXX".to_string())
+    } else {
+        Some("C".to_string())
+    };
+    CmakeTarget {
+        name: name.to_string(),
+        kind: TargetKind::StaticLib,
+        sources,
+        includes,
+        defines,
+        std,
+        language,
+        dep_targets: Vec::new(),
+    }
+}
+
 /// Render a list of strings as a TOML inline array body: `"a", "b"`.
 fn toml_str_list(items: &[String]) -> String {
     items
@@ -236,6 +324,7 @@ mod tests {
             includes: vec!["include".into()],
             std: Some("17".into()),
             language: Some("CXX".into()),
+            dep_targets: vec![],
         }
     }
 
@@ -293,6 +382,7 @@ mod tests {
             includes: vec![],
             std: Some("17".into()),
             language: Some("CXX".into()),
+            dep_targets: vec![],
         }
     }
 
@@ -355,13 +445,39 @@ mod tests {
     }
 
     #[test]
-    fn genuinely_distinct_libraries_fall_back() {
+    fn disconnected_libraries_fall_back() {
+        // Two libraries with no inter-dependency → two components → not one library.
         let mut a = lib_target("a");
-        a.sources = vec!["src/a.c".into()];
+        a.sources = vec!["a/a.c".into()];
         let mut b = lib_target("b");
-        b.sources = vec!["src/b.c".into()];
+        b.sources = vec!["b/b.c".into()];
         let model = CmakeModel { targets: vec![a, b] };
         assert!(render_native_manifest("x", &model, &BTreeSet::new()).is_none());
+    }
+
+    #[test]
+    fn connected_component_libraries_merge_into_one() {
+        // base ← strings ← cord: one connected component → merged into a single [lib].
+        let mut base = lib_target("base");
+        base.sources = vec!["absl/base/base.cc".into()];
+        base.dep_targets = vec![];
+        let mut strings = lib_target("strings");
+        strings.sources = vec!["absl/strings/strings.cc".into()];
+        strings.dep_targets = vec!["base".into()];
+        let mut cord = lib_target("cord");
+        cord.sources = vec!["absl/strings/cord.cc".into()];
+        cord.dep_targets = vec!["strings".into(), "base".into()];
+        let model = CmakeModel {
+            targets: vec![base, strings, cord],
+        };
+        let toml = render_native_manifest("absl", &model, &BTreeSet::new())
+            .expect("connected components merge → native");
+        // One [lib], all three components' sources merged in.
+        assert_eq!(toml.matches("[lib]").count(), 1, "{toml}");
+        assert!(!toml.contains("[[bin]]"));
+        for s in ["absl/base/base.cc", "absl/strings/strings.cc", "absl/strings/cord.cc"] {
+            assert!(toml.contains(s), "merged srcs missing {s}:\n{toml}");
+        }
     }
 
     #[test]

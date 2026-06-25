@@ -653,10 +653,16 @@ when `src/` is empty); adopting an existing build system is opt-in:
   configure. The generated manifest is **minimal** — it relies on the `src/` walk and
   only lists *differences*: a `!` negation for any file the walk would pick up that the
   library doesn't compile (e.g. a module unit), and a plain entry for any source outside
-  `src/`. A tidy library migrates to a manifest with no `srcs` at all. It **falls back**
-  to the `build = "cmake"` self-build when the shape can't be one package — more than one
-  *distinct* library (needs a workspace), a header-only INTERFACE library (no sources),
-  or a configure failure.
+  `src/`. A tidy library migrates to a manifest with no `srcs` at all.
+  - **Merging component libraries.** Many large libraries are split into dozens of
+    internal static libraries (e.g. abseil's ~90 targets) that share an include root and
+    a dense internal dependency graph but ship as *one* logical library. When the
+    libraries form a single connected component under their inter-dependencies, migration
+    **merges** them into one `[lib]` — the union of their sources, include dirs, and
+    defines — since the inter-component links all resolve inside the single archive.
+  It **falls back** to the `build = "cmake"` self-build when the shape can't be one
+  package — multiple *disconnected* libraries (genuinely independent → needs a
+  workspace), a header-only INTERFACE library (no sources), or a configure failure.
   - **Vendored submodules → deps.** If the project has a `.gitmodules`, `--migrate`
     converts each vendored git submodule (e.g. gRPC's `third_party/*`) into a
     freight `{ url, rev }` dependency, pinned to the exact commit the superproject

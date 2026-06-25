@@ -38,6 +38,9 @@ pub struct CmakeTarget {
     pub std: Option<String>,
     /// `"C"` or `"CXX"` — the target's dominant compiled language.
     pub language: Option<String>,
+    /// Names of other targets this target links/depends on (used to detect whether
+    /// many small libraries are components of one logical library → merge).
+    pub dep_targets: Vec<String>,
 }
 
 /// The extracted model: every representable target in the project.
@@ -114,6 +117,8 @@ struct DirectoryEntry {
 
 #[derive(Deserialize)]
 struct TargetRef {
+    id: String,
+    name: String,
     #[serde(rename = "jsonFile")]
     json_file: String,
     #[serde(default, rename = "directoryIndex")]
@@ -129,6 +134,13 @@ struct TargetFile {
     sources: Vec<SourceEntry>,
     #[serde(default, rename = "compileGroups")]
     compile_groups: Vec<CompileGroup>,
+    #[serde(default)]
+    dependencies: Vec<DependencyRef>,
+}
+
+#[derive(Deserialize)]
+struct DependencyRef {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -182,6 +194,11 @@ fn parse_reply(reply_dir: &Path, project_dir: &Path) -> Result<CmakeModel, Freig
     let (directories, trefs) = configuration
         .map(|c| (c.directories, c.targets))
         .unwrap_or_default();
+    // Target id → name, so each target's dependency ids resolve to target names.
+    let id_to_name: std::collections::HashMap<String, String> = trefs
+        .iter()
+        .map(|t| (t.id.clone(), t.name.clone()))
+        .collect();
     for tref in trefs {
         // Skip targets defined under test/example/vendor subdirectories — those are
         // the project's own tests/examples and bundled deps (gtest, …), not the
@@ -198,7 +215,7 @@ fn parse_reply(reply_dir: &Path, project_dir: &Path) -> Result<CmakeModel, Freig
         let Ok(tf) = serde_json::from_str::<TargetFile>(&text) else {
             continue;
         };
-        if let Some(target) = build_target(tf, project_dir) {
+        if let Some(target) = build_target(tf, project_dir, &id_to_name) {
             targets.push(target);
         }
     }
@@ -253,11 +270,21 @@ fn target_kind(type_: &str) -> TargetKind {
 
 /// Distil a target file into a [`CmakeTarget`]. Returns `None` for kinds freight
 /// can't represent (utility/interface/…) or targets with no compiled sources.
-fn build_target(tf: TargetFile, project_dir: &Path) -> Option<CmakeTarget> {
+fn build_target(
+    tf: TargetFile,
+    project_dir: &Path,
+    id_to_name: &std::collections::HashMap<String, String>,
+) -> Option<CmakeTarget> {
     let kind = target_kind(&tf.type_);
     if kind == TargetKind::Other {
         return None;
     }
+    let dep_targets: Vec<String> = tf
+        .dependencies
+        .iter()
+        .filter_map(|d| id_to_name.get(&d.id).cloned())
+        .filter(|n| *n != tf.name)
+        .collect();
 
     // Compiled sources: those with a compile-group index and a project-relative
     // path (an absolute path is generated or lives outside the source tree).
@@ -310,6 +337,7 @@ fn build_target(tf: TargetFile, project_dir: &Path) -> Option<CmakeTarget> {
         includes,
         std,
         language,
+        dep_targets,
     })
 }
 
@@ -321,10 +349,12 @@ fn project_relative(path: &str, project_dir: &Path) -> Option<String> {
     if !p.is_absolute() {
         return Some(path.replace('\\', "/"));
     }
-    p.strip_prefix(project_dir)
-        .ok()
-        .map(|r| r.to_string_lossy().replace('\\', "/"))
-        .filter(|s| !s.is_empty())
+    p.strip_prefix(project_dir).ok().map(|r| {
+        let rel = r.to_string_lossy().replace('\\', "/");
+        // The project root itself is a valid include dir (e.g. abseil, included as
+        // `absl/...`) — represent it as ".".
+        if rel.is_empty() { ".".to_string() } else { rel }
+    })
 }
 
 #[cfg(test)]
@@ -352,7 +382,7 @@ mod tests {
             ]
         }"#;
         let tf: TargetFile = serde_json::from_str(json).unwrap();
-        let t = build_target(tf, Path::new("/proj")).unwrap();
+        let t = build_target(tf, Path::new("/proj"), &Default::default()).unwrap();
         assert_eq!(t.kind, TargetKind::StaticLib);
         // Header (no compileGroupIndex) and the absolute generated path are dropped.
         assert_eq!(t.sources, vec!["src/format.cc", "src/os.cc"]);
@@ -377,7 +407,7 @@ mod tests {
             r#"{ "name": "docs", "type": "UTILITY", "sources": [], "compileGroups": [] }"#,
         )
         .unwrap();
-        assert!(build_target(tf, Path::new("/proj")).is_none());
+        assert!(build_target(tf, Path::new("/proj"), &Default::default()).is_none());
     }
 
     #[test]
@@ -387,6 +417,11 @@ mod tests {
             Some("include".to_string())
         );
         assert_eq!(project_relative("/usr/include", Path::new("/proj")), None);
+        // The project root itself is a valid include dir, mapped to ".".
+        assert_eq!(
+            project_relative("/proj", Path::new("/proj")),
+            Some(".".to_string())
+        );
         assert_eq!(
             project_relative("include", Path::new("/proj")),
             Some("include".to_string())
