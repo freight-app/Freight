@@ -1,4 +1,29 @@
 
+### 2026-06-28 — Claude — REMOVE auto-migration from freight core → new `freight-migrate` crate
+
+Decision (Max): migrating arbitrary C++ projects automatically is best-effort and
+breaks things; building a foreign project via the cmake plugin (`build = "cmake"`) is
+the safe, supported path. So all auto-migration leaves freight core and becomes a
+separate tool. Big frameworks get hand-curated, version-pinned ports in the ecosystem
+later.
+
+Removed from freight (this branch): `freight init --migrate[ --native]`, the CMake
+File API native extraction + library merge (src/migration/), find_package harvesting,
+and vendored-import conversion (submodules/FetchContent/add_subdirectory). resolve/cmake.rs
+keeps only build-path name helpers (is_system_pkg, is_installed_cmake_package,
+cmake_to_freight_name). `freight init` now only scaffolds a native project. KEPT (general,
+not migration): `!` source negation, `[package].auto-discover`, exported defines
+(`[lib].defines`/`pub-define:`), transitive optional-dep resolution, the whole cmake
+plugin / `build = "cmake"` / dependency provider / cmake_export. Freight suite green (818).
+
+The removed code now lives in NEW workspace crate `crates/freight-migrate` (binary
+`freight-migrate [--native] [PATH]`, lib depends on `freight`). Modules: fileapi (File
+API extraction), native (render + component-merge), cmake_scan (find_package/FetchContent/
+add_subdirectory detection + registry lookup), adopt (write_cmake_manifest + vendored
+conversion). 30 tests pass, clippy-clean; verified binary on fmt (--native → `["!src/fmt.cc"]`)
+and a synthetic foreign project (→ build="cmake" + harvested zlib). Docs:
+manifest-reference.md adoption section now points to freight-migrate.
+
 ### 2026-06-24 — Claude — native CMake migration via File API (branch adaptors-as-plugins)
 
 `freight init --migrate --native` now extracts a project's REAL build data from
