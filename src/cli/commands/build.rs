@@ -182,7 +182,11 @@ pub fn make_progress() -> Progress {
         BuildEvent::Emitted { path, .. } => {
             println!("{:>12} {}", "Emitted".dimmed(), path.display());
         }
-        BuildEvent::ScriptOutput { source, text, is_err } => {
+        BuildEvent::ScriptOutput {
+            source,
+            text,
+            is_err,
+        } => {
             print_script_output(&source, &text, is_err);
         }
     })
@@ -239,9 +243,11 @@ fn make_timed_progress() -> (
         BuildEvent::Emitted { path, .. } => {
             println!("{:>12} {}", "Emitted".dimmed(), path.display())
         }
-        BuildEvent::ScriptOutput { source, text, is_err } => {
-            print_script_output(&source, &text, is_err)
-        }
+        BuildEvent::ScriptOutput {
+            source,
+            text,
+            is_err,
+        } => print_script_output(&source, &text, is_err),
         _ => {}
     });
 

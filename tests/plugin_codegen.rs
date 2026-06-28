@@ -27,7 +27,10 @@ fn plugin_generates_and_links_a_source() {
          [plugin]\nentry = \"gen.freight\"\nhandles = [\"codegen\"]\ntools = [\"cp\"]\n",
     );
     // Template the plugin copies into the consumer's build as a generated source.
-    write(&plugin.join("template.c"), "int plugin_value(void) { return 42; }\n");
+    write(
+        &plugin.join("template.c"),
+        "int plugin_value(void) { return 42; }\n",
+    );
     // The plugin script: copy the template into out_dir, register it, add a define.
     write(
         &plugin.join("gen.freight"),

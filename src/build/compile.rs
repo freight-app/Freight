@@ -134,12 +134,14 @@ pub fn compile_sources(
 
             // Plugin-supplied flags aimed at this compiler (by name/alias/family
             // or the catch-all "compiler").
-            settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
-                tool_flags,
-                &compiler.template.name,
-                compiler.template.alias.as_deref(),
-                &compiler.template.family,
-            ));
+            settings
+                .extra_flags
+                .extend(crate::build::plugin::compiler_tool_flags(
+                    tool_flags,
+                    &compiler.template.name,
+                    compiler.template.alias.as_deref(),
+                    &compiler.template.family,
+                ));
 
             // Whole-program builders (e.g. gnatmake for Ada) handle compile+bind+link
             // in a single invocation during the link step. Skip the separate compile
@@ -344,12 +346,14 @@ pub fn compile_sources_unity(
             project_dir,
             feature_defines,
         );
-        settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
-            tool_flags,
-            &compiler.template.name,
-            compiler.template.alias.as_deref(),
-            &compiler.template.family,
-        ));
+        settings
+            .extra_flags
+            .extend(crate::build::plugin::compiler_tool_flags(
+                tool_flags,
+                &compiler.template.name,
+                compiler.template.alias.as_deref(),
+                &compiler.template.family,
+            ));
         let compile_bin = resolve_compile_binary(compiler, lang_key);
 
         for src in lang_sources {

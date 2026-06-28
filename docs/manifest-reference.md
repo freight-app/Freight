@@ -620,71 +620,24 @@ header-only dep needs no plugin: with no compilable sources, freight skips the
 build and collects its include dirs. See [`[plugin]` and build
 plugins](#plugin-and-build-plugins).
 
-**Automatic adoption.** You rarely write the `external = true` + `[cmake]` wiring
-by hand. Plain `freight init` writes a freight-native manifest (and a hello-world
-when `src/` is empty); adopting an existing build system is opt-in:
+**Adopting a CMake project.** `freight init` only scaffolds a freight-native project.
+To build an existing CMake project with freight, use a **foreign self-build** manifest
+(`[package] build = "cmake"`) — CMake configures and builds the whole project via the
+cmake plugin, with `find_package` / FetchContent steered to freight/installed packages
+by the dependency provider (below). Such a manifest can be written by hand, or generated
+by the separate **`freight-migrate`** tool:
 
-- **`freight init`** (plain) sets up a native manifest. If it notices a
-  `CMakeLists.txt` it prints a hint suggesting `--migrate`, but does not touch it.
-- **`freight init --migrate`** in a directory containing a `CMakeLists.txt` writes a
-  **foreign self-build** manifest (`[package] build = "cmake"`) — CMake configures
-  and builds the whole project; freight does not compile its sources natively. It
-  harvests `find_package()` calls (from `CMakeLists.txt` **and** `cmake/*.cmake`
-  modules) into `[dependencies]`, each probed with pkg-config (known version →
-  active `external = true`; unknown → commented suggestion). Toolchain packages
-  (`Threads`, `PkgConfig`, …) are skipped. Pass CMake cache options via
-  `[package] defines = ["gRPC_SSL_PROVIDER=package", …]` (alias `cmake-args`) to
-  steer the project toward freight/system-provided deps. (Errors if there is no
-  `CMakeLists.txt` to migrate.)
-- **`freight init --migrate --native`** goes further: instead of a `build = "cmake"`
-  self-build, it extracts the project's *real* build data — sources, defines, include
-  dirs, language standard — from CMake's
-  [File API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
-  (a throwaway `cmake` configure, CMake's own evaluation) and writes a
-  freight-**native** manifest. The migration is **library-focused**: when the project
-  builds a library, that becomes the `[lib]` and any executables are treated as the
-  library's tools / examples / tests and **ignored** (real example tools — e.g. zlib's
-  `minigzip` — often have their own build quirks and aren't the deliverable). Static and
-  shared variants of the same library (e.g. `zlib` + `zlibstatic`) collapse into one.
-  A *pure application* (no library) migrates its single-source executables as `[[bin]]`
-  instead. Targets under test/example/vendor subdirectories are ignored, defines/include
-  dirs are unioned into `[compiler]`, and the configure runs with
-  `-DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5` so older projects still
-  configure. The generated manifest is **minimal** — it relies on the `src/` walk and
-  only lists *differences*: a `!` negation for any file the walk would pick up that the
-  library doesn't compile (e.g. a module unit), and a plain entry for any source outside
-  `src/`. A tidy library migrates to a manifest with no `srcs` at all.
-  - **Merging component libraries.** Many large libraries are split into dozens of
-    internal static libraries (e.g. abseil's ~90 targets) that share an include root and
-    a dense internal dependency graph but ship as *one* logical library. When the
-    libraries form a single connected component under their inter-dependencies, migration
-    **merges** them into one `[lib]` — the union of their sources, include dirs, and
-    defines — since the inter-component links all resolve inside the single archive.
-  It **falls back** to the `build = "cmake"` self-build when the shape can't be one
-  package — multiple *disconnected* libraries (genuinely independent → needs a
-  workspace), a header-only INTERFACE library (no sources), or a configure failure.
-  - **Vendored submodules → deps.** If the project has a `.gitmodules`, `--migrate`
-    converts each vendored git submodule (e.g. gRPC's `third_party/*`) into a
-    freight `{ url, rev }` dependency, pinned to the exact commit the superproject
-    references — so the build pulls them through freight instead of carrying the
-    vendored trees. A submodule whose pinned commit can't be resolved becomes a
-    commented suggestion; one whose derived name collides with an already-harvested
-    `find_package` dep is skipped (no duplicate keys). freight does **not** delete
-    anything — it prints a prune report (`git rm <path>`) so you can remove the
-    trees yourself after a clean build.
-  - **FetchContent → deps.** `FetchContent_Declare(name …)` calls (in
-    `CMakeLists.txt` and `cmake/*.cmake`) are converted too: a git source
-    (`GIT_REPOSITORY` + `GIT_TAG`) becomes `{ url, tag }` — or `{ url, rev }` when
-    the tag looks like a commit SHA — and an archive (`URL` + `URL_HASH SHA256=`)
-    becomes `{ url, sha256 }`. Names colliding with a harvested `find_package` /
-    submodule dep are skipped.
-  - **Vendored `add_subdirectory` → deps.** `add_subdirectory(third_party/x)` calls
-    pointing at a vendored sub-project (a dir with its own `CMakeLists.txt`, under a
-    conventional vendor dir — `third_party`, `external`, `vendor`, … — or its own
-    git checkout) are converted. If the dir is a git checkout, freight recovers its
-    `remote.origin.url` + `HEAD` commit → `{ url, rev }` (pruneable); otherwise it
-    emits a commented `{ path = … }` suggestion (upstream unknown). The project's own
-    subdirs (`src/`, `lib/`, …) and `${var}` paths are left alone.
+```sh
+freight-migrate <dir>            # write a build = "cmake" self-build (harvest find_package
+                                 # deps, convert vendored submodules/FetchContent/add_subdirectory)
+freight-migrate --native <dir>   # instead extract real build data via CMake's File API and
+                                 # write a freight-native manifest (best-effort, library-focused)
+```
+
+Auto-generating a native manifest from an arbitrary C++ project is best-effort and easy
+to get subtly wrong, so it lives in `freight-migrate` rather than `freight` itself; the
+safe, supported path is the `build = "cmake"` self-build built by the real cmake tool.
+
 - **`freight add <git-url>`** fetches the repo and, if it ships no `freight.toml`,
   marks the dep `external = true`; when a build system is recognised it also adds
   the matching plugin to `[build-dependencies]` and a `[<backend>] build` entry.

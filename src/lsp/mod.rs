@@ -480,7 +480,11 @@ impl Server {
             .and_then(|s| s.get("legend"))
             .and_then(|l| l.get("tokenTypes"))
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         self.respond(
             msg.get("id").cloned(),
@@ -2898,8 +2902,8 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{header_capability, header_provider_label};
     use super::remap_semantic_token_types;
+    use super::{header_capability, header_provider_label};
 
     #[test]
     fn remap_token_types_into_forwarded_legend() {

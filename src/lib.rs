@@ -13,7 +13,6 @@ pub mod fetch;
 pub mod install;
 pub mod lock;
 pub mod manifest;
-pub mod migration;
 pub mod new;
 pub mod project;
 pub mod registry;

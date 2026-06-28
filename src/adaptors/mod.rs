@@ -4,7 +4,6 @@
 //! (`build_foreign_deps`), shared types, detection logic, and helpers that all
 //! builders use.
 
-
 // Dependency resolution moved to `crate::resolve`; these names are used heavily
 // here and re-exported for existing `adaptors::` consumers during the migration.
 pub use crate::resolve::pkg_config::{
@@ -36,7 +35,6 @@ pub struct ForeignBuilt {
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
-
 
 /// The effective `[patch]` table for a build. Patches are graph-wide and come
 /// from the workspace root. When building the root itself, that's the passed
@@ -340,7 +338,6 @@ fn foreign_needs_external(name: &str, backend: &str) -> FreightError {
     ))
 }
 
-
 /// Build a *foreign package itself* (`[package]` with `url`/`build`, no native
 /// targets — the vcpkg-scraper shape) as a standalone `freight build`. Fetches
 /// the source (if `url`), applies `[package].patches`, runs the foreign build
@@ -378,8 +375,16 @@ pub fn build_foreign_self(
     // are threaded in via `CFG.prefixes` so this build can find_package them.
     let root = project_dir;
     let out = crate::build::plugin::run_build_system(
-        &build, &pkg.name, &source_dir, &build_dir, root, profile, &pkg.defines, prefix_paths,
-        tool_paths, progress,
+        &build,
+        &pkg.name,
+        &source_dir,
+        &build_dir,
+        root,
+        profile,
+        &pkg.defines,
+        prefix_paths,
+        tool_paths,
+        progress,
     )?;
     let libs: Vec<PathBuf> = out
         .tool_flags
@@ -408,9 +413,6 @@ pub fn build_foreign_self(
     Ok(placed)
 }
 
-
-
-
 /// Extract the cmake version constraint from `[build-dependencies]`, if any.
 /// Returns `Some(">=3.20")` when the user wrote `cmake = ">=3.20"` (or any
 /// detailed form with a `version` field).
@@ -428,7 +430,9 @@ fn cmake_build_dep_constraint(manifest: &Manifest) -> Option<String> {
     // package (version `0.x`) AND, historically, a constraint on the cmake
     // *tool*. CMake tools are `>=3`, so a `0.x` constraint is the plugin version,
     // not a tool floor — don't enforce it against the installed cmake.
-    if v.trim_start_matches(['>', '=', '^', '~', ' ']).starts_with("0.") {
+    if v.trim_start_matches(['>', '=', '^', '~', ' '])
+        .starts_with("0.")
+    {
         return None;
     }
     Some(v.to_string())
@@ -923,7 +927,6 @@ fn resolve_fetched_dep(
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-
 // ── Detection ─────────────────────────────────────────────────────────────────
 
 pub fn detect_build_system(dep_dir: &Path) -> Option<String> {
@@ -955,9 +958,7 @@ pub fn detect_build_system(dep_dir: &Path) -> Option<String> {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-
 // ── Shared helpers ────────────────────────────────────────────────────────────
-
 
 /// Resolve include directories for a dep.
 pub(crate) fn collect_include_dirs(
@@ -1078,7 +1079,6 @@ fn is_executable(path: &Path) -> bool {
             Some("exe") | Some("cmd") | Some("bat")
         )
 }
-
 
 #[cfg(test)]
 mod foreign_pkg_tests {

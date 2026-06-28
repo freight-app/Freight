@@ -543,9 +543,11 @@ fn dep_matches_env(
     }
 
     if let Some(os_req) = &d.os {
-        let ok = os_req
-            .iter()
-            .any(|req| platforms.iter().any(|p| p.eq_ignore_ascii_case(req.as_str())));
+        let ok = os_req.iter().any(|req| {
+            platforms
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(req.as_str()))
+        });
         if !ok {
             return false;
         }
@@ -567,8 +569,16 @@ fn dep_matches_env(
 pub fn platforms_for(os: &str) -> Vec<String> {
     let unix = matches!(
         os,
-        "linux" | "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" | "android" | "ios"
-            | "solaris" | "illumos"
+        "linux"
+            | "macos"
+            | "freebsd"
+            | "openbsd"
+            | "netbsd"
+            | "dragonfly"
+            | "android"
+            | "ios"
+            | "solaris"
+            | "illumos"
     );
     let bsd = matches!(os, "freebsd" | "openbsd" | "netbsd" | "dragonfly");
     let mut chain = Vec::new();
@@ -1853,7 +1863,11 @@ mylib = {{ path = "../mylib"{dep_targets_line} }}
             "host-gated build-dep should survive a cross build"
         );
         // A build-dep gated to a different OS than the host is excluded.
-        let other = if host_os == "windows" { "linux" } else { "windows" };
+        let other = if host_os == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
         let src2 = format!(
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\
              [build-dependencies]\ngen = {{ version = \"1\", os = \"{other}\" }}\n"

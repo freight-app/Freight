@@ -226,7 +226,11 @@ impl ToolEnv for HostToolEnv {
         if let Ok(m) = crate::manifest::load_manifest(&self.pkgs_dir.join(name)) {
             return Some(m.package.version);
         }
-        Some(if req == "*" { "*".to_string() } else { req.to_string() })
+        Some(if req == "*" {
+            "*".to_string()
+        } else {
+            req.to_string()
+        })
     }
 
     fn deps_of(&self, name: &str, _version: &str) -> Vec<ToolReq> {
@@ -293,15 +297,26 @@ mod tests {
         env.prebuilt.insert("cmake".into(), vec!["3.20".into()]);
         env.system.insert("ninja".into());
         let plan = resolve_build_deps(
-            &[ToolReq::new("cmake", "*", false), ToolReq::new("ninja", "*", false)],
+            &[
+                ToolReq::new("cmake", "*", false),
+                ToolReq::new("ninja", "*", false),
+            ],
             &env,
         )
         .unwrap();
         assert_eq!(
             plan,
             vec![
-                PlannedTool { name: "cmake".into(), source: ToolSource::Prebuilt { version: "3.20".into() } },
-                PlannedTool { name: "ninja".into(), source: ToolSource::System },
+                PlannedTool {
+                    name: "cmake".into(),
+                    source: ToolSource::Prebuilt {
+                        version: "3.20".into()
+                    }
+                },
+                PlannedTool {
+                    name: "ninja".into(),
+                    source: ToolSource::System
+                },
             ]
         );
     }
@@ -321,8 +336,16 @@ mod tests {
         assert_eq!(
             plan,
             vec![
-                PlannedTool { name: "make".into(), source: ToolSource::System },
-                PlannedTool { name: "cmake".into(), source: ToolSource::FromSource { version: "3.20".into() } },
+                PlannedTool {
+                    name: "make".into(),
+                    source: ToolSource::System
+                },
+                PlannedTool {
+                    name: "cmake".into(),
+                    source: ToolSource::FromSource {
+                        version: "3.20".into()
+                    }
+                },
             ]
         );
     }
@@ -341,8 +364,18 @@ mod tests {
         assert_eq!(
             plan,
             vec![
-                PlannedTool { name: "cmake".into(), source: ToolSource::Prebuilt { version: "3.20".into() } },
-                PlannedTool { name: "cmake".into(), source: ToolSource::FromSource { version: "3.30".into() } },
+                PlannedTool {
+                    name: "cmake".into(),
+                    source: ToolSource::Prebuilt {
+                        version: "3.20".into()
+                    }
+                },
+                PlannedTool {
+                    name: "cmake".into(),
+                    source: ToolSource::FromSource {
+                        version: "3.30".into()
+                    }
+                },
             ]
         );
     }
@@ -372,7 +405,10 @@ mod tests {
         let err = resolve_build_deps(&[ToolReq::new("cmake", "3.30", false)], &env).unwrap_err();
         assert_eq!(
             err,
-            ResolveError::Unresolvable { name: "ghost".into(), req: "*".into() }
+            ResolveError::Unresolvable {
+                name: "ghost".into(),
+                req: "*".into()
+            }
         );
     }
 
@@ -381,7 +417,10 @@ mod tests {
         let mut env = Fake::default();
         env.prebuilt.insert("ninja".into(), vec!["1.0".into()]);
         let plan = resolve_build_deps(
-            &[ToolReq::new("ninja", "*", false), ToolReq::new("ninja", "*", false)],
+            &[
+                ToolReq::new("ninja", "*", false),
+                ToolReq::new("ninja", "*", false),
+            ],
             &env,
         )
         .unwrap();

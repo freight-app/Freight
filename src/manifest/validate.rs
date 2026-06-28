@@ -485,9 +485,9 @@ fn validate_targets(m: &Manifest, errors: &mut Vec<ValidationError>) {
     // cmake` + `[cmake] build = "<self>"`): the plugin produces the artifacts, so
     // there are no freight-native `[[bin]]`/`[lib]` targets.
     const BUILD_PLUGINS: &[&str] = &["cmake", "make", "meson", "autotools", "scons", "bazel"];
-    let delegates_to_plugin = BUILD_PLUGINS.iter().any(|p| {
-        m.build_dependencies.contains_key(*p) || m.dependencies.contains_key(*p)
-    });
+    let delegates_to_plugin = BUILD_PLUGINS
+        .iter()
+        .any(|p| m.build_dependencies.contains_key(*p) || m.dependencies.contains_key(*p));
     if m.bins.is_empty() && m.lib.is_none() && !is_foreign && !delegates_to_plugin {
         errors.push(ValidationError::new(
             "targets",

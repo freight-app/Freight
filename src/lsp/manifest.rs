@@ -136,7 +136,10 @@ pub fn completion_result(
     if !section.is_empty() {
         let mut plugin_items: Vec<Value> = Vec::new();
         let mut seen_keys: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for schema in plugin_schemas.iter().filter(|s| s.handles_section(&section)) {
+        for schema in plugin_schemas
+            .iter()
+            .filter(|s| s.handles_section(&section))
+        {
             for (key, desc) in &schema.keys {
                 if !seen_keys.insert(key.as_str()) {
                     continue;
@@ -1268,7 +1271,10 @@ members = ["missing"]
             .find(|i| i["label"] == json!("sources"))
             .expect("plugin schema key offered");
         assert_eq!(sources["detail"], json!("plugin: proto"));
-        assert_eq!(sources["documentation"]["value"], json!("Glob of .proto files"));
+        assert_eq!(
+            sources["documentation"]["value"],
+            json!("Glob of .proto files")
+        );
         assert!(items.iter().any(|i| i["label"] == json!("grpc")));
         // The plugin section must not fall through to the section list.
         assert!(!items.iter().any(|i| i["label"] == json!("[package]")));

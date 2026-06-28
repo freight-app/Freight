@@ -60,7 +60,10 @@ fn optional_dep_behind_feature_resolves_transitively() {
         &mid.join("include/mid.h"),
         "#include <leaf.h>\nstatic inline int mid_val(void){return leaf_val()+1;}\n",
     );
-    write(&mid.join("src/mid.c"), "#include <mid.h>\nint mid_anchor(void){return mid_val();}\n");
+    write(
+        &mid.join("src/mid.c"),
+        "#include <mid.h>\nint mid_anchor(void){return mid_val();}\n",
+    );
 
     // app: depends only on mid; its main pulls in mid.h (→ leaf.h transitively).
     let app = tmp.path().join("app");

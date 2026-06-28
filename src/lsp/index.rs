@@ -133,8 +133,15 @@ pub trait LanguageIndexer: Send {
 /// legend instead (e.g. clangd's, for C/C++), native tokens are remapped from
 /// these names into that legend.
 pub const FREIGHT_TOKEN_TYPES: [&str; 9] = [
-    "namespace", "type", "function", "method", "property",
-    "variable", "parameter", "enumMember", "macro",
+    "namespace",
+    "type",
+    "function",
+    "method",
+    "property",
+    "variable",
+    "parameter",
+    "enumMember",
+    "macro",
 ];
 
 /// The semantic-token legend advertised in server capabilities. The order must

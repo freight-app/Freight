@@ -86,19 +86,17 @@ pub fn resolve_dep_graph(
         // would be silently dropped from the graph, taking their include dirs,
         // libs, and exported defines with them. Resolution errors are left for the
         // build step to report; fall back to no activation here.
-        let activated = super::features::resolve_features(
-            &manifest.features,
-            &req_features,
-            use_defaults,
-        )
-        .map(|r| r.activated_deps)
-        .unwrap_or_default();
+        let activated =
+            super::features::resolve_features(&manifest.features, &req_features, use_defaults)
+                .map(|r| r.activated_deps)
+                .unwrap_or_default();
 
         // All deps — including transitive ones — live in the root project's flat
         // .pkgs/ pool, not in a nested .pkgs/ inside each dep.  Path deps in a
         // transitive manifest are relative to that dep's own directory, but
         // version/git deps always resolve against root_dir.
-        let sub_deps = direct_compilable_deps(root_dir, &dir, &manifest, false, &activated, patches);
+        let sub_deps =
+            direct_compilable_deps(root_dir, &dir, &manifest, false, &activated, patches);
         for (sub_name, sub_dir) in &sub_deps {
             if !sub_dir.exists() {
                 return Err(FreightError::ManifestParse(format!(

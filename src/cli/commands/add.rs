@@ -399,7 +399,10 @@ fn adopt_foreign_dep(
         print_error(&e.to_string());
         return;
     }
-    print_status("foreign", &format!("`{dep_name}` is not a freight package → external = true"));
+    print_status(
+        "foreign",
+        &format!("`{dep_name}` is not a freight package → external = true"),
+    );
 
     match detect_build_system(&dep_dir) {
         Some(backend) => {

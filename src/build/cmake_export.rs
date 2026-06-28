@@ -189,9 +189,14 @@ mod tests {
 
         // CMake config is keyed by the find_package name (case-sensitive).
         let cfg = std::fs::read_to_string(prefix.join("lib/cmake/ZLIB/ZLIBConfig.cmake")).unwrap();
-        assert!(cfg.contains("add_library(ZLIB::ZLIB INTERFACE IMPORTED)"), "{cfg}");
+        assert!(
+            cfg.contains("add_library(ZLIB::ZLIB INTERFACE IMPORTED)"),
+            "{cfg}"
+        );
         assert!(cfg.contains("set(ZLIB_FOUND TRUE)"), "{cfg}");
-        assert!(prefix.join("lib/cmake/ZLIB/ZLIBConfigVersion.cmake").is_file());
+        assert!(prefix
+            .join("lib/cmake/ZLIB/ZLIBConfigVersion.cmake")
+            .is_file());
     }
 
     #[test]
@@ -206,12 +211,19 @@ mod tests {
         std::fs::write(&built_lib, b"").unwrap();
 
         let prefix = tmp.path().join("export/bar");
-        let spec = ExportSpec { cmake_name: "bar", pc_name: "bar", version: "2.0" };
+        let spec = ExportSpec {
+            cmake_name: "bar",
+            pc_name: "bar",
+            version: "2.0",
+        };
         assemble_export_prefix(&prefix, &[dep_inc], &[built_lib], &spec).unwrap();
 
         assert!(prefix.join("include/bar/bar.h").is_file(), "header copied");
         assert!(prefix.join("lib/libbar.a").is_file(), "lib copied");
-        assert!(prefix.join("lib/cmake/bar/barConfig.cmake").is_file(), "config written");
+        assert!(
+            prefix.join("lib/cmake/bar/barConfig.cmake").is_file(),
+            "config written"
+        );
         assert!(prefix.join("lib/pkgconfig/bar.pc").is_file(), "pc written");
     }
 
@@ -224,7 +236,8 @@ mod tests {
             version: "*",
         };
         export_cmake_package(tmp.path(), &spec).unwrap();
-        let cfg = std::fs::read_to_string(tmp.path().join("lib/cmake/foo/fooConfig.cmake")).unwrap();
+        let cfg =
+            std::fs::read_to_string(tmp.path().join("lib/cmake/foo/fooConfig.cmake")).unwrap();
         assert!(cfg.contains("set(foo_VERSION \"0\")"), "{cfg}");
     }
 }

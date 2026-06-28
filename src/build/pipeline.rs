@@ -1182,9 +1182,24 @@ pub fn provide_cmake_package(
     let dep_dir = project_dir.join(".pkgs").join(&freight_name);
 
     if dep_dir.join("freight.toml").is_file() {
-        provide_native(cmake_name, &freight_name, &dep_dir, project_dir, &target_dir, profile, progress)
+        provide_native(
+            cmake_name,
+            &freight_name,
+            &dep_dir,
+            project_dir,
+            &target_dir,
+            profile,
+            progress,
+        )
     } else if dep_dir.join("CMakeLists.txt").is_file() {
-        provide_foreign(cmake_name, &dep_dir, project_dir, &target_dir, profile, progress)
+        provide_foreign(
+            cmake_name,
+            &dep_dir,
+            project_dir,
+            &target_dir,
+            profile,
+            progress,
+        )
     } else {
         None
     }
@@ -1219,7 +1234,11 @@ fn provide_native(
     let version = crate::manifest::load_manifest(dep_dir)
         .map(|m| m.package.version)
         .unwrap_or_default();
-    let lib_out = root_dir.join("target").join("deps").join(&pkg_name).join(profile);
+    let lib_out = root_dir
+        .join("target")
+        .join("deps")
+        .join(&pkg_name)
+        .join(profile);
     let mut libs = Vec::new();
     for ext in ["a", "so", "dylib"] {
         if let Ok(paths) = glob::glob(&lib_out.join(format!("*.{ext}")).to_string_lossy()) {
@@ -1264,7 +1283,16 @@ fn provide_foreign(
 ) -> Option<PathBuf> {
     let out_dir = target_dir.join("cmake-source").join(cmake_name);
     match crate::build::plugin::run_build_system(
-        "cmake", cmake_name, dep_dir, &out_dir, root_dir, profile, &[], &[], &[], progress,
+        "cmake",
+        cmake_name,
+        dep_dir,
+        &out_dir,
+        root_dir,
+        profile,
+        &[],
+        &[],
+        &[],
+        progress,
     ) {
         Ok(built) => built
             .include_dirs

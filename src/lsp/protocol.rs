@@ -474,7 +474,10 @@ mod tests {
         let tt = caps["semanticTokensProvider"]["legend"]["tokenTypes"]
             .as_array()
             .unwrap();
-        assert_eq!(tt[0], "namespace", "clang-bridge keeps freight legend, got {tt:?}");
+        assert_eq!(
+            tt[0], "namespace",
+            "clang-bridge keeps freight legend, got {tt:?}"
+        );
     }
 
     #[test]

@@ -432,12 +432,14 @@ fn compile_miu(
         project_dir,
         feature_defines,
     );
-    settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
-        tool_flags,
-        &compiler.template.name,
-        compiler.template.alias.as_deref(),
-        &compiler.template.family,
-    ));
+    settings
+        .extra_flags
+        .extend(crate::build::plugin::compiler_tool_flags(
+            tool_flags,
+            &compiler.template.name,
+            compiler.template.alias.as_deref(),
+            &compiler.template.family,
+        ));
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
 
     fs::create_dir_all(obj.parent().unwrap())?;
@@ -590,12 +592,14 @@ fn compile_non_miu(
         project_dir,
         feature_defines,
     );
-    settings.extra_flags.extend(crate::build::plugin::compiler_tool_flags(
-        tool_flags,
-        &compiler.template.name,
-        compiler.template.alias.as_deref(),
-        &compiler.template.family,
-    ));
+    settings
+        .extra_flags
+        .extend(crate::build::plugin::compiler_tool_flags(
+            tool_flags,
+            &compiler.template.name,
+            compiler.template.alias.as_deref(),
+            &compiler.template.family,
+        ));
     let compile_bin = resolve_compile_binary(compiler, &scanned.source.lang_key);
 
     // Build import flags using the compiler's template rather than a hardcoded format.

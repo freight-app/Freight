@@ -31,8 +31,7 @@ impl DirectoryRegistry {
     /// FREIGHT_HOME can be determined. Returns `None` when it can't (so callers
     /// can simply skip it).
     pub fn system() -> Option<Self> {
-        crate::resolve::system_registry::system_registry_dir()
-            .map(|dir| Self::new(dir, "system"))
+        crate::resolve::system_registry::system_registry_dir().map(|dir| Self::new(dir, "system"))
     }
 
     /// Parse `<dir>/<name>.toml` into a [`PackageInfo`]. `Ok(None)` when absent.
@@ -58,8 +57,14 @@ fn parse_stub(path: &Path) -> Result<PackageInfo, FreightError> {
         .get("name")
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .or_else(|| path.file_stem().and_then(|s| s.to_str()).map(str::to_string))
-        .ok_or_else(|| FreightError::ManifestParse(format!("{}: no package name", path.display())))?;
+        .or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+        })
+        .ok_or_else(|| {
+            FreightError::ManifestParse(format!("{}: no package name", path.display()))
+        })?;
     let version = pkg
         .get("version")
         .and_then(|v| v.as_str())

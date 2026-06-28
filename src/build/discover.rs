@@ -174,7 +174,9 @@ pub fn discover(
             .collect();
         sources.retain(|s| {
             let rel = s.path.to_string_lossy().replace('\\', "/");
-            !patterns.iter().any(|p| p.matches_with(&rel, EXCLUDE_MATCH_OPTS))
+            !patterns
+                .iter()
+                .any(|p| p.matches_with(&rel, EXCLUDE_MATCH_OPTS))
         });
     }
 

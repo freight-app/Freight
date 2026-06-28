@@ -148,7 +148,11 @@ fn do_run(s: &State, tool: &str, args: Array, cwd: Option<&str>) -> Result<(), B
                 "plugin tried to run disallowed tool '{tool}' — add it to `[plugin] tools`"
             )));
         }
-        (st.project_dir.clone(), resolve_tool(tool, &st.tool_paths), st.progress.clone())
+        (
+            st.project_dir.clone(),
+            resolve_tool(tool, &st.tool_paths),
+            st.progress.clone(),
+        )
     };
     let dir = match cwd {
         Some(c) => contained(&root, c)?,
@@ -222,9 +226,12 @@ fn register_fns(engine: &mut Engine, state: &State) {
     });
 
     let s = state.clone();
-    engine.register_fn("run", move |tool: &str, args: Array| -> Result<(), Box<EvalAltResult>> {
-        do_run(&s, tool, args, None)
-    });
+    engine.register_fn(
+        "run",
+        move |tool: &str, args: Array| -> Result<(), Box<EvalAltResult>> {
+            do_run(&s, tool, args, None)
+        },
+    );
     // `run(tool, args, cwd)` — run with the working directory set to a
     // project-confined `cwd` (for build systems like autotools that must run
     // inside an out-of-source build dir).
@@ -258,7 +265,10 @@ fn register_fns(engine: &mut Engine, state: &State) {
                 .output()
                 .map_err(|e| rhai_err(format!("failed to run '{tool}': {e}")))?;
             let mut m = Map::new();
-            m.insert("code".into(), Dynamic::from(output.status.code().unwrap_or(-1) as i64));
+            m.insert(
+                "code".into(),
+                Dynamic::from(output.status.code().unwrap_or(-1) as i64),
+            );
             m.insert(
                 "stdout".into(),
                 Dynamic::from(String::from_utf8_lossy(&output.stdout).into_owned()),
@@ -272,28 +282,37 @@ fn register_fns(engine: &mut Engine, state: &State) {
     );
 
     let s = state.clone();
-    engine.register_fn("add_source", move |path: &str| -> Result<(), Box<EvalAltResult>> {
-        let root = s.borrow().project_dir.clone();
-        let abs = contained(&root, path)?;
-        s.borrow_mut().out.sources.push(abs);
-        Ok(())
-    });
-    let s = state.clone();
-    engine.register_fn("add_sources", move |paths: Array| -> Result<(), Box<EvalAltResult>> {
-        let root = s.borrow().project_dir.clone();
-        for p in paths.iter() {
-            let abs = contained(&root, &p.to_string())?;
+    engine.register_fn(
+        "add_source",
+        move |path: &str| -> Result<(), Box<EvalAltResult>> {
+            let root = s.borrow().project_dir.clone();
+            let abs = contained(&root, path)?;
             s.borrow_mut().out.sources.push(abs);
-        }
-        Ok(())
-    });
+            Ok(())
+        },
+    );
     let s = state.clone();
-    engine.register_fn("add_include_dir", move |path: &str| -> Result<(), Box<EvalAltResult>> {
-        let root = s.borrow().project_dir.clone();
-        let abs = contained(&root, path)?;
-        s.borrow_mut().out.include_dirs.push(abs);
-        Ok(())
-    });
+    engine.register_fn(
+        "add_sources",
+        move |paths: Array| -> Result<(), Box<EvalAltResult>> {
+            let root = s.borrow().project_dir.clone();
+            for p in paths.iter() {
+                let abs = contained(&root, &p.to_string())?;
+                s.borrow_mut().out.sources.push(abs);
+            }
+            Ok(())
+        },
+    );
+    let s = state.clone();
+    engine.register_fn(
+        "add_include_dir",
+        move |path: &str| -> Result<(), Box<EvalAltResult>> {
+            let root = s.borrow().project_dir.clone();
+            let abs = contained(&root, path)?;
+            s.borrow_mut().out.include_dirs.push(abs);
+            Ok(())
+        },
+    );
     let s = state.clone();
     engine.register_fn("define", move |name: &str| {
         s.borrow_mut().out.defines.push(name.to_string());
@@ -314,28 +333,40 @@ fn register_fns(engine: &mut Engine, state: &State) {
     let s = state.clone();
     engine.register_fn("link_lib", move |lib: &str| {
         let is_path = lib.contains('/')
-            || [".a", ".so", ".lib", ".dylib"].iter().any(|e| lib.ends_with(e));
-        let flag = if is_path { lib.to_string() } else { format!("-l{lib}") };
-        s.borrow_mut().out.tool_flags.push(ToolFlag { tool: "linker".into(), flag });
+            || [".a", ".so", ".lib", ".dylib"]
+                .iter()
+                .any(|e| lib.ends_with(e));
+        let flag = if is_path {
+            lib.to_string()
+        } else {
+            format!("-l{lib}")
+        };
+        s.borrow_mut().out.tool_flags.push(ToolFlag {
+            tool: "linker".into(),
+            flag,
+        });
     });
     // Add a library search directory (`-L<path>`).
     let s = state.clone();
     engine.register_fn("link_dir", move |path: &str| {
-        s.borrow_mut()
-            .out
-            .tool_flags
-            .push(ToolFlag { tool: "linker".into(), flag: format!("-L{path}") });
+        s.borrow_mut().out.tool_flags.push(ToolFlag {
+            tool: "linker".into(),
+            flag: format!("-L{path}"),
+        });
     });
     // Register an install prefix this plugin produced (e.g. a foreign dep's
     // `CMAKE_INSTALL_PREFIX`). Threaded to later plugins as `CFG.prefixes` so a
     // dep built afterwards can resolve this one via find_package / pkg-config.
     let s = state.clone();
-    engine.register_fn("add_prefix", move |path: &str| -> Result<(), Box<EvalAltResult>> {
-        let root = s.borrow().project_dir.clone();
-        let abs = contained(&root, path)?;
-        s.borrow_mut().out.prefixes.push(abs);
-        Ok(())
-    });
+    engine.register_fn(
+        "add_prefix",
+        move |path: &str| -> Result<(), Box<EvalAltResult>> {
+            let root = s.borrow().project_dir.clone();
+            let abs = contained(&root, path)?;
+            s.borrow_mut().out.prefixes.push(abs);
+            Ok(())
+        },
+    );
 
     register_io_fns(engine, state);
     register_path_fns(engine);
@@ -356,16 +387,22 @@ fn register_regex_fns(engine: &mut Engine) {
     }
 
     // True if `pattern` matches anywhere in `text`.
-    engine.register_fn("re_test", |pattern: &str, text: &str| -> Result<bool, Box<EvalAltResult>> {
-        Ok(compile(pattern)?.is_match(text))
-    });
+    engine.register_fn(
+        "re_test",
+        |pattern: &str, text: &str| -> Result<bool, Box<EvalAltResult>> {
+            Ok(compile(pattern)?.is_match(text))
+        },
+    );
     // First match as `[whole, group1, group2, …]`; empty array when no match.
-    engine.register_fn("re_find", |pattern: &str, text: &str| -> Result<Array, Box<EvalAltResult>> {
-        Ok(compile(pattern)?
-            .captures(text)
-            .map(|c| group_strings(&c))
-            .unwrap_or_default())
-    });
+    engine.register_fn(
+        "re_find",
+        |pattern: &str, text: &str| -> Result<Array, Box<EvalAltResult>> {
+            Ok(compile(pattern)?
+                .captures(text)
+                .map(|c| group_strings(&c))
+                .unwrap_or_default())
+        },
+    );
     // Every match as an array of group-arrays.
     engine.register_fn(
         "re_find_all",
@@ -392,11 +429,13 @@ fn register_regex_fns(engine: &mut Engine) {
 /// scripts don't have to. Reads of a missing file raise (like Python).
 fn register_io_fns(engine: &mut Engine, state: &State) {
     let s = state.clone();
-    engine.register_fn("read_text", move |path: &str| -> Result<String, Box<EvalAltResult>> {
-        let abs = contained(&s.borrow().project_dir.clone(), path)?;
-        std::fs::read_to_string(&abs)
-            .map_err(|e| rhai_err(format!("read_text('{path}'): {e}")))
-    });
+    engine.register_fn(
+        "read_text",
+        move |path: &str| -> Result<String, Box<EvalAltResult>> {
+            let abs = contained(&s.borrow().project_dir.clone(), path)?;
+            std::fs::read_to_string(&abs).map_err(|e| rhai_err(format!("read_text('{path}'): {e}")))
+        },
+    );
 
     let s = state.clone();
     engine.register_fn(
@@ -441,22 +480,30 @@ fn register_io_fns(engine: &mut Engine, state: &State) {
     );
 
     let s = state.clone();
-    engine.register_fn("makedirs", move |path: &str| -> Result<(), Box<EvalAltResult>> {
-        let abs = contained(&s.borrow().project_dir.clone(), path)?;
-        std::fs::create_dir_all(&abs).map_err(|e| rhai_err(format!("makedirs('{path}'): {e}")))
-    });
+    engine.register_fn(
+        "makedirs",
+        move |path: &str| -> Result<(), Box<EvalAltResult>> {
+            let abs = contained(&s.borrow().project_dir.clone(), path)?;
+            std::fs::create_dir_all(&abs).map_err(|e| rhai_err(format!("makedirs('{path}'): {e}")))
+        },
+    );
 
     let s = state.clone();
-    engine.register_fn("listdir", move |path: &str| -> Result<Array, Box<EvalAltResult>> {
-        let abs = contained(&s.borrow().project_dir.clone(), path)?;
-        let mut out = Array::new();
-        let entries =
-            std::fs::read_dir(&abs).map_err(|e| rhai_err(format!("listdir('{path}'): {e}")))?;
-        for entry in entries.flatten() {
-            out.push(Dynamic::from(entry.file_name().to_string_lossy().into_owned()));
-        }
-        Ok(out)
-    });
+    engine.register_fn(
+        "listdir",
+        move |path: &str| -> Result<Array, Box<EvalAltResult>> {
+            let abs = contained(&s.borrow().project_dir.clone(), path)?;
+            let mut out = Array::new();
+            let entries =
+                std::fs::read_dir(&abs).map_err(|e| rhai_err(format!("listdir('{path}'): {e}")))?;
+            for entry in entries.flatten() {
+                out.push(Dynamic::from(
+                    entry.file_name().to_string_lossy().into_owned(),
+                ));
+            }
+            Ok(out)
+        },
+    );
 
     let s = state.clone();
     engine.register_fn("exists", move |path: &str| -> bool {
@@ -684,17 +731,20 @@ impl PluginEnv {
             .as_ref()
             .map(|m| m.package.name.clone())
             .unwrap_or_default();
-        let lib = manifest.as_ref().and_then(|m| m.lib.as_ref()).map(|l| LibInfo {
-            lib_type: match l.lib_type {
-                crate::manifest::types::LibType::Static => "static",
-                crate::manifest::types::LibType::Shared => "shared",
-                crate::manifest::types::LibType::Header => "header",
-            }
-            .to_string(),
-            hdrs: l.hdrs.clone(),
-            srcs: l.srcs.clone(),
-            link: l.link.clone().unwrap_or_default(),
-        });
+        let lib = manifest
+            .as_ref()
+            .and_then(|m| m.lib.as_ref())
+            .map(|l| LibInfo {
+                lib_type: match l.lib_type {
+                    crate::manifest::types::LibType::Static => "static",
+                    crate::manifest::types::LibType::Shared => "shared",
+                    crate::manifest::types::LibType::Header => "header",
+                }
+                .to_string(),
+                hdrs: l.hdrs.clone(),
+                srcs: l.srcs.clone(),
+                link: l.link.clone().unwrap_or_default(),
+            });
         let bins = manifest
             .as_ref()
             .map(|m| {
@@ -806,7 +856,10 @@ fn bins_map(env: &PluginEnv) -> Dynamic {
         m.insert(
             "required_features".into(),
             Dynamic::from_array(
-                b.required_features.iter().map(|f| Dynamic::from(f.clone())).collect(),
+                b.required_features
+                    .iter()
+                    .map(|f| Dynamic::from(f.clone()))
+                    .collect(),
             ),
         );
         map.insert(b.name.clone().into(), Dynamic::from_map(m));
@@ -961,7 +1014,13 @@ fn run_script(
     scope.push_constant("PKGS", pkgs_map(env));
     scope.push_constant("CFG", toml_to_dynamic(section_cfg));
 
-    run_engine(&script, &script_path.display().to_string(), &state, &mut scope, progress)
+    run_engine(
+        &script,
+        &script_path.display().to_string(),
+        &state,
+        &mut scope,
+        progress,
+    )
 }
 
 /// Create the sandboxed Rhai engine (print/debug routing, resource limits, the
@@ -1010,15 +1069,27 @@ fn run_engine(
 /// runtime. Returns the script and its allowed tools.
 fn embedded_build_system(backend: &str) -> Option<(&'static str, &'static [&'static str])> {
     Some(match backend {
-        "cmake" => (include_str!("../../plugins/cmake/cmake.freight"), &["cmake"]),
+        "cmake" => (
+            include_str!("../../plugins/cmake/cmake.freight"),
+            &["cmake"],
+        ),
         "make" => (include_str!("../../plugins/make/make.freight"), &["make"]),
-        "meson" => (include_str!("../../plugins/meson/meson.freight"), &["meson"]),
+        "meson" => (
+            include_str!("../../plugins/meson/meson.freight"),
+            &["meson"],
+        ),
         "autotools" => (
             include_str!("../../plugins/autotools/autotools.freight"),
             &["sh", "make"],
         ),
-        "scons" => (include_str!("../../plugins/scons/scons.freight"), &["scons"]),
-        "bazel" => (include_str!("../../plugins/bazel/bazel.freight"), &["bazel"]),
+        "scons" => (
+            include_str!("../../plugins/scons/scons.freight"),
+            &["scons"],
+        ),
+        "bazel" => (
+            include_str!("../../plugins/bazel/bazel.freight"),
+            &["bazel"],
+        ),
         _ => return None,
     })
 }
@@ -1134,8 +1205,14 @@ pub fn run_build_system(
     };
     for abs in raw.sources {
         if let Some(lang_key) = lang_key_for(&abs) {
-            let rel = abs.strip_prefix(&root).map(Path::to_path_buf).unwrap_or(abs);
-            out.sources.push(SourceFile { path: rel, lang_key });
+            let rel = abs
+                .strip_prefix(&root)
+                .map(Path::to_path_buf)
+                .unwrap_or(abs);
+            out.sources.push(SourceFile {
+                path: rel,
+                lang_key,
+            });
         }
     }
     Ok(out)
@@ -1285,7 +1362,17 @@ pub fn run_plugins(
             // unless an input (or the cfg/script) changed.
             let raw_out = if plugin.inputs.is_empty() {
                 progress(BuildEvent::RunningScript { cached: false });
-                run_script(&script_path, project_dir, path, cfg, &plugin.tools, &plugin_out_dir, tool_paths, &env, progress)?
+                run_script(
+                    &script_path,
+                    project_dir,
+                    path,
+                    cfg,
+                    &plugin.tools,
+                    &plugin_out_dir,
+                    tool_paths,
+                    &env,
+                    progress,
+                )?
             } else {
                 let fp = fingerprint(project_dir, &plugin.inputs, cfg, &script_path);
                 match read_cache(&plugin_out_dir).filter(|c| c.fingerprint == fp) {
@@ -1295,7 +1382,17 @@ pub fn run_plugins(
                     }
                     None => {
                         progress(BuildEvent::RunningScript { cached: false });
-                        let o = run_script(&script_path, project_dir, path, cfg, &plugin.tools, &plugin_out_dir, tool_paths, &env, progress)?;
+                        let o = run_script(
+                            &script_path,
+                            project_dir,
+                            path,
+                            cfg,
+                            &plugin.tools,
+                            &plugin_out_dir,
+                            tool_paths,
+                            &env,
+                            progress,
+                        )?;
                         write_cache(&plugin_out_dir, &fp, &o);
                         o
                     }
@@ -1316,7 +1413,10 @@ pub fn run_plugins(
                         .strip_prefix(project_dir)
                         .map(Path::to_path_buf)
                         .unwrap_or(abs);
-                    out.sources.push(SourceFile { path: rel, lang_key });
+                    out.sources.push(SourceFile {
+                        path: rel,
+                        lang_key,
+                    });
                 }
             }
             out.include_dirs.extend(raw_out.include_dirs);
@@ -1430,7 +1530,11 @@ pub fn plugin_schemas(project_dir: &Path) -> Vec<PluginSchema> {
         };
         out.push(PluginSchema {
             handles,
-            keys: plugin.schema.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            keys: plugin
+                .schema
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             plugin_name: m.package.name.clone(),
         });
     }
@@ -1481,15 +1585,27 @@ fn read_cache(out_dir: &Path) -> Option<PluginCache> {
 fn write_cache(out_dir: &Path, fingerprint: &str, out: &RawOutput) {
     let cache = PluginCache {
         fingerprint: fingerprint.to_string(),
-        sources: out.sources.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
-        include_dirs: out.include_dirs.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
+        sources: out
+            .sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+        include_dirs: out
+            .include_dirs
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
         defines: out.defines.clone(),
         tool_flags: out
             .tool_flags
             .iter()
             .map(|tf| (tf.tool.clone(), tf.flag.clone()))
             .collect(),
-        prefixes: out.prefixes.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
+        prefixes: out
+            .prefixes
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
     };
     if let Ok(json) = serde_json::to_string(&cache) {
         let _ = std::fs::create_dir_all(out_dir);
@@ -1499,7 +1615,12 @@ fn write_cache(out_dir: &Path, fingerprint: &str, out: &RawOutput) {
 
 /// Hash of the plugin's declared inputs (paths + mtimes), its `cfg`, and the
 /// script file — changes to any of these re-trigger the plugin.
-fn fingerprint(project_dir: &Path, inputs: &[String], cfg: &toml::Value, script_path: &Path) -> String {
+fn fingerprint(
+    project_dir: &Path,
+    inputs: &[String],
+    cfg: &toml::Value,
+    script_path: &Path,
+) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(format!("{cfg:?}").as_bytes());
@@ -1649,9 +1770,18 @@ mod tests {
             r#"if CFG.enabled { define("ON"); } define(CFG.name);"#,
         );
         let cfg: toml::Value = "enabled = true\nname = \"proto\"\n".parse().unwrap();
-        let out =
-            run_script(&script, tmp.path(), "proto", &cfg, &[], &tmp.path().join("out"), &[], &test_env(), &crate::event::silent())
-                .unwrap();
+        let out = run_script(
+            &script,
+            tmp.path(),
+            "proto",
+            &cfg,
+            &[],
+            &tmp.path().join("out"),
+            &[],
+            &test_env(),
+            &crate::event::silent(),
+        )
+        .unwrap();
         assert!(out.defines.contains(&"ON".to_string()));
         assert!(out.defines.contains(&"proto".to_string()));
     }
@@ -1767,7 +1897,11 @@ mod tests {
     fn native_target_triple_is_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let proj = tmp.path().canonicalize().unwrap();
-        let script = write(&proj, "p.freight", r#"define("T=[" + TARGET.triple + "]");"#);
+        let script = write(
+            &proj,
+            "p.freight",
+            r#"define("T=[" + TARGET.triple + "]");"#,
+        );
         let out = run_script(
             &script,
             &proj,
@@ -1944,8 +2078,15 @@ mod tests {
         let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
         let progress: Progress = Arc::new(move |e| {
-            if let BuildEvent::ScriptOutput { source, text, is_err } = e {
-                sink.lock().unwrap().push(format!("{source}|{text}|{is_err}"));
+            if let BuildEvent::ScriptOutput {
+                source,
+                text,
+                is_err,
+            } = e
+            {
+                sink.lock()
+                    .unwrap()
+                    .push(format!("{source}|{text}|{is_err}"));
             }
         });
         run_script(
@@ -2115,7 +2256,9 @@ mod tests {
 
     #[test]
     fn run_build_system_builds_a_cmake_project() {
-        let cmake = std::process::Command::new("cmake").arg("--version").output();
+        let cmake = std::process::Command::new("cmake")
+            .arg("--version")
+            .output();
         if cmake.map(|o| !o.status.success()).unwrap_or(true) {
             eprintln!("skipping run_build_system cmake test: cmake not installed");
             return;
@@ -2140,12 +2283,24 @@ mod tests {
 
         let out_dir = root.join("target/bs");
         let p = crate::event::silent();
-        let out =
-            run_build_system("cmake", "mylib", &src, &out_dir, &root, "release", &[], &[], &[], &p)
-                .unwrap();
+        let out = run_build_system(
+            "cmake",
+            "mylib",
+            &src,
+            &out_dir,
+            &root,
+            "release",
+            &[],
+            &[],
+            &[],
+            &p,
+        )
+        .unwrap();
         // The plugin installed headers + a static lib and wired them in.
         assert!(
-            out.include_dirs.iter().any(|d| d.ends_with("install/include")),
+            out.include_dirs
+                .iter()
+                .any(|d| d.ends_with("install/include")),
             "include dirs: {:?}",
             out.include_dirs
         );
@@ -2194,8 +2349,14 @@ mod tests {
         assert_eq!(
             out.tool_flags,
             vec![
-                ToolFlag { tool: "clang".into(), flag: "-fno-rtti".into() },
-                ToolFlag { tool: "linker".into(), flag: "-Wl,--gc-sections".into() },
+                ToolFlag {
+                    tool: "clang".into(),
+                    flag: "-fno-rtti".into()
+                },
+                ToolFlag {
+                    tool: "linker".into(),
+                    flag: "-Wl,--gc-sections".into()
+                },
             ]
         );
         assert!(out.defines.contains(&"HAS_LINKER=true".to_string()));
@@ -2228,9 +2389,18 @@ mod tests {
         assert_eq!(
             out.tool_flags,
             vec![
-                ToolFlag { tool: "linker".into(), flag: "-lz".into() },
-                ToolFlag { tool: "linker".into(), flag: "/abs/libfoo.a".into() },
-                ToolFlag { tool: "linker".into(), flag: "-L/abs/lib".into() },
+                ToolFlag {
+                    tool: "linker".into(),
+                    flag: "-lz".into()
+                },
+                ToolFlag {
+                    tool: "linker".into(),
+                    flag: "/abs/libfoo.a".into()
+                },
+                ToolFlag {
+                    tool: "linker".into(),
+                    flag: "-L/abs/lib".into()
+                },
             ]
         );
     }
@@ -2238,16 +2408,31 @@ mod tests {
     #[test]
     fn tool_flag_matching_by_name_alias_family_and_role() {
         let flags = vec![
-            ToolFlag { tool: "clang".into(), flag: "-a".into() },
-            ToolFlag { tool: "llvm".into(), flag: "-b".into() },
-            ToolFlag { tool: "compiler".into(), flag: "-c".into() },
-            ToolFlag { tool: "gcc".into(), flag: "-d".into() },
-            ToolFlag { tool: "linker".into(), flag: "-e".into() },
+            ToolFlag {
+                tool: "clang".into(),
+                flag: "-a".into(),
+            },
+            ToolFlag {
+                tool: "llvm".into(),
+                flag: "-b".into(),
+            },
+            ToolFlag {
+                tool: "compiler".into(),
+                flag: "-c".into(),
+            },
+            ToolFlag {
+                tool: "gcc".into(),
+                flag: "-d".into(),
+            },
+            ToolFlag {
+                tool: "linker".into(),
+                flag: "-e".into(),
+            },
         ];
         // clang++ has name "clang++", alias "clang", family "llvm".
         let m = compiler_tool_flags(&flags, "clang++", Some("clang"), "llvm");
         assert_eq!(m, vec!["-a", "-b", "-c"]); // alias, family, catch-all (not gcc)
-        // role selector
+                                               // role selector
         assert_eq!(role_tool_flags(&flags, "linker"), vec!["-e"]);
         assert!(role_tool_flags(&flags, "archiver").is_empty());
     }
@@ -2351,14 +2536,20 @@ mod tests {
     fn inject_prefixes_adds_array_without_clobbering_explicit() {
         let cfg: toml::Value = toml::from_str("build = \"zlib\"\n").unwrap();
         let augmented = inject_prefixes(&cfg, &[PathBuf::from("/a"), PathBuf::from("/b")]);
-        let arr = augmented.get("prefixes").and_then(|v| v.as_array()).unwrap();
+        let arr = augmented
+            .get("prefixes")
+            .and_then(|v| v.as_array())
+            .unwrap();
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0].as_str(), Some("/a"));
 
         // An explicit `prefixes` in the manifest is preserved (explicit wins).
         let cfg: toml::Value = toml::from_str("prefixes = [\"/x\"]\n").unwrap();
         let augmented = inject_prefixes(&cfg, &[PathBuf::from("/a")]);
-        let arr = augmented.get("prefixes").and_then(|v| v.as_array()).unwrap();
+        let arr = augmented
+            .get("prefixes")
+            .and_then(|v| v.as_array())
+            .unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0].as_str(), Some("/x"));
     }
@@ -2434,7 +2625,11 @@ mod tests {
 
         let p = crate::event::silent();
         let build = run_plugins(&app, "debug", "build", &[], &[], &p).unwrap();
-        assert!(build.defines.is_empty(), "gated off for `build`: {:?}", build.defines);
+        assert!(
+            build.defines.is_empty(),
+            "gated off for `build`: {:?}",
+            build.defines
+        );
         let test = run_plugins(&app, "debug", "test", &[], &[], &p).unwrap();
         assert_eq!(test.defines, vec!["RAN".to_string()]);
     }
@@ -2459,7 +2654,10 @@ mod tests {
             sources: vec![proj.join("g.cpp")],
             include_dirs: vec![proj.join("inc")],
             defines: vec!["D".to_string()],
-            tool_flags: vec![ToolFlag { tool: "clang".into(), flag: "-X".into() }],
+            tool_flags: vec![ToolFlag {
+                tool: "clang".into(),
+                flag: "-X".into(),
+            }],
             prefixes: vec![proj.join("prefix")],
         };
         let od = proj.join("out");
@@ -2484,7 +2682,7 @@ mod tests {
         assert!(section_matches("compiler.*", "compiler.clang"));
         assert!(!section_matches("compiler.*", "compiler.clang.opt")); // * = exactly one
         assert!(!section_matches("compiler.*", "compiler")); // needs a subsegment
-        // recursive wildcard = one or more (not the bare parent)
+                                                             // recursive wildcard = one or more (not the bare parent)
         assert!(section_matches("language.**", "language.zig"));
         assert!(section_matches("language.**", "language.zig.flags"));
         assert!(!section_matches("language.**", "language"));
@@ -2492,10 +2690,14 @@ mod tests {
 
     #[test]
     fn collect_section_paths_finds_nested_tables() {
-        let raw: toml::Value = "[proto]\nout=\"x\"\n[compiler.clang]\nopt=3\n[language.zig]\nstd=\"x\"\n"
-            .parse()
-            .unwrap();
-        let paths: Vec<String> = collect_section_paths(&raw).into_iter().map(|(p, _)| p).collect();
+        let raw: toml::Value =
+            "[proto]\nout=\"x\"\n[compiler.clang]\nopt=3\n[language.zig]\nstd=\"x\"\n"
+                .parse()
+                .unwrap();
+        let paths: Vec<String> = collect_section_paths(&raw)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         assert!(paths.contains(&"proto".to_string()));
         assert!(paths.contains(&"compiler".to_string()));
         assert!(paths.contains(&"compiler.clang".to_string()));
@@ -2505,7 +2707,10 @@ mod tests {
 
 /// Map a generated file's extension to the language key that compiles it.
 fn lang_key_for(path: &Path) -> Option<String> {
-    let ext = path.extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
     let key = match ext.as_str() {
         "cc" | "cpp" | "cxx" | "c++" | "cppm" | "ixx" => "cpp",
         "c" => "c",

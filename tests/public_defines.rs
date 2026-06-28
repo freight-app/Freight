@@ -27,10 +27,10 @@ fn have_cc() -> bool {
 /// A public header gated on a define: without the define a `#error` fires, so the
 /// build only succeeds if the define reaches both the lib's and the consumer's
 /// compilation.
-const GATED_HEADER: &str = "#ifndef GREET_PUBLIC\n#error \"GREET_PUBLIC not defined\"\n#endif\nint greet(void);\n";
+const GATED_HEADER: &str =
+    "#ifndef GREET_PUBLIC\n#error \"GREET_PUBLIC not defined\"\n#endif\nint greet(void);\n";
 const GREET_SRC: &str = "#include \"greet.h\"\nint greet(void){return 7;}\n";
-const CONSUMER_MAIN: &str =
-    "#include \"greet.h\"\nint main(void){return greet()==7?0:1;}\n";
+const CONSUMER_MAIN: &str = "#include \"greet.h\"\nint main(void){return greet()==7?0:1;}\n";
 
 fn greet_lib(dir: &Path, lib_toml: &str) {
     write(&dir.join("freight.toml"), lib_toml);
