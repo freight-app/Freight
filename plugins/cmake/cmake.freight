@@ -107,6 +107,10 @@ for name in names {
     // cross system/processor when building for a foreign target. Empty when the
     // project declares its own CMAKE_TOOLCHAIN_FILE (we don't clobber it).
     if FREIGHT_TOOLCHAIN != "" { args.push("-DCMAKE_TOOLCHAIN_FILE=" + FREIGHT_TOOLCHAIN); }
+    // Policy floor: CMake 4.x hard-rejects `cmake_minimum_required(VERSION <3.5)`,
+    // which nearly every pre-2020 library still declares. Default the minimum so
+    // those projects configure; a `defines` entry below overrides it (last -D wins).
+    args.push("-DCMAKE_POLICY_VERSION_MINIMUM=3.5");
     if "defines" in CFG { for d in CFG.defines { args.push("-D" + d); } }
     run("cmake", args);
 
@@ -118,7 +122,7 @@ for name in names {
     }
 
     // ── Build + install ────────────────────────────────────────────────────────
-    run("cmake", ["--build", build, "--parallel"]);
+    run("cmake", ["--build", build, "--parallel", JOBS]);
     run("cmake", ["--install", build]);
 
     // This dep is now installed: expose its prefix to the deps built after it

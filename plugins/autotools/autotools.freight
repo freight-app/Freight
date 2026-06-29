@@ -30,7 +30,7 @@ for name in names {
     run("sh", conf, build);                       // cwd = build (out-of-source)
 
     // ── Build + install ──────────────────────────────────────────────────────
-    run("make", ["-j"], build);
+    run("make", ["-j", JOBS], build);
     run("make", ["install"], build);
 
     // ── Wire results back into the freight build ───────────────────────────────

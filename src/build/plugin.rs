@@ -991,6 +991,7 @@ fn run_script(
     scope.push_constant("TARGET_DIR", path_string(&target_dir));
     scope.push_constant("OUT_DIR", path_string(&out_dir));
     scope.push_constant("PROFILE", profile);
+    scope.push_constant("JOBS", rayon::current_num_threads() as i64);
     scope.push_constant("FREIGHT_BIN", freight_bin_path());
     // Toolchain-file redirection is only generated on the foreign-self build path
     // (`run_build_system`) for now; define the constant here so the shared cmake
@@ -1145,6 +1146,7 @@ pub fn run_build_system(
     scope.push_constant("TARGET_DIR", path_string(&target_dir));
     scope.push_constant("OUT_DIR", path_string(out_dir));
     scope.push_constant("PROFILE", profile.to_string());
+    scope.push_constant("JOBS", rayon::current_num_threads() as i64);
     scope.push_constant("FREIGHT_BIN", freight_bin_path());
     scope.push_constant("HOST", platform_map(&env.host_os, &env.host_arch, None));
     scope.push_constant(

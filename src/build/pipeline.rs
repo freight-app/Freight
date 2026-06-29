@@ -1162,6 +1162,18 @@ pub fn run_pipeline_at(
 /// → built natively + wrapped in a generated `.pc` + `<Name>Config.cmake`. A
 /// foreign CMake project under `.pkgs/<name>` → built via the cmake plugin (which
 /// installs its own real config).
+/// Resolve a `path` dependency named `freight_name` in `project_dir`'s manifest to
+/// its source directory, so the CMake provider can build + export a sibling freight
+/// project referenced by `{ path = "..." }` (not just deps fetched into `.pkgs/`).
+fn manifest_path_dep_dir(project_dir: &Path, freight_name: &str) -> Option<PathBuf> {
+    use crate::manifest::types::Dependency;
+    let manifest = crate::manifest::load_manifest(project_dir).ok()?;
+    match manifest.effective_dependencies().get(freight_name)? {
+        Dependency::Detailed(d) => d.path.as_ref().map(|p| project_dir.join(p)),
+        Dependency::Simple(_) => None,
+    }
+}
+
 pub fn provide_cmake_package(
     cmake_name: &str,
     project_dir: &Path,
@@ -1179,7 +1191,10 @@ pub fn provide_cmake_package(
     }
 
     let target_dir = project_dir.join("target");
-    let dep_dir = project_dir.join(".pkgs").join(&freight_name);
+    // A `path` dependency in the parent manifest points at a sibling project
+    // directly; otherwise the dep was fetched into `.pkgs/<name>`.
+    let dep_dir = manifest_path_dep_dir(project_dir, &freight_name)
+        .unwrap_or_else(|| project_dir.join(".pkgs").join(&freight_name));
 
     if dep_dir.join("freight.toml").is_file() {
         provide_native(

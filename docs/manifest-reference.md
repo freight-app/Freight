@@ -148,6 +148,7 @@ During the build, the plugin's script runs with these **constants** in scope:
 | `TARGET_DIR` | `<project>/target/<profile>` |
 | `OUT_DIR` | this plugin's output dir, `TARGET_DIR/plugin-gen/<section>` (created for you) |
 | `PROFILE` | the build profile (`"debug"`, `"release"`, or a custom name) — branch on `PROFILE == "release"` |
+| `JOBS` | the parallel job count (`--jobs`, default `min(logical CPUs, 6)`) — pass to a sub-build's parallel flag, e.g. `run("cmake", ["--build", b, "--parallel", JOBS])` or `run("make", ["-j", JOBS], b)`, so the foreign build honours freight's concurrency instead of grabbing every core |
 | `HOST` | host characteristics: `HOST.os`, `HOST.arch`, `HOST.family` (`"windows"`/`"unix"`/`"wasm"`), `HOST.pointer_width` |
 | `TARGET` | target characteristics: `TARGET.os`, `TARGET.arch`, `TARGET.family`, `TARGET.pointer_width`, `TARGET.triple` (`""` when building for the host, the full triple when cross-compiling) |
 | `LIB` | the consuming project's library, `#{ name, type, hdrs, srcs, link }` — or `()` when it builds no `[lib]` |

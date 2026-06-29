@@ -28,7 +28,7 @@ for name in names {
     run("meson", setup);
 
     // ── Build + install ──────────────────────────────────────────────────────
-    run("meson", ["compile", "-C", build]);     // drives ninja
+    run("meson", ["compile", "-C", build, "--jobs", JOBS]);  // drives ninja
     run("meson", ["install", "-C", build]);
 
     // ── Wire results back into the freight build ───────────────────────────────

@@ -127,3 +127,65 @@ fn provider_satisfies_find_package_during_build() {
         String::from_utf8_lossy(&out.stderr),
     );
 }
+
+/// The provider resolves a freight-native `{ path = "..." }` dependency — not just
+/// deps fetched into `.pkgs/`. A foreign CMake app `find_package`s a sibling freight
+/// library declared by path; the provider builds it and exports its `Config.cmake`.
+#[test]
+fn provider_resolves_native_path_dependency() {
+    if !have("cmake") || !(have("c++") || have("g++") || have("clang++")) {
+        eprintln!("skipping: cmake or C++ compiler missing");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+
+    // A sibling freight-native library.
+    let greet = tmp.path().join("greet");
+    write(
+        &greet.join("freight.toml"),
+        "[package]\nname = \"greet\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"greet\"\n",
+    );
+    write(&greet.join("include/greet.h"), "const char* greeting(void);\n");
+    write(
+        &greet.join("src/greet.cpp"),
+        "#include \"greet.h\"\nconst char* greeting(void){return \"hi\";}\n",
+    );
+
+    // A foreign CMake app that find_package()s greet via a path dependency.
+    let app = tmp.path().join("greetapp");
+    write(
+        &app.join("freight.toml"),
+        "[package]\nname = \"greetapp\"\nversion = \"0.1.0\"\nbuild = \"cmake\"\n\n\
+         [dependencies]\ngreet = { path = \"../greet\" }\n",
+    );
+    write(
+        &app.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.24)\nproject(greetapp CXX)\n\
+         find_package(greet CONFIG REQUIRED)\n\
+         add_executable(greetapp main.cpp)\n\
+         target_link_libraries(greetapp greet::greet)\n\
+         install(TARGETS greetapp RUNTIME DESTINATION bin)\n",
+    );
+    write(
+        &app.join("main.cpp"),
+        "#include \"greet.h\"\nint main(){return greeting()?0:1;}\n",
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_freight"))
+        .arg("build")
+        .current_dir(&app)
+        .output()
+        .expect("run freight build");
+    assert!(
+        out.status.success(),
+        "find_package on a native path dep should resolve via the provider.\n\
+         stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        app.join("target/cmake-export/greet/lib/cmake/greet/greetConfig.cmake")
+            .is_file(),
+        "the path dep should have been exported as a Config.cmake package",
+    );
+}

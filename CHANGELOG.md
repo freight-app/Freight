@@ -135,6 +135,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   (e.g. `← zlib`). System headers remain `← stdlib`.
 
 ### Fixed
+- **Foreign builds now honour `--jobs`.** The bundled cmake/meson/autotools
+  plugins ran `cmake --build --parallel` (no count → every core), `meson compile`
+  (ninja → every core), and `make -j` (no count → *unbounded*), so `freight build
+  --jobs N` did not limit a foreign sub-build's concurrency. Plugins now receive a
+  `JOBS` constant (`rayon::current_num_threads()`, freight's single source of
+  truth) and pass it through (`--parallel JOBS`, `--jobs JOBS`, `-j JOBS`). A
+  `--jobs 2` build of a large CMake project (e.g. abseil) now stays at ~2 cores
+  instead of saturating the machine. (`make.freight` stays serial — adding `-j`
+  to an arbitrary hand-written Makefile can break non-parallel-safe rules.)
 - **`#include` hints/tooltips now show the version of `.pkgs/` dependencies.**
   Fetched packages live in `.pkgs/<name>` (no version in the directory name), so
   the version parse came up empty and hints rendered `**zlib**/zlib.h` instead of
@@ -193,6 +202,19 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   longer requires `srcs`; a genuinely source-less build is still caught at build
   time. Lets a migrated CMake library (whose sources were a `file(GLOB …)`) build
   from its `src/` directory.
+- **CMake policy floor defaults to 3.5** — foreign cmake builds pass
+  `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` by default, so the many pre-2020 libraries
+  whose `cmake_minimum_required(VERSION <3.5)` is hard-rejected by CMake 4.x
+  configure out of the box (yaml-cpp, spdlog, abseil, …). A `[package]`/dep
+  `defines` entry for `CMAKE_POLICY_VERSION_MINIMUM` overrides it; modern projects
+  declaring a higher minimum are unaffected.
+- **CMake provider resolves native `path` dependencies** — the on-demand
+  dependency provider (`freight cmake-provide`) now also satisfies a foreign CMake
+  project's `find_package(<dep>)` when `<dep>` is a `{ path = "..." }` freight
+  library in the parent manifest, not only deps fetched into `.pkgs/`. The sibling
+  library is built natively and exported as a `<Name>Config.cmake`, so a foreign
+  CMake consumer can `find_package` a local freight library during development. See
+  [docs/cmake-interop.md](docs/cmake-interop.md).
 - **Foreign packages build standalone** — `freight build` on a package whose
   `[package]` declares `url`/`build` and has no native targets (a vcpkg-scraper
   port) now fetches + foreign-builds it and places the produced library in
