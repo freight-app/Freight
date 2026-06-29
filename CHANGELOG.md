@@ -202,12 +202,14 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   longer requires `srcs`; a genuinely source-less build is still caught at build
   time. Lets a migrated CMake library (whose sources were a `file(GLOB …)`) build
   from its `src/` directory.
-- **CMake policy floor defaults to 3.5** — foreign cmake builds pass
-  `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` by default, so the many pre-2020 libraries
-  whose `cmake_minimum_required(VERSION <3.5)` is hard-rejected by CMake 4.x
-  configure out of the box (yaml-cpp, spdlog, abseil, …). A `[package]`/dep
-  `defines` entry for `CMAKE_POLICY_VERSION_MINIMUM` overrides it; modern projects
-  declaring a higher minimum are unaffected.
+- **CMake policy floor derived from the installed cmake** — the cmake plugin
+  probes `cmake --version` and, **only on CMake ≥ 4.0** (where support for
+  `cmake_minimum_required(VERSION <3.5)` was removed), passes
+  `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` so the many pre-2020 libraries that still
+  declare an old minimum (yaml-cpp, spdlog, abseil, …) configure out of the box.
+  On CMake 3.x those minimums still work, so freight leaves them untouched. A
+  `[package]`/dep `defines` entry for `CMAKE_POLICY_VERSION_MINIMUM` overrides it;
+  modern projects declaring a higher minimum are unaffected.
 - **CMake provider resolves native `path` dependencies** — the on-demand
   dependency provider (`freight cmake-provide`) now also satisfies a foreign CMake
   project's `find_package(<dep>)` when `<dep>` is a `{ path = "..." }` freight

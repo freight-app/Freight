@@ -18,6 +18,10 @@ if "prefixes" in CFG {
     for p in CFG.prefixes { prefixes = if prefixes == "" { p } else { prefixes + ";" + p }; }
 }
 
+// Major version of the installed cmake, probed once and reused for every dep in
+// this invocation — drives the policy-floor decision during configure.
+let cmake_major = cmake_major_version();
+
 for name in names {
     // A declared dependency, or `name == PKG_NAME` → build the project's own
     // source (a `[cmake] build = "<self>"` self-build).
@@ -107,10 +111,12 @@ for name in names {
     // cross system/processor when building for a foreign target. Empty when the
     // project declares its own CMAKE_TOOLCHAIN_FILE (we don't clobber it).
     if FREIGHT_TOOLCHAIN != "" { args.push("-DCMAKE_TOOLCHAIN_FILE=" + FREIGHT_TOOLCHAIN); }
-    // Policy floor: CMake 4.x hard-rejects `cmake_minimum_required(VERSION <3.5)`,
-    // which nearly every pre-2020 library still declares. Default the minimum so
-    // those projects configure; a `defines` entry below overrides it (last -D wins).
-    args.push("-DCMAKE_POLICY_VERSION_MINIMUM=3.5");
+    // Policy floor: CMake 4.0 *removed* support for `cmake_minimum_required(VERSION
+    // <3.5)`, which nearly every pre-2020 library still declares. Bump the minimum
+    // to 3.5 only on cmake >= 4 (derived from the installed cmake below) — older
+    // cmake still honours those minimums, so leave them untouched. A `defines`
+    // entry overrides this (last -D wins).
+    if cmake_major >= 4 { args.push("-DCMAKE_POLICY_VERSION_MINIMUM=3.5"); }
     if "defines" in CFG { for d in CFG.defines { args.push("-D" + d); } }
     run("cmake", args);
 
@@ -138,4 +144,18 @@ for name in names {
             for lib in glob(d + "/*.a") + glob(d + "/*.so") { link_lib(lib); }
         }
     }
+}
+
+// Major version number of the installed cmake (0 if it can't be determined).
+// `cmake --version` prints e.g. "cmake version 4.3.4" on its first line.
+fn cmake_major_version() {
+    let v = capture("cmake", ["--version"]);
+    if v.code != 0 { return 0; }
+    let ls = lines(v.stdout);
+    if ls.len() == 0 { return 0; }
+    let parts = ls[0].split(" ");        // ["cmake", "version", "4.3.4"]
+    if parts.len() < 3 { return 0; }
+    let num = parts[2].split(".");       // ["4", "3", "4"]
+    if num.len() == 0 { return 0; }
+    parse_int(num[0])
 }
