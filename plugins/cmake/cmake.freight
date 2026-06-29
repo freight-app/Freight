@@ -102,9 +102,12 @@ for name in names {
     // plus every dep already built in this invocation).
     if prefixes != "" { args.push("-DFREIGHT_PREFIXES=" + prefixes); }
     if "pc_path" in CFG { args.push("-DFREIGHT_PC_PATH=" + CFG.pc_path); }
+    // Freight-generated toolchain file: redirects find_package / find_library to
+    // freight's prefixes (freight-first), with the sysroot as fallback, and the
+    // cross system/processor when building for a foreign target. Empty when the
+    // project declares its own CMAKE_TOOLCHAIN_FILE (we don't clobber it).
+    if FREIGHT_TOOLCHAIN != "" { args.push("-DCMAKE_TOOLCHAIN_FILE=" + FREIGHT_TOOLCHAIN); }
     if "defines" in CFG { for d in CFG.defines { args.push("-D" + d); } }
-    // Cross builds: TARGET.os / TARGET.arch / TARGET.triple are in scope here;
-    // hand CMake a -DCMAKE_TOOLCHAIN_FILE=... when TARGET.triple != "".
     run("cmake", args);
 
     // Report what the project resolved (so freight learns its dependencies).

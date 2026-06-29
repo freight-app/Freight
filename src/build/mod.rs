@@ -1,4 +1,5 @@
 pub mod cmake_export;
+pub mod cmake_toolchain;
 pub mod compile;
 pub mod compile_commands;
 pub mod deps;

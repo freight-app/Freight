@@ -992,6 +992,10 @@ fn run_script(
     scope.push_constant("OUT_DIR", path_string(&out_dir));
     scope.push_constant("PROFILE", profile);
     scope.push_constant("FREIGHT_BIN", freight_bin_path());
+    // Toolchain-file redirection is only generated on the foreign-self build path
+    // (`run_build_system`) for now; define the constant here so the shared cmake
+    // plugin can reference it unconditionally.
+    scope.push_constant("FREIGHT_TOOLCHAIN", String::new());
     // The consuming project's own package name (so a plugin can recognise a
     // self-build: `[cmake] build = "<this package>"` → build PROJECT_DIR).
     scope.push_constant("PKG_NAME", env.pkg_name.clone());
@@ -1101,7 +1105,6 @@ fn embedded_build_system(backend: &str) -> Option<(&'static str, &'static [&'sta
 /// source — it runs exactly the plugin a project would, with a synthesized scope
 /// (`PKGS` = just this package, `CFG.build` = its name).
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn run_build_system(
     backend: &str,
     name: &str,
@@ -1167,6 +1170,31 @@ pub fn run_build_system(
     let mut pkgs = Map::new();
     pkgs.insert(name.into(), Dynamic::from_map(pkg));
     scope.push_constant("PKGS", Dynamic::from_map(pkgs));
+
+    // Generate a CMake toolchain file that redirects dependency resolution to
+    // freight's prefixes (searched before the system/sysroot). Skipped if the
+    // project already declares its own CMAKE_TOOLCHAIN_FILE (e.g. vcpkg) — we must
+    // not clobber it. The cmake plugin reads `FREIGHT_TOOLCHAIN` and adds the
+    // `-DCMAKE_TOOLCHAIN_FILE` argument when it is non-empty.
+    let has_user_toolchain = defines
+        .iter()
+        .any(|d| d.trim_start_matches("-D").starts_with("CMAKE_TOOLCHAIN_FILE"));
+    let toolchain_path = if has_user_toolchain {
+        String::new()
+    } else {
+        let environment = crate::environment::Environment::for_project(&root);
+        crate::build::cmake_toolchain::generate(
+            out_dir,
+            prefixes,
+            environment.sysroot.as_deref(),
+            &env.target_os,
+            &env.target_arch,
+            env.target_triple.is_some(),
+        )
+        .map(|p| path_string(&p))
+        .unwrap_or_default()
+    };
+    scope.push_constant("FREIGHT_TOOLCHAIN", toolchain_path);
 
     // Synthesized CFG — `build = name`, plus any configure defines.
     let mut cfg = Map::new();
