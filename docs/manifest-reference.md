@@ -1134,6 +1134,11 @@ default_debugger = "lldb"       # preferred debugger backend
 target          = "aarch64-linux-gnu"  # cross-compilation target triple
 sysroot         = "/opt/sysroot"
 auto-cpu-tuning = true          # set false to suppress derived -march/-mcpu/-mtune flags
+# Extra flags injected into foreign CMake builds via the generated toolchain file
+# (CMAKE_<LANG>_FLAGS_INIT). The home for host-compat shims, applied to every
+# `build = "cmake"` build on this machine without per-project edits.
+cmake-cxx-flags = ["-include", "cstdint"]
+cmake-c-flags   = []
 
 [debugger.gdb]
 args  = ["--tui"]   # raw extra flags before the program separator

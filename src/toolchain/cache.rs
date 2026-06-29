@@ -148,6 +148,13 @@ pub struct GlobalConfig {
     /// Whether freight derives CPU tuning flags from the configured target/sysroot.
     #[serde(default, rename = "auto-cpu-tuning", alias = "auto_cpu_tuning")]
     pub auto_cpu_tuning: Option<bool>,
+    /// Extra C / C++ flags injected into foreign CMake builds via the generated
+    /// toolchain file (`CMAKE_<LANG>_FLAGS_INIT`). Machine-local — the home for
+    /// host-compat shims like `-include cstdint`. Empty by default (no effect).
+    #[serde(default, rename = "cmake-c-flags", alias = "cmake_c_flags")]
+    pub cmake_c_flags: Vec<String>,
+    #[serde(default, rename = "cmake-cxx-flags", alias = "cmake_cxx_flags")]
+    pub cmake_cxx_flags: Vec<String>,
     /// Ordered list of package registries to search.
     /// Tried in declaration order; first hit wins.
     /// The public `freight.dev` registry is always appended last unless an entry
@@ -278,6 +285,12 @@ impl GlobalConfig {
         }
         if local.auto_cpu_tuning.is_some() {
             self.auto_cpu_tuning = local.auto_cpu_tuning;
+        }
+        if !local.cmake_c_flags.is_empty() {
+            self.cmake_c_flags = local.cmake_c_flags;
+        }
+        if !local.cmake_cxx_flags.is_empty() {
+            self.cmake_cxx_flags = local.cmake_cxx_flags;
         }
         // Local registries take priority: prepend them, keeping base registries that
         // aren't shadowed by name.

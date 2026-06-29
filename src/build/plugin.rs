@@ -1191,23 +1191,34 @@ pub fn run_build_system(
         let detected =
             crate::toolchain::detect_all_cached(&crate::toolchain::builtin::all_compiler_templates());
         let backend = crate::manifest::types::Backend::default();
-        let compilers: Vec<(String, String)> = [
+        let gcfg = crate::toolchain::cache::GlobalConfig::load();
+        let langs: Vec<crate::build::cmake_toolchain::LangSpec> = [
             ("c", "C"),
             ("cpp", "CXX"),
             ("fortran", "Fortran"),
             ("cuda", "CUDA"),
         ]
         .iter()
-        .filter_map(|(lang_key, cmake_lang)| {
-            crate::build::compile::select_compiler(lang_key, &backend, &detected, None).map(|c| {
-                let bin = crate::build::compile::resolve_compile_binary(c, lang_key);
-                (cmake_lang.to_string(), path_string(&bin))
-            })
+        .map(|(lang_key, cmake_lang)| {
+            let compiler = crate::build::compile::select_compiler(lang_key, &backend, &detected, None)
+                .map(|c| path_string(&crate::build::compile::resolve_compile_binary(c, lang_key)));
+            // Machine-local host-compat flags (e.g. `-include cstdint`), per language.
+            let flags = match *lang_key {
+                "c" => gcfg.cmake_c_flags.clone(),
+                "cpp" => gcfg.cmake_cxx_flags.clone(),
+                _ => Vec::new(),
+            };
+            crate::build::cmake_toolchain::LangSpec {
+                cmake_lang: cmake_lang.to_string(),
+                compiler,
+                flags,
+            }
         })
+        .filter(|l| l.compiler.is_some() || !l.flags.is_empty())
         .collect();
         crate::build::cmake_toolchain::generate(
             out_dir,
-            &compilers,
+            &langs,
             prefixes,
             environment.sysroot.as_deref(),
             &env.target_os,
