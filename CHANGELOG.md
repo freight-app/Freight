@@ -135,6 +135,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   (e.g. `← zlib`). System headers remain `← stdlib`.
 
 ### Fixed
+- **Optional build-dependencies are now feature-gated.** An `optional = true`
+  entry in `[build-dependencies]` was always built, ignoring feature activation
+  (only `[dependencies]` were gated). They now follow the same rule — skipped
+  unless a feature activates them via `dep:name`. This makes a feature able to
+  **pin a build tool**: e.g. `pinned-cmake = ["dep:cmake-4_3"]` with
+  `cmake-4_3 = { ..., optional = true }` puts that cmake's `bin/` on the tool path
+  only when the feature is on, and the cmake plugin then runs *that* cmake (via the
+  existing build-dep-`bin/` → tool-path → `resolve_tool` chain) instead of the one
+  on `$PATH`.
 - **Foreign builds now honour `--jobs`.** The bundled cmake/meson/autotools
   plugins ran `cmake --build --parallel` (no count → every core), `meson compile`
   (ninja → every core), and `make -j` (no count → *unbounded*), so `freight build

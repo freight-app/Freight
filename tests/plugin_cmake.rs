@@ -171,3 +171,82 @@ fn cmake_plugin_resolves_an_earlier_dep_via_find_package() {
     common::assert_success(&out, "freight run with transitive cmake find_package");
     common::assert_output_contains(&out, &["answer=42"]);
 }
+
+/// A feature can pin which cmake binary the plugin uses: an optional
+/// build-dependency that ships a `bin/cmake` is only placed on the tool path
+/// (and thus used by the cmake plugin) when a feature activates it via `dep:`.
+/// Guards both the feature→tool binding and the optional-build-dep gating.
+#[cfg(unix)]
+#[test]
+fn feature_activates_a_pinned_cmake_binary() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !cmake_available() {
+        eprintln!("skipping pinned-cmake test: cmake not installed");
+        return;
+    }
+    // Absolute path to the real cmake — the wrapper delegates to it (never the
+    // bare name, which could re-resolve to the wrapper itself).
+    let real_cmake = {
+        let o = Command::new("sh").arg("-c").arg("command -v cmake").output().unwrap();
+        PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("wrapper-used.marker");
+
+    // A prebuilt "cmakebin" build-dep: bin/cmake touches a marker on every call,
+    // then execs the real cmake so the build still succeeds.
+    let cmakebin = tmp.path().join("cmakebin");
+    write(
+        &cmakebin.join("freight.toml"),
+        "[package]\nname = \"cmakebin\"\nversion = \"4.3.4\"\n",
+    );
+    let wrapper = cmakebin.join("bin/cmake");
+    write(
+        &wrapper,
+        &format!(
+            "#!/bin/sh\necho used >> \"{}\"\nexec \"{}\" \"$@\"\n",
+            marker.display(),
+            real_cmake.display()
+        ),
+    );
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A foreign cmake self-build with the pinned cmake as an optional build-dep.
+    let app = tmp.path().join("app");
+    write(
+        &app.join("freight.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nbuild = \"cmake\"\n\n\
+         [features]\npinned-cmake = [\"dep:cmakebin\"]\n\n\
+         [build-dependencies]\ncmakebin = { path = \"../cmakebin\", optional = true }\n",
+    );
+    write(
+        &app.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.24)\nproject(app C)\n\
+         add_library(app STATIC src/a.c)\ninstall(TARGETS app ARCHIVE DESTINATION lib)\n",
+    );
+    write(&app.join("src/a.c"), "int f(void){return 0;}\n");
+
+    // Without the feature: the optional build-dep is gated out → system cmake.
+    let out = common::freight(&app, &["build"]);
+    if common::missing_toolchain(&out) {
+        eprintln!("skipping pinned-cmake test: no C toolchain");
+        return;
+    }
+    common::assert_success(&out, "build without the pinned-cmake feature");
+    assert!(
+        !marker.exists(),
+        "optional build-dep must not be used without its activating feature",
+    );
+
+    // With the feature: the pinned cmake is activated and the plugin uses it.
+    fs::remove_dir_all(app.join(".freight-build")).ok();
+    fs::remove_dir_all(app.join("target")).ok();
+    let out = common::freight(&app, &["build", "--features", "pinned-cmake"]);
+    common::assert_success(&out, "build with the pinned-cmake feature");
+    assert!(
+        marker.exists(),
+        "feature `dep:cmakebin` must activate the pinned cmake binary",
+    );
+}

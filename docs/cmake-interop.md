@@ -225,3 +225,22 @@ sysroot         = "/opt/sysroot"             # → CMAKE_SYSROOT, appended after
 Compilers come from freight's normal toolchain detection / `freight toolchain use`;
 they are not configured here. See [manifest-reference.md](manifest-reference.md) for
 the full config-file reference.
+
+### Pinning the cmake binary
+
+By default the plugin runs the `cmake` on `$PATH`. To pin a specific cmake, ship it
+as a build-dependency: the plugin resolves `cmake` from build-dep `bin/` directories
+before `$PATH`. A feature can make that opt-in by activating an *optional* build-dep:
+
+```toml
+[features]
+cmake-4_3 = ["dep:cmake-4_3"]                  # turn the pinned toolchain on
+
+[build-dependencies]
+cmake-4_3 = { version = "4.3", optional = true }   # a package shipping bin/cmake
+```
+
+`freight build --features cmake-4_3` then puts that cmake's `bin/` on the tool path
+and the plugin uses it; without the feature, the system `cmake` is used. (Declaring
+`cmake = "<constraint>"` in `[build-dependencies]` additionally *verifies* the cmake
+that will be used satisfies the constraint before any configure runs.)

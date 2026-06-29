@@ -258,6 +258,7 @@ pub(crate) fn stage_build_deps(
         manifest,
         profile,
         dep_defines,
+        activated_deps,
         progress,
     )?;
 

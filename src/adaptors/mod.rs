@@ -112,6 +112,7 @@ pub fn build_foreign_deps(
     manifest: &Manifest,
     profile: &str,
     _dep_defines: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    activated_deps: &std::collections::BTreeSet<String>,
     progress: &Progress,
 ) -> Result<(Vec<ForeignBuilt>, Vec<ResolvedPkgConfig>, Vec<PathBuf>), FreightError> {
     let pkgs_root = root_dir;
@@ -133,6 +134,14 @@ pub fn build_foreign_deps(
         pkgs_dir: pkgs_root.join(".pkgs"),
     };
     for (name, dep) in &manifest.effective_build_dependencies() {
+        // Skip optional build-deps not activated via a `dep:name` feature entry —
+        // mirrors the gating of optional `[dependencies]`. This is what lets a
+        // feature select a pinned tool (e.g. a specific cmake binary) on demand.
+        if let Dependency::Detailed(d) = dep {
+            if d.optional && !activated_deps.contains(name) {
+                continue;
+            }
+        }
         // Resolver decision (no prebuilt index yet): a system tool on PATH
         // satisfies the build-dep with no fetch/build — unless `source = true`
         // forces a from-source build.
