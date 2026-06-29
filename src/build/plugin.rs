@@ -1183,8 +1183,31 @@ pub fn run_build_system(
         String::new()
     } else {
         let environment = crate::environment::Environment::for_project(&root);
+        // Resolve freight's compilers (cached detection) and set them in the
+        // toolchain so the foreign build uses the same toolchain as native builds.
+        // `select_compiler` picks the toolchain entry (consistent across languages);
+        // `resolve_compile_binary` then yields the *correct* binary per language
+        // (e.g. clang for C, clang++ for C++ — not the C++ driver for both).
+        let detected =
+            crate::toolchain::detect_all_cached(&crate::toolchain::builtin::all_compiler_templates());
+        let backend = crate::manifest::types::Backend::default();
+        let compilers: Vec<(String, String)> = [
+            ("c", "C"),
+            ("cpp", "CXX"),
+            ("fortran", "Fortran"),
+            ("cuda", "CUDA"),
+        ]
+        .iter()
+        .filter_map(|(lang_key, cmake_lang)| {
+            crate::build::compile::select_compiler(lang_key, &backend, &detected, None).map(|c| {
+                let bin = crate::build::compile::resolve_compile_binary(c, lang_key);
+                (cmake_lang.to_string(), path_string(&bin))
+            })
+        })
+        .collect();
         crate::build::cmake_toolchain::generate(
             out_dir,
+            &compilers,
             prefixes,
             environment.sysroot.as_deref(),
             &env.target_os,
