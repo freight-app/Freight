@@ -178,6 +178,7 @@ The `examples/` directory has fully buildable projects. See [`examples/README.md
 | [docs/manifest-reference.md](docs/manifest-reference.md) | Complete `freight.toml` field reference |
 | [docs/compiler-templates.md](docs/compiler-templates.md) | Writing Rhai compiler scripts |
 | [docs/platform-sources.md](docs/platform-sources.md) | `[os.*]` / `[arch.*]` platform-conditional sources |
+| [docs/cmake-interop.md](docs/cmake-interop.md) | CMake compatibility — toolchain file, dependency provider, package export |
 | [docs/architecture.md](docs/architecture.md) | Repository layout, build pipeline, architecture rules |
 | [docs/cargo-vs-freight.md](docs/cargo-vs-freight.md) | Mapping from Cargo concepts to freight |
 | [docs/roadmap.md](docs/roadmap.md) | Development roadmap |

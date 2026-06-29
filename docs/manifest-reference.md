@@ -667,6 +667,18 @@ file — the cmake script calls `freight` directly, on demand. `freight init` st
 harvests `find_package` names statically (from `CMakeLists.txt` + `cmake/*.cmake`)
 to seed `[dependencies]`.
 
+**Generated toolchain file.** Alongside the provider, freight writes a
+`Freight.toolchain.cmake` (passed via `-DCMAKE_TOOLCHAIN_FILE`) that sets freight's
+compilers, applies machine-local host-compat flags (`cmake-c-flags` /
+`cmake-cxx-flags`, see [Developer config](#developer-config--outside-freighttoml)),
+and prepends freight's package prefixes to `CMAKE_PREFIX_PATH` /
+`CMAKE_FIND_ROOT_PATH` so dependency resolution is freight-first. It is skipped when
+the project supplies its own `CMAKE_TOOLCHAIN_FILE` (e.g. vcpkg). The provider says
+*provide on demand*; the toolchain file says *what to build with and where to look*.
+The full story — including cross-compilation, the package export side
+(`<Name>Config.cmake`), and how the pieces compose — is in
+[cmake-interop.md](cmake-interop.md).
+
 **System registry.** `freight-system-registry` builds a local directory of
 `[package]` stubs — one per pkg-config package installed on the host — so freight
 can resolve locally-installed libraries offline:
@@ -1137,6 +1149,7 @@ auto-cpu-tuning = true          # set false to suppress derived -march/-mcpu/-mt
 # Extra flags injected into foreign CMake builds via the generated toolchain file
 # (CMAKE_<LANG>_FLAGS_INIT). The home for host-compat shims, applied to every
 # `build = "cmake"` build on this machine without per-project edits.
+# See docs/cmake-interop.md for the full toolchain-file story.
 cmake-cxx-flags = ["-include", "cstdint"]
 cmake-c-flags   = []
 

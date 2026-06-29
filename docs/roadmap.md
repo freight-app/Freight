@@ -83,6 +83,7 @@ Feature branches follow the convention `feature/<name>` off `master`.
 - [x] Header-only auto-detection when no build system and no source files found
 - [x] **pkg-config**: `pkgconf` fallback when `pkg-config` binary is absent; cross-compile env var lookup (`PKG_CONFIG_PATH_<target>`, `TARGET_PKG_CONFIG_PATH`, …); `PKG_CONFIG_LIBDIR` / `PKG_CONFIG_SYSROOT_DIR` passthrough; `PKG_CONFIG_ALL_STATIC` static-link mode
 - [x] **CMake**: Ninja generator auto-selected when `ninja` is on `$PATH`; `CMAKE_SYSTEM_NAME` + `CMAKE_SYSTEM_PROCESSOR` injected from target triple for cross-builds; `cmake --build --parallel N` on CMake ≥ 3.12; `cmake --install` step with explicit prefix
+- [x] **CMake interop** (`build = "cmake"` self-builds — see [cmake-interop.md](cmake-interop.md)): generated `Freight.toolchain.cmake` (freight's compilers + per-language `CMAKE_<LANG>_FLAGS_INIT` from `cmake-c/cxx-flags` + freight-first `CMAKE_PREFIX_PATH`/`CMAKE_FIND_ROOT_PATH`, native-overlay `BOTH` vs cross `ONLY`; skipped when the project supplies its own toolchain); on-demand dependency provider (CMake 3.24+) intercepting `find_package`/`FetchContent` → `freight cmake-provide`; package export of `<Name>Config.cmake` + `.pc` so freight libraries satisfy downstream `find_package`
 - [x] **Autotools**: `--host=<triple>` passed to `configure` for cross-builds; parallel `make -j{N}`; fast-build configure skip when `config.status` + `Makefile` are up-to-date; `--enable-static --disable-shared`; Emscripten `emconfigure`/`emmake` for wasm/emscripten targets
 
 ### Features System ✓ COMPLETE
