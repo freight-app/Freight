@@ -134,7 +134,7 @@ freight search <query>           search the registry
 freight install / package        install to a prefix / build a redistributable archive
 freight fmt / lint [--fix]       format / lint sources (wraps clang-format / clang-tidy)
 freight debug                    launch GDB/LLDB; generate launch.json
-freight lsp                      serve freight.toml diagnostics + source LSP passthroughs
+freight lsp                      serve freight.toml diagnostics + source intelligence
 freight compile-commands         generate compile_commands.json
 freight publish                  upload this package to a registry
 freight doc                      browse dependency docs in a TUI
@@ -191,9 +191,10 @@ common C/C++/Fortran workflows, but some areas are still preview or unproven:
 
 - **Manifest format is not yet stable.** While `0.x`, `freight.toml` fields may
   change between releases.
-- **Editor integration is preview.** `freight lsp` works (it passes through to
-  clangd / fortls); the bundled VS Code and Neovim plugins, the in-process
-  `clang-bridge`, and the native Fortran indexer are still in progress.
+- **Editor integration is preview.** `freight lsp` works with clangd for
+  C-family files and native in-process Fortran/assembly indexers; the bundled
+  VS Code and Neovim plugins and the in-process `clang-bridge` are still in
+  progress.
 - **Platform coverage.** Development and CI focus on Linux and macOS. Windows
   builds via MSVC but is less exercised — please report issues.
 - **Foreign build systems need their tools on `PATH`.** CMake/Meson/Autotools/

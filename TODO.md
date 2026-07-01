@@ -233,22 +233,23 @@ the compiler gets `--sysroot`, pkg-config is scoped into the sysroot.
 
 **End goal:** Fortran files are served by the workspace's `crates/fortran-lsp`
 embedded as a `LanguageIndexer` (like ClangIndexer), scoped by freight's
-manifest source graph. `fortls` remains a reference implementation and
-flag-gated fallback until removal.
+manifest source graph. `fortls` remains a reference implementation for
+differential tests only.
 
-**Status:** `fortran-lsp` already covers parsing (free/fixed form, preprocessor
-evaluation, recursive includes), indexing, hover, definition, completion,
-signature help, references, and a broad diagnostic set (48 tests) — but
-**`freight lsp` does not call it yet**; Fortran traffic still goes to fortls.
+**Status:** Done at the Freight boundary. `FortranIndexer` is always registered
+by `freight lsp`, wraps `fortran_lsp::Workspace`, uses manifest/dependency
+include roots, and serves hover, definition, completion, signature help,
+diagnostics, document/workspace symbols, folding ranges, references, document
+highlights, implementation lookup, selection ranges, semantic tokens, inlay
+hints, code actions, and rename.
 
 **How to solve:**
-- [ ] `FortranIndexer` in `src/lsp/indexers/` wrapping `fortran_lsp::Workspace`:
-      feed it manifest source roots + include dirs; route Fortran URIs to it
-      behind a `--use-native-fortran` flag (mirror the clang-bridge gating).
-- [ ] Map `fortran-lsp` model types to LSP responses for supported methods;
-      forward unsupported methods to fortls while gaps remain.
-- [ ] Differential-test against fortls (same oracle technique as clang-bridge
-      vs clangd), close gaps, then flip the default.
+- [x] `FortranIndexer` in `src/lsp/indexers/` wrapping `fortran_lsp::Workspace`;
+      feed it manifest source roots + include dirs; route Fortran URIs to it by
+      default.
+- [x] Map `fortran-lsp` model types to LSP responses for supported methods.
+- [x] Remove the fortls passthrough from `freight lsp`; keep fortls only as the
+      external oracle used by `scripts/fortran_lsp_compare.py`.
 - [ ] See `crates/fortran-lsp/TODO.md` for crate-side gaps.
 
 ### LSP: native assembly support (`AsmIndexer`)

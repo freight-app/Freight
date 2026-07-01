@@ -198,7 +198,7 @@ flowchart LR
     end
 
     subgraph Servers["Servers (stdio)"]
-        L["freight lsp\nLSP multiplexer\n(clangd + fortls + asm-lsp)"]
+        L["freight lsp\nLSP multiplexer\n(clangd + native Fortran/asm)"]
         DA["freight dap\nDAP proxy\n(lldb-dap / gdb-mi)"]
     end
 ```

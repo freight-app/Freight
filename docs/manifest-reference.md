@@ -1039,14 +1039,14 @@ freight fmt --check   # exit non-zero if any file needs reformatting (CI use)
 ## IDE / LSP
 
 `freight lsp` runs a stdio language server for editors. It owns `freight.toml`
-diagnostics, completion, and hover, and can start source-file language servers
-as passthroughs:
+diagnostics, completion, and hover, serves Fortran and assembly in process, and
+can start C-family source-file language servers as passthroughs:
 
-| Language | Passthrough |
+| Language | Owner |
 |---|---|
 | C / C++ / CUDA / HIP / Objective-C / Objective-C++ | `clangd` |
-| Fortran | `fortls` |
-| Assembly (`.asm`, `.nasm`, `.s`) | `asm-lsp` |
+| Fortran | native `fortran-lsp` indexer |
+| Assembly (`.asm`, `.nasm`, `.s`) | native indexer by default; `asm-lsp` fallback with `--no-native-asm` |
 
 On initialize, when `freight.toml` is saved, and when the editor reports an
 external `freight.toml` file change, the server refreshes a source LSP compile
@@ -1063,12 +1063,12 @@ profile, and feature set. Installed system packages that are not listed in the
 manifest are not added to the source LSP search surface.
 
 ```sh
-freight lsp                    # freight.toml helper + source LSP passthroughs
+freight lsp                    # freight.toml helper + source intelligence
 freight lsp --no-clangd        # disable C-family passthrough
 freight lsp --clangd /path/to/clangd
-freight lsp --fortls /path/to/fortls
 freight lsp --asm-lsp /path/to/asm-lsp
-freight lsp --no-clangd --no-fortls --no-asm-lsp  # manifest-only mode
+freight lsp --no-native-asm --asm-lsp /path/to/asm-lsp
+freight lsp --no-clangd --no-asm-lsp  # manifest + native Fortran/asm only
 freight lsp --profile release  # generate release LSP compile database
 ```
 

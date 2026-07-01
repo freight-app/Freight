@@ -1,9 +1,10 @@
 # Freight LSP Architecture
 
-The freight language server is a **multiplexing proxy** that sits between VS Code and
-the underlying language servers (clangd, fortls, asm-lsp). It intercepts requests it
-can answer itself, enriches or filters what passes through, and owns all
-include/import-related features entirely.
+The freight language server is a **multiplexing proxy** that sits between an LSP
+client, native in-process indexers, and external passthrough servers (`clangd`,
+optionally `asm-lsp`). It intercepts requests it can answer itself, enriches or
+filters what passes through, and owns all include/import-related features
+entirely.
 
 ---
 
@@ -17,26 +18,27 @@ graph TD
         Router["Request router\n(match method)"]
         DocIndex["DocIndex\n(docify symbols)"]
         HeaderIndex["HeaderIndex\n(include → package)"]
+        Fortran["FortranIndexer\n(native fortran-lsp)"]
+        AsmNative["AsmIndexer\n(native assembly)"]
         PendingMap["clangd_pending\n(inlay hint intercepts)"]
     end
 
     subgraph Passthroughs["Passthrough servers"]
         Clangd["clangd\n(C / C++ / CUDA / ObjC)"]
-        Fortls["fortls\n(Fortran)"]
-        AsmLsp["asm-lsp\n(Assembly)"]
+        AsmLsp["asm-lsp\n(Assembly fallback)"]
     end
 
     VSCode -->|"JSON-RPC (stdio)"| Router
     Router -->|"freight-owned response"| VSCode
     Router -->|"forward"| Clangd
-    Router -->|"forward"| Fortls
     Router -->|"forward"| AsmLsp
     Clangd -->|"response (reader thread)"| PendingMap
     PendingMap -->|"merged + filtered"| VSCode
-    Fortls  -->|"response (reader thread)"| VSCode
     AsmLsp  -->|"response (reader thread)"| VSCode
     Router  --> DocIndex
     Router  --> HeaderIndex
+    Router  --> Fortran
+    Router  --> AsmNative
 ```
 
 ---
@@ -59,24 +61,24 @@ flowchart TD
     MethodSwitch -->|"inlayHint"| InlayPipeline["Inlay hint pipeline\n(see below)"]
     MethodSwitch -->|"definition\ndeclaration"| DefHandler{"cursor on\n#include line?"}
     DefHandler -->|yes| FreightDef["freight → open header file"]
-    DefHandler -->|no| PassDef["forward → clangd / fortls"]
+    DefHandler -->|no| PassDef["native indexer or forward → clangd"]
     MethodSwitch -->|"documentLink"| FreightLinks["freight → links for\nevery include line"]
-    MethodSwitch -->|"completion\nsignatureHelp\ncodeAction"| PassComp["forward by file extension"]
+    MethodSwitch -->|"completion\nsignatureHelp\ncodeAction"| IndexOrPass["native indexer or forward\nby file extension"]
     MethodSwitch -->|"didOpen\ndidSave\ndidChange"| SyncHandler["freight updates state\nthen forward to all"]
     MethodSwitch -->|"everything else"| ForwardAll["forward → all passthroughs"]
 ```
 
 ---
 
-## File extension → passthrough server
+## File extension → owner
 
 ```mermaid
 flowchart LR
     ext{"file extension"}
 
     ext -->|".c .h .cc .cpp .hpp\n.cxx .cu .hip .m .mm\n.cl .ispc .cppm .ixx"| Clangd["clangd"]
-    ext -->|".f .for .ftn .f90\n.f95 .f03 .f08 etc."| Fortls["fortls"]
-    ext -->|".asm .nasm .s .S"| AsmLsp["asm-lsp"]
+    ext -->|".f .for .ftn .f90\n.f95 .f03 .f08 etc."| Fortran["native FortranIndexer"]
+    ext -->|".asm .nasm .s .S"| Asm["native AsmIndexer\nor asm-lsp fallback"]
     ext -->|"freight.toml"| Freight["freight (built-in)"]
     ext -->|"other"| Null["null response"]
 ```
@@ -98,8 +100,8 @@ flowchart TD
     Step2 -->|found| DocHover["return markdown:\nsignature · brief · params · returns"]
     Step2 -->|miss| Step3{"file type?"}
     Step3 -->|"C/C++\n(clangd)"| ClangdHover["forward → clangd\n(types, stl docs)"]
-    Step3 -->|"Fortran"| FortlsHover["forward → fortls"]
-    Step3 -->|"Assembly"| AsmHover["forward → asm-lsp"]
+    Step3 -->|"Fortran"| FortranHover["native FortranIndexer"]
+    Step3 -->|"Assembly"| AsmHover["native AsmIndexer\nor asm-lsp fallback"]
     Step3 -->|"other"| NullHover["null"]
 ```
 

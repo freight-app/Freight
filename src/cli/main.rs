@@ -100,7 +100,7 @@ enum Commands {
     Fmt(commands::fmt::Args),
     /// Lint source files
     Lint(commands::lint::Args),
-    /// Start the freight.toml language server and clangd passthrough
+    /// Start the freight.toml language server, native Fortran/asm indexers, and clangd passthrough
     Lsp(lsp::Args),
     /// Manage compiler toolchains
     Toolchain(commands::toolchain::Args),

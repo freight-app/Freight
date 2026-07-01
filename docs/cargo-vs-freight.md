@@ -140,7 +140,7 @@ features = ["ws2_32"]    # -lws2_32 on Windows
 | `cargo search` | `freight search` | Same |
 | — | `freight debug` | Launches GDB or LLDB; generates `.vscode/launch.json` |
 | — | `freight watch` | Rebuilds on file changes |
-| — | `freight compile-commands` | Generates `compile_commands.json` for clangd/fortls |
+| — | `freight compile-commands` | Generates `compile_commands.json` for clangd and other source tools |
 | — | `freight toolchain list` | Shows detected compilers and debuggers |
 | — | `freight toolchain use` | Sets the default compiler backend |
 | `cargo outdated` (plugin) | `freight outdated` | Built-in |
