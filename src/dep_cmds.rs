@@ -318,7 +318,10 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
     let progress = silent();
     let mut outcomes = Vec::new();
 
-    for (name, dep) in &manifest.dependencies {
+    // Build-deps too: a url build-dep is a prebuilt tool archive (e.g. a pinned
+    // cmake tarball) that offline builds need fetched up front.
+    let build_deps = manifest.effective_build_dependencies();
+    for (name, dep) in manifest.dependencies.iter().chain(&build_deps) {
         // A `[patch]` override replaces this dep with a local source — nothing to fetch.
         if manifest.patch.contains_key(name) {
             continue;
@@ -327,6 +330,9 @@ pub fn fetch_url_deps(project_dir: &Path) -> Result<Vec<(String, bool)>, Freight
             continue;
         };
         let Some(url) = &d.url else { continue };
+        if d.is_git() {
+            continue;
+        }
 
         let already = project_dir
             .join(".pkgs")

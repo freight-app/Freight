@@ -228,19 +228,40 @@ the full config-file reference.
 
 ### Pinning the cmake binary
 
-By default the plugin runs the `cmake` on `$PATH`. To pin a specific cmake, ship it
-as a build-dependency: the plugin resolves `cmake` from build-dep `bin/` directories
-before `$PATH`. A feature can make that opt-in by activating an *optional* build-dep:
+By default the plugin runs the `cmake` on `$PATH`. To pin an exact cmake, point a
+build-dependency at a prebuilt tool archive — Kitware publishes one per release:
+
+```toml
+[build-dependencies]
+cmake = { version = "3.28", url = "https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.tar.gz" }
+```
+
+freight downloads the tarball into `.pkgs/cmake/` on first build (or `freight fetch`),
+finds its `bin/cmake`, and puts it ahead of `$PATH` for every cmake the build runs —
+a `url`- or `path`-pinned build-dep always beats the system tool of the same name.
+The `version` constraint is verified against the binary that will actually run
+before any configure starts, so a wrong tarball fails fast. Add `sha256 = "…"` to
+verify the download (auto-detected on first fetch otherwise).
+
+A feature can make the pin opt-in by activating an *optional* build-dep:
 
 ```toml
 [features]
-cmake-4_3 = ["dep:cmake-4_3"]                  # turn the pinned toolchain on
+cmake-3_28 = ["dep:cmake-3_28"]                # turn the pinned toolchain on
 
 [build-dependencies]
-cmake-4_3 = { version = "4.3", optional = true }   # a package shipping bin/cmake
+cmake-3_28 = { url = "https://…/cmake-3.28.6-linux-x86_64.tar.gz", optional = true }
 ```
 
-`freight build --features cmake-4_3` then puts that cmake's `bin/` on the tool path
-and the plugin uses it; without the feature, the system `cmake` is used. (Declaring
-`cmake = "<constraint>"` in `[build-dependencies]` additionally *verifies* the cmake
-that will be used satisfies the constraint before any configure runs.)
+`freight build --features cmake-3_28` then puts that cmake's `bin/` on the tool path
+and the plugin uses it; without the feature, the system `cmake` is used.
+
+Cross-platform pins use the `os` filter field — one entry per platform archive
+(distinct keys; what matters is the `bin/cmake` inside, not the dep name):
+
+```toml
+[build-dependencies]
+cmake-linux = { url = "https://…/cmake-3.28.6-linux-x86_64.tar.gz",  os = "linux" }
+cmake-macos = { url = "https://…/cmake-3.28.6-macos-universal.tar.gz", os = "macos" }
+cmake = "3.28"   # optional: verify whichever cmake wins satisfies the constraint
+```

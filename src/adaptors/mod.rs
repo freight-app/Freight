@@ -144,15 +144,37 @@ pub fn build_foreign_deps(
         }
         // Resolver decision (no prebuilt index yet): a system tool on PATH
         // satisfies the build-dep with no fetch/build — unless `source = true`
-        // forces a from-source build.
+        // forces a from-source build, or the dep is explicitly pinned to a
+        // `url`/`path` (a pinned tool must win over whatever the system has).
         let source_forced = matches!(dep, Dependency::Detailed(d) if d.source);
-        if !source_forced && crate::resolve::build_deps::ToolEnv::system(&tool_env, name, "*") {
+        let pinned = matches!(dep, Dependency::Detailed(d) if d.url.is_some() || d.path.is_some());
+        if !source_forced
+            && !pinned
+            && crate::resolve::build_deps::ToolEnv::system(&tool_env, name, "*")
+        {
             continue;
         }
         let dep_dir = match build_dep_dir(name, dep, project_dir, pkgs_root) {
             Some(d) => d,
             None => continue,
         };
+        // A url build-dep (prebuilt tool archive, e.g. a Kitware cmake tarball)
+        // is fetched on demand, same as url `[dependencies]` below.
+        if !dep_dir.exists() {
+            if let Dependency::Detailed(d) = dep {
+                if let Some(url) = &d.url {
+                    if !d.is_git() {
+                        crate::fetch::http::fetch_url_dep(
+                            name,
+                            url,
+                            d.sha256.as_deref(),
+                            pkgs_root,
+                            progress,
+                        )?;
+                    }
+                }
+            }
+        }
         if !dep_dir.exists() {
             progress(BuildEvent::Warning(format!(
                 "build-dep '{name}' not found at '{}' — run `freight fetch` first",

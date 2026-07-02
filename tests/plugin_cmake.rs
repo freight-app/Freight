@@ -172,6 +172,71 @@ fn cmake_plugin_resolves_an_earlier_dep_via_find_package() {
     common::assert_output_contains(&out, &["answer=42"]);
 }
 
+/// A build-dep explicitly pinned to a `path`/`url` must beat the system tool of
+/// the same name: `cmake = { path = ... }` shipping a `bin/cmake` is used even
+/// though a system cmake is on PATH (which previously short-circuited it).
+#[cfg(unix)]
+#[test]
+fn pinned_build_dep_beats_system_tool() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !cmake_available() {
+        eprintln!("skipping pinned-over-system test: cmake not installed");
+        return;
+    }
+    let real_cmake = {
+        let o = Command::new("sh")
+            .arg("-c")
+            .arg("command -v cmake")
+            .output()
+            .unwrap();
+        PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("wrapper-used.marker");
+
+    let cmakedir = tmp.path().join("pinned-cmake");
+    write(
+        &cmakedir.join("freight.toml"),
+        "[package]\nname = \"cmake\"\nversion = \"4.3.4\"\n",
+    );
+    let wrapper = cmakedir.join("bin/cmake");
+    write(
+        &wrapper,
+        &format!(
+            "#!/bin/sh\necho used >> \"{}\"\nexec \"{}\" \"$@\"\n",
+            marker.display(),
+            real_cmake.display()
+        ),
+    );
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let app = tmp.path().join("app");
+    write(
+        &app.join("freight.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nbuild = \"cmake\"\n\n\
+         [build-dependencies]\ncmake = { path = \"../pinned-cmake\" }\n",
+    );
+    write(
+        &app.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.24)\nproject(app C)\n\
+         add_library(app STATIC src/a.c)\ninstall(TARGETS app ARCHIVE DESTINATION lib)\n",
+    );
+    write(&app.join("src/a.c"), "int f(void){return 0;}\n");
+
+    let out = common::freight(&app, &["build"]);
+    if common::missing_toolchain(&out) {
+        eprintln!("skipping pinned-over-system test: no C toolchain");
+        return;
+    }
+    common::assert_success(&out, "build with a path-pinned cmake build-dep");
+    assert!(
+        marker.exists(),
+        "a path-pinned `cmake` build-dep must be used instead of the system cmake",
+    );
+}
+
 /// A feature can pin which cmake binary the plugin uses: an optional
 /// build-dependency that ships a `bin/cmake` is only placed on the tool path
 /// (and thus used by the cmake plugin) when a feature activates it via `dep:`.
@@ -188,7 +253,11 @@ fn feature_activates_a_pinned_cmake_binary() {
     // Absolute path to the real cmake — the wrapper delegates to it (never the
     // bare name, which could re-resolve to the wrapper itself).
     let real_cmake = {
-        let o = Command::new("sh").arg("-c").arg("command -v cmake").output().unwrap();
+        let o = Command::new("sh")
+            .arg("-c")
+            .arg("command -v cmake")
+            .output()
+            .unwrap();
         PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
 

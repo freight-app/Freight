@@ -135,6 +135,19 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
   (e.g. `← zlib`). System headers remain `← stdlib`.
 
 ### Fixed
+- **`url` build-dependencies now work end-to-end — pin an exact tool binary.**
+  Three gaps closed: (1) a build-dep explicitly pinned to a `url`/`path` was
+  silently short-circuited by a system tool of the same name — a pinned tool now
+  always wins; (2) a `url` build-dep was never downloaded (neither `freight
+  fetch` nor the build fetched it) — the build now fetches it on demand and
+  `freight fetch` includes build-deps; (3) `freight fetch` re-attempted an
+  archive download of *git* url deps on every run (git clones don't write the
+  `.freight-fetched` sentinel) — git urls are now left to the git fetcher.
+  Net effect: `cmake = { version = "3.28", url = "https://…/cmake-3.28.6-linux-x86_64.tar.gz" }`
+  downloads the Kitware tarball into `.pkgs/cmake/`, puts its `bin/cmake` ahead
+  of `$PATH` for the whole build, and the existing constraint check verifies the
+  pinned binary before configure. See *Pinning the cmake binary* in
+  [docs/cmake-interop.md](docs/cmake-interop.md).
 - **Optional build-dependencies are now feature-gated.** An `optional = true`
   entry in `[build-dependencies]` was always built, ignoring feature activation
   (only `[dependencies]` were gated). They now follow the same rule — skipped
