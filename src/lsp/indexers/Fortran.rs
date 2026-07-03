@@ -45,6 +45,77 @@ impl FortranIndexer {
         }
         self.sources.get(path).map(String::as_str)
     }
+
+    /// Index every Fortran file under the include roots so cross-file
+    /// hover/definition/diagnostics work with a single file open (fortls scans
+    /// the workspace root the same way at initialize). Files with a live editor
+    /// buffer (`sources`) are skipped — the buffer is authoritative. Unchanged
+    /// files are skipped, so a manifest refresh only reparses what changed on
+    /// disk. Parsing is pure, so changed files are parsed in parallel.
+    fn index_workspace_sources(&mut self, roots: &[PathBuf]) {
+        use rayon::prelude::*;
+
+        let mut files = Vec::new();
+        let mut visited_dirs = std::collections::HashSet::new();
+        for root in roots {
+            collect_fortran_files(root, &mut visited_dirs, &mut files);
+        }
+        let changed: Vec<(PathBuf, String)> = files
+            .into_iter()
+            .filter(|path| !self.sources.contains_key(path))
+            .filter_map(|path| {
+                let source = std::fs::read_to_string(&path).ok()?;
+                let unchanged = self
+                    .workspace
+                    .file(&path)
+                    .is_some_and(|f| f.source == source);
+                (!unchanged).then_some((path, source))
+            })
+            .collect();
+        let defines = self.workspace.predefined_macros().to_vec();
+        let parsed: Vec<fortran_lsp::ParsedFile> = changed
+            .into_par_iter()
+            .map(|(path, source)| {
+                fortran_lsp::ParsedFile::parse_with_defines(path, &source, &defines)
+            })
+            .collect();
+        for file in parsed {
+            self.workspace.upsert_parsed(file);
+        }
+    }
+}
+
+/// Recursively collect Fortran source files, skipping build output, VCS
+/// internals, and symlink cycles. Dep roots under `.pkgs` are still walked
+/// because they are passed in as roots directly.
+fn collect_fortran_files(
+    dir: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    out: &mut Vec<PathBuf>,
+) {
+    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(canonical) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name == "target" || name == "build" {
+                continue;
+            }
+            collect_fortran_files(&path, visited, out);
+        } else if file_type.is_file() && FortranIndexer::is_fortran(&path) {
+            out.push(path);
+        }
+    }
 }
 
 impl Default for FortranIndexer {
@@ -71,6 +142,35 @@ fn collect_fortran_include_roots(manifest_dir: &Path, profile: &str) -> Vec<Path
 
     collect_dep_include_roots(manifest_dir, manifest_dir, &manifest, &mut roots, &mut seen);
     roots
+}
+
+/// The build's `-D` set for this project — `[compiler]`/`[os.*]` defines plus
+/// default-feature defines — as `(NAME, VALUE)` pairs for the fortran-lsp
+/// preprocessor, so `#ifdef` regions are evaluated as the compiler would.
+fn fortran_predefined_macros(manifest_dir: &Path, profile: &str) -> Vec<(String, String)> {
+    let Ok(manifest) = load_manifest(manifest_dir) else {
+        return Vec::new();
+    };
+    let mut raw = manifest.build_settings_for(profile).defines;
+    if let Ok(resolution) = crate::build::features::resolve_features(&manifest.features, &[], true)
+    {
+        raw.extend(crate::build::features::to_defines(&resolution.active));
+        raw.extend(resolution.defines.iter().cloned());
+    }
+    let mut macros: Vec<(String, String)> = raw
+        .iter()
+        .map(|d| {
+            let d = d.trim().trim_start_matches("-D");
+            match d.split_once('=') {
+                Some((name, value)) => (name.to_string(), value.to_string()),
+                None => (d.to_string(), String::new()),
+            }
+        })
+        .filter(|(name, _)| !name.is_empty())
+        .collect();
+    macros.sort();
+    macros.dedup();
+    macros
 }
 
 fn fortran_line_length_limits(manifest_dir: &Path) -> (Option<usize>, Option<usize>) {
@@ -182,15 +282,26 @@ impl LanguageIndexer for FortranIndexer {
 
     fn refresh_flags(&mut self, manifest_dir: &Path, _profile: &str) {
         let roots = collect_fortran_include_roots(manifest_dir, _profile);
-        self.workspace.set_include_roots(roots);
+        self.workspace.set_include_roots(roots.clone());
         let (max_line_length, max_comment_line_length) = fortran_line_length_limits(manifest_dir);
         self.workspace
             .set_line_length_limits(max_line_length, max_comment_line_length);
+        self.workspace
+            .set_predefined_macros(fortran_predefined_macros(manifest_dir, _profile));
+        self.index_workspace_sources(&roots);
     }
 
     fn evict(&mut self, path: &Path) {
+        // Closing a buffer must not un-index the file: other files' modules
+        // still resolve through it. Drop the live buffer and restore the
+        // on-disk content; only a file gone from disk leaves the index.
         self.sources.remove(path);
-        self.workspace.remove_file(path);
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                self.workspace.upsert_file(path.to_path_buf(), &source);
+            }
+            Err(_) => self.workspace.remove_file(path),
+        }
     }
 
     fn reparse(&mut self, uri: &str, content: &str) {
@@ -805,6 +916,84 @@ max_comment_line_length = "10"
         );
     }
 
+    /// Manifest defines ([compiler] + default-feature defines) drive the
+    /// fortran-lsp preprocessor: an `#ifdef`-guarded symbol only exists when
+    /// the build would define the macro.
+    #[test]
+    fn fortran_indexer_applies_manifest_defines_to_preprocessor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            &root.join("freight.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [compiler]\ndefines = [\"API_LEVEL=3\"]\n\n\
+             [features]\ndefault = [\"fast\"]\nfast = [\"define:WITH_FAST\"]\n",
+        );
+        write(
+            &root.join("src/guarded.F90"),
+            "module m\n#ifdef WITH_FAST\ninteger :: fast_var\n#endif\n\
+             #if API_LEVEL >= 3\ninteger :: modern_var\n#endif\nend module",
+        );
+
+        let mut indexer = FortranIndexer::new();
+        indexer.refresh_flags(root, "debug");
+        let symbols = indexer.workspace_symbols("_var").unwrap_or_default();
+        let names: Vec<&str> = symbols.iter().filter_map(|s| s["name"].as_str()).collect();
+        assert!(
+            names.contains(&"m::fast_var") && names.contains(&"m::modern_var"),
+            "feature + compiler defines must reach the preprocessor, got {names:?}",
+        );
+    }
+
+    /// `refresh_flags` indexes the whole workspace so cross-file resolution
+    /// works with a single file open — and closing a buffer (`evict`) must not
+    /// un-index the file for other files that use its modules.
+    #[test]
+    fn fortran_indexer_indexes_unopened_workspace_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            &root.join("freight.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &root.join("src/answer_mod.f90"),
+            "module answer_mod\ncontains\ninteger function answer()\nanswer = 42\n\
+             end function\nend module",
+        );
+        let main = root.join("src/main.f90");
+        let main_src = "program main\nuse answer_mod\nprint *, answer()\nend program";
+        write(&main, main_src);
+
+        let mut indexer = FortranIndexer::new();
+        indexer.refresh_flags(root, "debug");
+        // Only main.f90 is "opened"; answer_mod.f90 was indexed by the walk.
+        let uri = uri_from_path(&main);
+        indexer.reparse(&uri, main_src);
+
+        assert!(
+            indexer.diagnostics(&uri).is_empty(),
+            "use of a module in an unopened sibling file must resolve",
+        );
+        let msg = serde_json::json!({
+            "params": { "position": { "line": 2, "character": 10 } }
+        });
+        let def = indexer
+            .goto_definition(&uri, &msg)
+            .expect("definition into an unopened file");
+        assert!(
+            def["uri"].as_str().unwrap().ends_with("answer_mod.f90"),
+            "definition should land in the walked file, got {def}",
+        );
+
+        // Closing the dep buffer keeps the on-disk index.
+        indexer.evict(&root.join("src/answer_mod.f90"));
+        assert!(
+            indexer.diagnostics(&uri).is_empty(),
+            "evict must reload from disk, not un-index the module",
+        );
+    }
+
     #[test]
     fn fortran_indexer_serves_semantic_tokens() {
         let tmp = tempfile::tempdir().unwrap();
@@ -903,5 +1092,147 @@ max_comment_line_length = "10"
         assert_eq!(location["uri"], impl_uri);
         assert_eq!(location["range"]["start"]["line"], 2);
         assert_eq!(location["range"]["start"]["character"], 17);
+    }
+
+    #[test]
+    fn fortran_indexer_serves_inlay_hints() {
+        let tmp = tempfile::tempdir().unwrap();
+        let module_path = tmp.path().join("math.f90");
+        let app_path = tmp.path().join("app.f90");
+        let module = "module math\ncontains\nsubroutine axpy(a, x, y)\nend subroutine\nend module";
+        let app = "program app\nuse math, only: axpy\ncall axpy(alpha, xs, y=ys)\nend program";
+        write(&module_path, module);
+        write(&app_path, app);
+
+        let module_uri = uri_from_path(&module_path);
+        let app_uri = uri_from_path(&app_path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&module_uri, module);
+        indexer.reparse(&app_uri, app);
+        let msg = serde_json::json!({
+            "params": {
+                "textDocument": { "uri": app_uri },
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 2, "character": 30 }
+                }
+            }
+        });
+        let hints = indexer
+            .inlay_hints(&app_uri, &msg)
+            .expect("inlay hints for Fortran source");
+
+        assert_eq!(hints.len(), 2);
+        assert_eq!(hints[0]["label"], "a:");
+        assert_eq!(hints[0]["kind"], 2);
+        assert_eq!(hints[1]["label"], "x:");
+    }
+
+    #[test]
+    fn fortran_indexer_serves_highlights_and_folding_ranges() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("math.f90");
+        let source =
+            "module math\ncontains\nsubroutine axpy()\ninteger :: value\nvalue = value + 1\nend subroutine\nend module";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&uri, source);
+        let msg = serde_json::json!({
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": 4, "character": 1 }
+            }
+        });
+        let highlights = indexer
+            .document_highlight(&uri, &msg)
+            .expect("document highlights for Fortran source");
+        let folds = indexer
+            .folding_ranges(&uri)
+            .expect("folding ranges for Fortran source");
+
+        assert!(highlights.iter().any(|item| {
+            item["range"]["start"]["line"] == 3 && item["range"]["start"]["character"] == 11
+        }));
+        assert!(highlights.iter().any(|item| {
+            item["range"]["start"]["line"] == 4 && item["range"]["start"]["character"] == 0
+        }));
+        assert!(folds.iter().any(|item| {
+            item["startLine"] == 0 && item["endLine"] == 6 && item["kind"] == "region"
+        }));
+        assert!(folds.iter().any(|item| {
+            item["startLine"] == 2 && item["endLine"] == 5 && item["kind"] == "region"
+        }));
+    }
+
+    #[test]
+    fn fortran_indexer_serves_code_actions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("types.f90");
+        let source = "module m\n\
+type, abstract :: shape\n\
+contains\n\
+procedure(draw_iface), deferred :: draw\n\
+end type\n\
+type, extends(shape) :: circle\n\
+end type\n\
+end module";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&uri, source);
+        let actions = indexer
+            .code_actions(
+                &uri,
+                &serde_json::json!({ "params": { "textDocument": { "uri": uri } } }),
+            )
+            .expect("code actions for Fortran source");
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["kind"], "quickfix");
+        assert_eq!(
+            actions[0]["title"],
+            "Implement deferred procedures for `circle`"
+        );
+        assert_eq!(
+            actions[0]["edit"]["changes"][&uri][0]["newText"],
+            "contains\n  procedure :: draw => draw\n"
+        );
+    }
+
+    #[test]
+    fn fortran_indexer_serves_rename_workspace_edits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let module_path = tmp.path().join("math.f90");
+        let app_path = tmp.path().join("app.f90");
+        let module = "module math\ncontains\nsubroutine axpy()\nend subroutine axpy\nend module";
+        let app = "program app\nuse math, only: axpy\ncall axpy()\nend program";
+        write(&module_path, module);
+        write(&app_path, app);
+
+        let module_uri = uri_from_path(&module_path);
+        let app_uri = uri_from_path(&app_path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&module_uri, module);
+        indexer.reparse(&app_uri, app);
+        let msg = serde_json::json!({
+            "params": {
+                "textDocument": { "uri": app_uri },
+                "position": { "line": 2, "character": 6 },
+                "newName": "saxpy"
+            }
+        });
+        let edit = indexer
+            .rename(&app_uri, &msg)
+            .expect("rename workspace edit for Fortran source");
+
+        let module_edits = edit["changes"][&module_uri].as_array().unwrap();
+        let app_edits = edit["changes"][&app_uri].as_array().unwrap();
+        assert!(module_edits.iter().any(|item| item["newText"] == "saxpy"));
+        assert!(app_edits
+            .iter()
+            .any(|item| { item["range"]["start"]["line"] == 2 && item["newText"] == "saxpy" }));
     }
 }

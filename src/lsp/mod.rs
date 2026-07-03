@@ -632,6 +632,31 @@ impl Server {
             .filter(|uri| is_freight_manifest_uri(uri))
             .map(ToString::to_string)
             .collect();
+        // Source files changed on disk outside the editor (git pull, codegen):
+        // refresh the indexers' view of any file without a live buffer.
+        // (`docs` holds open buffers, which stay authoritative.)
+        if let Some(changes) = msg
+            .get("params")
+            .and_then(|p| p.get("changes"))
+            .and_then(Value::as_array)
+        {
+            for change in changes {
+                let Some(uri) = change.get("uri").and_then(Value::as_str) else {
+                    continue;
+                };
+                if is_freight_manifest_uri(uri) || self.state.docs.contains_key(uri) {
+                    continue;
+                }
+                let Some(path) = path_from_uri(uri) else {
+                    continue;
+                };
+                for ix in &mut self.state.indexers {
+                    if ix.handles(&path) {
+                        ix.evict(&path); // reloads from disk (or drops a deleted file)
+                    }
+                }
+            }
+        }
         if manifest_changes.is_empty() {
             return self.forward_to_all_passthroughs(&msg);
         }
