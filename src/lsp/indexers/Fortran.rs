@@ -438,19 +438,28 @@ impl LanguageIndexer for FortranIndexer {
         Some(ranges)
     }
 
-    fn code_actions(&mut self, uri: &str, _msg: &Value) -> Option<Vec<Value>> {
+    fn code_actions(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {
         let path = path_from_uri(uri)?;
         if !Self::is_fortran(&path) {
             return None;
         }
-        self.ensure_file(&path);
-        Some(
-            self.workspace
-                .code_actions(&path)
-                .into_iter()
-                .map(code_action_to_lsp)
-                .collect(),
-        )
+        let source = self.ensure_file(&path)?.to_string();
+        // codeAction params carry a range, not a position — quick fixes key
+        // off its start (the cursor / diagnostic location).
+        let start = msg
+            .get("params")
+            .and_then(|p| p.get("range"))
+            .and_then(|r| r.get("start"));
+        let actions = match start {
+            Some(start) => {
+                let line = start.get("line").and_then(Value::as_u64)? as usize;
+                let character = start.get("character").and_then(Value::as_u64)? as usize;
+                self.workspace
+                    .code_actions_at(&path, Position::new(line, character), &source)
+            }
+            None => self.workspace.code_actions(&path),
+        };
+        Some(actions.into_iter().map(code_action_to_lsp).collect())
     }
 
     fn references(&mut self, uri: &str, msg: &Value) -> Option<Vec<Value>> {

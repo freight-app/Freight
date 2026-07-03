@@ -440,6 +440,7 @@ impl Server {
                 "textDocument/documentSymbol" => self.handle_document_symbol(msg)?,
                 "workspace/symbol" => self.handle_workspace_symbol(msg)?,
                 "textDocument/foldingRange" => self.handle_folding_range(msg)?,
+                "textDocument/formatting" => self.handle_formatting_or_forward(msg)?,
                 "textDocument/references" => self.handle_references(msg)?,
                 "textDocument/documentHighlight" => self.handle_document_highlight(msg)?,
                 "textDocument/selectionRange" => self.handle_selection_range(msg)?,
@@ -1117,6 +1118,61 @@ impl Server {
     }
 
     /// `textDocument/foldingRange` — prefer a language indexer, else forward.
+    /// `textDocument/formatting`: free-form Fortran is formatted by shelling
+    /// out to `fprettify` (stdin → stdout) when it is on PATH; fixed-form files
+    /// and missing-formatter cases answer null. Non-Fortran requests are
+    /// forwarded (clangd formats C/C++).
+    /// TODO(codex): thread `[language.fortran]` style options (indent width,
+    /// line length) through as fprettify flags.
+    fn handle_formatting_or_forward(&mut self, msg: Value) -> io::Result<()> {
+        let Some(uri) = text_document_uri(&msg) else {
+            return self.forward_to_all_passthroughs(&msg);
+        };
+        let Some(path) = path_from_uri(&uri) else {
+            return self.forward_by_uri(&uri, &msg);
+        };
+        let is_fortran = self.state.indexers.iter().any(|ix| ix.handles(&path));
+        let is_free_form = matches!(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("f90" | "f95" | "f03" | "f08" | "f18")
+        );
+        if !is_fortran {
+            return self.forward_by_uri(&uri, &msg);
+        }
+        let id = msg.get("id").cloned();
+        if !is_free_form {
+            // fprettify only understands free-form source.
+            return self.respond(id, Value::Null);
+        }
+        let text = match self.state.docs.get(&uri) {
+            Some(text) => text.clone(),
+            None => match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(_) => return self.respond(id, Value::Null),
+            },
+        };
+        let Some(formatted) = run_fprettify(&text) else {
+            return self.respond(id, Value::Null);
+        };
+        if formatted == text {
+            return self.respond(id, json!([]));
+        }
+        let end_line = text.lines().count();
+        self.respond(
+            id,
+            json!([{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": end_line, "character": 0 }
+                },
+                "newText": formatted
+            }]),
+        )
+    }
+
     fn handle_folding_range(&mut self, msg: Value) -> io::Result<()> {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let uri = text_document_uri(&msg);
@@ -3150,4 +3206,28 @@ src = "src/main.c"
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join("freight.toml"), text).unwrap();
     }
+}
+
+/// Format free-form Fortran source with `fprettify --silent` over stdin.
+/// `None` when fprettify is not installed or fails — the caller answers null
+/// so the client reports "no formatter" instead of erroring.
+fn run_fprettify(source: &str) -> Option<String> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("fprettify")
+        .args(["--silent", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(source.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let formatted = String::from_utf8(out.stdout).ok()?;
+    // An empty result for non-empty input means fprettify choked; keep the
+    // buffer untouched rather than wiping the file.
+    (!(formatted.is_empty() && !source.is_empty())).then_some(formatted)
 }

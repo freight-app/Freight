@@ -277,6 +277,10 @@ pub fn freight_capabilities(use_clang_bridge: bool, use_native_fortran: bool) ->
         if let Some(obj) = caps.as_object_mut() {
             obj.insert("codeActionProvider".into(), json!(true));
             obj.insert("renameProvider".into(), json!(true));
+            // Free-form Fortran formatting shells out to fprettify when it is
+            // on PATH (the server answers null otherwise). Other languages'
+            // formatting requests are forwarded (clangd formats C/C++).
+            obj.insert("documentFormattingProvider".into(), json!(true));
         }
     }
     caps
