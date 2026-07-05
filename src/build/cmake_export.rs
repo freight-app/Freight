@@ -185,12 +185,19 @@ fn write_cmake_config(prefix: &Path, spec: &ExportSpec) -> io::Result<()> {
     );
     std::fs::write(dir.join(format!("{name}Config.cmake")), config)?;
 
-    // A permissive version file so `find_package(<name> <ver>)` is satisfied.
+    // "Any newer version" compatibility (CMake's AnyNewerVersion policy): a
+    // `find_package(<name> <req>)` is satisfied when the exported version is
+    // >= the requested one, and marked exact on equality — so a request for a
+    // version newer than what freight exports is correctly rejected.
     let version_file = format!(
         "set(PACKAGE_VERSION \"{version}\")\n\
-         set(PACKAGE_VERSION_COMPATIBLE TRUE)\n\
-         if(\"${{PACKAGE_VERSION}}\" VERSION_EQUAL \"${{PACKAGE_FIND_VERSION}}\")\n\
-         \u{20}\u{20}set(PACKAGE_VERSION_EXACT TRUE)\n\
+         if(PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION)\n\
+         \u{20}\u{20}set(PACKAGE_VERSION_COMPATIBLE FALSE)\n\
+         else()\n\
+         \u{20}\u{20}set(PACKAGE_VERSION_COMPATIBLE TRUE)\n\
+         \u{20}\u{20}if(PACKAGE_VERSION VERSION_EQUAL PACKAGE_FIND_VERSION)\n\
+         \u{20}\u{20}\u{20}\u{20}set(PACKAGE_VERSION_EXACT TRUE)\n\
+         \u{20}\u{20}endif()\n\
          endif()\n",
         version = version_or_zero(spec.version),
     );
@@ -303,6 +310,31 @@ mod tests {
             std::fs::read_to_string(tmp.path().join("lib/cmake/solo/soloConfig.cmake")).unwrap();
         assert!(!cfg.contains("find_dependency"), "{cfg}");
         assert!(!cfg.contains("CMakeFindDependencyMacro"), "{cfg}");
+    }
+
+    #[test]
+    fn version_file_enforces_any_newer_version_compat() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spec = ExportSpec {
+            cmake_name: "widget",
+            pc_name: "widget",
+            version: "2.5.0",
+            dependencies: &[],
+        };
+        export_cmake_package(tmp.path(), &spec).unwrap();
+        let vf = std::fs::read_to_string(
+            tmp.path()
+                .join("lib/cmake/widget/widgetConfigVersion.cmake"),
+        )
+        .unwrap();
+        // Older-than-requested must be marked incompatible (not blanket TRUE).
+        assert!(
+            vf.contains("PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION"),
+            "{vf}"
+        );
+        assert!(vf.contains("set(PACKAGE_VERSION_COMPATIBLE FALSE)"), "{vf}");
+        assert!(vf.contains("set(PACKAGE_VERSION_EXACT TRUE)"), "{vf}");
+        assert!(vf.contains("set(PACKAGE_VERSION \"2.5.0\")"), "{vf}");
     }
 
     #[test]

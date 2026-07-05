@@ -7,6 +7,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 
 ## [Unreleased]
 
+### Fixed
+- **Exported CMake package version requests are enforced.** A freight-exported
+  `<Name>ConfigVersion.cmake` set `PACKAGE_VERSION_COMPATIBLE TRUE`
+  unconditionally, so `find_package(Foo 9.0)` was satisfied by an exported 2.5.0.
+  It now uses CMake's *any-newer-version* rule (compatible iff exported ≥
+  requested, exact on equality), so a too-new request is correctly rejected.
+
 ### Added
 - **Exported CMake packages carry their transitive freight deps.** A freight
   library exported for a downstream `find_package` now emits
