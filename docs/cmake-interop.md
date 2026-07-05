@@ -129,9 +129,17 @@ prints an install prefix to add to `CMAKE_PREFIX_PATH`. A request resolves to:
   consumer `find_package` a sibling freight library during local development.
 - a **foreign CMake project** under `.pkgs/` — built via the cmake plugin, which
   runs its own `install`, yielding the project's real `<Name>Config.cmake`.
-- **nothing** — freight stays out of the way and CMake's normal search runs;
-  `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=ALWAYS` is set so a freight/installed copy still
-  wins over a network `FetchContent` download when present.
+- **nothing** — freight stays out of the way and CMake's normal search runs.
+
+**`FetchContent` is intercepted the same way.** The provider also handles the
+`FETCHCONTENT_MAKEAVAILABLE_SERIAL` method: for each `FetchContent_MakeAvailable(dep)`
+it asks `freight cmake-provide dep`, and if freight can provide the package it does a
+config-mode `find_package` in freight's prefix and calls `FetchContent_SetPopulated`
+— so the declared `GIT_REPOSITORY` / `URL` is **never downloaded** and any vendored
+copy is bypassed. If freight can't provide the dep, the provider returns without
+marking it populated, so FetchContent falls through to its normal population (git
+clone, archive download, or a local `SOURCE_DIR`). `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=ALWAYS`
+is also set as a belt-and-braces fallback for CMake < 3.24, where no provider runs.
 
 This is dynamic and self-contained: no separate resolver binary and no resolution
 file — the script calls `freight` directly, on demand, only for the packages a

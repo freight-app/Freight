@@ -8,6 +8,14 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- **`FetchContent` is resolved through freight.** The cmake dependency
+  provider now handles `FetchContent_MakeAvailable` as well as `find_package`:
+  when a foreign CMake project's `FetchContent_MakeAvailable(dep)` names a dep
+  freight knows (a `{ path = … }` entry, a `.pkgs/` package, or an installed
+  one), freight provides its copy and calls `FetchContent_SetPopulated`, so the
+  declared `GIT_REPOSITORY` / `URL` is never downloaded and vendored trees are
+  bypassed. Deps freight doesn't know fall through to FetchContent's normal
+  population untouched. See [docs/cmake-interop.md](docs/cmake-interop.md) §2.
 - **Build plugins (`[plugin]`).** A package can declare `[plugin]`
   (`entry`/`handles`/`tools`) to ship a Rhai script. A project that depends on
   such a package and declares one of the plugin's `handles` sections (e.g.

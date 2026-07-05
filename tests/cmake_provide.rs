@@ -128,6 +128,101 @@ fn provider_satisfies_find_package_during_build() {
     );
 }
 
+/// `FetchContent_MakeAvailable` is satisfied by the provider when freight knows
+/// the dep: the declared GIT_REPOSITORY is a dead host, so a successful build
+/// proves no download happened — freight's installed copy was provided and
+/// `FetchContent_SetPopulated` short-circuited population. A second content
+/// (`vendored`) that freight can NOT provide must fall through to FetchContent's
+/// normal population (a local SOURCE_DIR add_subdirectory).
+#[test]
+fn provider_satisfies_fetchcontent_and_falls_back_when_unknown() {
+    if !have("cmake") || !(have("cc") || have("gcc") || have("clang")) {
+        eprintln!("skipping: cmake or C compiler missing");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let app = tmp.path().join("app");
+
+    write(
+        &app.join("freight.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nbuild = \"cmake\"\n",
+    );
+    write(
+        &app.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.24)\nproject(app C)\n\
+         include(FetchContent)\n\
+         FetchContent_Declare(jsonlike GIT_REPOSITORY https://invalid.invalid/jsonlike.git GIT_TAG v1)\n\
+         FetchContent_Declare(vendored SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vendored)\n\
+         FetchContent_MakeAvailable(jsonlike vendored)\n\
+         add_executable(app main.c)\n\
+         target_link_libraries(app jsonlike vendored)\n\
+         install(TARGETS app RUNTIME DESTINATION bin)\n",
+    );
+    write(
+        &app.join("main.c"),
+        "int jl(void);\nint vend(void);\nint main(void){return jl()+vend()==3?0:1;}\n",
+    );
+
+    // The freight-known dep, fetched under .pkgs (exports jsonlikeConfig.cmake).
+    let dep = app.join(".pkgs/jsonlike");
+    write(
+        &dep.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.10)\nproject(jsonlike C)\n\
+         add_library(jsonlike STATIC src.c)\n\
+         target_include_directories(jsonlike PUBLIC $<INSTALL_INTERFACE:include>)\n\
+         install(TARGETS jsonlike EXPORT t ARCHIVE DESTINATION lib)\n\
+         install(EXPORT t FILE jsonlikeConfig.cmake DESTINATION lib/cmake/jsonlike)\n\
+         install(FILES jl.h DESTINATION include)\n",
+    );
+    write(&dep.join("jl.h"), "int jl(void);\n");
+    write(&dep.join("src.c"), "int jl(void){return 1;}\n");
+
+    // The unknown dep: a local vendored tree FetchContent must add_subdirectory.
+    let vendored = app.join("third_party/vendored");
+    write(
+        &vendored.join("CMakeLists.txt"),
+        "add_library(vendored STATIC vend.c)\n\
+         target_include_directories(vendored PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})\n",
+    );
+    write(&vendored.join("vend.c"), "int vend(void){return 2;}\n");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_freight"))
+        .arg("build")
+        .current_dir(&app)
+        .output()
+        .expect("run freight build");
+    assert!(
+        out.status.success(),
+        "FetchContent should be provided by freight (jsonlike) and fall back \
+         locally (vendored).\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    // The provider records what it satisfied in the per-build report file.
+    let report = find_file(&app, "freight-report.txt")
+        .expect("the cmake plugin should write freight-report.txt");
+    let report = fs::read_to_string(report).unwrap();
+    assert!(
+        report.contains("fetchcontent-provided jsonlike"),
+        "provider should record satisfying jsonlike via freight:\n{report}",
+    );
+}
+
+/// First file named `name` anywhere under `dir`.
+fn find_file(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_file(&path, name) {
+                return Some(found);
+            }
+        } else if path.file_name().is_some_and(|f| f == name) {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// The provider resolves a freight-native `{ path = "..." }` dependency — not just
 /// deps fetched into `.pkgs/`. A foreign CMake app `find_package`s a sibling freight
 /// library declared by path; the provider builds it and exports its `Config.cmake`.
@@ -145,7 +240,10 @@ fn provider_resolves_native_path_dependency() {
         &greet.join("freight.toml"),
         "[package]\nname = \"greet\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"greet\"\n",
     );
-    write(&greet.join("include/greet.h"), "const char* greeting(void);\n");
+    write(
+        &greet.join("include/greet.h"),
+        "const char* greeting(void);\n",
+    );
     write(
         &greet.join("src/greet.cpp"),
         "#include \"greet.h\"\nconst char* greeting(void){return \"hi\";}\n",

@@ -66,9 +66,7 @@ for name in names {
     fc += "    freight_report(\"${method}\" \"${dep}\")\n";
     // FIND_PACKAGE: ask freight to provide the dep on demand (build + export its
     // copy), prepend the returned prefix, then do the normal search — so freight's
-    // copy wins, else CMake finds the system one. FetchContent: record only and
-    // return; TRY_FIND_PACKAGE_MODE + CMAKE_PREFIX_PATH make MakeAvailable prefer
-    // freight's copy first.
+    // copy wins, else CMake finds the system one.
     fc += "    if(\"${method}\" STREQUAL \"FIND_PACKAGE\")\n";
     fc += "      if(FREIGHT_BIN)\n";
     fc += "        execute_process(COMMAND \"${FREIGHT_BIN}\" cmake-provide \"${dep}\" --profile \"${FREIGHT_PROFILE}\"\n";
@@ -78,6 +76,26 @@ for name in names {
     fc += "        endif()\n";
     fc += "      endif()\n";
     fc += "      find_package(${dep} ${ARGN} BYPASS_PROVIDER)\n";
+    // FETCHCONTENT_MAKEAVAILABLE_SERIAL: if freight knows the dep (declared in
+    // freight.toml / present in .pkgs), provide it as an installed package and
+    // mark the content populated — no download, vendored trees bypassed. If
+    // freight can't provide it, fall through untouched: returning without
+    // FetchContent_SetPopulated makes FetchContent do its normal population.
+    fc += "    elseif(\"${method}\" STREQUAL \"FETCHCONTENT_MAKEAVAILABLE_SERIAL\")\n";
+    fc += "      if(FREIGHT_BIN)\n";
+    fc += "        execute_process(COMMAND \"${FREIGHT_BIN}\" cmake-provide \"${dep}\" --profile \"${FREIGHT_PROFILE}\"\n";
+    fc += "          OUTPUT_VARIABLE _freight_pfx OUTPUT_STRIP_TRAILING_WHITESPACE)\n";
+    fc += "        if(_freight_pfx)\n";
+    fc += "          list(PREPEND CMAKE_PREFIX_PATH \"${_freight_pfx}\")\n";
+    // The Declare args in ARGN (GIT_REPOSITORY …) are not find_package options —
+    // search by name only, config mode, in freight's prefix.
+    fc += "          find_package(${dep} CONFIG BYPASS_PROVIDER)\n";
+    fc += "          if(${dep}_FOUND)\n";
+    fc += "            freight_report(\"fetchcontent-provided\" \"${dep}\")\n";
+    fc += "            FetchContent_SetPopulated(${dep})\n";
+    fc += "          endif()\n";
+    fc += "        endif()\n";
+    fc += "      endif()\n";
     fc += "    endif()\n";
     fc += "  endmacro()\n";
     fc += "  cmake_language(SET_DEPENDENCY_PROVIDER freight_provide_dependency\n";
