@@ -8,6 +8,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (while
 ## [Unreleased]
 
 ### Added
+- **Exported CMake packages carry their transitive freight deps.** A freight
+  library exported for a downstream `find_package` now emits
+  `find_dependency(<dep>)` + links `<dep>::<dep>` for each of its own freight
+  `[dependencies]`, and `freight cmake-provide` recursively builds + exports the
+  whole freight-dep closure, returning every prefix. So a foreign CMake app that
+  links only `mylib::mylib` still resolves `mylib`'s freight deps' archives —
+  previously their symbols were undefined at link. System deps are omitted (the
+  consumer resolves them normally). See
+  [docs/cmake-interop.md](docs/cmake-interop.md) §3.
 - **`FetchContent` is resolved through freight.** The cmake dependency
   provider now handles `FetchContent_MakeAvailable` as well as `find_package`:
   when a foreign CMake project's `FetchContent_MakeAvailable(dep)` names a dep

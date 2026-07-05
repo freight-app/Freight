@@ -31,12 +31,19 @@ impl Args {
         // The provider runs inside the dep's build tree; resolve the freight
         // project that owns the `.pkgs/` pool from the cwd upward.
         let project_dir = find_manifest_dir(&cwd).unwrap_or(cwd);
-        // Silent: this prints only the prefix on stdout (consumed by CMake);
-        // build events must not pollute that.
-        if let Some(prefix) =
-            provide_cmake_package(&self.name, &project_dir, &self.profile, &silent())
-        {
-            println!("{}", prefix.display());
+        // Silent: this prints only the prefix list on stdout (consumed by
+        // CMake); build events must not pollute that. Multiple prefixes (the
+        // package plus its transitive freight deps) are `;`-joined so the
+        // provider's `list(PREPEND CMAKE_PREFIX_PATH ...)` sees each as a
+        // separate entry.
+        let prefixes = provide_cmake_package(&self.name, &project_dir, &self.profile, &silent());
+        if !prefixes.is_empty() {
+            let joined = prefixes
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(";");
+            println!("{joined}");
         }
     }
 }

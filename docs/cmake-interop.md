@@ -170,6 +170,17 @@ for, freight exports *reactively* (when a request comes in) rather than eagerly 
 every package — eager export would have to guess the CMake-side casing (`ZLIB` vs
 `zlib`) and could publish a config under the wrong name.
 
+**Transitive freight dependencies.** When the freight package being exported has
+its own freight `[dependencies]` (a `{ path = … }` / `.pkgs` library, not a system
+lib), its generated `<Name>Config.cmake` emits `find_dependency(<dep>)` for each and
+links `<dep>::<dep>` into its interface — so a downstream `find_package(<Name>)`
+pulls those archives in too (a static freight lib carries its freight deps). freight
+provides the whole closure in one shot: `freight cmake-provide <name>` recursively
+builds + exports each transitive freight dep and returns **all** their prefixes
+(`;`-joined onto `CMAKE_PREFIX_PATH`), so each `find_dependency` resolves freight's
+copy. System deps are left out of the config (their CMake casing is unknown; the
+consumer finds them the usual way).
+
 ---
 
 ## How it composes — end to end

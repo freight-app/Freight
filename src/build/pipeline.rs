@@ -1180,22 +1180,55 @@ pub fn provide_cmake_package(
     project_dir: &Path,
     profile: &str,
     progress: &Progress,
-) -> Option<PathBuf> {
+) -> Vec<PathBuf> {
+    let target_dir = project_dir.join("target");
+    let mut seen = std::collections::HashSet::new();
+    provide_cmake_package_at(
+        cmake_name,
+        project_dir,
+        &target_dir,
+        profile,
+        &mut seen,
+        progress,
+    )
+}
+
+/// Provide `cmake_name` (and, for a freight-native library, its transitive
+/// freight dependencies) as CMake packages, returning every install prefix to
+/// add to `CMAKE_PREFIX_PATH`. `root_dir` owns the `.pkgs/` pool and the
+/// `cmake-export` output tree; it stays fixed across the recursion while dep
+/// directories are resolved relative to each level. `seen` guards against
+/// re-exporting a diamond dependency (and against cycles).
+fn provide_cmake_package_at(
+    cmake_name: &str,
+    project_dir: &Path,
+    target_dir: &Path,
+    profile: &str,
+    seen: &mut std::collections::HashSet<String>,
+    progress: &Progress,
+) -> Vec<PathBuf> {
     use crate::resolve::cmake::{cmake_to_freight_name, is_installed_cmake_package};
 
     let freight_name = cmake_to_freight_name(cmake_name);
+    if !seen.insert(freight_name.clone()) {
+        return Vec::new();
+    }
     // Already on the host → the parent's CMake finds it directly.
     if !crate::resolve::pkg_config::pkg_config_version(&freight_name).is_empty()
         || is_installed_cmake_package(cmake_name)
     {
-        return None;
+        return Vec::new();
     }
 
-    let target_dir = project_dir.join("target");
     // A `path` dependency in the parent manifest points at a sibling project
     // directly; otherwise the dep was fetched into `.pkgs/<name>`.
-    let dep_dir = manifest_path_dep_dir(project_dir, &freight_name)
-        .unwrap_or_else(|| project_dir.join(".pkgs").join(&freight_name));
+    let dep_dir = manifest_path_dep_dir(project_dir, &freight_name).unwrap_or_else(|| {
+        target_dir
+            .parent()
+            .unwrap_or(project_dir)
+            .join(".pkgs")
+            .join(&freight_name)
+    });
 
     if dep_dir.join("freight.toml").is_file() {
         provide_native(
@@ -1203,8 +1236,9 @@ pub fn provide_cmake_package(
             &freight_name,
             &dep_dir,
             project_dir,
-            &target_dir,
+            target_dir,
             profile,
+            seen,
             progress,
         )
     } else if dep_dir.join("CMakeLists.txt").is_file() {
@@ -1212,12 +1246,14 @@ pub fn provide_cmake_package(
             cmake_name,
             &dep_dir,
             project_dir,
-            &target_dir,
+            target_dir,
             profile,
             progress,
         )
+        .into_iter()
+        .collect()
     } else {
-        None
+        Vec::new()
     }
 }
 
@@ -1230,8 +1266,9 @@ fn provide_native(
     root_dir: &Path,
     target_dir: &Path,
     profile: &str,
+    seen: &mut std::collections::HashSet<String>,
     progress: &Progress,
-) -> Option<PathBuf> {
+) -> Vec<PathBuf> {
     let cfg = PipelineConfig {
         profile: profile.to_string(),
         goal: PipelineGoal::Build,
@@ -1241,14 +1278,39 @@ fn provide_native(
         progress(BuildEvent::Warning(format!(
             "failed to build cmake dep '{cmake_name}': {e}"
         )));
-        return None;
+        return Vec::new();
     }
 
-    let pkg_name = crate::manifest::load_manifest(dep_dir)
-        .map(|m| m.package.name)
-        .unwrap_or_else(|_| freight_name.to_string());
-    let version = crate::manifest::load_manifest(dep_dir)
-        .map(|m| m.package.version)
+    let dep_manifest = crate::manifest::load_manifest(dep_dir).ok();
+    let pkg_name = dep_manifest
+        .as_ref()
+        .map(|m| m.package.name.clone())
+        .unwrap_or_else(|| freight_name.to_string());
+    let version = dep_manifest
+        .as_ref()
+        .map(|m| m.package.version.clone())
+        .unwrap_or_default();
+    // This freight lib's own deps that freight itself will provide (path/.pkgs
+    // packages, not system/pkg-config libs) become `find_dependency` entries in
+    // the generated config, so a downstream `find_package` pulls their archives
+    // in too. System deps are left out — their CMake casing is unknown and the
+    // consumer resolves them normally.
+    let dependencies: Vec<String> = dep_manifest
+        .as_ref()
+        .map(|m| {
+            m.dependencies
+                .iter()
+                .filter(|(name, dep)| {
+                    !crate::manifest::types::is_platform_dep(name)
+                        && !matches!(dep, crate::manifest::types::Dependency::Detailed(d) if d.optional)
+                })
+                .map(|(name, _)| name.clone())
+                .filter(|name| {
+                    crate::resolve::pkg_config::pkg_config_version(name).is_empty()
+                        && !crate::resolve::cmake::is_installed_cmake_package(name)
+                })
+                .collect()
+        })
         .unwrap_or_default();
     let lib_out = root_dir
         .join("target")
@@ -1266,7 +1328,7 @@ fn provide_native(
         .filter(|p| p.is_dir())
         .collect();
     if libs.is_empty() && includes.is_empty() {
-        return None;
+        return Vec::new();
     }
 
     let prefix = target_dir.join("cmake-export").join(cmake_name);
@@ -1274,6 +1336,7 @@ fn provide_native(
         cmake_name,
         pc_name: freight_name,
         version: &version,
+        dependencies: &dependencies,
     };
     if let Err(e) =
         crate::build::cmake_export::assemble_export_prefix(&prefix, &includes, &libs, &spec)
@@ -1281,9 +1344,20 @@ fn provide_native(
         progress(BuildEvent::Warning(format!(
             "failed to export cmake dep '{cmake_name}': {e}"
         )));
-        return None;
+        return Vec::new();
     }
-    Some(prefix)
+
+    // Recursively provide + export the freight deps we referenced via
+    // `find_dependency`, so their configs are discoverable on CMAKE_PREFIX_PATH
+    // when the consumer's `find_package(<self>)` resolves them. Each dep is
+    // resolved relative to this package's directory.
+    let mut prefixes = vec![prefix];
+    for dep in &dependencies {
+        prefixes.extend(provide_cmake_package_at(
+            dep, dep_dir, target_dir, profile, seen, progress,
+        ));
+    }
+    prefixes
 }
 
 /// A foreign CMake project fetched under `.pkgs/`: build it via the cmake plugin

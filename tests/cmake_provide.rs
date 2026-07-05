@@ -287,3 +287,82 @@ fn provider_resolves_native_path_dependency() {
         "the path dep should have been exported as a Config.cmake package",
     );
 }
+
+/// A freight-native library's exported config pulls in its own freight deps via
+/// `find_dependency`. `alpha` (native) depends on `bee` (native); a foreign CMake
+/// app `find_package(alpha)` and links only `alpha::alpha`. `alpha()` calls into
+/// `bee()`, so without `find_dependency(bee)` + the transitive link, `bee`'s
+/// archive is never linked and the app fails at link time with undefined `bee`.
+#[test]
+fn native_export_pulls_in_transitive_freight_dependency() {
+    if !have("cmake") || !(have("cc") || have("gcc") || have("clang")) {
+        eprintln!("skipping: cmake or C compiler missing");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+
+    // bee: leaf freight-native library.
+    let bee = tmp.path().join("bee");
+    write(
+        &bee.join("freight.toml"),
+        "[package]\nname = \"bee\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"bee\"\n",
+    );
+    write(&bee.join("include/bee.h"), "int bee(void);\n");
+    write(
+        &bee.join("src/bee.c"),
+        "#include \"bee.h\"\nint bee(void){return 21;}\n",
+    );
+
+    // alpha: freight-native library that depends on bee and calls it.
+    let alpha = tmp.path().join("alpha");
+    write(
+        &alpha.join("freight.toml"),
+        "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"alpha\"\n\n\
+         [dependencies]\nbee = { path = \"../bee\" }\n",
+    );
+    write(&alpha.join("include/alpha.h"), "int alpha(void);\n");
+    write(
+        &alpha.join("src/alpha.c"),
+        "#include \"alpha.h\"\n#include \"bee.h\"\nint alpha(void){return bee() * 2;}\n",
+    );
+
+    // A foreign CMake app that links only alpha::alpha.
+    let app = tmp.path().join("app");
+    write(
+        &app.join("freight.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nbuild = \"cmake\"\n\n\
+         [dependencies]\nalpha = { path = \"../alpha\" }\n",
+    );
+    write(
+        &app.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.24)\nproject(app C)\n\
+         find_package(alpha CONFIG REQUIRED)\n\
+         add_executable(app main.c)\n\
+         target_link_libraries(app alpha::alpha)\n\
+         install(TARGETS app RUNTIME DESTINATION bin)\n",
+    );
+    write(
+        &app.join("main.c"),
+        "int alpha(void);\nint main(void){return alpha()==42?0:1;}\n",
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_freight"))
+        .arg("build")
+        .current_dir(&app)
+        .output()
+        .expect("run freight build");
+    assert!(
+        out.status.success(),
+        "transitive freight dep should link via find_dependency.\n\
+         stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let cfg =
+        fs::read_to_string(app.join("target/cmake-export/alpha/lib/cmake/alpha/alphaConfig.cmake"))
+            .expect("alpha config exported");
+    assert!(
+        cfg.contains("find_dependency(bee)"),
+        "alpha's config should find_dependency(bee):\n{cfg}",
+    );
+}
