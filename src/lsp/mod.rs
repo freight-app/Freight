@@ -1122,8 +1122,6 @@ impl Server {
     /// out to `fprettify` (stdin → stdout) when it is on PATH; fixed-form files
     /// and missing-formatter cases answer null. Non-Fortran requests are
     /// forwarded (clangd formats C/C++).
-    /// TODO(codex): thread `[language.fortran]` style options (indent width,
-    /// line length) through as fprettify flags.
     fn handle_formatting_or_forward(&mut self, msg: Value) -> io::Result<()> {
         let Some(uri) = text_document_uri(&msg) else {
             return self.forward_to_all_passthroughs(&msg);
@@ -1154,7 +1152,8 @@ impl Server {
                 Err(_) => return self.respond(id, Value::Null),
             },
         };
-        let Some(formatted) = run_fprettify(&text) else {
+        let options = self.fortran_format_options();
+        let Some(formatted) = run_fprettify(&text, &options) else {
             return self.respond(id, Value::Null);
         };
         if formatted == text {
@@ -1171,6 +1170,18 @@ impl Server {
                 "newText": formatted
             }]),
         )
+    }
+
+    fn fortran_format_options(&self) -> FortranFormatOptions {
+        self.active_manifest_dir()
+            .and_then(|dir| load_manifest_cached(&dir.join("freight.toml")).ok())
+            .and_then(|manifest| {
+                let settings = manifest.language.get("fortran")?;
+                Some(FortranFormatOptions::from_language_options(
+                    settings.extra_options(),
+                ))
+            })
+            .unwrap_or_default()
     }
 
     fn handle_folding_range(&mut self, msg: Value) -> io::Result<()> {
@@ -2978,10 +2989,11 @@ mod tests {
     use super::build_workspace_inventory;
     use super::protocol::sanitize_code_action_diagnostics;
     use super::{
-        insert_dependency_toml_version, insert_os_feature_toml, lsp_end_position,
-        merge_clangd_codeaction_response,
+        fprettify_args, insert_dependency_toml_version, insert_os_feature_toml, lsp_end_position,
+        merge_clangd_codeaction_response, FortranFormatOptions,
     };
     use serde_json::json;
+    use std::collections::HashMap;
 
     use super::remap_semantic_token_types;
     use super::{header_capability, header_provider_label};
@@ -3001,6 +3013,29 @@ mod tests {
     fn remap_is_identity_for_empty_legend() {
         let data = vec![0, 0, 3, 5, 0];
         assert_eq!(remap_semantic_token_types(data.clone(), &[]), data);
+    }
+
+    #[test]
+    fn fprettify_args_include_fortran_language_options() {
+        let mut raw = HashMap::new();
+        raw.insert("indent_width".to_string(), "2".to_string());
+        raw.insert("max_line_length".to_string(), "88".to_string());
+        let options = FortranFormatOptions::from_language_options(&raw);
+
+        assert_eq!(
+            fprettify_args(&options),
+            ["--silent", "--indent", "2", "--line-length", "88", "-"]
+        );
+    }
+
+    #[test]
+    fn fprettify_args_ignore_empty_fortran_language_options() {
+        let mut raw = HashMap::new();
+        raw.insert("indent".to_string(), "0".to_string());
+        raw.insert("max_line_length".to_string(), "not-a-number".to_string());
+        let options = FortranFormatOptions::from_language_options(&raw);
+
+        assert_eq!(fprettify_args(&options), ["--silent", "-"]);
     }
 
     #[test]
@@ -3208,14 +3243,52 @@ src = "src/main.c"
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FortranFormatOptions {
+    indent: Option<usize>,
+    line_length: Option<usize>,
+}
+
+impl FortranFormatOptions {
+    fn from_language_options(options: &HashMap<String, String>) -> Self {
+        Self {
+            indent: parse_positive_usize(
+                options
+                    .get("indent_width")
+                    .or_else(|| options.get("indent")),
+            ),
+            line_length: parse_positive_usize(options.get("max_line_length")),
+        }
+    }
+}
+
+fn parse_positive_usize(value: Option<&String>) -> Option<usize> {
+    let parsed = value?.trim().parse::<usize>().ok()?;
+    (parsed > 0).then_some(parsed)
+}
+
+fn fprettify_args(options: &FortranFormatOptions) -> Vec<String> {
+    let mut args = vec!["--silent".to_string()];
+    if let Some(indent) = options.indent {
+        args.push("--indent".to_string());
+        args.push(indent.to_string());
+    }
+    if let Some(line_length) = options.line_length {
+        args.push("--line-length".to_string());
+        args.push(line_length.to_string());
+    }
+    args.push("-".to_string());
+    args
+}
+
 /// Format free-form Fortran source with `fprettify --silent` over stdin.
 /// `None` when fprettify is not installed or fails — the caller answers null
 /// so the client reports "no formatter" instead of erroring.
-fn run_fprettify(source: &str) -> Option<String> {
+fn run_fprettify(source: &str, options: &FortranFormatOptions) -> Option<String> {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
     let mut child = Command::new("fprettify")
-        .args(["--silent", "-"])
+        .args(fprettify_args(options))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
