@@ -37,6 +37,18 @@ impl FortranIndexer {
         )
     }
 
+    fn is_fortran_indexable(path: &Path) -> bool {
+        Self::is_fortran(path)
+            || matches!(
+                path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref()
+                    .unwrap_or(""),
+                "inc"
+            )
+    }
+
     fn ensure_file(&mut self, path: &Path) -> Option<&str> {
         if !self.sources.contains_key(path) {
             let source = std::fs::read_to_string(path).ok()?;
@@ -112,7 +124,7 @@ fn collect_fortran_files(
                 continue;
             }
             collect_fortran_files(&path, visited, out);
-        } else if file_type.is_file() && FortranIndexer::is_fortran(&path) {
+        } else if file_type.is_file() && FortranIndexer::is_fortran_indexable(&path) {
             out.push(path);
         }
     }
@@ -1001,6 +1013,45 @@ max_comment_line_length = "10"
             indexer.diagnostics(&uri).is_empty(),
             "evict must reload from disk, not un-index the module",
         );
+    }
+
+    #[test]
+    fn fortran_indexer_indexes_include_files_for_module_exports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            &root.join("freight.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &root.join("src/m.f90"),
+            "module m\ninclude 'solver.inc'\nend module",
+        );
+        write(
+            &root.join("src/solver.inc"),
+            "subroutine dlsoda()\nend subroutine",
+        );
+        let main = root.join("src/main.f90");
+        let main_src = "program main\nuse m\ncall dls\nend program";
+        write(&main, main_src);
+
+        let mut indexer = FortranIndexer::new();
+        indexer.refresh_flags(root, "debug");
+        let uri = uri_from_path(&main);
+        indexer.reparse(&uri, main_src);
+        let msg = serde_json::json!({
+            "params": { "position": { "line": 2, "character": 8 } }
+        });
+        let completions = indexer
+            .completion(&uri, &msg)
+            .expect("completion for Fortran source");
+        let labels: Vec<_> = completions["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["label"].as_str())
+            .collect();
+        assert!(labels.contains(&"dlsoda"), "labels: {labels:?}");
     }
 
     #[test]
