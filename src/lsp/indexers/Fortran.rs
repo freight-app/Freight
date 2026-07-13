@@ -1227,6 +1227,64 @@ max_comment_line_length = "10"
     }
 
     #[test]
+    fn fortran_indexer_audits_editor_surfaces_for_type_bound_shapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("shapes.f90");
+        let source = "module shapes\n\
+type :: vector\n\
+contains\n\
+procedure :: scale => scale_vector\n\
+generic :: apply => scale\n\
+end type\n\
+interface make\n\
+module procedure make_vector\n\
+end interface\n\
+contains\n\
+function make_vector() result(v)\n\
+type(vector) :: v\n\
+end function\n\
+subroutine scale_vector(self, factor)\n\
+class(vector), intent(inout) :: self\n\
+real, intent(in) :: factor\n\
+end subroutine\n\
+subroutine run(obj)\n\
+type(vector), intent(inout) :: obj\n\
+call obj%scale(2.0)\n\
+end subroutine\n\
+end module";
+        write(&path, source);
+
+        let uri = uri_from_path(&path);
+        let mut indexer = FortranIndexer::new();
+        indexer.reparse(&uri, source);
+        let msg = serde_json::json!({
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": 19, "character": 10 }
+            }
+        });
+        let highlights = indexer
+            .document_highlight(&uri, &msg)
+            .expect("document highlights for type-bound call");
+        let folds = indexer
+            .folding_ranges(&uri)
+            .expect("folding ranges for type-bound source");
+
+        assert!(highlights.iter().any(|item| {
+            item["range"]["start"]["line"] == 3 && item["range"]["start"]["character"] == 13
+        }));
+        assert!(highlights.iter().any(|item| {
+            item["range"]["start"]["line"] == 19 && item["range"]["start"]["character"] == 9
+        }));
+        assert!(folds.iter().any(|item| {
+            item["startLine"] == 1 && item["endLine"] == 5 && item["kind"] == "region"
+        }));
+        assert!(folds.iter().any(|item| {
+            item["startLine"] == 6 && item["endLine"] == 8 && item["kind"] == "region"
+        }));
+    }
+
+    #[test]
     fn fortran_indexer_serves_code_actions() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("types.f90");
