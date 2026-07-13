@@ -250,7 +250,10 @@ hints, code actions, and rename.
 - [x] Map `fortran-lsp` model types to LSP responses for supported methods.
 - [x] Remove the fortls passthrough from `freight lsp`; keep fortls only as the
       external oracle used by `scripts/fortran_lsp_compare.py`.
-- [ ] See `crates/fortran-lsp/TODO.md` for crate-side gaps.
+- [x] See `crates/fortran-lsp/TODO.md` for crate-side gaps. The active
+      crate-side hardening queue is complete; future differential sweeps need
+      a repaired/pinned fortls oracle because the local `/tmp/fortls-reference`
+      checkout is missing Python modules.
 
 ### LSP: native assembly support (`AsmIndexer`)
 
