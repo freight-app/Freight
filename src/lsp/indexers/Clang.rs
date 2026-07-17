@@ -326,8 +326,30 @@ impl LanguageIndexer for ClangIndexer {
             return None;
         }
         let tu = self.ensure_tu(&path)?;
-        let md = clang_bridge::hover::hover_full(tu, line as u32 + 1, col as u32 + 1)?;
-        Some(json!({ "contents": { "kind": "markdown", "value": md } }))
+        let line = line as u32 + 1;
+        let col = col as u32 + 1;
+        let range = clang_bridge::hover::hover_range(tu, line, col);
+        let md = clang_bridge::hover::hover_full(tu, line, col)
+            .or_else(|| clang_bridge::hover::macro_hover(tu, line, col))
+            .or_else(|| {
+                range.and_then(|token| {
+                    clang_bridge::hover::macro_hover(tu, token.start_line, token.start_col)
+                })
+            })?;
+        let mut result = json!({ "contents": { "kind": "markdown", "value": md } });
+        if let Some(range) = range {
+            result["range"] = json!({
+                "start": {
+                    "line": range.start_line.saturating_sub(1),
+                    "character": range.start_col.saturating_sub(1)
+                },
+                "end": {
+                    "line": range.end_line.saturating_sub(1),
+                    "character": range.end_col.saturating_sub(1)
+                }
+            });
+        }
+        Some(result)
     }
 
     fn signature_help(&mut self, uri: &str, msg: &Value) -> Option<Value> {
@@ -816,6 +838,32 @@ mod tests {
                 .unwrap()
                 .len(),
             3
+        );
+    }
+
+    #[test]
+    fn hover_includes_identifier_range_and_falls_back_to_macros() {
+        let dir = tempfile::tempdir().expect("hover fixture");
+        let main = dir.path().join("main.cpp");
+        let source = "#define MAX_ITEMS 128\nint main() { return MAX_ITEMS; }\n";
+        std::fs::write(&main, source).unwrap();
+        let uri = uri_from_path(&main);
+        let character = source.lines().nth(1).unwrap().find("MAX_ITEMS").unwrap() + 2;
+        let request = json!({
+            "params": { "position": { "line": 1, "character": character } }
+        });
+        let mut indexer = ClangIndexer::new();
+
+        let hover = indexer.hover(&uri, &request).expect("native macro hover");
+        assert!(hover["contents"]["value"]
+            .as_str()
+            .is_some_and(|value| value.contains("MAX_ITEMS") && value.contains("128")));
+        assert_eq!(
+            hover["range"],
+            json!({
+                "start": { "line": 1, "character": 20 },
+                "end": { "line": 1, "character": 29 }
+            })
         );
     }
 
