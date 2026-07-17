@@ -1,5 +1,6 @@
 //! `freight lsp` — Language Server Protocol multiplexer for freight.toml and
-//! source files (clangd and asm-lsp passthroughs, native Fortran).
+//! source files (clangd passthrough, native Fortran/assembly, and an optional
+//! asm-lsp fallback).
 
 pub mod doxygen;
 mod index;

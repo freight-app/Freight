@@ -265,8 +265,17 @@ clang-bridge/fortran-lsp.)
 **Status:** implemented and default-on — `src/lsp/indexers/Asm.rs` (GAS + NASM).
 `--no-native-asm` falls back to the external `asm-lsp` passthrough; otherwise
 that passthrough is not started and asm requests route to `AsmIndexer`.
-Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils handled. 17 unit
-tests + end-to-end verified through `freight lsp`.
+Comment/string-aware tokenizer; `%`-registers and `$`/`@` sigils handled. The
+17 parser/indexer unit tests plus `tests/lsp_asm.rs` exercise the real
+`freight lsp` stdio process with clangd and external `asm-lsp` disabled.
+
+End-to-end verification covers:
+- all supported extensions (`.s`, `.S`, `.asm`, `.nasm`) and GAS/NASM syntax;
+- initialization capabilities, open/change synchronization, and diagnostics;
+- hover (symbol/instruction/register/directive), definition (named, numeric,
+  include-file), completion, document/workspace symbols, and folding;
+- references with and without declarations, highlights, selection ranges,
+  semantic tokens, and same-file/cross-file rename.
 
 Implemented:
 - **Symbols** — labels, constants (`.equ`/`.set`/`.equiv`, GAS `name = …`, NASM
