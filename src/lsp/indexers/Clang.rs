@@ -75,6 +75,59 @@ pub(crate) fn diag_to_lsp(d: &clang_bridge::diag::Diagnostic, source: &str) -> V
     v
 }
 
+fn same_file(path: &Path, reported: &str) -> bool {
+    let reported = Path::new(reported);
+    if path == reported {
+        return true;
+    }
+    matches!(
+        (path.canonicalize(), reported.canonicalize()),
+        (Ok(left), Ok(right)) if left == right
+    )
+}
+
+fn header_diag_to_lsp(
+    d: &clang_bridge::diag::Diagnostic,
+    anchor: &clang_bridge::diag::IncludeAnchor,
+    inclusion: Option<&clang_bridge::inclusion::Inclusion>,
+) -> Value {
+    let mut diagnostic = diag_to_lsp(d, "clang");
+    let line = anchor.line.saturating_sub(1);
+    let (start_col, end_col) = inclusion
+        .map(|include| {
+            (
+                include.start_col.saturating_sub(1),
+                include.end_col.saturating_sub(1),
+            )
+        })
+        .unwrap_or_else(|| {
+            let col = anchor.col.saturating_sub(1);
+            (col, col)
+        });
+    diagnostic["range"] = json!({
+        "start": { "line": line, "character": start_col },
+        "end":   { "line": line, "character": end_col }
+    });
+    diagnostic["message"] = Value::String(format!("In included file: {}", d.message));
+    diagnostic["relatedInformation"] = json!([{
+        "location": {
+            "uri": uri_from_path(Path::new(&d.file)),
+            "range": {
+                "start": {
+                    "line": d.line.saturating_sub(1),
+                    "character": d.col.saturating_sub(1)
+                },
+                "end": {
+                    "line": d.line.saturating_sub(1),
+                    "character": d.col.saturating_sub(1)
+                }
+            }
+        },
+        "message": d.message
+    }]);
+    diagnostic
+}
+
 /// Per-file C/C++ indexer backed by `clang-bridge`.
 ///
 /// Holds a single `Index` (reused across parses), a TU cache keyed on the
@@ -234,10 +287,24 @@ impl LanguageIndexer for ClangIndexer {
         let Some(tu) = self.ensure_tu(&path) else {
             return vec![];
         };
-        let source_str = path.to_string_lossy().into_owned();
+        let inclusions = tu.inclusions();
         tu.diagnostics()
-            .filter(|d| d.file == source_str)
-            .map(|d| diag_to_lsp(&d, "clang"))
+            .filter_map(|d| {
+                if same_file(&path, &d.file) {
+                    return Some(diag_to_lsp(&d, "clang"));
+                }
+                let anchor = d.include_anchor.as_ref()?;
+                if !same_file(&path, &anchor.file) {
+                    return None;
+                }
+                let inclusion = inclusions.iter().find(|include| {
+                    same_file(&path, &include.including_file)
+                        && include.line == anchor.line
+                        && include.start_col <= anchor.col
+                        && anchor.col <= include.end_col
+                });
+                Some(header_diag_to_lsp(&d, anchor, inclusion.as_ref()))
+            })
             .collect()
     }
 
@@ -504,4 +571,50 @@ fn doc_symbol_node(i: usize, syms: &[clang_bridge::docsym::DocSym], kids: &[Vec<
         node["children"] = json!(children);
     }
     node
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_header_diagnostic_is_published_on_main_file_include() {
+        let dir = tempfile::tempdir().expect("header diagnostic fixture");
+        let main = dir.path().join("main.cpp");
+        let outer = dir.path().join("outer.hpp");
+        let inner = dir.path().join("inner.hpp");
+        let source = "#include \"outer.hpp\"\nint main() { return 0; }\n";
+        std::fs::write(&main, source).unwrap();
+        std::fs::write(&outer, "#pragma once\n#include \"inner.hpp\"\n").unwrap();
+        std::fs::write(&inner, "#pragma once\ninline int broken = missing_name;\n").unwrap();
+
+        let uri = uri_from_path(&main);
+        let mut indexer = ClangIndexer::new();
+        indexer.reparse(&uri, source);
+        let diagnostics = indexer.diagnostics(&uri);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|d| d["message"].as_str().is_some_and(|m| m.contains("missing_name")))
+            .expect("nested header diagnostic should be published");
+
+        assert_eq!(
+            diagnostic["message"],
+            "In included file: use of undeclared identifier 'missing_name'"
+        );
+        assert_eq!(
+            diagnostic["range"],
+            json!({
+                "start": { "line": 0, "character": 9 },
+                "end": { "line": 0, "character": 20 }
+            })
+        );
+        assert_eq!(
+            diagnostic["relatedInformation"][0]["location"]["uri"],
+            uri_from_path(&inner)
+        );
+        assert_eq!(
+            diagnostic["relatedInformation"][0]["location"]["range"]["start"],
+            json!({ "line": 1, "character": 20 })
+        );
+    }
 }
