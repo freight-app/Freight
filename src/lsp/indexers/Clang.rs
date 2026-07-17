@@ -258,7 +258,7 @@ impl LanguageIndexer for ClangIndexer {
             "uri": target_uri,
             "range": {
                 "start": { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) },
-                "end":   { "line": loc.line.saturating_sub(1), "character": loc.col.saturating_sub(1) }
+                "end":   { "line": loc.end_line.saturating_sub(1), "character": loc.end_col.saturating_sub(1) }
             }
         }))
     }
@@ -615,6 +615,32 @@ mod tests {
         assert_eq!(
             diagnostic["relatedInformation"][0]["location"]["range"]["start"],
             json!({ "line": 1, "character": 20 })
+        );
+    }
+
+    #[test]
+    fn goto_definition_returns_the_identifier_range() {
+        let dir = tempfile::tempdir().expect("goto fixture");
+        let main = dir.path().join("main.cpp");
+        let source = "int target() { return 1; }\nint main() { return target(); }\n";
+        std::fs::write(&main, source).unwrap();
+
+        let uri = uri_from_path(&main);
+        let use_col = source.lines().nth(1).unwrap().find("target").unwrap();
+        let request = json!({
+            "params": { "position": { "line": 1, "character": use_col } }
+        });
+        let mut indexer = ClangIndexer::new();
+        let location = indexer
+            .goto_definition(&uri, &request)
+            .expect("definition location");
+
+        assert_eq!(
+            location["range"],
+            json!({
+                "start": { "line": 0, "character": 4 },
+                "end": { "line": 0, "character": 10 }
+            })
         );
     }
 }
