@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use clang_bridge::{Index, TranslationUnit};
@@ -133,10 +133,18 @@ fn header_diag_to_lsp(
 /// Holds a single `Index` (reused across parses), a TU cache keyed on the
 /// absolute source path, and per-file `(working_dir, flags)` derived from the
 /// freight build context.
+const DEFAULT_TU_CACHE_CAPACITY: usize = 8;
+
 pub struct ClangIndexer {
     index: Index,
-    /// Lazily-populated translation units, keyed on absolute source path.
+    /// Bounded set of live ASTs, keyed on absolute source path.
     tus: HashMap<PathBuf, TranslationUnit>,
+    /// Least-recently-used path at the front, hottest path at the back.
+    tu_lru: VecDeque<PathBuf>,
+    tu_cache_capacity: usize,
+    /// Latest text for open buffers. This is cheap compared with an AST and
+    /// lets an evicted TU be reconstructed without reading stale disk content.
+    live_buffers: HashMap<PathBuf, String>,
     /// file path → (working_dir, compile_flags).
     /// `working_dir` is the project root; flags have no compiler binary, -c, or -o.
     source_data: HashMap<PathBuf, (String, Vec<String>)>,
@@ -144,9 +152,16 @@ pub struct ClangIndexer {
 
 impl ClangIndexer {
     pub fn new() -> Self {
+        Self::with_tu_cache_capacity(DEFAULT_TU_CACHE_CAPACITY)
+    }
+
+    fn with_tu_cache_capacity(capacity: usize) -> Self {
         Self {
             index: Index::new(),
             tus: HashMap::new(),
+            tu_lru: VecDeque::new(),
+            tu_cache_capacity: capacity.max(1),
+            live_buffers: HashMap::new(),
             source_data: HashMap::new(),
         }
     }
@@ -159,21 +174,59 @@ impl ClangIndexer {
     }
 
     fn ensure_tu(&mut self, path: &Path) -> Option<&TranslationUnit> {
-        if !self.tus.contains_key(path) {
-            let (wd, flags) = self
-                .source_data
-                .get(path)
-                .map(|(wd, f)| {
-                    (
-                        wd.as_str(),
-                        f.iter().map(String::as_str).collect::<Vec<_>>(),
-                    )
-                })
-                .unwrap_or(("", vec![]));
-            let tu = self.index.parse(path.to_str()?, wd, &flags)?;
-            self.tus.insert(path.to_path_buf(), tu);
+        if self.tus.contains_key(path) {
+            self.touch_tu(path);
+            return self.tus.get(path);
         }
+
+        let (wd, flags) = self
+            .source_data
+            .get(path)
+            .map(|(wd, f)| {
+                (
+                    wd.as_str(),
+                    f.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+            })
+            .unwrap_or(("", vec![]));
+        let tu = self.index.parse(path.to_str()?, wd, &flags)?;
+        if let Some(content) = self.live_buffers.get(path) {
+            if !tu.reparse(Some(content)) {
+                return None;
+            }
+        }
+        self.tus.insert(path.to_path_buf(), tu);
+        self.touch_tu(path);
+        self.trim_tu_cache();
         self.tus.get(path)
+    }
+
+    fn touch_tu(&mut self, path: &Path) {
+        if let Some(index) = self.tu_lru.iter().position(|cached| cached == path) {
+            self.tu_lru.remove(index);
+        }
+        self.tu_lru.push_back(path.to_path_buf());
+    }
+
+    fn trim_tu_cache(&mut self) {
+        while self.tus.len() > self.tu_cache_capacity {
+            let Some(coldest) = self.tu_lru.pop_front() else {
+                break;
+            };
+            self.tus.remove(&coldest);
+        }
+    }
+
+    fn remove_tu(&mut self, path: &Path) {
+        self.tus.remove(path);
+        if let Some(index) = self.tu_lru.iter().position(|cached| cached == path) {
+            self.tu_lru.remove(index);
+        }
+    }
+
+    fn clear_tus(&mut self) {
+        self.tus.clear();
+        self.tu_lru.clear();
     }
 }
 
@@ -227,11 +280,14 @@ impl LanguageIndexer for ClangIndexer {
             })
             .collect();
 
-        self.tus.clear();
+        // Keep live_buffers: open unsaved documents remain authoritative when
+        // a TU is rebuilt with new compile flags.
+        self.clear_tus();
     }
 
     fn evict(&mut self, path: &Path) {
-        self.tus.remove(path);
+        self.remove_tu(path);
+        self.live_buffers.remove(path);
     }
 
     fn hover(&mut self, uri: &str, msg: &Value) -> Option<Value> {
@@ -270,10 +326,13 @@ impl LanguageIndexer for ClangIndexer {
         if !Self::is_c_family(&path) {
             return;
         }
-        // Ensure the TU exists (parses from disk on first call).
-        self.ensure_tu(&path);
+        self.live_buffers.insert(path.clone(), content.to_string());
         if let Some(tu) = self.tus.get(&path) {
             clang_bridge::hover::reparse(tu, Some(content));
+            self.touch_tu(&path);
+        } else {
+            // ensure_tu applies the cached live buffer after its initial parse.
+            self.ensure_tu(&path);
         }
     }
 
@@ -594,7 +653,11 @@ mod tests {
         let diagnostics = indexer.diagnostics(&uri);
         let diagnostic = diagnostics
             .iter()
-            .find(|d| d["message"].as_str().is_some_and(|m| m.contains("missing_name")))
+            .find(|d| {
+                d["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("missing_name"))
+            })
             .expect("nested header diagnostic should be published");
 
         assert_eq!(
@@ -642,5 +705,66 @@ mod tests {
                 "end": { "line": 0, "character": 10 }
             })
         );
+    }
+
+    #[test]
+    fn tu_cache_evicts_the_least_recently_used_file() {
+        let dir = tempfile::tempdir().expect("TU cache fixture");
+        let paths: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let path = dir.path().join(format!("file_{i}.cpp"));
+                std::fs::write(&path, format!("int value_{i} = {i};\n")).unwrap();
+                path
+            })
+            .collect();
+        let uris: Vec<String> = paths.iter().map(|path| uri_from_path(path)).collect();
+        let mut indexer = ClangIndexer::with_tu_cache_capacity(2);
+
+        indexer.diagnostics(&uris[0]);
+        indexer.diagnostics(&uris[1]);
+        indexer.diagnostics(&uris[0]); // file_0 becomes hottest.
+        indexer.diagnostics(&uris[2]);
+
+        assert_eq!(indexer.tus.len(), 2);
+        assert!(indexer.tus.contains_key(&paths[0]));
+        assert!(!indexer.tus.contains_key(&paths[1]));
+        assert!(indexer.tus.contains_key(&paths[2]));
+        assert_eq!(
+            indexer.tu_lru.iter().collect::<Vec<_>>(),
+            vec![&paths[0], &paths[2]]
+        );
+    }
+
+    #[test]
+    fn evicted_open_tu_reloads_the_latest_unsaved_buffer() {
+        let dir = tempfile::tempdir().expect("unsaved TU cache fixture");
+        let first = dir.path().join("first.cpp");
+        let second = dir.path().join("second.cpp");
+        std::fs::write(&first, "int disk_symbol = 1;\n").unwrap();
+        std::fs::write(&second, "int second_symbol = 2;\n").unwrap();
+        let first_uri = uri_from_path(&first);
+        let second_uri = uri_from_path(&second);
+        let live_source = "int live_symbol = 3;\n";
+        let mut indexer = ClangIndexer::with_tu_cache_capacity(1);
+
+        indexer.reparse(&first_uri, live_source);
+        indexer.diagnostics(&second_uri); // Evicts first.cpp's AST only.
+        assert!(!indexer.tus.contains_key(&first));
+        assert_eq!(
+            indexer.live_buffers.get(&first).map(String::as_str),
+            Some(live_source)
+        );
+
+        let symbols = indexer
+            .document_symbols(&first_uri)
+            .expect("symbols after cache reload");
+        assert!(symbols.iter().any(|symbol| symbol["name"] == "live_symbol"));
+        assert!(!symbols.iter().any(|symbol| symbol["name"] == "disk_symbol"));
+        assert!(indexer.tus.contains_key(&first));
+        assert!(!indexer.tus.contains_key(&second));
+
+        indexer.evict(&first);
+        assert!(!indexer.live_buffers.contains_key(&first));
+        assert!(!indexer.tu_lru.contains(&first));
     }
 }
