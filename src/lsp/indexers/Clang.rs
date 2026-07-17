@@ -174,6 +174,22 @@ impl ClangIndexer {
     }
 
     fn ensure_tu(&mut self, path: &Path) -> Option<&TranslationUnit> {
+        if self
+            .tus
+            .get(path)
+            .is_some_and(TranslationUnit::is_poisoned)
+        {
+            let error = self
+                .tus
+                .get(path)
+                .and_then(TranslationUnit::last_error)
+                .unwrap_or_else(|| "unknown clang failure".to_string());
+            eprintln!(
+                "freight lsp: rebuilding poisoned clang translation unit {}: {error}",
+                path.display()
+            );
+            self.remove_tu(path);
+        }
         if self.tus.contains_key(path) {
             self.touch_tu(path);
             return self.tus.get(path);
@@ -336,8 +352,12 @@ impl LanguageIndexer for ClangIndexer {
         }
         self.live_buffers.insert(path.clone(), content.to_string());
         if let Some(tu) = self.tus.get(&path) {
-            clang_bridge::hover::reparse(tu, Some(content));
-            self.touch_tu(&path);
+            if clang_bridge::hover::reparse(tu, Some(content)) {
+                self.touch_tu(&path);
+            } else {
+                self.remove_tu(&path);
+                self.ensure_tu(&path);
+            }
         } else {
             // ensure_tu applies the cached live buffer after its initial parse.
             self.ensure_tu(&path);
