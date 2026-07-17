@@ -236,6 +236,9 @@ struct DiagCache {
 }
 
 struct ServerState {
+    client_initialized: bool,
+    work_done_progress: bool,
+    progress_counter: u64,
     root_dir: PathBuf,
     manifest_dir: Option<PathBuf>,
     compile_commands_dir: Option<PathBuf>,
@@ -332,6 +335,45 @@ struct LinkFeatureHint {
     os: String,
 }
 
+fn work_done_create(request_id: &str, token: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "window/workDoneProgress/create",
+        "params": { "token": token }
+    })
+}
+
+fn work_done_begin(token: &str, title: &str, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "$/progress",
+        "params": {
+            "token": token,
+            "value": { "kind": "begin", "title": title, "message": message }
+        }
+    })
+}
+
+fn work_done_end(token: &str, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "$/progress",
+        "params": {
+            "token": token,
+            "value": { "kind": "end", "message": message }
+        }
+    })
+}
+
+fn freight_status(state: &str, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "freight/status",
+        "params": { "state": state, "message": message }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Server impl
 // ---------------------------------------------------------------------------
@@ -371,6 +413,9 @@ impl Server {
             args,
             out,
             state: ServerState {
+                client_initialized: false,
+                work_done_progress: false,
+                progress_counter: 0,
                 root_dir,
                 manifest_dir,
                 compile_commands_dir: None,
@@ -414,6 +459,7 @@ impl Server {
             match method {
                 "initialize" => self.handle_initialize(msg)?,
                 "initialized" => {
+                    self.state.client_initialized = true;
                     self.register_manifest_file_watcher()?;
                     self.forward_to_all_passthroughs(&msg)?;
                 }
@@ -457,6 +503,10 @@ impl Server {
     }
 
     fn handle_initialize(&mut self, msg: Value) -> io::Result<()> {
+        self.state.work_done_progress = msg
+            .pointer("/params/capabilities/window/workDoneProgress")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         if let Some(root) = root_from_initialize(&msg) {
             self.state.root_dir = root;
             self.state.manifest_dir = find_manifest_dir(&self.state.root_dir);
@@ -526,12 +576,24 @@ impl Server {
             }
             // Flag undeclared #includes (no-op for non-C/C++).
             self.compute_include_hygiene(&uri, &text);
+            let parse_progress = if self.clang_bridge_active()
+                && matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd))
+            {
+                self.begin_progress("Parsing C/C++", "Building translation unit")
+            } else {
+                None
+            };
             // Keep the live buffer so include/import hints reflect unsaved edits.
             for ix in &mut self.state.indexers {
                 ix.reparse(&uri, &text);
             }
             self.state.docs.insert(uri.clone(), text);
-            self.publish_related_indexer_diagnostics(&uri)?;
+            let diagnostics = self.publish_related_indexer_diagnostics(&uri);
+            if let Some(token) = parse_progress {
+                let diagnostic_error = diagnostics.as_ref().err().map(ToString::to_string);
+                self.end_progress(&token, "C/C++ index ready", diagnostic_error.as_deref());
+            }
+            diagnostics?;
         }
         self.forward_by_text_document(&msg)
     }
@@ -2114,6 +2176,43 @@ impl Server {
         write_lsp_message(&mut *self.out.lock().unwrap(), msg)
     }
 
+    fn begin_progress(&mut self, title: &str, message: &str) -> Option<String> {
+        if !self.state.client_initialized {
+            return None;
+        }
+        self.state.progress_counter += 1;
+        let token = format!("freight-progress-{}", self.state.progress_counter);
+        let request_id = format!("__freight_client_progress_{}", self.state.progress_counter);
+        if self.state.work_done_progress {
+            for notification in [
+                work_done_create(&request_id, &token),
+                work_done_begin(&token, title, message),
+            ] {
+                if let Err(error) = self.write_to_client(&notification) {
+                    tracing::debug!(%error, "failed to publish LSP progress");
+                }
+            }
+        }
+        if let Err(error) = self.write_to_client(&freight_status("parsing", message)) {
+            tracing::debug!(%error, "failed to publish LSP status");
+        }
+        Some(token)
+    }
+
+    fn end_progress(&self, token: &str, message: &str, error: Option<&str>) {
+        let state = if error.is_some() { "error" } else { "idle" };
+        let status_message = error.unwrap_or(message);
+        if self.state.work_done_progress {
+            let notification = work_done_end(token, status_message);
+            if let Err(error) = self.write_to_client(&notification) {
+                tracing::debug!(%error, "failed to publish LSP progress");
+            }
+        }
+        if let Err(write_error) = self.write_to_client(&freight_status(state, status_message)) {
+            tracing::debug!(error = %write_error, "failed to publish LSP status");
+        }
+    }
+
     fn register_manifest_file_watcher(&self) -> io::Result<()> {
         self.write_to_client(&json!({
             "jsonrpc": "2.0",
@@ -2626,6 +2725,7 @@ impl Server {
             );
             return;
         };
+        let progress = self.begin_progress("Refreshing C/C++ project", "Updating compile commands");
         // Run plugin codegen (incremental) so generated headers exist on disk for
         // clangd and the include index. Best-effort: a missing tool or a failing
         // plugin must not break the language server.
@@ -2640,16 +2740,23 @@ impl Server {
             tracing::debug!("plugin codegen skipped: {e}");
         }
 
-        if let Ok(dir) = generate_lsp_compile_commands_at(&dir, &self.args.profile) {
-            tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
-            self.state.compile_commands_dir = Some(dir);
-        }
+        let refresh_error = match generate_lsp_compile_commands_at(&dir, &self.args.profile) {
+            Ok(dir) => {
+                tracing::info!(path = %dir.display(), "compile_commands.json refreshed");
+                self.state.compile_commands_dir = Some(dir);
+                None
+            }
+            Err(error) => Some(error.to_string()),
+        };
         // Compile commands changed: drop the per-file include-dir cache and the
         // include-hygiene fast-path memo so dep/manifest changes re-check.
         self.state.declared_dirs_cache.clear();
         self.state.last_includes.clear();
         self.refresh_indexer_flags();
         self.refresh_header_index();
+        if let Some(token) = progress {
+            self.end_progress(&token, "C/C++ project refreshed", refresh_error.as_deref());
+        }
     }
 
     fn refresh_header_index(&mut self) {
@@ -2990,14 +3097,31 @@ mod tests {
     use super::build_workspace_inventory;
     use super::protocol::sanitize_code_action_diagnostics;
     use super::{
-        fprettify_args, insert_dependency_toml_version, insert_os_feature_toml, lsp_end_position,
-        merge_clangd_codeaction_response, FortranFormatOptions,
+        fprettify_args, freight_status, insert_dependency_toml_version, insert_os_feature_toml,
+        lsp_end_position, merge_clangd_codeaction_response, work_done_begin, work_done_create,
+        work_done_end, FortranFormatOptions,
     };
     use serde_json::json;
     use std::collections::HashMap;
 
     use super::remap_semantic_token_types;
     use super::{header_capability, header_provider_label};
+
+    #[test]
+    fn progress_messages_follow_lsp_work_done_shape() {
+        let create = work_done_create("__freight_client_progress_1", "freight-progress-1");
+        let begin = work_done_begin("freight-progress-1", "Parsing C/C++", "Building TU");
+        let end = work_done_end("freight-progress-1", "Index ready");
+        let status = freight_status("parsing", "Building TU");
+
+        assert_eq!(create["method"], "window/workDoneProgress/create");
+        assert_eq!(create["params"]["token"], "freight-progress-1");
+        assert_eq!(begin["method"], "$/progress");
+        assert_eq!(begin["params"]["value"]["kind"], "begin");
+        assert_eq!(end["params"]["value"]["kind"], "end");
+        assert_eq!(status["method"], "freight/status");
+        assert_eq!(status["params"]["state"], "parsing");
+    }
 
     #[test]
     fn remap_token_types_into_forwarded_legend() {
