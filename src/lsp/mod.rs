@@ -13,8 +13,9 @@ use std::collections::HashMap;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use index::LanguageIndexer;
 use indexers::AsmIndexer;
@@ -41,6 +42,7 @@ use protocol::*;
 pub(crate) const INTERNAL_ID_PREFIX: &str = "__freight_";
 const INTERNAL_CLANGD_INIT_ID: &str = "__freight_clangd_initialize";
 const INTERNAL_ASM_LSP_INIT_ID: &str = "__freight_asm_lsp_initialize";
+const REPARSE_DEBOUNCE: Duration = Duration::from_millis(150);
 
 // ---------------------------------------------------------------------------
 // Args
@@ -239,6 +241,7 @@ struct ServerState {
     client_initialized: bool,
     work_done_progress: bool,
     progress_counter: u64,
+    pending_reparses: ReparseQueue,
     root_dir: PathBuf,
     manifest_dir: Option<PathBuf>,
     compile_commands_dir: Option<PathBuf>,
@@ -335,6 +338,79 @@ struct LinkFeatureHint {
     os: String,
 }
 
+struct PendingReparse {
+    text: String,
+    deadline: Instant,
+}
+
+#[derive(Default)]
+struct ReparseQueue {
+    entries: HashMap<String, PendingReparse>,
+    latest_versions: HashMap<String, i64>,
+}
+
+impl ReparseQueue {
+    fn queue(&mut self, uri: String, text: String, version: Option<i64>, now: Instant) -> bool {
+        if let Some(version) = version {
+            if self
+                .latest_versions
+                .get(&uri)
+                .is_some_and(|latest| version <= *latest)
+            {
+                return false;
+            }
+            self.latest_versions.insert(uri.clone(), version);
+        }
+        self.entries.insert(
+            uri,
+            PendingReparse {
+                text,
+                deadline: now + REPARSE_DEBOUNCE,
+            },
+        );
+        true
+    }
+
+    fn take(&mut self, uri: &str) -> Option<PendingReparse> {
+        self.entries.remove(uri)
+    }
+
+    fn cancel(&mut self, uri: &str) {
+        self.entries.remove(uri);
+    }
+
+    fn reset(&mut self, uri: &str) {
+        self.entries.remove(uri);
+        self.latest_versions.remove(uri);
+    }
+
+    fn take_due(&mut self, now: Instant) -> Vec<(String, PendingReparse)> {
+        let mut uris: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, pending)| pending.deadline <= now)
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        uris.sort();
+        uris.into_iter()
+            .filter_map(|uri| self.entries.remove(&uri).map(|pending| (uri, pending)))
+            .collect()
+    }
+
+    fn drain(&mut self) -> Vec<(String, PendingReparse)> {
+        let mut entries: Vec<_> = self.entries.drain().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    }
+
+    fn next_delay(&self, now: Instant) -> Option<Duration> {
+        self.entries
+            .values()
+            .map(|pending| pending.deadline.saturating_duration_since(now))
+            .min()
+    }
+}
+
 fn work_done_create(request_id: &str, token: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -416,6 +492,7 @@ impl Server {
                 client_initialized: false,
                 work_done_progress: false,
                 progress_counter: 0,
+                pending_reparses: ReparseQueue::default(),
                 root_dir,
                 manifest_dir,
                 compile_commands_dir: None,
@@ -442,15 +519,54 @@ impl Server {
     }
 
     fn run(mut self) -> io::Result<()> {
-        let stdin = io::stdin();
-        let mut input = BufReader::new(stdin.lock());
-        while let Some(msg) = read_lsp_message(&mut input)? {
+        let (input_tx, input_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let stdin = io::stdin();
+            let mut input = BufReader::new(stdin.lock());
+            loop {
+                match read_lsp_message(&mut input) {
+                    Ok(Some(msg)) => {
+                        if input_tx.send(Ok(Some(msg))).is_err() {
+                            return;
+                        }
+                    }
+                    terminal => {
+                        let _ = input_tx.send(terminal);
+                        return;
+                    }
+                }
+            }
+        });
+
+        loop {
+            let timeout = self
+                .state
+                .pending_reparses
+                .next_delay(Instant::now())
+                .unwrap_or(Duration::from_secs(60 * 60));
+            let msg = match input_rx.recv_timeout(timeout) {
+                Ok(Ok(Some(msg))) => msg,
+                Ok(Ok(None)) => break,
+                Ok(Err(error)) => return Err(error),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    self.flush_due_reparses()?;
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
             let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
             if method.is_empty() {
                 if !is_internal_client_response(&msg) {
                     self.forward_to_all_passthroughs(&msg)?;
                 }
                 continue;
+            }
+            if msg.get("id").is_some() {
+                if method == "workspace/symbol" {
+                    self.flush_all_reparses()?;
+                } else if let Some(uri) = text_document_uri(&msg) {
+                    self.flush_pending_reparse(&uri)?;
+                }
             }
             match level_for_method(method) {
                 tracing::Level::INFO => tracing::info!(method, "← client"),
@@ -554,6 +670,7 @@ impl Server {
 
     fn handle_did_open(&mut self, msg: Value) -> io::Result<()> {
         if let Some((uri, text)) = opened_text(&msg) {
+            self.state.pending_reparses.reset(&uri);
             if is_freight_manifest_uri(&uri) {
                 self.state.docs.insert(uri.clone(), text);
                 self.publish_manifest_diagnostics(&uri)?;
@@ -603,15 +720,31 @@ impl Server {
             return self.forward_to_all_passthroughs(&msg);
         };
         if !is_freight_manifest_uri(&uri) {
-            // Reparse the clang-bridge TU so hover/completion reflect the live buffer.
-            // Full-text sync (change: 1) guarantees changed_full_text is always present.
             if let Some(text) = changed_full_text(&msg) {
-                for ix in &mut self.state.indexers {
-                    ix.reparse(&uri, &text);
+                let deferred = self.clang_bridge_active()
+                    && matches!(source_server_for_uri(&uri), Some(SourceServer::Clangd));
+                if deferred {
+                    let version = msg
+                        .pointer("/params/textDocument/version")
+                        .and_then(Value::as_i64);
+                    if !self.state.pending_reparses.queue(
+                        uri.clone(),
+                        text.clone(),
+                        version,
+                        Instant::now(),
+                    ) {
+                        return Ok(());
+                    }
+                } else {
+                    for ix in &mut self.state.indexers {
+                        ix.reparse(&uri, &text);
+                    }
                 }
                 self.compute_include_hygiene(&uri, &text);
                 self.state.docs.insert(uri.clone(), text);
-                self.publish_related_indexer_diagnostics(&uri)?;
+                if !deferred {
+                    self.publish_related_indexer_diagnostics(&uri)?;
+                }
             }
             return self.forward_by_uri(&uri, &msg);
         }
@@ -629,6 +762,7 @@ impl Server {
         let Some(uri) = text_document_uri(&msg) else {
             return self.forward_to_all_passthroughs(&msg);
         };
+        self.state.pending_reparses.cancel(&uri);
         if !is_freight_manifest_uri(&uri) {
             self.forward_by_uri(&uri, &msg)?;
             self.spawn_tidy(&uri);
@@ -669,6 +803,7 @@ impl Server {
         let Some(uri) = text_document_uri(&msg) else {
             return self.forward_to_all_passthroughs(&msg);
         };
+        self.state.pending_reparses.reset(&uri);
         if is_freight_manifest_uri(&uri) {
             self.state.docs.remove(&uri);
             self.publish_diagnostics(&uri, vec![])?;
@@ -683,6 +818,34 @@ impl Server {
             }
         }
         self.forward_by_uri(&uri, &msg)
+    }
+
+    fn apply_pending_reparse(&mut self, uri: &str, pending: PendingReparse) -> io::Result<()> {
+        for ix in &mut self.state.indexers {
+            ix.reparse(uri, &pending.text);
+        }
+        self.publish_related_indexer_diagnostics(uri)
+    }
+
+    fn flush_pending_reparse(&mut self, uri: &str) -> io::Result<()> {
+        if let Some(pending) = self.state.pending_reparses.take(uri) {
+            self.apply_pending_reparse(uri, pending)?;
+        }
+        Ok(())
+    }
+
+    fn flush_due_reparses(&mut self) -> io::Result<()> {
+        for (uri, pending) in self.state.pending_reparses.take_due(Instant::now()) {
+            self.apply_pending_reparse(&uri, pending)?;
+        }
+        Ok(())
+    }
+
+    fn flush_all_reparses(&mut self) -> io::Result<()> {
+        for (uri, pending) in self.state.pending_reparses.drain() {
+            self.apply_pending_reparse(&uri, pending)?;
+        }
+        Ok(())
     }
 
     fn handle_watched_files_changed(&mut self, msg: Value) -> io::Result<()> {
@@ -3099,13 +3262,131 @@ mod tests {
     use super::{
         fprettify_args, freight_status, insert_dependency_toml_version, insert_os_feature_toml,
         lsp_end_position, merge_clangd_codeaction_response, work_done_begin, work_done_create,
-        work_done_end, FortranFormatOptions,
+        work_done_end, FortranFormatOptions, ReparseQueue, REPARSE_DEBOUNCE,
     };
     use serde_json::json;
     use std::collections::HashMap;
 
     use super::remap_semantic_token_types;
     use super::{header_capability, header_provider_label};
+
+    #[test]
+    fn reparse_queue_keeps_latest_version_and_resets_deadline() {
+        let start = std::time::Instant::now();
+        let mut queue = ReparseQueue::default();
+        assert!(queue.queue("file:///a.cpp".into(), "v1".into(), Some(1), start));
+        assert!(queue.queue(
+            "file:///a.cpp".into(),
+            "v2".into(),
+            Some(2),
+            start + std::time::Duration::from_millis(100),
+        ));
+        assert!(!queue.queue(
+            "file:///a.cpp".into(),
+            "stale".into(),
+            Some(1),
+            start + std::time::Duration::from_millis(120),
+        ));
+
+        assert!(queue.take_due(start + REPARSE_DEBOUNCE).is_empty());
+        let due = queue.take_due(start + std::time::Duration::from_millis(100) + REPARSE_DEBOUNCE);
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].0, "file:///a.cpp");
+        assert_eq!(due[0].1.text, "v2");
+        assert!(!queue.queue(
+            "file:///a.cpp".into(),
+            "stale-after-flush".into(),
+            Some(1),
+            start + std::time::Duration::from_millis(300),
+        ));
+        queue.reset("file:///a.cpp");
+        assert!(queue.queue(
+            "file:///a.cpp".into(),
+            "reopened".into(),
+            Some(1),
+            start + std::time::Duration::from_millis(300),
+        ));
+    }
+
+    #[cfg(feature = "clang-bridge")]
+    #[test]
+    fn did_change_defers_and_coalesces_native_clang_reparses() {
+        struct RecordingIndexer(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+        impl super::LanguageIndexer for RecordingIndexer {
+            fn handles(&self, _path: &std::path::Path) -> bool {
+                true
+            }
+
+            fn refresh_flags(&mut self, _manifest_dir: &std::path::Path, _profile: &str) {}
+
+            fn evict(&mut self, _path: &std::path::Path) {}
+
+            fn hover(&mut self, _uri: &str, _msg: &serde_json::Value) -> Option<serde_json::Value> {
+                None
+            }
+
+            fn goto_definition(
+                &mut self,
+                _uri: &str,
+                _msg: &serde_json::Value,
+            ) -> Option<serde_json::Value> {
+                None
+            }
+
+            fn completion(
+                &mut self,
+                _uri: &str,
+                _msg: &serde_json::Value,
+            ) -> Option<serde_json::Value> {
+                None
+            }
+
+            fn reparse(&mut self, _uri: &str, content: &str) {
+                self.0.lock().unwrap().push(content.to_string());
+            }
+        }
+
+        let reparses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let args = super::Args {
+            clangd: "clangd".into(),
+            no_clangd: true,
+            asm_lsp: "asm-lsp".into(),
+            no_asm_lsp: true,
+            no_native_asm: true,
+            profile: "debug".into(),
+            use_clang_bridge: true,
+            clangd_args: vec![],
+            stdio: true,
+            wait_for_debugger: false,
+        };
+        let mut server = super::Server::with_out(
+            args,
+            std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout())),
+        );
+        server.state.indexers = vec![Box::new(RecordingIndexer(reparses.clone()))];
+        let change = |version, text| {
+            json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": "file:///tmp/debounce.cpp", "version": version },
+                    "contentChanges": [{ "text": text }]
+                }
+            })
+        };
+
+        server.handle_did_change(change(1, "v1")).unwrap();
+        server.handle_did_change(change(2, "v2")).unwrap();
+        server.handle_did_change(change(1, "stale")).unwrap();
+
+        assert!(reparses.lock().unwrap().is_empty());
+        assert_eq!(server.state.docs["file:///tmp/debounce.cpp"], "v2");
+        server
+            .flush_pending_reparse("file:///tmp/debounce.cpp")
+            .unwrap();
+        assert_eq!(*reparses.lock().unwrap(), vec!["v2"]);
+    }
 
     #[test]
     fn progress_messages_follow_lsp_work_done_shape() {
