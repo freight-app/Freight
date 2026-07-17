@@ -60,14 +60,23 @@ pub(crate) fn diag_to_lsp(d: &clang_bridge::diag::Diagnostic, source: &str) -> V
     };
     let line = d.line.saturating_sub(1) as u64;
     let col = d.col.saturating_sub(1) as u64;
+    let end_line = d.end_line.saturating_sub(1) as u64;
+    let end_col = d.end_col.saturating_sub(1) as u64;
+    let mut message = d.message.clone();
+    if let Some(first) = message.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    if !d.fixits.is_empty() {
+        message.push_str(" (fix available)");
+    }
     let mut v = json!({
         "range": {
             "start": { "line": line, "character": col },
-            "end":   { "line": line, "character": col }
+            "end":   { "line": end_line, "character": end_col }
         },
         "severity": severity,
         "source":   source,
-        "message":  d.message
+        "message":  message
     });
     if let Some(ref name) = d.check_name {
         v["code"] = Value::String(name.clone());
@@ -118,12 +127,12 @@ fn header_diag_to_lsp(
                     "character": d.col.saturating_sub(1)
                 },
                 "end": {
-                    "line": d.line.saturating_sub(1),
-                    "character": d.col.saturating_sub(1)
+                    "line": d.end_line.saturating_sub(1),
+                    "character": d.end_col.saturating_sub(1)
                 }
             }
         },
-        "message": d.message
+        "message": "Error occurred here"
     }]);
     diagnostic
 }
@@ -174,11 +183,7 @@ impl ClangIndexer {
     }
 
     fn ensure_tu(&mut self, path: &Path) -> Option<&TranslationUnit> {
-        if self
-            .tus
-            .get(path)
-            .is_some_and(TranslationUnit::is_poisoned)
-        {
+        if self.tus.get(path).is_some_and(TranslationUnit::is_poisoned) {
             let error = self
                 .tus
                 .get(path)
@@ -706,6 +711,49 @@ mod tests {
         assert_eq!(
             diagnostic["relatedInformation"][0]["location"]["range"]["start"],
             json!({ "line": 1, "character": 20 })
+        );
+        assert_eq!(
+            diagnostic["relatedInformation"][0]["location"]["range"]["end"],
+            json!({ "line": 1, "character": 32 })
+        );
+        assert_eq!(
+            diagnostic["relatedInformation"][0]["message"],
+            "Error occurred here"
+        );
+    }
+
+    #[test]
+    fn direct_diagnostic_preserves_range_and_matches_clangd_message_shape() {
+        let diagnostic = clang_bridge::diag::Diagnostic {
+            file: "/tmp/main.cpp".into(),
+            line: 3,
+            col: 5,
+            end_line: 3,
+            end_col: 12,
+            severity: clang_bridge::diag::Severity::Error,
+            message: "expected expression".into(),
+            check_name: None,
+            include_anchor: None,
+            fixits: vec![clang_bridge::diag::FixIt {
+                start_line: 3,
+                start_col: 12,
+                end_line: 3,
+                end_col: 12,
+                replacement: ";".into(),
+            }],
+        };
+
+        assert_eq!(
+            diag_to_lsp(&diagnostic, "clang"),
+            json!({
+                "range": {
+                    "start": { "line": 2, "character": 4 },
+                    "end": { "line": 2, "character": 11 }
+                },
+                "severity": 1,
+                "source": "clang",
+                "message": "Expected expression (fix available)"
+            })
         );
     }
 
