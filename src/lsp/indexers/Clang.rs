@@ -330,6 +330,35 @@ impl LanguageIndexer for ClangIndexer {
         Some(json!({ "contents": { "kind": "markdown", "value": md } }))
     }
 
+    fn signature_help(&mut self, uri: &str, msg: &Value) -> Option<Value> {
+        let (line, col) = position(msg)?;
+        let path = path_from_uri(uri)?;
+        if !Self::is_c_family(&path) {
+            return None;
+        }
+        let tu = self.ensure_tu(&path)?;
+        let help = clang_bridge::sighelp::signature_help(tu, line as u32 + 1, col as u32 + 1)?;
+        let signatures: Vec<Value> = help
+            .overloads
+            .into_iter()
+            .map(|overload| {
+                json!({
+                    "label": overload.label,
+                    "parameters": overload
+                        .params
+                        .into_iter()
+                        .map(|parameter| json!({ "label": parameter.label }))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        Some(json!({
+            "signatures": signatures,
+            "activeSignature": 0,
+            "activeParameter": help.active_param
+        }))
+    }
+
     fn goto_definition(&mut self, uri: &str, msg: &Value) -> Option<Value> {
         let (line, col) = position(msg)?;
         let path = path_from_uri(uri)?;
@@ -754,6 +783,39 @@ mod tests {
                 "source": "clang",
                 "message": "Expected expression (fix available)"
             })
+        );
+    }
+
+    #[test]
+    fn signature_help_serves_partial_native_clang_calls() {
+        let dir = tempfile::tempdir().expect("signature fixture");
+        let main = dir.path().join("main.cpp");
+        let source = "int outer(int alpha, int beta, int gamma);\n\
+                      void test() { outer(1, 2, ); }\n";
+        std::fs::write(&main, source).unwrap();
+        let uri = uri_from_path(&main);
+        let line = source.lines().nth(1).unwrap();
+        let character = line.find(", )").unwrap() + 2;
+        let request = json!({
+            "params": { "position": { "line": 1, "character": character } }
+        });
+        let mut indexer = ClangIndexer::new();
+        indexer.reparse(&uri, source);
+
+        let help = indexer
+            .signature_help(&uri, &request)
+            .expect("native signature help");
+        assert_eq!(help["activeSignature"], 0);
+        assert_eq!(help["activeParameter"], 2);
+        assert!(help["signatures"][0]["label"]
+            .as_str()
+            .is_some_and(|label| label.contains("outer")));
+        assert_eq!(
+            help["signatures"][0]["parameters"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
         );
     }
 
