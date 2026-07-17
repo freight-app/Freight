@@ -224,9 +224,17 @@ impl ClangIndexer {
         }
     }
 
-    fn clear_tus(&mut self) {
-        self.tus.clear();
-        self.tu_lru.clear();
+    fn replace_source_data(&mut self, source_data: HashMap<PathBuf, (String, Vec<String>)>) {
+        let stale: Vec<PathBuf> = self
+            .tus
+            .keys()
+            .filter(|path| self.source_data.get(*path) != source_data.get(*path))
+            .cloned()
+            .collect();
+        for path in stale {
+            self.remove_tu(&path);
+        }
+        self.source_data = source_data;
     }
 }
 
@@ -258,7 +266,7 @@ impl LanguageIndexer for ClangIndexer {
         let mut probe_cache: std::collections::HashMap<(String, String), Vec<PathBuf>> =
             std::collections::HashMap::new();
 
-        self.source_data = per_file
+        let source_data = per_file
             .into_iter()
             .map(|(path, (compiler, dir, file_flags))| {
                 let env = env_probe_flags(&file_flags);
@@ -280,9 +288,9 @@ impl LanguageIndexer for ClangIndexer {
             })
             .collect();
 
-        // Keep live_buffers: open unsaved documents remain authoritative when
-        // a TU is rebuilt with new compile flags.
-        self.clear_tus();
+        // Preserve ASTs whose complete parse environment is unchanged. Open
+        // buffers remain authoritative when a changed TU is rebuilt.
+        self.replace_source_data(source_data);
     }
 
     fn evict(&mut self, path: &Path) {
@@ -766,5 +774,55 @@ mod tests {
         indexer.evict(&first);
         assert!(!indexer.live_buffers.contains_key(&first));
         assert!(!indexer.tu_lru.contains(&first));
+    }
+
+    #[test]
+    fn source_flag_refresh_only_evicts_changed_translation_units() {
+        let dir = tempfile::tempdir().expect("flag refresh fixture");
+        let unchanged = dir.path().join("unchanged.cpp");
+        let changed = dir.path().join("changed.cpp");
+        let removed = dir.path().join("removed.cpp");
+        for path in [&unchanged, &changed, &removed] {
+            std::fs::write(path, "int value = 1;\n").unwrap();
+        }
+        let old_dir = dir.path().join("old");
+        let new_dir = dir.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        let old_dir = old_dir.to_string_lossy().into_owned();
+        let new_dir = new_dir.to_string_lossy().into_owned();
+
+        let mut indexer = ClangIndexer::new();
+        indexer.source_data = HashMap::from([
+            (
+                unchanged.clone(),
+                (old_dir.clone(), vec!["-std=c++20".into()]),
+            ),
+            (
+                changed.clone(),
+                (old_dir.clone(), vec!["-std=c++20".into()]),
+            ),
+            (
+                removed.clone(),
+                (old_dir.clone(), vec!["-std=c++20".into()]),
+            ),
+        ]);
+        for path in [&unchanged, &changed, &removed] {
+            indexer.diagnostics(&uri_from_path(path));
+        }
+        indexer
+            .live_buffers
+            .insert(changed.clone(), "int unsaved_value = 2;\n".to_string());
+
+        indexer.replace_source_data(HashMap::from([
+            (unchanged.clone(), (old_dir, vec!["-std=c++20".into()])),
+            (changed.clone(), (new_dir, vec!["-std=c++23".into()])),
+        ]));
+
+        assert!(indexer.tus.contains_key(&unchanged));
+        assert!(!indexer.tus.contains_key(&changed));
+        assert!(!indexer.tus.contains_key(&removed));
+        assert_eq!(indexer.tu_lru.iter().collect::<Vec<_>>(), vec![&unchanged]);
+        assert!(indexer.live_buffers.contains_key(&changed));
     }
 }
